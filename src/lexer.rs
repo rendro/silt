@@ -20,6 +20,7 @@ pub enum Token {
     Import,
     As,
     Else,
+    Where,
 
     // Literals
     Int(i64),
@@ -98,6 +99,7 @@ impl fmt::Display for Token {
             Token::Import => write!(f, "import"),
             Token::As => write!(f, "as"),
             Token::Else => write!(f, "else"),
+            Token::Where => write!(f, "where"),
             Token::Int(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
             Token::Bool(b) => write!(f, "{b}"),
@@ -429,6 +431,7 @@ impl Lexer {
             "import" => Token::Import,
             "as" => Token::As,
             "else" => Token::Else,
+            "where" => Token::Where,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             _ => Token::Ident(name),
@@ -714,5 +717,10 @@ mod tests {
         assert_eq!(lex(r#""\{not interp\}""#), vec![
             Token::StringLit("{not interp}".into()),
         ]);
+    }
+
+    #[test]
+    fn test_where_keyword() {
+        assert_eq!(lex("where"), vec![Token::Where]);
     }
 }

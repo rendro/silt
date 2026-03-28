@@ -140,15 +140,26 @@ impl Scheme {
 
 // ── Type errors ─────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub message: std::string::String,
     pub span: Span,
+    pub severity: Severity,
 }
 
 impl std::fmt::Display for TypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] type error: {}", self.span, self.message)
+        let label = match self.severity {
+            Severity::Error => "type error",
+            Severity::Warning => "type warning",
+        };
+        write!(f, "[{}] {}: {}", self.span, label, self.message)
     }
 }
 
@@ -216,6 +227,14 @@ impl TypeEnv {
 }
 
 /// Collect free type variables in a type.
+/// Count the number of parameters in a function type.
+fn count_params(ty: &Type) -> usize {
+    match ty {
+        Type::Fun(params, _) => params.len(),
+        _ => 0,
+    }
+}
+
 fn free_vars_in(ty: &Type) -> Vec<TyVar> {
     match ty {
         Type::Var(v) => vec![*v],
@@ -311,15 +330,17 @@ struct RecordInfo {
 /// Information about a declared trait.
 #[derive(Debug, Clone)]
 struct TraitInfo {
-    _name: std::string::String,
-    _methods: Vec<(std::string::String, Type)>,
+    name: std::string::String,
+    methods: Vec<(std::string::String, Type)>,
 }
 
 /// Information about a trait implementation.
 #[derive(Debug, Clone)]
 struct TraitImplInfo {
-    _trait_name: std::string::String,
-    _target_type: std::string::String,
+    trait_name: std::string::String,
+    target_type: std::string::String,
+    methods: Vec<(std::string::String, usize)>,
+    span: Span,
 }
 
 // ── The type checker ────────────────────────────────────────────────
@@ -581,7 +602,11 @@ impl TypeChecker {
     // ── Error reporting ─────────────────────────────────────────────
 
     fn error(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError { message, span });
+        self.errors.push(TypeError { message, span, severity: Severity::Error });
+    }
+
+    fn warning(&mut self, message: std::string::String, span: Span) {
+        self.errors.push(TypeError { message, span, severity: Severity::Warning });
     }
 
     // ── Check a full program ────────────────────────────────────────
@@ -591,6 +616,38 @@ impl TypeChecker {
 
         // Register builtins in the type environment
         self.register_builtins(&mut env);
+
+        // Register built-in traits
+        {
+            let display_self = self.fresh_var();
+            self.traits.insert("Display".into(), TraitInfo {
+                name: "Display".into(),
+                methods: vec![("display".into(), Type::Fun(vec![display_self], Box::new(Type::String)))],
+            });
+        }
+        {
+            let compare_a = self.fresh_var();
+            let compare_b = self.fresh_var();
+            self.traits.insert("Compare".into(), TraitInfo {
+                name: "Compare".into(),
+                methods: vec![("compare".into(), Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)))],
+            });
+        }
+        {
+            let equal_a = self.fresh_var();
+            let equal_b = self.fresh_var();
+            self.traits.insert("Equal".into(), TraitInfo {
+                name: "Equal".into(),
+                methods: vec![("equal".into(), Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)))],
+            });
+        }
+        {
+            let hash_self = self.fresh_var();
+            self.traits.insert("Hash".into(), TraitInfo {
+                name: "Hash".into(),
+                methods: vec![("hash".into(), Type::Fun(vec![hash_self], Box::new(Type::Int)))],
+            });
+        }
 
         // First pass: register all type declarations
         for decl in &program.decls {
@@ -615,6 +672,9 @@ impl TypeChecker {
             }
         }
 
+        // Validate trait implementations against their declarations
+        self.validate_trait_impls();
+
         // Third pass: type check function bodies
         for decl in &program.decls {
             if let Decl::Fn(f) = decl {
@@ -627,6 +687,51 @@ impl TypeChecker {
             if let Decl::TraitImpl(ti) = decl {
                 for method in &ti.methods {
                     self.check_fn_body(method, &env);
+                }
+            }
+        }
+    }
+
+    // ── Validate trait implementations ────────────────────────────────
+
+    fn validate_trait_impls(&mut self) {
+        // Clone to avoid borrow issues
+        let impls = self.trait_impls.clone();
+        for impl_info in &impls {
+            // Check that the trait exists
+            let Some(trait_info) = self.traits.get(&impl_info.trait_name) else {
+                self.error(
+                    format!("trait '{}' is not declared", impl_info.trait_name),
+                    impl_info.span,
+                );
+                continue;
+            };
+
+            // Check that all required methods are implemented
+            let trait_methods = trait_info.methods.clone();
+            for (method_name, trait_method_type) in &trait_methods {
+                if let Some((_, impl_arity)) =
+                    impl_info.methods.iter().find(|(n, _)| n == method_name)
+                {
+                    // Check arity matches
+                    let expected_arity = count_params(trait_method_type);
+                    if *impl_arity != expected_arity {
+                        self.error(
+                            format!(
+                                "method '{}' in trait impl '{}' for '{}' has wrong arity: expected {}, got {}",
+                                method_name, impl_info.trait_name, impl_info.target_type, expected_arity, impl_arity
+                            ),
+                            impl_info.span,
+                        );
+                    }
+                } else {
+                    self.error(
+                        format!(
+                            "trait impl '{}' for '{}' is missing method '{}'",
+                            impl_info.trait_name, impl_info.target_type, method_name
+                        ),
+                        impl_info.span,
+                    );
                 }
             }
         }
@@ -1241,8 +1346,8 @@ impl TypeChecker {
         self.traits.insert(
             t.name.clone(),
             TraitInfo {
-                _name: t.name.clone(),
-                _methods: methods,
+                name: t.name.clone(),
+                methods,
             },
         );
     }
@@ -1250,9 +1355,16 @@ impl TypeChecker {
     // ── Register trait implementations ──────────────────────────────
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
+        let impl_methods: Vec<(std::string::String, usize)> = ti
+            .methods
+            .iter()
+            .map(|m| (m.name.clone(), m.params.len()))
+            .collect();
         self.trait_impls.push(TraitImplInfo {
-            _trait_name: ti.trait_name.clone(),
-            _target_type: ti.target_type.clone(),
+            trait_name: ti.trait_name.clone(),
+            target_type: ti.target_type.clone(),
+            methods: impl_methods,
+            span: ti.span,
         });
 
         // Register methods as "TypeName.method_name"
@@ -1284,6 +1396,16 @@ impl TypeChecker {
 
     fn check_fn_body(&mut self, f: &FnDecl, env: &TypeEnv) {
         let mut local_env = env.child();
+
+        // Validate where clauses
+        for (type_param, trait_name) in &f.where_clauses {
+            if !self.traits.contains_key(trait_name) {
+                self.error(
+                    format!("unknown trait '{}' in where clause for '{}'", trait_name, type_param),
+                    f.span,
+                );
+            }
+        }
 
         // Look up the function's registered type and instantiate it
         let fn_scheme = match env.lookup(&f.name) {
@@ -2258,9 +2380,13 @@ mod tests {
         Parser::new(tokens).parse_program().expect("parse error")
     }
 
-    fn check_program(input: &str) -> Vec<TypeError> {
+    fn check_errors(input: &str) -> Vec<TypeError> {
         let program = parse(input);
         check(&program)
+    }
+
+    fn check_program(input: &str) -> Vec<TypeError> {
+        check_errors(input)
     }
 
     fn assert_no_errors(input: &str) {
@@ -2868,5 +2994,111 @@ fn main() {
   classify(5)
 }
         "#);
+    }
+
+    // ── Severity tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_type_error_has_error_severity() {
+        // A type mismatch should produce Severity::Error
+        let errors = check_errors(r#"
+            fn main() {
+                let x: Int = "hello"
+                x
+            }
+        "#);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.severity == Severity::Error));
+    }
+
+    #[test]
+    fn test_valid_program_no_errors() {
+        let errors = check_errors(r#"
+            fn main() {
+                let x = 42
+                x + 1
+            }
+        "#);
+        let hard_errors: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
+        assert!(hard_errors.is_empty());
+    }
+
+    #[test]
+    fn test_trait_impl_validates_methods() {
+        // Complete impl should have no errors about missing methods
+        let errors = check_program(r#"
+            trait Greet {
+                fn greet(self) -> String {
+                    "hello"
+                }
+            }
+            trait Greet for User {
+                fn greet(self) -> String {
+                    "hi"
+                }
+            }
+            type User { name: String }
+            fn main() { 0 }
+        "#);
+        let trait_errors: Vec<_> = errors.iter().filter(|e| e.message.contains("missing method")).collect();
+        assert!(trait_errors.is_empty(), "unexpected trait errors: {:?}", trait_errors);
+    }
+
+    #[test]
+    fn test_trait_impl_missing_method() {
+        let errors = check_program(r#"
+            trait Showable {
+                fn show(self) -> String { "default" }
+                fn detail(self) -> String { "detail" }
+            }
+            trait Showable for Item {
+                fn show(self) -> String { "item" }
+            }
+            type Item { name: String }
+            fn main() { 0 }
+        "#);
+        assert!(errors.iter().any(|e| e.message.contains("missing method") && e.message.contains("detail")));
+    }
+
+    #[test]
+    fn test_trait_impl_unknown_trait() {
+        let errors = check_program(r#"
+            trait Nonexistent for Thing {
+                fn foo(self) -> Int { 0 }
+            }
+            type Thing { x: Int }
+            fn main() { 0 }
+        "#);
+        assert!(errors.iter().any(|e| e.message.contains("not declared")));
+    }
+
+    #[test]
+    fn test_builtin_display_trait_exists() {
+        // Implementing Display should not produce "trait not declared" error
+        let errors = check_program(r#"
+            type Color { Red, Blue }
+            trait Display for Color {
+                fn display(self) -> String {
+                    match self {
+                        Red -> "red"
+                        Blue -> "blue"
+                    }
+                }
+            }
+            fn main() { 0 }
+        "#);
+        let undeclared: Vec<_> = errors.iter().filter(|e| e.message.contains("not declared")).collect();
+        assert!(undeclared.is_empty(), "Display should be a built-in trait: {:?}", undeclared);
+    }
+
+    #[test]
+    fn test_where_unknown_trait_warning() {
+        let errors = check_program(r#"
+            fn show(x) where x: Nonexistent {
+                x
+            }
+            fn main() { 0 }
+        "#);
+        assert!(errors.iter().any(|e| e.message.contains("Nonexistent")));
     }
 }

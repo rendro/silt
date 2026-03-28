@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
+use silt::errors::SourceError;
 use silt::interpreter::Interpreter;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -66,10 +67,15 @@ fn run_file(path: &str) {
         }
     };
 
-    // Run the type checker (warnings only — does not block execution)
+    // Run the type checker
     let type_errors = typechecker::check(&program);
+    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
-        eprintln!("{path}:{err}");
+        let source_err = SourceError::from_type_error(err, &source, path);
+        eprintln!("{source_err}");
+    }
+    if has_hard_errors {
+        process::exit(1);
     }
 
     // Derive project root from the input file's directory

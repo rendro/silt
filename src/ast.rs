@@ -210,6 +210,7 @@ pub struct FnDecl {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
+    pub where_clauses: Vec<(String, String)>,
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,

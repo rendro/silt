@@ -170,6 +170,27 @@ impl Parser {
             None
         };
 
+        let where_clauses = if self.peek_skip_nl() == &Token::Where {
+            self.advance(); // consume 'where'
+            let mut clauses = Vec::new();
+            loop {
+                self.skip_nl();
+                let (type_param, _) = self.expect_ident()?;
+                self.expect(&Token::Colon)?;
+                let (trait_name, _) = self.expect_ident()?;
+                clauses.push((type_param, trait_name));
+                self.skip_nl();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            clauses
+        } else {
+            Vec::new()
+        };
+
         self.skip_nl();
         let body = if self.at(&Token::Eq) {
             // Single-expression form: fn square(x) = x * x
@@ -184,6 +205,7 @@ impl Parser {
             name,
             params,
             return_type,
+            where_clauses,
             body,
             is_pub: false,
             span,
@@ -1626,5 +1648,45 @@ fn main() {
             }
         "#);
         assert_eq!(prog.decls.len(), 1);
+    }
+
+    #[test]
+    fn test_where_clause() {
+        let prog = parse(r#"
+            fn show(x) where x: Display {
+                x
+            }
+            fn main() { 0 }
+        "#);
+        if let Decl::Fn(f) = &prog.decls[0] {
+            assert_eq!(f.where_clauses, vec![("x".into(), "Display".into())]);
+        } else {
+            panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_where_clause_multiple() {
+        let prog = parse(r#"
+            fn compare_show(a, b) where a: Display, b: Compare {
+                a
+            }
+            fn main() { 0 }
+        "#);
+        if let Decl::Fn(f) = &prog.decls[0] {
+            assert_eq!(f.where_clauses.len(), 2);
+        } else {
+            panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_fn_without_where_still_works() {
+        // Regression test: functions without where should still parse
+        let prog = parse(r#"
+            fn add(a, b) { a + b }
+            fn main() { add(1, 2) }
+        "#);
+        assert_eq!(prog.decls.len(), 2);
     }
 }

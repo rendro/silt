@@ -208,6 +208,13 @@ fn collect_public_names(program: &Program) -> (HashSet<String>, HashMap<String, 
                     type_variants.insert(name.clone(), variant_names);
                 }
             }
+            Decl::Trait(t) => {
+                // Trait declarations are always public (they define interfaces)
+                names.insert(t.name.clone());
+            }
+            Decl::TraitImpl(_) => {
+                // Trait impls are automatically available (no explicit export needed)
+            }
             _ => {}
         }
     }

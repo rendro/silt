@@ -33,6 +33,7 @@ pub struct SourceError {
     pub span: Span,
     pub source_line: Option<String>,
     pub file: Option<String>,
+    pub is_warning: bool,
 }
 
 impl SourceError {
@@ -44,6 +45,7 @@ impl SourceError {
             span: err.span,
             source_line,
             file: Some(file.into()),
+            is_warning: false,
         }
     }
 
@@ -55,17 +57,21 @@ impl SourceError {
             span: err.span,
             source_line,
             file: Some(file.into()),
+            is_warning: false,
         }
     }
 
     pub fn from_type_error(err: &TypeError, source: &str, file: impl Into<String>) -> Self {
+        use crate::typechecker::Severity;
         let source_line = get_source_line(source, err.span.line);
+        let is_warning = err.severity == Severity::Warning;
         Self {
             kind: ErrorKind::Type,
             message: err.message.clone(),
             span: err.span,
             source_line,
             file: Some(file.into()),
+            is_warning,
         }
     }
 
@@ -76,6 +82,7 @@ impl SourceError {
             span: Span::new(0, 0),
             source_line: None,
             file,
+            is_warning: false,
         }
     }
 }
@@ -134,15 +141,9 @@ impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let c = if use_color() { &COLORS_ON } else { &COLORS_OFF };
 
-        // Error header: error[parse]: message
-        let label_color = match self.kind {
-            ErrorKind::Type => c.yellow,
-            _ => c.red,
-        };
-        let label = match self.kind {
-            ErrorKind::Type => "warning",
-            _ => "error",
-        };
+        // Error header: error[parse]: message  (or warning[type] for type warnings)
+        let label_color = if self.is_warning { c.yellow } else { c.red };
+        let label = if self.is_warning { "warning" } else { "error" };
 
         write!(
             f,
@@ -267,6 +268,7 @@ mod tests {
             span: Span::with_offset(5, 12, 0),
             source_line: Some("    Err(e) -> println(\"error\")".to_string()),
             file: Some("test.silt".to_string()),
+            is_warning: false,
         };
         let output = format!("{err}");
         assert!(output.contains("error[parse]"));
@@ -284,9 +286,25 @@ mod tests {
             span: Span::with_offset(3, 5, 0),
             source_line: Some("let x = true + 1".to_string()),
             file: Some("test.silt".to_string()),
+            is_warning: true,
         };
         let output = format!("{err}");
         assert!(output.contains("warning[type]"));
+        assert!(output.contains("type mismatch"));
+    }
+
+    #[test]
+    fn test_source_error_type_error() {
+        let err = SourceError {
+            kind: ErrorKind::Type,
+            message: "type mismatch".to_string(),
+            span: Span::with_offset(3, 5, 0),
+            source_line: Some("let x = true + 1".to_string()),
+            file: Some("test.silt".to_string()),
+            is_warning: false,
+        };
+        let output = format!("{err}");
+        assert!(output.contains("error[type]"));
         assert!(output.contains("type mismatch"));
     }
 

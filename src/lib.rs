@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod env;
+pub mod errors;
 pub mod interpreter;
 pub mod lexer;
 pub mod module;
