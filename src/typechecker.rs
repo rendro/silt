@@ -360,6 +360,8 @@ pub struct TypeChecker {
     traits: HashMap<std::string::String, TraitInfo>,
     /// Trait implementations.
     trait_impls: Vec<TraitImplInfo>,
+    /// Maps function names to their where clauses as (param_index, trait_name).
+    fn_where_clauses: HashMap<std::string::String, Vec<(usize, std::string::String)>>,
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
 }
@@ -374,6 +376,7 @@ impl TypeChecker {
             records: HashMap::new(),
             traits: HashMap::new(),
             trait_impls: Vec::new(),
+            fn_where_clauses: HashMap::new(),
             errors: Vec::new(),
         }
     }
@@ -597,6 +600,33 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         substitute_vars(&scheme.ty, &mapping)
+    }
+
+    // ── Type name for trait impl matching ────────────────────────────
+
+    /// Convert a resolved Type to a type name string suitable for matching
+    /// against `TraitImplInfo.target_type`. Returns `None` if the type is
+    /// unresolved (still a type variable) or cannot be mapped to a name.
+    fn type_name_for_impl(&self, ty: &Type) -> Option<std::string::String> {
+        match ty {
+            Type::Int => Some("Int".into()),
+            Type::Float => Some("Float".into()),
+            Type::Bool => Some("Bool".into()),
+            Type::String => Some("String".into()),
+            Type::Unit => Some("()".into()),
+            Type::Record(name, _) => Some(name.clone()),
+            Type::Generic(name, _) => Some(name.clone()),
+            Type::Variant(name, _) => {
+                // Look up the parent enum name for this variant
+                if let Some(enum_name) = self.variant_to_enum.get(name) {
+                    Some(enum_name.clone())
+                } else {
+                    Some(name.clone())
+                }
+            }
+            Type::Var(_) => None, // unresolved
+            _ => None,
+        }
     }
 
     // ── Error reporting ─────────────────────────────────────────────
@@ -1316,6 +1346,25 @@ impl TypeChecker {
         let fn_type = Type::Fun(param_types, Box::new(ret_type));
         let scheme = self.generalize(env, &fn_type);
         env.define(f.name.clone(), scheme);
+
+        // Store where clauses mapped to parameter indices
+        if !f.where_clauses.is_empty() {
+            let mut indexed_clauses = Vec::new();
+            for (type_param, trait_name) in &f.where_clauses {
+                // Find the parameter index for this type_param name
+                for (i, param) in f.params.iter().enumerate() {
+                    if let Pattern::Ident(name) = &param.pattern {
+                        if name == type_param {
+                            indexed_clauses.push((i, trait_name.clone()));
+                            break;
+                        }
+                    }
+                }
+            }
+            if !indexed_clauses.is_empty() {
+                self.fn_where_clauses.insert(f.name.clone(), indexed_clauses);
+            }
+        }
     }
 
     // ── Register trait declarations ─────────────────────────────────
@@ -1727,7 +1776,7 @@ impl TypeChecker {
                         let mut all_arg_types = vec![arg_type];
                         all_arg_types.extend(explicit_arg_types);
 
-                        match &callee_ty {
+                        let result_ty = match &callee_ty {
                             Type::Fun(params, ret) => {
                                 let min_len = params.len().min(all_arg_types.len());
                                 for i in 0..min_len {
@@ -1738,12 +1787,39 @@ impl TypeChecker {
                             }
                             Type::Var(_) => {
                                 let ret = self.fresh_var();
-                                let fn_ty = Type::Fun(all_arg_types, Box::new(ret.clone()));
+                                let fn_ty = Type::Fun(all_arg_types.clone(), Box::new(ret.clone()));
                                 self.unify(&callee_ty, &fn_ty, expr.span);
                                 ret
                             }
                             _ => self.fresh_var(),
+                        };
+
+                        // Check where clause constraints for piped calls
+                        if let ExprKind::Ident(fn_name) = &callee.kind {
+                            if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
+                                for (param_idx, trait_name) in &clauses {
+                                    if let Some(arg_ty) = all_arg_types.get(*param_idx) {
+                                        let resolved = self.apply(arg_ty);
+                                        if let Some(type_name) = self.type_name_for_impl(&resolved) {
+                                            let has_impl = self.trait_impls.iter().any(|imp| {
+                                                imp.trait_name == *trait_name && imp.target_type == type_name
+                                            });
+                                            if !has_impl {
+                                                self.error(
+                                                    format!(
+                                                        "type '{}' does not implement trait '{}'",
+                                                        type_name, trait_name
+                                                    ),
+                                                    expr.span,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
+
+                        result_ty
                     }
                     _ => {
                         // RHS is a plain function/lambda, not a call
@@ -1806,7 +1882,7 @@ impl TypeChecker {
                     .map(|a| self.infer_expr(a, env))
                     .collect();
 
-                match &callee_ty {
+                let result_ty = match &callee_ty {
                     Type::Fun(params, ret) => {
                         // Unify argument types with parameter types
                         let min_len = params.len().min(arg_types.len());
@@ -1818,7 +1894,7 @@ impl TypeChecker {
                     Type::Var(_) => {
                         // The callee is an unresolved type variable - create a function type
                         let ret = self.fresh_var();
-                        let fn_ty = Type::Fun(arg_types, Box::new(ret.clone()));
+                        let fn_ty = Type::Fun(arg_types.clone(), Box::new(ret.clone()));
                         self.unify(&callee_ty, &fn_ty, expr.span);
                         ret
                     }
@@ -1826,7 +1902,36 @@ impl TypeChecker {
                         // Lenient: might be a constructor or something we can't resolve
                         self.fresh_var()
                     }
+                };
+
+                // Check where clause constraints
+                if let ExprKind::Ident(fn_name) = &callee.kind {
+                    if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
+                        for (param_idx, trait_name) in &clauses {
+                            if let Some(arg_ty) = arg_types.get(*param_idx) {
+                                let resolved = self.apply(arg_ty);
+                                if let Some(type_name) = self.type_name_for_impl(&resolved) {
+                                    let has_impl = self.trait_impls.iter().any(|imp| {
+                                        imp.trait_name == *trait_name && imp.target_type == type_name
+                                    });
+                                    if !has_impl {
+                                        self.error(
+                                            format!(
+                                                "type '{}' does not implement trait '{}'",
+                                                type_name, trait_name
+                                            ),
+                                            expr.span,
+                                        );
+                                    }
+                                }
+                                // If type_name_for_impl returns None, the type is
+                                // unresolved — skip the check (lenient).
+                            }
+                        }
+                    }
                 }
+
+                result_ty
             }
 
             ExprKind::Lambda { params, body } => {
@@ -3101,5 +3206,47 @@ fn main() {
             fn main() { 0 }
         "#);
         assert!(errors.iter().any(|e| e.message.contains("Nonexistent")));
+    }
+
+    #[test]
+    fn test_where_constraint_satisfied() {
+        // Should produce no errors about constraints
+        let errors = check_errors(r#"
+            trait Showable {
+                fn show(self) -> String { "default" }
+            }
+            type Color { Red, Blue }
+            trait Showable for Color {
+                fn show(self) -> String { "color" }
+            }
+            fn display(x) where x: Showable {
+                x
+            }
+            fn main() {
+                display(Red)
+            }
+        "#);
+        let constraint_errors: Vec<_> = errors.iter()
+            .filter(|e| e.message.contains("does not implement"))
+            .collect();
+        assert!(constraint_errors.is_empty(), "unexpected: {:?}", constraint_errors);
+    }
+
+    #[test]
+    fn test_where_constraint_violated() {
+        // Should produce an error: Int doesn't implement Showable
+        let errors = check_errors(r#"
+            trait Showable {
+                fn show(self) -> String { "default" }
+            }
+            fn display(x) where x: Showable {
+                x
+            }
+            fn main() {
+                display(42)
+            }
+        "#);
+        assert!(errors.iter().any(|e| e.message.contains("does not implement") || e.message.contains("Showable")),
+            "expected constraint violation error, got: {:?}", errors);
     }
 }
