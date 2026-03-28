@@ -18,6 +18,14 @@ fn run_ok(input: &str) {
     interp.run(&program).expect("runtime error");
 }
 
+fn run_err(input: &str) -> String {
+    let tokens = Lexer::new(input).tokenize().expect("lexer error");
+    let program = Parser::new(tokens).parse_program().expect("parse error");
+    let mut interp = Interpreter::new();
+    let err = interp.run(&program).expect_err("expected runtime error");
+    format!("{err}")
+}
+
 // ── Phase 3: Hello World ─────────────────────────────────────────────
 
 #[test]
@@ -652,4 +660,84 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Int(20));
+}
+
+// ── Channel closing ─────────────────────────────────────────────────
+
+#[test]
+fn test_channel_close() {
+    // After close, receive on empty channel returns None
+    let result = run(r#"
+fn main() {
+  let ch = chan(10)
+  send(ch, 1)
+  close(ch)
+  let a = receive(ch)
+  let b = receive(ch)
+  match b {
+    None -> a
+    _ -> -1
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn test_send_on_closed_channel_errors() {
+    // Sending on closed channel should error
+    let err = run_err(r#"
+fn main() {
+  let ch = chan(10)
+  close(ch)
+  send(ch, 42)
+}
+    "#);
+    assert!(err.contains("send on closed channel"), "got: {err}");
+}
+
+#[test]
+fn test_try_send_success() {
+    let result = run(r#"
+fn main() {
+  let ch = chan(1)
+  try_send(ch, 42)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_try_send_full() {
+    let result = run(r#"
+fn main() {
+  let ch = chan(1)
+  send(ch, 1)
+  try_send(ch, 2)
+}
+    "#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_try_receive_some() {
+    let result = run(r#"
+fn main() {
+  let ch = chan(10)
+  send(ch, 42)
+  try_receive(ch)
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+}
+
+#[test]
+fn test_try_receive_empty() {
+    let result = run(r#"
+fn main() {
+  let ch = chan(10)
+  try_receive(ch)
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }

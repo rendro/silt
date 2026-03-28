@@ -7,7 +7,7 @@ use crate::ast::*;
 use crate::env::Env;
 use crate::module::ModuleLoader;
 use crate::scheduler::{Scheduler, TaskState};
-use crate::value::{Closure, Value};
+use crate::value::{Closure, TryReceiveResult, TrySendResult, Value};
 
 // ── Runtime error ────────────────────────────────────────────────────
 
@@ -436,6 +436,9 @@ impl Interpreter {
                         "chan" => return self.builtin_chan(args, env),
                         "send" => return self.builtin_send(args, env),
                         "receive" => return self.builtin_receive(args, env),
+                        "close" => return self.builtin_close(args, env),
+                        "try_send" => return self.builtin_try_send(args, env),
+                        "try_receive" => return self.builtin_try_receive(args, env),
                         "spawn" => return self.builtin_spawn(args, env),
                         "join" => return self.builtin_join(args, env),
                         "cancel" => return self.builtin_cancel(args, env),
@@ -717,15 +720,25 @@ impl Interpreter {
         // to drain the channel, then retry.
         let max_retries = 10000;
         for _ in 0..max_retries {
-            if ch.try_send(val.clone()) {
-                return Ok(Value::Unit);
+            match ch.try_send(val.clone()) {
+                TrySendResult::Sent => return Ok(Value::Unit),
+                TrySendResult::Closed => {
+                    return Err(err(format!("send on closed channel {}", ch.id)));
+                }
+                TrySendResult::Full => {}
             }
             // Run one round of pending tasks to try to unblock
             if !self.run_pending_tasks_once()? {
-                return Err(err("send: deadlock detected - channel buffer full and no tasks can make progress"));
+                return Err(err(format!(
+                    "deadlock: channel {} is full and no task can drain it",
+                    ch.id
+                )));
             }
         }
-        Err(err("send: exceeded maximum retries"))
+        Err(err(format!(
+            "deadlock: channel {} is full and no task can drain it",
+            ch.id
+        )))
     }
 
     fn builtin_receive(&self, args: &[Expr], env: &Env) -> Result<Value> {
@@ -739,15 +752,69 @@ impl Interpreter {
         // In cooperative mode, try to receive. If empty, run pending tasks.
         let max_retries = 10000;
         for _ in 0..max_retries {
-            if let Some(val) = ch.try_receive() {
-                return Ok(val);
+            match ch.try_receive() {
+                TryReceiveResult::Value(val) => return Ok(val),
+                TryReceiveResult::Closed => {
+                    // Channel is closed and drained — return None variant.
+                    return Ok(Value::Variant("None".into(), vec![]));
+                }
+                TryReceiveResult::Empty => {}
             }
             // Run one round of pending tasks to try to produce a value
             if !self.run_pending_tasks_once()? {
-                return Err(err("receive: deadlock detected - channel empty and no tasks can make progress"));
+                return Err(err(format!(
+                    "deadlock: channel {} is empty and no task can fill it",
+                    ch.id
+                )));
             }
         }
-        Err(err("receive: exceeded maximum retries"))
+        Err(err(format!(
+            "deadlock: channel {} is empty and no task can fill it",
+            ch.id
+        )))
+    }
+
+    fn builtin_close(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(err("close() takes 1 argument (channel)"));
+        }
+        let ch_val = self.eval(&args[0], env)?;
+        let Value::Channel(ch) = ch_val else {
+            return Err(err("close() requires a channel argument"));
+        };
+        ch.close();
+        Ok(Value::Unit)
+    }
+
+    fn builtin_try_send(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(err("try_send takes 2 arguments (channel, value)"));
+        }
+        let ch_val = self.eval(&args[0], env)?;
+        let val = self.eval(&args[1], env)?;
+        let Value::Channel(ch) = ch_val else {
+            return Err(err("try_send: first argument must be a channel"));
+        };
+        match ch.try_send(val) {
+            TrySendResult::Sent => Ok(Value::Bool(true)),
+            TrySendResult::Full | TrySendResult::Closed => Ok(Value::Bool(false)),
+        }
+    }
+
+    fn builtin_try_receive(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(err("try_receive takes 1 argument (channel)"));
+        }
+        let ch_val = self.eval(&args[0], env)?;
+        let Value::Channel(ch) = ch_val else {
+            return Err(err("try_receive: argument must be a channel"));
+        };
+        match ch.try_receive() {
+            TryReceiveResult::Value(val) => Ok(Value::Variant("Some".into(), vec![val])),
+            TryReceiveResult::Empty | TryReceiveResult::Closed => {
+                Ok(Value::Variant("None".into(), Vec::new()))
+            }
+        }
     }
 
     fn builtin_spawn(&self, args: &[Expr], env: &Env) -> Result<Value> {
@@ -853,18 +920,32 @@ impl Interpreter {
     fn eval_select(&self, arms: &[SelectArm], env: &Env) -> Result<Value> {
         let max_retries = 10000;
         for _ in 0..max_retries {
+            let mut all_closed = true;
             // Try each arm in order
             for arm in arms {
                 let ch_val = self.eval(&arm.channel, env)?;
                 let Value::Channel(ch) = ch_val else {
                     return Err(err("select arm channel must be a channel"));
                 };
-                if let Some(val) = ch.try_receive() {
-                    // Bind the received value and execute the body
-                    let arm_env = env.child();
-                    arm_env.define(arm.binding.clone(), val);
-                    return self.eval(&arm.body, &arm_env);
+                match ch.try_receive() {
+                    TryReceiveResult::Value(val) => {
+                        // Bind the received value and execute the body
+                        let arm_env = env.child();
+                        arm_env.define(arm.binding.clone(), val);
+                        return self.eval(&arm.body, &arm_env);
+                    }
+                    TryReceiveResult::Closed => {
+                        // Skip closed, empty channels
+                        continue;
+                    }
+                    TryReceiveResult::Empty => {
+                        all_closed = false;
+                    }
                 }
+            }
+            if all_closed {
+                // All channels are closed and drained
+                return Ok(Value::Variant("None".into(), vec![]));
             }
             // No channel had data; run pending tasks to try to produce some
             if !self.run_pending_tasks_once()? {

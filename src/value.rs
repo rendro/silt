@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
@@ -25,45 +25,85 @@ pub enum Value {
     Unit,
 }
 
-/// A cooperative channel implemented as a bounded or unbounded queue.
+/// A cooperative channel implemented as a bounded queue.
+///
+/// In a cooperative (non-preemptive) concurrency model, true rendezvous semantics
+/// (where both sender and receiver must be simultaneously ready) are impractical
+/// because tasks cannot be suspended mid-execution. Instead, `chan()` (capacity 0)
+/// is treated as buffered-1: the sender can deposit one value without a receiver
+/// being ready, and the receiver picks it up on its next turn. This provides
+/// a reasonable approximation of unbuffered channel behaviour for cooperative tasks.
 pub struct Channel {
     pub id: usize,
     pub buffer: RefCell<VecDeque<Value>>,
-    pub capacity: usize, // 0 = unbuffered, n = buffered with capacity n
+    pub capacity: usize,
+    pub closed: Cell<bool>,
+}
+
+/// Result of attempting to send on a channel.
+pub enum TrySendResult {
+    /// Value was accepted into the buffer.
+    Sent,
+    /// Buffer is full; caller should retry later.
+    Full,
+    /// Channel has been closed; sending is not allowed.
+    Closed,
+}
+
+/// Result of attempting to receive from a channel.
+pub enum TryReceiveResult {
+    /// A value was available.
+    Value(Value),
+    /// Buffer is empty but channel is still open; caller should retry later.
+    Empty,
+    /// Buffer is empty AND channel is closed; no more values will arrive.
+    Closed,
 }
 
 impl Channel {
     pub fn new(id: usize, capacity: usize) -> Self {
+        // In a cooperative scheduler, capacity 0 (unbuffered / rendezvous) is
+        // promoted to 1 because we cannot park a sender mid-execution to wait
+        // for a matching receiver.  See the struct-level doc comment for details.
+        let effective_capacity = if capacity == 0 { 1 } else { capacity };
         Self {
             id,
             buffer: RefCell::new(VecDeque::new()),
-            capacity,
+            capacity: effective_capacity,
+            closed: Cell::new(false),
         }
     }
 
-    /// Try to send a value. Returns true if sent, false if buffer is full.
-    pub fn try_send(&self, val: Value) -> bool {
+    /// Try to send a value.
+    pub fn try_send(&self, val: Value) -> TrySendResult {
+        if self.closed.get() {
+            return TrySendResult::Closed;
+        }
         let mut buf = self.buffer.borrow_mut();
-        if self.capacity == 0 {
-            // Unbuffered: can only send if there's a pending receive (buffer empty acts as rendezvous)
-            // For simplicity in cooperative model: allow buffering 1 element
-            if buf.is_empty() {
-                buf.push_back(val);
-                true
-            } else {
-                false
-            }
-        } else if buf.len() < self.capacity {
+        if buf.len() < self.capacity {
             buf.push_back(val);
-            true
+            TrySendResult::Sent
         } else {
-            false
+            TrySendResult::Full
         }
     }
 
-    /// Try to receive a value. Returns Some(val) if available.
-    pub fn try_receive(&self) -> Option<Value> {
-        self.buffer.borrow_mut().pop_front()
+    /// Try to receive a value.
+    pub fn try_receive(&self) -> TryReceiveResult {
+        let mut buf = self.buffer.borrow_mut();
+        if let Some(val) = buf.pop_front() {
+            TryReceiveResult::Value(val)
+        } else if self.closed.get() {
+            TryReceiveResult::Closed
+        } else {
+            TryReceiveResult::Empty
+        }
+    }
+
+    /// Close the channel. Future sends will fail; receives drain remaining
+    /// buffered values and then return `Closed`.
+    pub fn close(&self) {
+        self.closed.set(true);
     }
 }
 

@@ -127,19 +127,22 @@ impl Scheduler {
             match &task.state {
                 TaskState::BlockedSend(ch_id) => {
                     if let Some(ch) = channels.iter().find(|c| c.id == *ch_id) {
-                        let buf = ch.buffer.borrow();
-                        if ch.capacity == 0 {
-                            if buf.is_empty() {
+                        // Unblock if there's room, or if the channel was closed
+                        // (the send will then fail with an error, but the task
+                        // needs to run to observe that).
+                        if ch.closed.get() {
+                            task.state = TaskState::Ready;
+                        } else {
+                            let buf = ch.buffer.borrow();
+                            if buf.len() < ch.capacity {
                                 task.state = TaskState::Ready;
                             }
-                        } else if buf.len() < ch.capacity {
-                            task.state = TaskState::Ready;
                         }
                     }
                 }
                 TaskState::BlockedReceive(ch_id) => {
                     if let Some(ch) = channels.iter().find(|c| c.id == *ch_id) {
-                        if !ch.buffer.borrow().is_empty() {
+                        if !ch.buffer.borrow().is_empty() || ch.closed.get() {
                             task.state = TaskState::Ready;
                         }
                     }
