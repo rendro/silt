@@ -1439,6 +1439,45 @@ impl Parser {
                     Ok(first)
                 }
             }
+            Token::LBracket => {
+                self.advance(); // consume [
+                self.skip_nl();
+                if self.at(&Token::RBracket) {
+                    self.advance();
+                    return Ok(Pattern::List(vec![], None)); // empty list pattern
+                }
+                let mut patterns = Vec::new();
+                let mut rest = None;
+                loop {
+                    self.skip_nl();
+                    if self.at(&Token::DotDot) {
+                        // ...rest pattern
+                        self.advance(); // consume ..
+                        let rest_pat = self.parse_pattern()?;
+                        rest = Some(Box::new(rest_pat));
+                        self.skip_nl();
+                        break;
+                    }
+                    patterns.push(self.parse_pattern()?);
+                    self.skip_nl();
+                    if self.at(&Token::Comma) {
+                        self.advance();
+                        self.skip_nl();
+                        // Check if next is ..rest after comma
+                        if self.at(&Token::DotDot) {
+                            self.advance();
+                            let rest_pat = self.parse_pattern()?;
+                            rest = Some(Box::new(rest_pat));
+                            self.skip_nl();
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(&Token::RBracket)?;
+                Ok(Pattern::List(patterns, rest))
+            }
             Token::Minus => {
                 // Negative number pattern
                 self.advance();

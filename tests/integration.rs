@@ -741,3 +741,93 @@ fn main() {
     "#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
+
+// ── List pattern matching ───────────────────────────────────────────
+
+#[test]
+fn test_list_pattern_empty() {
+    let result = run(r#"
+fn describe(xs) {
+  match xs {
+    [] -> "empty"
+    _ -> "not empty"
+  }
+}
+fn main() {
+  describe([])
+}
+    "#);
+    assert_eq!(result, Value::String("empty".into()));
+}
+
+#[test]
+fn test_list_pattern_exact() {
+    let result = run(r#"
+fn main() {
+  match [1, 2, 3] {
+    [a, b, c] -> a + b + c
+    _ -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_list_pattern_head_tail() {
+    let result = run(r#"
+fn first(xs) {
+  match xs {
+    [head, ..tail] -> Some(head)
+    [] -> None
+  }
+}
+fn main() {
+  match first([10, 20, 30]) {
+    Some(n) -> n
+    None -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn test_list_pattern_recursive_sum() {
+    let result = run(r#"
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+fn main() {
+  sum([1, 2, 3, 4, 5])
+}
+    "#);
+    assert_eq!(result, Value::Int(15));
+}
+
+#[test]
+fn test_list_pattern_in_let() {
+    let result = run(r#"
+fn main() {
+  let [a, b, ..rest] = [1, 2, 3, 4, 5]
+  a + b
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_list_pattern_nested() {
+    let result = run(r#"
+fn main() {
+  match [Some(1), Some(2), None] {
+    [Some(a), Some(b), ..rest] -> a + b
+    _ -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}

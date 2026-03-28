@@ -1553,6 +1553,19 @@ impl TypeChecker {
                     self.bind_pattern(sp, &tv, env);
                 }
             }
+            Pattern::List(pats, rest) => {
+                let elem_ty = self.fresh_var();
+                let list_ty = Type::List(Box::new(elem_ty.clone()));
+                self.unify(ty, &list_ty, Span { line: 0, col: 0, offset: 0 });
+                let resolved_elem = self.apply(&elem_ty);
+                for p in pats {
+                    self.bind_pattern(p, &resolved_elem, env);
+                }
+                if let Some(rest_pat) = rest {
+                    let rest_ty = Type::List(Box::new(resolved_elem));
+                    self.bind_pattern(rest_pat, &rest_ty, env);
+                }
+            }
             Pattern::Record { fields, .. } => {
                 let resolved = self.apply(ty);
                 if let Type::Record(_, field_types) = &resolved {
@@ -2196,6 +2209,19 @@ impl TypeChecker {
                         let tv = self.fresh_var();
                         self.check_pattern(sp, &tv, env, span);
                     }
+                }
+            }
+            Pattern::List(pats, rest) => {
+                let elem_ty = self.fresh_var();
+                let list_ty = Type::List(Box::new(elem_ty.clone()));
+                self.unify(expected, &list_ty, span);
+                let resolved_elem = self.apply(&elem_ty);
+                for p in pats {
+                    self.check_pattern(p, &resolved_elem, env, span);
+                }
+                if let Some(rest_pat) = rest {
+                    let rest_ty = Type::List(Box::new(resolved_elem));
+                    self.check_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
             Pattern::Record { name, fields, .. } => {

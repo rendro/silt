@@ -1093,6 +1093,31 @@ impl Interpreter {
                     .zip(fields.iter())
                     .all(|(p, v)| self.try_bind_pattern(p, v, env))
             }
+            (Pattern::List(pats, rest), Value::List(list)) => {
+                let items = list.as_ref();
+                if rest.is_some() {
+                    if items.len() < pats.len() {
+                        return false;
+                    }
+                } else {
+                    if items.len() != pats.len() {
+                        return false;
+                    }
+                }
+                for (pat, val) in pats.iter().zip(items.iter()) {
+                    if !self.try_bind_pattern(pat, val, env) {
+                        return false;
+                    }
+                }
+                if let Some(rest_pat) = rest {
+                    let remaining: Vec<Value> = items[pats.len()..].to_vec();
+                    let rest_val = Value::List(Rc::new(remaining));
+                    if !self.try_bind_pattern(rest_pat, &rest_val, env) {
+                        return false;
+                    }
+                }
+                true
+            }
             (Pattern::Record { name: _, fields, has_rest }, Value::Record(_rname, rec_fields)) => {
                 for (fname, sub_pat) in fields {
                     let Some(val) = rec_fields.get(fname) else {
@@ -2112,6 +2137,27 @@ fn bind_pattern_simple(
             }
             for (p, v) in pats.iter().zip(vals.iter()) {
                 bind_pattern_simple(p, v, env)?;
+            }
+            Ok(())
+        }
+        (Pattern::List(pats, rest), Value::List(list)) => {
+            let items = list.as_ref();
+            if rest.is_some() {
+                if items.len() < pats.len() {
+                    return Err("list pattern length mismatch".into());
+                }
+            } else {
+                if items.len() != pats.len() {
+                    return Err("list pattern length mismatch".into());
+                }
+            }
+            for (p, v) in pats.iter().zip(items.iter()) {
+                bind_pattern_simple(p, v, env)?;
+            }
+            if let Some(rest_pat) = rest {
+                let remaining: Vec<Value> = items[pats.len()..].to_vec();
+                let rest_val = Value::List(Rc::new(remaining));
+                bind_pattern_simple(rest_pat, &rest_val, env)?;
             }
             Ok(())
         }

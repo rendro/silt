@@ -168,6 +168,8 @@ pub enum Pattern {
         fields: Vec<(String, Option<Pattern>)>,
         has_rest: bool,
     },
+    /// Match a list: [a, b, c] or [head, ...tail] or []
+    List(Vec<Pattern>, Option<Box<Pattern>>),
 }
 
 // ── Parameters & type expressions ────────────────────────────────────
