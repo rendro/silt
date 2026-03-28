@@ -1,0 +1,13 @@
+[package]
+name = "silt"
+version = "0.1.0"
+edition = "2024"
+description = "A minimal, statically-typed, expression-based language with CSP concurrency"
+
+[[bin]]
+name = "silt"
+path = "src/main.rs"
+
+[lib]
+name = "silt"
+path = "src/lib.rs"

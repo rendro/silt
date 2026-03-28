@@ -1,0 +1,281 @@
+use crate::lexer::Span;
+
+// ── Expressions ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+impl ExprKind {
+    pub fn kind_name(&self) -> &str {
+        match self {
+            ExprKind::Ident(name) => name,
+            _ => "<expr>",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind {
+    // Literals
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    StringLit(String),
+    StringInterp(Vec<StringPart>),
+
+    // Collections
+    List(Vec<Expr>),
+    Map(Vec<(Expr, Expr)>),
+    Tuple(Vec<Expr>),
+
+    // Variables & access
+    Ident(String),
+    FieldAccess(Box<Expr>, String),
+
+    // Operations
+    Binary(Box<Expr>, BinOp, Box<Expr>),
+    Unary(UnaryOp, Box<Expr>),
+    Pipe(Box<Expr>, Box<Expr>),
+    Range(Box<Expr>, Box<Expr>),
+    QuestionMark(Box<Expr>),
+
+    // Function-related
+    Call(Box<Expr>, Vec<Expr>),
+    Lambda {
+        params: Vec<Param>,
+        body: Box<Expr>,
+    },
+
+    // Records
+    RecordCreate {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    RecordUpdate {
+        expr: Box<Expr>,
+        fields: Vec<(String, Expr)>,
+    },
+
+    // Control flow
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+    Return(Option<Box<Expr>>),
+
+    // Concurrency
+    Select {
+        arms: Vec<SelectArm>,
+    },
+
+    // Block
+    Block(Vec<Stmt>),
+
+    // Unit
+    Unit,
+}
+
+#[derive(Debug, Clone)]
+pub enum StringPart {
+    Literal(String),
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Leq,
+    Geq,
+    And,
+    Or,
+}
+
+impl std::fmt::Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
+            BinOp::Eq => write!(f, "=="),
+            BinOp::Neq => write!(f, "!="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::Leq => write!(f, "<="),
+            BinOp::Geq => write!(f, ">="),
+            BinOp::And => write!(f, "&&"),
+            BinOp::Or => write!(f, "||"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
+// ── Match arms ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
+    pub body: Expr,
+}
+
+// ── Select arms ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct SelectArm {
+    pub channel: Expr,
+    pub binding: String,
+    pub body: Expr,
+}
+
+// ── Patterns ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Wildcard,
+    Ident(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    StringLit(String),
+    Tuple(Vec<Pattern>),
+    Constructor(String, Vec<Pattern>),
+    Record {
+        name: Option<String>,
+        fields: Vec<(String, Option<Pattern>)>,
+        has_rest: bool,
+    },
+}
+
+// ── Parameters & type expressions ────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub pattern: Pattern,
+    pub ty: Option<TypeExpr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeExpr {
+    Named(String),
+    Generic(String, Vec<TypeExpr>),
+    Tuple(Vec<TypeExpr>),
+    Function(Vec<TypeExpr>, Box<TypeExpr>),
+}
+
+// ── Statements ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum Stmt {
+    Let {
+        pattern: Pattern,
+        ty: Option<TypeExpr>,
+        value: Expr,
+    },
+    When {
+        pattern: Pattern,
+        expr: Expr,
+        else_body: Expr,
+    },
+    Expr(Expr),
+}
+
+// ── Declarations ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct FnDecl {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeExpr>,
+    pub body: Expr,
+    pub is_pub: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeBody {
+    Enum(Vec<EnumVariant>),
+    Record(Vec<RecordField>),
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<TypeExpr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: TypeExpr,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeDecl {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: TypeBody,
+    pub is_pub: bool,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitDecl {
+    pub name: String,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitImpl {
+    pub trait_name: String,
+    pub target_type: String,
+    pub methods: Vec<FnDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportTarget {
+    Module(String),
+    Items(String, Vec<String>),
+    Alias(String, String),
+}
+
+#[derive(Debug, Clone)]
+pub enum Decl {
+    Fn(FnDecl),
+    Type(TypeDecl),
+    Trait(TraitDecl),
+    TraitImpl(TraitImpl),
+    Import(ImportTarget),
+}
+
+// ── Program ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct Program {
+    pub decls: Vec<Decl>,
+}

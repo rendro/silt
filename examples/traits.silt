@@ -1,0 +1,28 @@
+type Shape {
+  Circle(Float)
+  Rect(Float, Float)
+}
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+    }
+  }
+}
+
+fn area(shape) {
+  match shape {
+    Circle(r) -> 3.14159 * r * r
+    Rect(w, h) -> w * h
+  }
+}
+
+fn main() {
+  let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
+
+  shapes
+  |> map { s -> (s.display(), area(s)) }
+  |> each { pair -> println("{pair}") }
+}

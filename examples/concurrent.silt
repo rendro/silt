@@ -1,0 +1,17 @@
+fn main() {
+  let ch = chan(10)
+
+  let producer = spawn fn() {
+    send(ch, "hello")
+    send(ch, "world")
+  }
+
+  let consumer = spawn fn() {
+    let msg1 = receive(ch)
+    let msg2 = receive(ch)
+    println("{msg1} {msg2}")
+  }
+
+  join(producer)
+  join(consumer)
+}

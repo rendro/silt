@@ -1,0 +1,7 @@
+import math
+
+fn main() {
+  let result = math.add(3, 4)
+  println("3 + 4 = {result}")
+  println("5^2 = {math.square(5)}")
+}
