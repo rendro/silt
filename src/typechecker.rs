@@ -1608,6 +1608,23 @@ impl TypeChecker {
                     }
                 }
             }
+            Pattern::Or(alts) => {
+                for alt in alts {
+                    self.bind_pattern(alt, ty, env);
+                }
+            }
+            Pattern::Range(_, _) => {
+                self.unify(ty, &Type::Int, Span { line: 0, col: 0, offset: 0 });
+            }
+            Pattern::Map(entries) => {
+                let val_ty = self.fresh_var();
+                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
+                self.unify(ty, &map_ty, Span { line: 0, col: 0, offset: 0 });
+                let resolved_val = self.apply(&val_ty);
+                for (_key, pat) in entries {
+                    self.bind_pattern(pat, &resolved_val, env);
+                }
+            }
         }
     }
 
@@ -2260,6 +2277,23 @@ impl TypeChecker {
                     }
                 }
             }
+            Pattern::Or(alts) => {
+                for alt in alts {
+                    self.check_pattern(alt, expected, env, span);
+                }
+            }
+            Pattern::Range(_, _) => {
+                self.unify(expected, &Type::Int, span);
+            }
+            Pattern::Map(entries) => {
+                let val_ty = self.fresh_var();
+                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
+                self.unify(expected, &map_ty, span);
+                let resolved_val = self.apply(&val_ty);
+                for (_key, pat) in entries {
+                    self.check_pattern(pat, &resolved_val, env, span);
+                }
+            }
         }
     }
 
@@ -2299,20 +2333,31 @@ impl TypeChecker {
 
                 let mut covered_variants: Vec<std::string::String> = Vec::new();
 
-                for arm in arms {
-                    match &arm.pattern {
+                fn collect_constructors(pat: &Pattern, covered: &mut Vec<std::string::String>) {
+                    match pat {
                         Pattern::Constructor(name, _) => {
-                            if !covered_variants.contains(name) {
-                                covered_variants.push(name.clone());
+                            if !covered.contains(name) {
+                                covered.push(name.clone());
                             }
                         }
+                        Pattern::Or(alts) => {
+                            for alt in alts {
+                                collect_constructors(alt, covered);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                for arm in arms {
+                    match &arm.pattern {
                         Pattern::Wildcard | Pattern::Ident(_) => {
                             if arm.guard.is_none() {
                                 // catch-all, already handled above
                                 return;
                             }
                         }
-                        _ => {}
+                        _ => collect_constructors(&arm.pattern, &mut covered_variants),
                     }
                 }
 
@@ -2338,16 +2383,27 @@ impl TypeChecker {
         if matches!(&scrutinee_ty, Type::Bool) {
             let mut has_true = false;
             let mut has_false = false;
+            fn collect_bools(pat: &Pattern, has_true: &mut bool, has_false: &mut bool) {
+                match pat {
+                    Pattern::Bool(true) => *has_true = true,
+                    Pattern::Bool(false) => *has_false = true,
+                    Pattern::Or(alts) => {
+                        for alt in alts {
+                            collect_bools(alt, has_true, has_false);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             for arm in arms {
                 match &arm.pattern {
-                    Pattern::Bool(true) => has_true = true,
-                    Pattern::Bool(false) => has_false = true,
                     Pattern::Wildcard | Pattern::Ident(_) => {
                         if arm.guard.is_none() {
                             return;
                         }
                     }
-                    _ => {}
+                    _ => collect_bools(&arm.pattern, &mut has_true, &mut has_false),
                 }
             }
             if !has_true || !has_false {

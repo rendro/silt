@@ -54,6 +54,7 @@ pub enum Token {
     OrOr,
     Not,
     Pipe,     // |>
+    Bar,      // |
     Question, // ?
     DotDot,   // ..
     Arrow,    // ->
@@ -123,6 +124,7 @@ impl fmt::Display for Token {
             Token::OrOr => write!(f, "||"),
             Token::Not => write!(f, "!"),
             Token::Pipe => write!(f, "|>"),
+            Token::Bar => write!(f, "|"),
             Token::Question => write!(f, "?"),
             Token::DotDot => write!(f, ".."),
             Token::Arrow => write!(f, "->"),
@@ -592,10 +594,7 @@ impl Lexer {
                     self.advance_char();
                     Ok((Token::OrOr, start))
                 } else {
-                    Err(LexError {
-                        message: "unexpected character '|', did you mean '|>' or '||'?".to_string(),
-                        span: start,
-                    })
+                    Ok((Token::Bar, start))
                 }
             }
 

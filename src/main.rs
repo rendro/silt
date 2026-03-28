@@ -30,6 +30,16 @@ fn main() {
             let file = args.get(2).map(|s| s.as_str());
             run_tests(file);
         }
+        "repl" => {
+            silt::repl::run_repl();
+        }
+        "fmt" => {
+            if args.len() < 3 {
+                eprintln!("Usage: silt fmt <file.silt>");
+                process::exit(1);
+            }
+            format_file(&args[2]);
+        }
         // If the argument looks like a file, run it directly
         arg if arg.ends_with(".silt") => {
             run_file(arg);
@@ -37,6 +47,28 @@ fn main() {
         other => {
             eprintln!("Unknown command: {other}");
             eprintln!("Usage: silt run <file.silt>");
+            process::exit(1);
+        }
+    }
+}
+
+fn format_file(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+    match silt::formatter::format(&source) {
+        Ok(formatted) => {
+            if let Err(e) = fs::write(path, formatted) {
+                eprintln!("error writing {path}: {e}");
+                process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{path}: {e}");
             process::exit(1);
         }
     }

@@ -1,10 +1,12 @@
 pub mod ast;
 pub mod env;
 pub mod errors;
+pub mod formatter;
 pub mod interpreter;
 pub mod lexer;
 pub mod module;
 pub mod parser;
+pub mod repl;
 pub mod scheduler;
 pub mod typechecker;
 pub mod value;

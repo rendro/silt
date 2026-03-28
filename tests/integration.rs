@@ -831,3 +831,134 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(3));
 }
+
+// ── Or-patterns ─────────────────────────────────────────────────────
+
+#[test]
+fn test_or_pattern() {
+    let result = run(r#"
+fn classify(n) {
+  match n {
+    0 | 1 -> "binary"
+    2 | 3 | 5 | 7 -> "small prime"
+    _ -> "other"
+  }
+}
+fn main() {
+  [classify(0), classify(3), classify(9)]
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::String("binary".into()),
+        Value::String("small prime".into()),
+        Value::String("other".into()),
+    ])));
+}
+
+#[test]
+fn test_or_pattern_constructors() {
+    let result = run(r#"
+type Color { Red, Green, Blue }
+fn is_warm(c) {
+  match c {
+    Red | Green -> true
+    Blue -> false
+  }
+}
+fn main() {
+  is_warm(Red)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+// ── Range patterns ──────────────────────────────────────────────────
+
+#[test]
+fn test_range_pattern() {
+    let result = run(r#"
+fn classify(n) {
+  match n {
+    0..9 -> "single digit"
+    10..99 -> "double digit"
+    _ -> "big"
+  }
+}
+fn main() {
+  [classify(5), classify(42), classify(100)]
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::String("single digit".into()),
+        Value::String("double digit".into()),
+        Value::String("big".into()),
+    ])));
+}
+
+// ── Map patterns ────────────────────────────────────────────────────
+
+#[test]
+fn test_map_pattern() {
+    let result = run(r#"
+fn get_name(m) {
+  match m {
+    #{ "name": n } -> n
+    _ -> "unknown"
+  }
+}
+fn main() {
+  get_name(#{ "name": "Alice", "age": "30" })
+}
+    "#);
+    assert_eq!(result, Value::String("Alice".into()));
+}
+
+// ── Tail-Call Optimization ─────────────────────────────────────────
+
+#[test]
+fn test_tail_call_optimization() {
+    let result = run(r#"
+fn count_down(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count_down(n - 1, acc + 1)
+  }
+}
+fn main() {
+  count_down(10000, 0)
+}
+    "#);
+    assert_eq!(result, Value::Int(10000));
+}
+
+#[test]
+fn test_tail_recursive_sum() {
+    let result = run(r#"
+fn sum_helper(xs, acc) {
+  match xs {
+    [] -> acc
+    [h, ..t] -> sum_helper(t, acc + h)
+  }
+}
+fn main() {
+  sum_helper(1..1001, 0)
+}
+    "#);
+    assert_eq!(result, Value::Int(500500));
+}
+
+#[test]
+fn test_non_tail_call_still_works() {
+    let result = run(r#"
+fn factorial(n) {
+  match n {
+    0 -> 1
+    _ -> n * factorial(n - 1)
+  }
+}
+fn main() {
+  factorial(10)
+}
+    "#);
+    assert_eq!(result, Value::Int(3628800));
+}

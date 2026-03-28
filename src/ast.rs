@@ -170,6 +170,12 @@ pub enum Pattern {
     },
     /// Match a list: [a, b, c] or [head, ...tail] or []
     List(Vec<Pattern>, Option<Box<Pattern>>),
+    /// Or-pattern: 0 | 1 -> "small"
+    Or(Vec<Pattern>),
+    /// Range pattern: 1..10 (inclusive on both ends)
+    Range(i64, i64),
+    /// Map pattern: #{ "key": value }
+    Map(Vec<(String, Pattern)>),
 }
 
 // ── Parameters & type expressions ────────────────────────────────────

@@ -11,10 +11,22 @@ use crate::value::{Closure, TryReceiveResult, TrySendResult, Value};
 
 // ── Runtime error ────────────────────────────────────────────────────
 
-#[derive(Debug)]
 pub enum RuntimeError {
     Error(String),
     Return(Value),
+    TailCall(Rc<Closure>, Vec<Value>),
+}
+
+impl std::fmt::Debug for RuntimeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeError::Error(msg) => f.debug_tuple("Error").field(msg).finish(),
+            RuntimeError::Return(val) => f.debug_tuple("Return").field(val).finish(),
+            RuntimeError::TailCall(_, args) => {
+                f.debug_tuple("TailCall").field(&"<closure>").field(args).finish()
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -22,6 +34,7 @@ impl std::fmt::Display for RuntimeError {
         match self {
             RuntimeError::Error(msg) => write!(f, "runtime error: {msg}"),
             RuntimeError::Return(_) => write!(f, "unexpected return outside function"),
+            RuntimeError::TailCall(_, _) => write!(f, "unhandled tail call"),
         }
     }
 }
@@ -75,7 +88,7 @@ impl Interpreter {
         }
     }
 
-    fn register_decl(&mut self, decl: &Decl) -> Result<()> {
+    pub fn register_decl(&mut self, decl: &Decl) -> Result<()> {
         match decl {
             Decl::Fn(f) => {
                 let closure = Value::Closure(Rc::new(Closure {
@@ -320,9 +333,35 @@ impl Interpreter {
         }
     }
 
+    /// Evaluate statements in the global scope (for REPL persistence).
+    pub fn eval_in_global(&mut self, stmts: &[Stmt]) -> Result<Value> {
+        let mut last = Value::Unit;
+        for stmt in stmts {
+            last = self.eval_stmt(stmt, &self.global.clone())?;
+        }
+        Ok(last)
+    }
+
+    /// Call a function by name (for REPL).
+    pub fn call_by_name(&self, name: &str) -> Result<Value> {
+        match self.global.get(name) {
+            Some(Value::Closure(c)) => self.call_closure(&c, &[]),
+            Some(_) => Err(err(format!("{name} is not a function"))),
+            None => Err(err(format!("undefined: {name}"))),
+        }
+    }
+
     // ── Evaluation ───────────────────────────────────────────────────
 
     fn eval(&self, expr: &Expr, env: &Env) -> Result<Value> {
+        self.eval_inner(expr, env, false)
+    }
+
+    fn eval_tail(&self, expr: &Expr, env: &Env) -> Result<Value> {
+        self.eval_inner(expr, env, true)
+    }
+
+    fn eval_inner(&self, expr: &Expr, env: &Env, tail: bool) -> Result<Value> {
         match &expr.kind {
             ExprKind::Int(n) => Ok(Value::Int(*n)),
             ExprKind::Float(n) => Ok(Value::Float(*n)),
@@ -450,6 +489,11 @@ impl Interpreter {
                     .iter()
                     .map(|a| self.eval(a, env))
                     .collect::<Result<_>>()?;
+                if tail {
+                    if let Value::Closure(c) = &func {
+                        return Err(RuntimeError::TailCall(c.clone(), arg_vals));
+                    }
+                }
                 self.call_value(&func, &arg_vals)
             }
 
@@ -502,7 +546,7 @@ impl Interpreter {
 
             ExprKind::Match { expr, arms } => {
                 let val = self.eval(expr, env)?;
-                self.eval_match(&val, arms, env)
+                self.eval_match(&val, arms, env, tail)
             }
 
             ExprKind::Select { arms } => {
@@ -517,20 +561,26 @@ impl Interpreter {
                 Err(RuntimeError::Return(v))
             }
 
-            ExprKind::Block(stmts) => self.eval_block(stmts, env),
+            ExprKind::Block(stmts) => self.eval_block_inner(stmts, env, tail),
         }
     }
 
-    fn eval_block(&self, stmts: &[Stmt], env: &Env) -> Result<Value> {
+    fn eval_block_inner(&self, stmts: &[Stmt], env: &Env, tail: bool) -> Result<Value> {
         let block_env = env.child();
+        let len = stmts.len();
         let mut last = Value::Unit;
-        for stmt in stmts {
-            last = self.eval_stmt(stmt, &block_env)?;
+        for (i, stmt) in stmts.iter().enumerate() {
+            let is_last = i + 1 == len;
+            last = self.eval_stmt_inner(stmt, &block_env, tail && is_last)?;
         }
         Ok(last)
     }
 
     fn eval_stmt(&self, stmt: &Stmt, env: &Env) -> Result<Value> {
+        self.eval_stmt_inner(stmt, env, false)
+    }
+
+    fn eval_stmt_inner(&self, stmt: &Stmt, env: &Env, tail: bool) -> Result<Value> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
                 let val = self.eval(value, env)?;
@@ -554,7 +604,7 @@ impl Interpreter {
                 }
                 Ok(Value::Unit)
             }
-            Stmt::Expr(expr) => self.eval(expr, env),
+            Stmt::Expr(expr) => self.eval_inner(expr, env, tail),
         }
     }
 
@@ -898,6 +948,14 @@ impl Interpreter {
             let result = match self.eval(&task.body, &task.env) {
                 Ok(val) => Ok(val),
                 Err(RuntimeError::Return(val)) => Ok(val),
+                Err(RuntimeError::TailCall(c, args)) => {
+                    match self.call_closure(&c, &args) {
+                        Ok(val) => Ok(val),
+                        Err(RuntimeError::Error(msg)) => Err(msg),
+                        Err(RuntimeError::Return(val)) => Ok(val),
+                        Err(RuntimeError::TailCall(_, _)) => Err("unhandled tail call in task".into()),
+                    }
+                }
                 Err(RuntimeError::Error(msg)) => Err(msg),
             };
             *task.handle.result.borrow_mut() = Some(result);
@@ -956,14 +1014,27 @@ impl Interpreter {
     }
 
     fn call_closure(&self, closure: &Closure, args: &[Value]) -> Result<Value> {
-        let call_env = closure.env.child();
-        for (param, arg) in closure.params.iter().zip(args.iter()) {
-            self.bind_pattern(&param.pattern, arg, &call_env)?;
-        }
-        match self.eval(&closure.body, &call_env) {
-            Ok(val) => Ok(val),
-            Err(RuntimeError::Return(val)) => Ok(val),
-            Err(e) => Err(e),
+        let mut current_closure: Rc<Closure> = Rc::new(Closure {
+            params: closure.params.clone(),
+            body: closure.body.clone(),
+            env: closure.env.clone(),
+        });
+        let mut current_args: Vec<Value> = args.to_vec();
+        loop {
+            let call_env = current_closure.env.child();
+            for (param, arg) in current_closure.params.iter().zip(current_args.iter()) {
+                self.bind_pattern(&param.pattern, arg, &call_env)?;
+            }
+            match self.eval_tail(&current_closure.body, &call_env) {
+                Ok(val) => return Ok(val),
+                Err(RuntimeError::Return(val)) => return Ok(val),
+                Err(RuntimeError::TailCall(next_closure, next_args)) => {
+                    current_closure = next_closure;
+                    current_args = next_args;
+                    // Loop back for the trampoline
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -1046,7 +1117,7 @@ impl Interpreter {
 
     // ── Pattern matching ─────────────────────────────────────────────
 
-    fn eval_match(&self, val: &Value, arms: &[MatchArm], env: &Env) -> Result<Value> {
+    fn eval_match(&self, val: &Value, arms: &[MatchArm], env: &Env, tail: bool) -> Result<Value> {
         for arm in arms {
             let arm_env = env.child();
             if self.try_bind_pattern(&arm.pattern, val, &arm_env) {
@@ -1057,7 +1128,7 @@ impl Interpreter {
                         continue;
                     }
                 }
-                return self.eval(&arm.body, &arm_env);
+                return self.eval_inner(&arm.body, &arm_env, tail);
             }
         }
         Err(err(format!("non-exhaustive match: no arm matched {val}")))
@@ -1138,6 +1209,19 @@ impl Interpreter {
                 if !has_rest && fields.len() < rec_fields.len() {
                     // Not all fields matched and no `..`
                     // Actually, allow partial matching by default for usability
+                }
+                true
+            }
+            (Pattern::Or(alts), _) => {
+                alts.iter().any(|alt| self.try_bind_pattern(alt, val, env))
+            }
+            (Pattern::Range(start, end), Value::Int(n)) => {
+                *n >= *start && *n <= *end
+            }
+            (Pattern::Map(entries), Value::Map(map)) => {
+                for (key, pat) in entries {
+                    let Some(val) = map.get(key) else { return false; };
+                    if !self.try_bind_pattern(pat, val, env) { return false; }
                 }
                 true
             }
@@ -2105,6 +2189,14 @@ fn call_value_static(func: &Value, args: &[Value]) -> std::result::Result<Value,
             match interp.eval(&c.body, &call_env) {
                 Ok(val) => Ok(val),
                 Err(RuntimeError::Return(val)) => Ok(val),
+                Err(RuntimeError::TailCall(tc, ta)) => {
+                    match interp.call_closure(&tc, &ta) {
+                        Ok(val) => Ok(val),
+                        Err(RuntimeError::Error(msg)) => Err(msg),
+                        Err(RuntimeError::Return(val)) => Ok(val),
+                        Err(RuntimeError::TailCall(_, _)) => Err("unhandled tail call".into()),
+                    }
+                }
                 Err(RuntimeError::Error(msg)) => Err(msg),
             }
         }
@@ -2158,6 +2250,30 @@ fn bind_pattern_simple(
                 let remaining: Vec<Value> = items[pats.len()..].to_vec();
                 let rest_val = Value::List(Rc::new(remaining));
                 bind_pattern_simple(rest_pat, &rest_val, env)?;
+            }
+            Ok(())
+        }
+        (Pattern::Or(alts), _) => {
+            for alt in alts {
+                if bind_pattern_simple(alt, val, env).is_ok() {
+                    return Ok(());
+                }
+            }
+            Err("or-pattern: no alternative matched".into())
+        }
+        (Pattern::Range(start, end), Value::Int(n)) => {
+            if *n >= *start && *n <= *end {
+                Ok(())
+            } else {
+                Err("range pattern match failed".into())
+            }
+        }
+        (Pattern::Map(entries), Value::Map(map)) => {
+            for (key, pat) in entries {
+                let Some(val) = map.get(key) else {
+                    return Err(format!("map pattern: missing key '{key}'"));
+                };
+                bind_pattern_simple(pat, val, env)?;
             }
             Ok(())
         }
