@@ -330,7 +330,7 @@ struct RecordInfo {
 /// Information about a declared trait.
 #[derive(Debug, Clone)]
 struct TraitInfo {
-    name: std::string::String,
+    _name: std::string::String,
     methods: Vec<(std::string::String, Type)>,
 }
 
@@ -605,6 +605,7 @@ impl TypeChecker {
         self.errors.push(TypeError { message, span, severity: Severity::Error });
     }
 
+    #[allow(dead_code)]
     fn warning(&mut self, message: std::string::String, span: Span) {
         self.errors.push(TypeError { message, span, severity: Severity::Warning });
     }
@@ -621,7 +622,7 @@ impl TypeChecker {
         {
             let display_self = self.fresh_var();
             self.traits.insert("Display".into(), TraitInfo {
-                name: "Display".into(),
+                _name: "Display".into(),
                 methods: vec![("display".into(), Type::Fun(vec![display_self], Box::new(Type::String)))],
             });
         }
@@ -629,7 +630,7 @@ impl TypeChecker {
             let compare_a = self.fresh_var();
             let compare_b = self.fresh_var();
             self.traits.insert("Compare".into(), TraitInfo {
-                name: "Compare".into(),
+                _name: "Compare".into(),
                 methods: vec![("compare".into(), Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)))],
             });
         }
@@ -637,14 +638,14 @@ impl TypeChecker {
             let equal_a = self.fresh_var();
             let equal_b = self.fresh_var();
             self.traits.insert("Equal".into(), TraitInfo {
-                name: "Equal".into(),
+                _name: "Equal".into(),
                 methods: vec![("equal".into(), Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)))],
             });
         }
         {
             let hash_self = self.fresh_var();
             self.traits.insert("Hash".into(), TraitInfo {
-                name: "Hash".into(),
+                _name: "Hash".into(),
                 methods: vec![("hash".into(), Type::Fun(vec![hash_self], Box::new(Type::Int)))],
             });
         }
@@ -1346,7 +1347,7 @@ impl TypeChecker {
         self.traits.insert(
             t.name.clone(),
             TraitInfo {
-                name: t.name.clone(),
+                _name: t.name.clone(),
                 methods,
             },
         );

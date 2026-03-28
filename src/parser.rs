@@ -197,8 +197,11 @@ impl Parser {
             self.advance();
             self.skip_nl();
             self.parse_expr()?
-        } else {
+        } else if self.at(&Token::LBrace) {
             self.parse_block()?
+        } else {
+            // Abstract method — no body (e.g. trait method declarations)
+            Expr::new(ExprKind::Unit, span)
         };
 
         Ok(FnDecl {
@@ -1677,6 +1680,23 @@ fn main() {
             assert_eq!(f.where_clauses.len(), 2);
         } else {
             panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_abstract_trait_method() {
+        let prog = parse(r#"
+            trait Display {
+                fn display(self) -> String
+            }
+        "#);
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Trait(ref td) = prog.decls[0] {
+            assert_eq!(td.name, "Display");
+            assert_eq!(td.methods.len(), 1);
+            assert_eq!(td.methods[0].name, "display");
+        } else {
+            panic!("expected trait decl");
         }
     }
 

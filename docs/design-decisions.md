@@ -331,34 +331,31 @@ This works through **generalization** and **instantiation**:
 This is the `Scheme` type in the code: `{ vars: Vec<TyVar>, ty: Type }`.
 The `generalize` and `instantiate` methods implement the two directions.
 
-### Type checker as optional warning pass
+### Type errors block execution
 
-In v1, the type checker runs but does not block execution:
+The type checker runs before the interpreter and blocks execution on errors:
 
 ```rust
-// main.rs, line 69-73
-// Run the type checker (warnings only -- does not block execution)
+// main.rs
 let type_errors = typechecker::check(&program);
 for err in &type_errors {
     eprintln!("{path}:{err}");
 }
+if type_errors.iter().any(|e| e.is_error()) {
+    std::process::exit(1);
+}
 ```
 
-Type errors are displayed as **warnings** (yellow, `warning[type]`), not
-errors (red). The interpreter runs regardless. This is a pragmatic choice:
+Type **errors** (mismatched types, non-exhaustive matches, trait contract
+violations) are fatal -- the program does not run. Type **warnings**
+(unused variables, unreachable patterns) are displayed but allow execution
+to continue. This gives the type checker real teeth: a program that
+type-checks is guaranteed free of the errors the checker covers.
 
-1. The type checker is not yet complete. Some valid programs produce spurious
-   warnings. Blocking execution on an incomplete type checker would be
-   infuriating.
-2. It lets us ship the type checker incrementally. Users get gradually
-   improving warnings without breakage.
-3. It matches the development philosophy: get the interpreter correct first,
-   make the type checker strict later.
-
-The trade-off: type errors don't prevent runtime crashes. A program with a
-type mismatch will fail at runtime instead of being rejected at compile time.
-This is strictly worse than a blocking type checker, but it is the right
-choice for v1 where the type checker is still being hardened.
+Trait contract enforcement is part of this pass. When a type implements a
+trait, the type checker validates that every method declared in the trait is
+present in the implementation and that arities match. Missing methods or
+arity mismatches produce type errors that block execution.
 
 ### What we deliberately left out
 
@@ -1080,9 +1077,10 @@ Value>`. Map keys must be strings at runtime, even though the type system
 allows `Map(k, v)` with any key type. This is a simplification that should
 be addressed.
 
-**Type checker is incomplete.** Some valid programs produce spurious
-warnings. Some invalid programs are not caught. The type checker runs as
-a best-effort analysis, not a guarantee.
+**Type checker coverage is still growing.** The type checker catches type
+mismatches, non-exhaustive matches, and trait contract violations, and it
+blocks execution on errors. But some edge cases are not yet covered. The
+checker improves with each release.
 
 ---
 
@@ -1105,16 +1103,14 @@ If starting over, we might use a different syntax for trailing closures
 prefix as in OCaml). The current design works but is the source of the most
 parser complexity.
 
-### Type checker as warnings-only is pragmatic but limiting
+### Type checker strictness was a journey
 
-The warnings-only approach was the right call for getting the language usable
-quickly, but it means users can't rely on the type checker to catch all
-errors. This creates an awkward middle ground: the type checker exists and
-is useful, but you can't trust it completely.
-
-The path forward is to make the type checker stricter over time, with a
-`--strict` flag that treats warnings as errors once the checker is mature
-enough. But for now, we live with the ambiguity.
+The type checker started as a warnings-only pass to avoid blocking execution
+on an incomplete checker. It has since matured to the point where type errors
+(mismatches, non-exhaustive matches, trait violations) block execution,
+while warnings (unused bindings, unreachable patterns) still allow it. This
+graduated approach let us ship early and tighten incrementally. The remaining
+work is expanding coverage, not changing the enforcement model.
 
 ### Cooperative concurrency is a stepping stone
 
