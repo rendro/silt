@@ -283,7 +283,106 @@ fn main() {
 
 -----
 
-## 5. Select
+## 5. Channel Closing and Non-Blocking Operations
+
+### Closing a channel
+
+When a producer is done sending values, it can close the channel with `close(ch)`.
+After closing:
+
+- **Sends** on the closed channel will error.
+- **Receives** return any remaining buffered values. Once the buffer is empty,
+  `receive` returns `None` instead of blocking.
+
+This lets the consumer detect when the producer is finished without needing to
+know how many values to expect.
+
+```
+fn main() {
+  let ch = chan(10)
+
+  let producer = spawn fn() {
+    send(ch, 1)
+    send(ch, 2)
+    send(ch, 3)
+    close(ch)
+  }
+
+  let consumer = spawn fn() {
+    let a = receive(ch)   -- 1
+    let b = receive(ch)   -- 2
+    let c = receive(ch)   -- 3
+    let d = receive(ch)   -- None (closed and empty)
+    println("{a} {b} {c} done={d}")
+  }
+
+  join(producer)
+  join(consumer)
+}
+```
+
+### Non-blocking send: try_send
+
+`try_send(ch, value)` attempts to send without blocking. It returns `true` if
+the value was placed in the channel, or `false` if the buffer is full or the
+channel is closed.
+
+```
+let ch = chan(2)
+try_send(ch, "a")   -- true
+try_send(ch, "b")   -- true
+try_send(ch, "c")   -- false (buffer full)
+```
+
+This is useful when you want to offer a value to a channel without stalling the
+current task -- for example, logging to a channel that a consumer may or may not
+be draining.
+
+### Non-blocking receive: try_receive
+
+`try_receive(ch)` attempts to receive without blocking. It returns `Some(value)`
+if data is available, or `None` if the channel is empty or closed.
+
+```
+let ch = chan(10)
+send(ch, 42)
+
+try_receive(ch)   -- Some(42)
+try_receive(ch)   -- None (empty)
+```
+
+This is useful for polling a channel in a loop or checking for data availability
+without committing to a blocking wait.
+
+### Combining close with try_receive
+
+A common pattern is for a consumer to drain a channel until it is closed:
+
+```
+fn main() {
+  let ch = chan(10)
+
+  let producer = spawn fn() {
+    send(ch, "a")
+    send(ch, "b")
+    send(ch, "c")
+    close(ch)
+  }
+
+  join(producer)
+
+  -- Drain remaining values
+  let v1 = try_receive(ch)   -- Some("a")
+  let v2 = try_receive(ch)   -- Some("b")
+  let v3 = try_receive(ch)   -- Some("c")
+  let v4 = try_receive(ch)   -- None (closed and empty)
+  println("{v1} {v2} {v3} {v4}")
+}
+```
+
+-----
+
+## 6. Select
 
 `select` lets a task wait on multiple channels at once and proceed with
 whichever channel has data available first.
@@ -358,7 +457,7 @@ select: deadlock detected - no channels have data and no tasks can make progress
 
 -----
 
-## 6. The Cooperative Scheduler
+## 7. The Cooperative Scheduler
 
 Understanding the scheduler helps you reason about how your concurrent code
 actually executes.
@@ -444,7 +543,7 @@ addressed in future versions (see Section 8).
 
 -----
 
-## 7. Common Patterns
+## 8. Common Patterns
 
 ### Producer/Consumer
 
@@ -588,7 +687,7 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 
 -----
 
-## 8. Limitations and Future Work
+## 9. Limitations and Future Work
 
 ### Current limitations (v1)
 
@@ -599,10 +698,6 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 - **No timeouts.** There is no way to say "receive from this channel, but give
   up after 5 seconds." A `receive` on an empty channel with no producer will
   deadlock (though Silt detects and reports this).
-
-- **No channel closing or iteration.** You cannot close a channel to signal "no
-  more values." The receiver must know how many values to expect, or use a
-  sentinel value.
 
 - **No buffering changes after creation.** A channel's capacity is fixed at
   creation time. You cannot resize a buffer or convert between buffered and
@@ -623,9 +718,6 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 - **Timeouts and deadlines.** Adding a `timeout` arm to `select` would enable
   patterns like "wait for a response, but give up after 100ms."
 
-- **Channel closing.** A `close(ch)` operation would let producers signal
-  completion, enabling iteration patterns like `for msg in ch { ... }`.
-
 - **Buffered send in select.** Extending `select` to support `send(ch, val) as
   _ -> ...` arms.
 
@@ -641,6 +733,9 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 | Spawn | `spawn fn() { ... }` | Run a function as a concurrent task |
 | Join | `join(handle)` | Wait for a task to finish, get its result |
 | Cancel | `cancel(handle)` | Stop a task |
+| Close | `close(ch)` | Close a channel (no more sends) |
+| Try send | `try_send(ch, val)` | Non-blocking send (returns Bool) |
+| Try receive | `try_receive(ch)` | Non-blocking receive (returns Option) |
 | Select | `select { receive(ch) as x -> ... }` | Wait on multiple channels |
 
 The mental model: tasks are independent workers. Channels are the pipes between

@@ -1276,6 +1276,9 @@ CSP-style concurrency primitives. These are language-level builtins with special
 | `spawn` | `spawn(fn) -> Handle` | Spawn a concurrent task |
 | `join` | `join(handle) -> T` | Wait for a task to complete and get its result |
 | `cancel` | `cancel(handle) -> Unit` | Cancel a spawned task |
+| `close` | `close(ch) -> Unit` | Close a channel; no more sends allowed |
+| `try_send` | `try_send(ch, value) -> Bool` | Non-blocking send; true if sent |
+| `try_receive` | `try_receive(ch) -> Option` | Non-blocking receive; Some(value) or None |
 
 ### `chan`
 
@@ -1379,6 +1382,77 @@ Cancels a spawned task. The task will not be scheduled for further execution.
 fn main() {
   let h = spawn fn() { 42 }
   cancel(h)
+}
+```
+
+### `close`
+
+```
+close(ch) -> Unit
+```
+
+Closes a channel. After closing, `send` on the channel will error. `receive` on a closed channel returns any remaining buffered values; once the buffer is empty, `receive` returns `None`.
+
+```silt
+fn main() {
+  let ch = chan(10)
+
+  let producer = spawn fn() {
+    send(ch, "hello")
+    send(ch, "world")
+    close(ch)
+  }
+
+  let consumer = spawn fn() {
+    let msg1 = receive(ch)
+    let msg2 = receive(ch)
+    let msg3 = receive(ch)   -- None (channel closed and empty)
+    println("{msg1} {msg2}")
+  }
+
+  join(producer)
+  join(consumer)
+}
+```
+
+### `try_send`
+
+```
+try_send(ch, value) -> Bool
+```
+
+Attempts a non-blocking send. Returns `true` if the value was successfully sent, `false` if the channel buffer is full or the channel is closed. Never blocks.
+
+```silt
+fn main() {
+  let ch = chan(1)
+
+  let sent1 = try_send(ch, "first")    -- true (buffer has space)
+  let sent2 = try_send(ch, "second")   -- false (buffer full)
+
+  println("sent1: {sent1}")   -- true
+  println("sent2: {sent2}")   -- false
+}
+```
+
+### `try_receive`
+
+```
+try_receive(ch) -> Option
+```
+
+Attempts a non-blocking receive. Returns `Some(value)` if a value is available, `None` if the channel is empty or closed. Never blocks.
+
+```silt
+fn main() {
+  let ch = chan(10)
+  send(ch, 42)
+
+  let got1 = try_receive(ch)   -- Some(42)
+  let got2 = try_receive(ch)   -- None (channel empty)
+
+  println("got1: {got1}")   -- Some(42)
+  println("got2: {got2}")   -- None
 }
 ```
 

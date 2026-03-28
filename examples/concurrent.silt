@@ -4,6 +4,7 @@ fn main() {
   let producer = spawn fn() {
     send(ch, "hello")
     send(ch, "world")
+    close(ch)
   }
 
   let consumer = spawn fn() {
