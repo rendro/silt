@@ -554,6 +554,75 @@ fn classify(n) {
 The guard `when x > 0` is checked only after the pattern matches. If the guard fails,
 matching continues to the next arm.
 
+### List patterns
+
+Lists can be destructured in both `match` arms and `let` bindings using bracket
+syntax. There are three forms:
+
+**Empty list** -- matches a list with no elements:
+
+```silt
+match xs {
+  [] -> "empty"
+  _ -> "not empty"
+}
+```
+
+**Exact length** -- matches a list with exactly the given number of elements and
+binds each one:
+
+```silt
+let [a, b, c] = [1, 2, 3]
+-- a = 1, b = 2, c = 3
+```
+
+Without `..`, the pattern requires an exact length match. `[a, b]` will only match
+a list of exactly two elements.
+
+**Head/tail destructuring** -- uses `..` to bind the remaining elements as a new
+list:
+
+```silt
+match xs {
+  [] -> "empty"
+  [head, ..tail] -> "head is {head}, rest has {len(tail)} elements"
+}
+```
+
+The `..` prefix binds all remaining elements into a new list. You can match any
+number of leading elements before the rest:
+
+```silt
+match xs {
+  [a, b, ..rest] -> "first two: {a}, {b}"
+  _ -> "fewer than two elements"
+}
+```
+
+**Nested patterns** -- list elements can contain any pattern, including constructor
+patterns:
+
+```silt
+match xs {
+  [Some(a), Some(b), ..rest] -> "first two are present: {a}, {b}"
+  _ -> "something else"
+}
+```
+
+List patterns are especially useful for recursive processing:
+
+```silt
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+```
+
+The `..` syntax is consistent with record rest patterns (`User { name, .. }`),
+though in list patterns the rest is always bound to a name rather than discarded.
+
 ### Exhaustiveness checking
 
 The compiler checks that your match covers all possible cases. If you forget a variant,

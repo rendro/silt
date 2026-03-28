@@ -1,0 +1,41 @@
+-- List pattern matching examples
+--
+-- Demonstrates the three forms of list patterns:
+--   []           empty list
+--   [a, b, c]    exact length match
+--   [h, ..t]     head/tail destructuring
+
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+
+fn first(xs) {
+  match xs {
+    [head, ..tail] -> Some(head)
+    [] -> None
+  }
+}
+
+fn describe(xs) {
+  match xs {
+    [] -> "empty list"
+    [x] -> "single element: {x}"
+    [a, b] -> "pair: ({a}, {b})"
+    [a, b, ..rest] -> "starts with {a}, {b} and {len(rest)} more"
+  }
+}
+
+fn main() {
+  println("sum([1,2,3,4,5]) = {sum([1, 2, 3, 4, 5])}")
+
+  match first([10, 20, 30]) {
+    Some(n) -> println("first element: {n}")
+    None -> println("empty list")
+  }
+
+  [[], [1], [1, 2], [1, 2, 3, 4, 5]]
+  |> each { xs -> println(describe(xs)) }
+}

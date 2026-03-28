@@ -259,6 +259,28 @@ The flat version reads top-to-bottom, which is how humans think about
 sequential validation. The nested version reads inside-out, which is the
 "staircase of doom" pattern.
 
+### List patterns
+
+Pattern matching extends to lists with three forms: `[]` (empty), `[a, b, c]`
+(exact length), and `[head, ..tail]` (head/tail destructuring). The `..`
+syntax binds remaining elements as a new list, enabling recursive list
+processing in the same style as Haskell or Erlang:
+
+```
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+```
+
+The `..` was chosen over alternatives like `...` (JavaScript) or `|`
+(Haskell/Erlang) to stay consistent with the existing record rest syntax
+(`User { name, .. }`). Without `..`, a list pattern requires an exact length
+match -- `[a, b]` matches only two-element lists. Nested patterns work inside
+list elements (`[Some(x), ..rest]`), giving full compositional power.
+
 ---
 
 ## 3. The Type System
