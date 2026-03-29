@@ -1,0 +1,239 @@
+{-
+  text_stats.silt -- Compute detailed text statistics from a file
+
+  === Friction Report ===  Rating: 5/10
+
+  No list indexing or list.take/list.slice: 8/10 painful
+    This is the single biggest pain point. To get the "top 5" frequent words
+    I need a recursive helper that peels off the max one at a time. There is
+    no list[n] or list.get(n) for positional access. Every time you need the
+    Nth element of a split result you must destructure with pattern matching
+    or chain head/tail. This turns trivial tasks into multi-line recursive
+    functions.
+
+  No sort_by / sort with custom comparator: 7/10 painful
+    list.sort uses natural ordering only. To sort words by frequency
+    (descending) I cannot pass a comparator. The workaround is to find-max
+    repeatedly and remove from the map, which is O(n*k) instead of
+    O(n log n). A sort_by or sort_with would make "top N by X" trivial.
+
+  Comparison expressions cannot be match scrutinees: 6/10 surprising
+    Writing "match x > y { true -> ... false -> ... }" is a parse error
+    because the match scrutinee parser has high minimum binding power (116).
+    Comparison operators have bp=60, so they get cut off. You must bind the
+    comparison to a let first ("let gt = x > y; match gt { ... }"). This is
+    the biggest syntax surprise -- it blocks the most natural conditional
+    pattern in a language with no if/else.
+
+  len() is typed only for Lists in the type checker: 5/10 gotcha
+    The runtime len() works on strings, lists, and maps, but the type
+    checker defines it as List(a) -> Int only. Using len(some_string)
+    causes a type error that unifies the string as List(?), corrupting
+    downstream inference. You must use string.length(s) for strings
+    and len(xs) only for lists. This is not documented and silently
+    breaks programs in confusing ways.
+
+  Many stdlib builtins missing from the type checker: 4/10
+    io.read_file, io.args, map.get, map.set, map.keys, map.delete,
+    string.to_lower, string.chars, int.to_float, float.round, and many
+    others are not registered in the type checker. They work fine at
+    runtime but the type checker infers their types from usage context,
+    which sometimes leads to incorrect unifications. The gap between
+    what the interpreter supports and what the type checker knows is
+    the single most confusing aspect of the language.
+
+  Pipe chains are pleasant: 8/10
+    The |> operator with trailing closures reads very nicely for data
+    transformation pipelines. fold, map, filter all compose well.
+    This is the language's clear strength.
+
+  when/else for early returns: 8/10
+    The "when pattern = expr else { return ... }" pattern is clean and
+    reads well for argument validation and error unwrapping.
+
+  Overall: The program works but requires workarounds for type checker
+  gaps. The runtime is solid; the friction is almost entirely in making
+  the type checker happy. Once you learn the gotchas (use string.length
+  not len, bind comparisons before match, etc.) the language is pleasant
+  for data transformation tasks.
+-}
+
+-- Strip punctuation from a word
+fn clean_word(word) {
+  let chars = string.chars(word)
+  chars
+  |> map { c ->
+    match c {
+      "." -> ""
+      "," -> ""
+      "!" -> ""
+      "?" -> ""
+      ";" -> ""
+      ":" -> ""
+      "(" -> ""
+      ")" -> ""
+      "'" -> ""
+      "\"" -> ""
+      _ -> c
+    }
+  }
+  |> string.join("")
+  |> string.trim
+}
+
+-- Find the key with the maximum value in a frequency map
+-- Returns ("", 0) for an empty map
+fn find_max_entry(freq) {
+  let keys = map.keys(freq)
+  keys |> fold(("", 0)) { best, key ->
+    let count = map.get(freq, key) |> unwrap_or(0)
+    let (_, best_count) = best
+    let is_greater = count > best_count
+    match is_greater {
+      true -> (key, count)
+      false -> best
+    }
+  }
+}
+
+-- Print top N most frequent words by repeatedly finding and removing the max
+fn print_top_n(freq, n, rank) {
+  let done = rank > n
+  match done {
+    true -> freq
+    false -> {
+      let keys = map.keys(freq)
+      match len(keys) {
+        0 -> freq
+        _ -> {
+          let (word, count) = find_max_entry(freq)
+          println("    {rank}. \"{word}\" ({count} times)")
+          let reduced = map.delete(freq, word)
+          print_top_n(reduced, n, rank + 1)
+        }
+      }
+    }
+  }
+}
+
+fn main() {
+  -- Parse CLI arguments using when/else for early return
+  let args = io.args()
+
+  when [_, _, filename, .._] = args else {
+    println("Usage: silt text_stats.silt <filename>")
+    return Err("no filename provided")
+  }
+
+  -- Read the file with error handling
+  when Ok(content) = io.read_file(filename) else {
+    println("Error: could not read file '{filename}'")
+    return Err("file read failed")
+  }
+
+  -- Handle empty file gracefully
+  -- Note: must use string.length, not len, because the type checker
+  -- types len as List(a) -> Int only
+  let content_len = string.length(content)
+  match content_len {
+    0 -> {
+      println("=== Text Statistics for '{filename}' ===")
+      println("")
+      println("  (empty file)")
+      println("")
+      println("  Lines:            0")
+      println("  Words:            0")
+      println("  Characters:       0")
+      println("  Unique words:     0")
+      println("  Avg word length:  0.0")
+    }
+    _ -> {
+      -- Non-empty file: compute all statistics
+
+      -- Split into lines
+      let lines = string.split(content, "\n")
+      let non_empty_lines = lines
+        |> filter { line -> string.length(string.trim(line)) > 0 }
+      let line_count = len(non_empty_lines)
+
+      -- Total character count
+      let char_count = string.length(content)
+
+      -- Build word list: split by spaces, flatten, clean, lowercase, filter empty
+      let words = lines
+        |> map { line -> string.split(line, " ") }
+        |> flatten
+        |> map { w -> string.trim(w) }
+        |> map { w -> clean_word(w) }
+        |> map { w -> string.to_lower(w) }
+        |> filter { w -> string.length(w) > 0 }
+
+      let word_count = len(words)
+
+      -- Average word length using int.to_float for division
+      let total_len = words
+        |> map { w -> string.length(w) }
+        |> fold(0) { acc, n -> acc + n }
+      let avg_len = match word_count {
+        0 -> 0.0
+        _ -> int.to_float(total_len) / int.to_float(word_count)
+      }
+      -- Round to 2 decimal places
+      let avg_rounded = int.to_float(float.round(avg_len * 100.0)) / 100.0
+
+      -- Find longest word
+      let longest = words |> fold("") { best, word ->
+        let is_longer = string.length(word) > string.length(best)
+        match is_longer {
+          true -> word
+          false -> best
+        }
+      }
+
+      -- Find shortest non-empty word
+      let shortest = words |> fold("") { best, word ->
+        let wlen = string.length(word)
+        let blen = string.length(best)
+        match wlen {
+          0 -> best
+          _ -> match blen {
+            0 -> word
+            _ -> {
+              let is_shorter = wlen < blen
+              match is_shorter {
+                true -> word
+                false -> best
+              }
+            }
+          }
+        }
+      }
+
+      -- Build word frequency map using fold as accumulator
+      let freq = words |> fold(#{}) { freq, word ->
+        let count = map.get(freq, word) |> unwrap_or(0)
+        map.set(freq, word, count + 1)
+      }
+      let unique_words = map.keys(freq)
+      let unique_count = len(unique_words)
+
+      -- Print all results
+      println("=== Text Statistics for '{filename}' ===")
+      println("")
+      println("  Lines:            {line_count}")
+      println("  Words:            {word_count}")
+      println("  Characters:       {char_count}")
+      println("  Unique words:     {unique_count}")
+      println("  Avg word length:  {avg_rounded}")
+      println("")
+      let longest_len = string.length(longest)
+      let shortest_len = string.length(shortest)
+      println("  Longest word:     \"{longest}\" ({longest_len} chars)")
+      println("  Shortest word:    \"{shortest}\" ({shortest_len} chars)")
+      println("")
+      println("  Top 5 most frequent words:")
+      let _ = print_top_n(freq, 5, 1)
+      println("")
+    }
+  }
+}

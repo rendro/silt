@@ -1,0 +1,11 @@
+Channels and Tasks
+
+Data flows through narrow pipes
+Messages passed from hand to hand
+No shared state to corrupt or break
+Just values sent across the strand
+
+Each task runs its own small world
+Receiving what it needs to know
+Then sending back the answer found
+A clean and simple dataflow

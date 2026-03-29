@@ -1,0 +1,471 @@
+{-
+  config_parser.silt -- INI-style config file parser with validation
+
+  === Friction Report ===
+
+  Overall rating: 5/10
+
+  Error accumulation without mutable state: 4/10
+    Building a list of errors across a fold is natural -- the accumulator carries
+    both the config and the error list. But appending to an immutable list means
+    building a new list each time via flatten([old, [new]]). There is no
+    list.append or list.push, so you must use list concatenation. This works but
+    feels heavier than it should for something as common as "collect errors while
+    iterating."
+
+  Nested map construction: 5/10
+    Building a map-of-maps requires extracting the inner map via map.get, matching
+    Some/None, updating the inner map with map.set, then setting it back into the
+    outer map with map.set. Each step returns a new value, so you end up with a
+    4-5 line ceremony for what would be config[section][key] = value in a mutable
+    language. The nesting of map.set(outer, section, map.set(inner, k, v)) is
+    correct but dense. Not terrible, but not smooth either.
+
+  No list indexing: 6/10 painful
+    string.split returns a list, but there is no list.get(xs, n) or xs[n] syntax.
+    Accessing the second element of a split requires pattern matching with
+    [first, ..rest] and then matching rest again, or writing a recursive helper.
+    For a parser that constantly splits on "=" and needs both halves, this is
+    significant friction. Pattern matching on [key, ..rest] with
+    string.join(rest, "=") is the idiomatic workaround but it's verbose.
+
+  Type system vs heterogeneous values: 4/10 painful
+    INI values are naturally heterogeneous (some are ints, some bools, some
+    strings). Silt's HM type system correctly rejects functions that return
+    different types in different branches. You must introduce a wrapper variant
+    type (ConfigValue { CStr / CInt / CBool }) and then unwrap everywhere you
+    use a value. This is type-safe but adds significant ceremony compared to a
+    dynamically-typed approach. Every consumer of a config value must pattern
+    match on the variant to extract the underlying value.
+
+  when-else for early-return validation: 8/10 (good)
+    The when-else pattern works well for "check a condition, bail if it fails."
+    Using it for parse validation (when Ok(n) = int.parse(s) else { ... }) is
+    clean and readable. The requirement that the else block must diverge (return)
+    maps well to "skip this line and accumulate an error."
+
+  ? operator: 7/10 (good but limited)
+    The ? operator works well for simple Result propagation (io.read_file(path)?).
+    However, it always propagates the exact error variant, so you cannot transform
+    the error message at the ? site. For error accumulation, you cannot use ? at
+    all -- you must match explicitly. This is correct by design but means ? is
+    only useful for the "bail immediately" path, not the "collect errors" path.
+
+  String operations for parsing: 6/10
+    string.split, string.trim, string.starts_with, string.contains cover the
+    basics. But missing: string.strip_prefix/strip_suffix (have to split on "[" and
+    "]" or use starts_with + manual char extraction), string.substring/slice
+    (needed to extract section name between brackets). Had to use string.split
+    combined with list pattern matching as workaround. Also no string.index_of.
+
+  Pattern matching as sole branching: 7/10
+    match on true/false works as if-else but reads oddly: match condition { true ->
+    ... false -> ... }. For a parser with many conditions (is blank? is comment?
+    is section header? is key=value?), the nested match-on-bool gets deep. A
+    simple if/else or cond expression would reduce nesting significantly.
+
+  fold for stateful parsing: 6/10
+    Using fold to thread a tuple (config, current_section, errors, line_number)
+    through each line is the idiomatic approach. It works but the accumulator tuple
+    gets wide and destructuring it on every iteration is ceremonial. Record types
+    with Map/List fields cause type checker issues with unresolved generics, so
+    tuples are the safer bet -- at the cost of readability.
+
+  Record types with generic fields: 3/10 painful
+    Defining a record like type ParseState { config: Map, errors: List } causes
+    the type checker to fail with "expected Map(?136, ?137), got Map". The bare
+    Map and List type names are not valid type expressions without their generic
+    parameters, but the language has no syntax to express Map(String, Map(String,
+    ConfigValue)) in a type annotation on a record field. This forces you to
+    abandon records and use tuples for any accumulator that contains collections,
+    which is a significant ergonomic hit.
+-}
+
+-- ── Typed config values ────────────────────────────────────────────
+-- Silt's type system requires a uniform return type, so we wrap
+-- heterogeneous config values in a tagged variant.
+
+type ConfigValue {
+  CStr(String)
+  CInt(Int)
+  CBool(Bool)
+}
+
+-- ── Line classification tokens ─────────────────────────────────────
+
+type LineToken {
+  Blank
+  Comment
+  Section(String)
+  KeyValue(String, String)
+  ParseError(String)
+}
+
+-- ── Type coercion: parse a raw string into a ConfigValue ───────────
+-- Tries bools first, then ints, falls back to string. Never fails.
+
+fn coerce_value(raw) {
+  let trimmed = string.trim(raw)
+  match trimmed {
+    "true" -> CBool(true)
+    "false" -> CBool(false)
+    _ -> {
+      match int.parse(trimmed) {
+        Ok(n) -> CInt(n)
+        Err(_) -> CStr(trimmed)
+      }
+    }
+  }
+}
+
+-- ── Display a ConfigValue for printing ─────────────────────────────
+
+fn display_value(v) {
+  match v {
+    CStr(s) -> s
+    CInt(n) -> "{n}"
+    CBool(b) -> match b {
+      true -> "true"
+      false -> "false"
+    }
+  }
+}
+
+-- ── Describe the type of a ConfigValue ─────────────────────────────
+
+fn type_label(v) {
+  match v {
+    CStr(_) -> "String"
+    CInt(_) -> "Int"
+    CBool(_) -> "Bool"
+  }
+}
+
+-- ── Classify a single line ─────────────────────────────────────────
+-- Returns a LineToken describing what was found.
+
+fn classify_line(line, line_num) {
+  let trimmed = string.trim(line)
+
+  match trimmed {
+    "" -> Blank
+    _ -> match string.starts_with(trimmed, "#") {
+      true -> Comment
+      false -> match string.starts_with(trimmed, "[") {
+        true -> parse_section_header(trimmed, line_num)
+        false -> match string.contains(trimmed, "=") {
+          true -> parse_key_value(trimmed, line_num)
+          false -> ParseError("line {line_num}: unrecognized line '{trimmed}'")
+        }
+      }
+    }
+  }
+}
+
+-- ── Parse a [section] header ───────────────────────────────────────
+
+fn parse_section_header(trimmed, line_num) {
+  match string.contains(trimmed, "]") {
+    false -> ParseError("line {line_num}: missing closing ']' in '{trimmed}'")
+    true -> {
+      -- Extract name between [ and ]
+      let after_open = string.split(trimmed, "[")
+      match after_open {
+        ["", rest, .._] -> {
+          let before_close = string.split(rest, "]")
+          match before_close {
+            [name, .._] -> {
+              let section_name = string.trim(name)
+              match section_name {
+                "" -> ParseError("line {line_num}: empty section name '[]'")
+                _ -> Section(section_name)
+              }
+            }
+            _ -> ParseError("line {line_num}: malformed section header '{trimmed}'")
+          }
+        }
+        _ -> ParseError("line {line_num}: malformed section header '{trimmed}'")
+      }
+    }
+  }
+}
+
+-- ── Parse a key=value pair ─────────────────────────────────────────
+
+fn parse_key_value(trimmed, line_num) {
+  let parts = string.split(trimmed, "=")
+  match parts {
+    [key, ..rest] -> {
+      let k = string.trim(key)
+      -- Rejoin rest with "=" in case value contained "="
+      let v = string.join(rest, "=")
+      match k {
+        "" -> ParseError("line {line_num}: empty key in '{trimmed}'")
+        _ -> KeyValue(k, v)
+      }
+    }
+    _ -> ParseError("line {line_num}: malformed key=value '{trimmed}'")
+  }
+}
+
+-- ── Set a nested key: config[section][key] = value ─────────────────
+
+fn set_nested(config, section, key, value) {
+  let inner = match map.get(config, section) {
+    Some(existing) -> existing
+    None -> #{}
+  }
+  let new_inner = map.set(inner, key, value)
+  map.set(config, section, new_inner)
+}
+
+-- ── Core parser: fold over lines to build config + errors ──────────
+-- Returns a tuple: (config_map, error_list)
+-- config_map is Map(String, Map(String, ConfigValue))
+-- Uses a 4-tuple accumulator: (config, current_section, errors, line_num)
+
+fn parse_config(content) {
+  let lines = string.split(content, "\n")
+
+  let init = (#{}, "", [], 0)
+
+  let final_state = lines |> fold(init) { state, line ->
+    let (config, current_section, errors, prev_num) = state
+    let line_num = prev_num + 1
+    let token = classify_line(line, line_num)
+
+    match token {
+      Blank -> (config, current_section, errors, line_num)
+
+      Comment -> (config, current_section, errors, line_num)
+
+      Section(name) -> {
+        -- Ensure section exists in config even if it has no keys yet
+        let new_config = match map.get(config, name) {
+          Some(_) -> config
+          None -> map.set(config, name, #{})
+        }
+        (new_config, name, errors, line_num)
+      }
+
+      KeyValue(key, raw_value) -> {
+        match current_section {
+          "" -> {
+            let err_msg = "line {line_num}: key '{key}' found outside any [section]"
+            (config, current_section, flatten([errors, [err_msg]]), line_num)
+          }
+          section -> {
+            let value = coerce_value(raw_value)
+            let new_config = set_nested(config, section, key, value)
+            (new_config, section, errors, line_num)
+          }
+        }
+      }
+
+      ParseError(msg) -> {
+        (config, current_section, flatten([errors, [msg]]), line_num)
+      }
+    }
+  }
+
+  -- Return just (config, errors) -- drop the section and line_num
+  let (config, _, errors, _) = final_state
+  (config, errors)
+}
+
+-- ── Validation: check that required keys exist ─────────────────────
+-- Takes a list of (section, key) tuples and the parsed config.
+-- Returns a list of error strings for any missing required keys.
+
+fn validate_required(config, requirements) {
+  requirements |> fold([]) { errors, req ->
+    let (section, key) = req
+    match map.get(config, section) {
+      None -> flatten([errors, ["missing required section '[{section}]'"]])
+      Some(section_map) -> {
+        match map.get(section_map, key) {
+          None -> flatten([errors, ["missing required key '{key}' in [{section}]"]])
+          Some(_) -> errors
+        }
+      }
+    }
+  }
+}
+
+-- ── Pretty-print the parsed config ─────────────────────────────────
+
+fn print_config(config) {
+  let sections = map.keys(config)
+  sections |> each { section ->
+    println("[{section}]")
+    match map.get(config, section) {
+      Some(section_map) -> {
+        let keys = map.keys(section_map)
+        keys |> each { key ->
+          match map.get(section_map, key) {
+            Some(value) -> {
+              let displayed = display_value(value)
+              let tl = type_label(value)
+              println("  {key} = {displayed} ({tl})")
+            }
+            None -> println("  {key} = (none)")
+          }
+        }
+      }
+      None -> println("  (empty)")
+    }
+    println("")
+  }
+}
+
+-- ── Print errors with formatting ───────────────────────────────────
+
+fn print_errors(errors) {
+  match len(errors) {
+    0 -> println("No errors.")
+    n -> {
+      println("{n} error(s) found:")
+      errors |> each { err ->
+        println("  ERROR: {err}")
+      }
+    }
+  }
+}
+
+-- ── Nested lookup helper ───────────────────────────────────────────
+
+fn get_value(config, section, key) {
+  match map.get(config, section) {
+    None -> None
+    Some(section_map) -> map.get(section_map, key)
+  }
+}
+
+-- ── Main ────────────────────────────────────────────────────────────
+
+fn main() {
+  println("=== Silt INI Config Parser ===")
+  println("")
+
+  -- Read the config file
+  let path = "programs/app.conf"
+  when Ok(content) = io.read_file(path) else {
+    println("Error: could not read config file '{path}'")
+    return Err("file read failed")
+  }
+
+  println("Parsing '{path}'...")
+  println("")
+
+  -- Parse the config
+  let (config, parse_errors) = parse_config(content)
+
+  -- Report any parse errors
+  match len(parse_errors) {
+    0 -> println("Parse: OK (no syntax errors)")
+    _ -> print_errors(parse_errors)
+  }
+  println("")
+
+  -- Define required keys for validation
+  let required = [
+    ("server", "host"),
+    ("server", "port"),
+    ("database", "url"),
+    ("database", "pool_size"),
+  ]
+
+  -- Validate required keys
+  let validation_errors = validate_required(config, required)
+  match len(validation_errors) {
+    0 -> println("Validation: OK (all required keys present)")
+    _ -> {
+      println("Validation FAILED:")
+      print_errors(validation_errors)
+    }
+  }
+  println("")
+
+  -- Print the parsed config
+  println("--- Parsed Configuration ---")
+  println("")
+  print_config(config)
+
+  -- Demonstrate typed access with pattern matching on ConfigValue
+  println("--- Typed Value Access ---")
+  println("")
+
+  match get_value(config, "server", "port") {
+    Some(CInt(port)) -> println("server.port = {port} (Int, ready for arithmetic: {port + 1})")
+    Some(other) -> println("server.port = {display_value(other)} (unexpected type: {type_label(other)})")
+    None -> println("server.port not found")
+  }
+
+  match get_value(config, "server", "debug") {
+    Some(CBool(debug)) -> {
+      let label = match debug {
+        true -> "enabled"
+        false -> "disabled"
+      }
+      println("server.debug = {label} (Bool, debug mode is {label})")
+    }
+    Some(other) -> println("server.debug = {display_value(other)} (unexpected type: {type_label(other)})")
+    None -> println("server.debug not found")
+  }
+
+  match get_value(config, "database", "url") {
+    Some(CStr(url)) -> println("database.url = {url} (String)")
+    Some(other) -> println("database.url = {display_value(other)} (unexpected type: {type_label(other)})")
+    None -> println("database.url not found")
+  }
+
+  match get_value(config, "database", "pool_size") {
+    Some(CInt(n)) -> println("database.pool_size = {n} (Int)")
+    Some(other) -> println("database.pool_size = {display_value(other)} (unexpected type)")
+    None -> println("database.pool_size not found")
+  }
+
+  println("")
+
+  -- ── Error handling demo: parse intentionally bad input ───────────
+  println("--- Error Handling Demo ---")
+  println("")
+
+  let bad_input = "orphan_key=no_section
+[valid]
+key1=value1
+
+[bad section
+missing_equals_sign
+key2=value2
+
+[]
+=no_key
+[recovery]
+recovered=true"
+
+  println("Parsing intentionally malformed config:")
+  println("")
+
+  let (bad_config, bad_errors) = parse_config(bad_input)
+
+  -- Show accumulated errors with line numbers
+  print_errors(bad_errors)
+  println("")
+
+  -- Show what was still successfully parsed despite errors
+  println("Successfully parsed sections despite errors:")
+  print_config(bad_config)
+
+  -- Validate the bad config against our requirements (will fail)
+  let bad_validation = validate_required(bad_config, required)
+  match len(bad_validation) {
+    0 -> println("(unexpectedly passed validation)")
+    _ -> {
+      println("Expected validation failures:")
+      print_errors(bad_validation)
+    }
+  }
+
+  Ok("done")
+}

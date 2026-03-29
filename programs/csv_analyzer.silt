@@ -1,0 +1,497 @@
+{-
+  CSV Analyzer — Silt Language Ergonomics Evaluation
+  ==================================================
+
+  Overall Rating: 7/10
+
+  WHAT WAS EASY / PLEASANT:
+  - Pipe chains (|>) are excellent for data transformation pipelines. They read
+    naturally left-to-right and compose well with map/filter/fold.
+  - String interpolation with {expr} is clean and works on any Display type,
+    which means no explicit to_string() calls needed for printing.
+  - Trailing closure syntax { x -> body } is concise and reads well, especially
+    in map/filter/each chains.
+  - Pattern matching with list destructuring [head, ..tail] is powerful for
+    head/tail splitting (CSV header vs data rows).
+  - Record types with named fields make column stats clear and self-documenting.
+  - Record update syntax record.{ field: value } is elegant and concise.
+  - The when/else guard statement is great for early-return error handling,
+    very readable compared to nested match.
+  - Immutable-by-default with shadowing feels natural for data transformation.
+
+  WHAT WAS AWKWARD / REQUIRED WORKAROUNDS:
+  - No list indexing (xs[i] or list.get(xs, i)) means extracting the Nth element
+    from a CSV row requires recursive helper functions or chained head/tail calls.
+    This is the single biggest pain point for CSV work where you need column access.
+  - No Int/Float mixed arithmetic for +, -, / (only * is supported). Must
+    explicitly convert with int.to_float before adding/subtracting/dividing.
+    This is a constant friction point when computing averages (int count, float sum).
+  - No string padding functions (pad_left, pad_right) makes table formatting
+    tedious — had to build a pad_right helper with string.repeat.
+  - fold's 3-argument form in pipes is slightly confusing: list |> fold(init) { acc, x -> ... }.
+    The init value goes in parens, the function goes in trailing closure. Workable
+    but takes a moment to parse visually.
+  - No way to convert a float to a string with fixed decimal places (e.g., 2 digits).
+    float.round exists but returns Int, so formatting "92.50" is not possible.
+  - float.parse returns Result(Float, String) — good, but there is no
+    float.min / float.max builtin, requiring manual comparison helpers.
+
+  MISSING STDLIB FUNCTIONS:
+  - list.get(xs, i) or xs[i] — index-based list access (critical for CSV columns)
+  - list.range(start, end) or list.slice — sub-list extraction
+  - string.pad_left / string.pad_right — essential for table formatting
+  - float.min / float.max — parallel to int.min / int.max
+  - float.to_int — explicit conversion (only float.round/ceil/floor exist, which
+    are close but semantically different)
+  - string.format or some way to control decimal places in output
+  - list.enumerate — for index-aware iteration
+  - list.any / list.all — boolean aggregation over lists
+
+  SYNTAX ISSUES / CONFUSING MOMENTS:
+  - Block comments {- ... -} are nice but collision-prone with string interpolation
+    in documentation (must be careful with { inside block comments).
+  - The lack of if/else (match-only branching) means simple boolean checks like
+    "is this column numeric?" require match on true/false which feels heavy.
+  - No early break from each/map/fold loops. Once you start iterating, you
+    must finish — no short-circuit beyond find.
+  - Record field access (stat.sum) is great, but you can't dynamically access
+    fields by name (no reflection), which limits generic column handling.
+-}
+
+import io
+import string
+import int
+import float
+import list
+import map
+
+-- ── Record type for per-column statistics ──────────────────────────
+
+type ColumnStat {
+  name: String,
+  count: Int,
+  sum: Float,
+  min: Float,
+  max: Float,
+}
+
+-- ── List helper: get Nth element (0-indexed) ───────────────────────
+-- FRICTION: This function should not need to exist. A builtin list.get(xs, n)
+-- or indexing syntax xs[n] would eliminate ~15 lines of boilerplate.
+
+fn list_get(xs, n) {
+  match xs {
+    [] -> None
+    [head, ..tail] -> match n {
+      0 -> Some(head)
+      _ -> list_get(tail, n - 1)
+    }
+  }
+}
+
+-- ── String helper: right-pad to width ──────────────────────────────
+-- FRICTION: Should be string.pad_right(s, width, char) in stdlib.
+
+fn pad_right(s, width) {
+  let slen = string.length(s)
+  match slen >= width {
+    true -> s
+    false -> s + string.repeat(" ", width - slen)
+  }
+}
+
+fn pad_left(s, width) {
+  let slen = string.length(s)
+  match slen >= width {
+    true -> s
+    false -> string.repeat(" ", width - slen) + s
+  }
+}
+
+-- ── Float helpers ──────────────────────────────────────────────────
+-- FRICTION: No float.min / float.max in stdlib, despite int.min / int.max existing.
+
+fn float_min(a, b) {
+  match a < b {
+    true -> a
+    false -> b
+  }
+}
+
+fn float_max(a, b) {
+  match a > b {
+    true -> a
+    false -> b
+  }
+}
+
+-- ── Truncate a float to 2 decimal places (as a string) ─────────────
+-- FRICTION: No string formatting / decimal place control.
+-- This is a rough workaround using string manipulation.
+
+fn format_float(f) {
+  let s = "{f}"
+  match string.contains(s, ".") {
+    false -> s + ".00"
+    true -> {
+      let parts = string.split(s, ".")
+      when Some(int_part) = list_get(parts, 0) else {
+        return s
+      }
+      when Some(dec_part) = list_get(parts, 1) else {
+        return s
+      }
+      -- Truncate or pad decimal part to 2 characters
+      let dec_len = string.length(dec_part)
+      match dec_len >= 2 {
+        true -> {
+          -- Take first 2 chars by splitting into chars and rejoining
+          let chars = string.chars(dec_part)
+          when Some(c1) = list_get(chars, 0) else { return s }
+          when Some(c2) = list_get(chars, 1) else {
+            return int_part + "." + dec_part + "0"
+          }
+          int_part + "." + c1 + c2
+        }
+        false -> int_part + "." + dec_part + string.repeat("0", 2 - dec_len)
+      }
+    }
+  }
+}
+
+-- ── Parse CSV content into list of rows (each row = list of strings) ───
+
+fn parse_csv(content) {
+  let lines = content
+    |> string.split("\n")
+    |> filter { line -> string.length(string.trim(line)) > 0 }
+
+  lines |> map { line ->
+    line
+    |> string.split(",")
+    |> map { cell -> string.trim(cell) }
+  }
+}
+
+-- ── Check if a string parses as a number ───────────────────────────
+
+fn is_numeric(s) {
+  match float.parse(s) {
+    Ok(_) -> true
+    Err(_) -> false
+  }
+}
+
+-- ── Parse a string to float, defaulting to 0.0 ────────────────────
+
+fn parse_number(s) {
+  match float.parse(s) {
+    Ok(n) -> n
+    Err(_) -> 0.0
+  }
+}
+
+-- ── Compute stats for a single column of string values ─────────────
+
+fn compute_column_stats(col_name, values) {
+  -- Filter to only numeric values
+  let numeric_strings = values |> filter { v -> is_numeric(v) }
+  let nums = numeric_strings |> map { v -> parse_number(v) }
+
+  let count = len(nums)
+
+  match count {
+    0 -> ColumnStat {
+      name: col_name,
+      count: 0,
+      sum: 0.0,
+      min: 0.0,
+      max: 0.0,
+    }
+    _ -> {
+      let sum = nums |> fold(0.0) { acc, x -> acc + x }
+
+      -- Get first element as initial min/max
+      when Some(first) = list.head(nums) else {
+        return ColumnStat {
+          name: col_name,
+          count: 0,
+          sum: 0.0,
+          min: 0.0,
+          max: 0.0,
+        }
+      }
+
+      let min_val = nums |> fold(first) { acc, x -> float_min(acc, x) }
+      let max_val = nums |> fold(first) { acc, x -> float_max(acc, x) }
+
+      ColumnStat {
+        name: col_name,
+        count: count,
+        sum: sum,
+        min: min_val,
+        max: max_val,
+      }
+    }
+  }
+}
+
+-- ── Extract a column by index from all rows ────────────────────────
+
+fn extract_column(rows, col_index) {
+  rows |> map { row ->
+    match list_get(row, col_index) {
+      Some(val) -> val
+      None -> ""
+    }
+  }
+}
+
+-- ── Compute average from a ColumnStat ──────────────────────────────
+-- FRICTION: Can't do stat.sum / stat.count because sum is Float and count is Int.
+-- Must convert count to Float first.
+
+fn average(stat) {
+  match stat.count {
+    0 -> 0.0
+    _ -> stat.sum / int.to_float(stat.count)
+  }
+}
+
+-- ── Pretty-print a separator line ──────────────────────────────────
+
+fn print_separator(col_width) {
+  let line = string.repeat("-", col_width)
+  let sep = "+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+"
+  println(sep)
+}
+
+-- ── Pretty-print the stats table ───────────────────────────────────
+
+fn print_stats_table(stats) {
+  let w = 12
+
+  println("")
+  println("  Column Statistics")
+  println("  =================")
+  println("")
+
+  -- Header
+  print_separator(w)
+  let header = "| "
+    + pad_right("Column", w) + " | "
+    + pad_right("Count", w) + " | "
+    + pad_right("Sum", w) + " | "
+    + pad_right("Min", w) + " | "
+    + pad_right("Max", w) + " | "
+    + pad_right("Average", w) + " |"
+  println(header)
+  print_separator(w)
+
+  -- Data rows
+  stats |> each { stat ->
+    let avg = average(stat)
+    let row = "| "
+      + pad_right(stat.name, w) + " | "
+      + pad_right("{stat.count}", w) + " | "
+      + pad_right(format_float(stat.sum), w) + " | "
+      + pad_right(format_float(stat.min), w) + " | "
+      + pad_right(format_float(stat.max), w) + " | "
+      + pad_right(format_float(avg), w) + " |"
+    println(row)
+  }
+
+  print_separator(w)
+}
+
+-- ── Print filtered rows as a table ─────────────────────────────────
+
+fn print_filtered_table(header, rows, label) {
+  println("")
+  println("  {label}")
+  println("  {string.repeat("=", string.length(label))}")
+  println("")
+
+  let w = 12
+
+  -- Print header row
+  let header_line = header |> map { h -> pad_right(h, w) }
+    |> string.join(" | ")
+  println("  | {header_line} |")
+  let sep = header |> map { _ -> string.repeat("-", w) }
+    |> string.join("-+-")
+  println("  +-{sep}-+")
+
+  -- Print data rows
+  rows |> each { row ->
+    let line = row |> map { cell -> pad_right(cell, w) }
+      |> string.join(" | ")
+    println("  | {line} |")
+  }
+
+  println("")
+  println("  ({len(rows)} rows)")
+}
+
+-- ── Determine which column indices are numeric ─────────────────────
+
+fn find_numeric_columns(header, data_rows) {
+  -- Check each column: if the first data row has a numeric value, it's numeric
+  when [first_row, .._] = data_rows else {
+    return []
+  }
+
+  -- Build list of (index, name) for numeric columns
+  -- FRICTION: No list.enumerate, so we must use a counter via fold
+  let indices = 0..(len(header))
+  indices |> filter { i ->
+    let val = match list_get(first_row, i) {
+      Some(v) -> v
+      None -> ""
+    }
+    is_numeric(val)
+  }
+}
+
+-- ── Main ───────────────────────────────────────────────────────────
+
+fn main() {
+  -- Read CSV file path from args, or use default
+  let args = io.args()
+  -- args is [binary, "run", file, ...user_args]
+  -- User args start at index 3
+  let csv_path = match list_get(args, 3) {
+    Some(path) -> path
+    None -> "programs/data.csv"
+  }
+
+  println("  CSV Analyzer")
+  println("  ============")
+  println("  Reading: {csv_path}")
+
+  -- Read and parse CSV
+  when Ok(content) = io.read_file(csv_path) else {
+    return println("Error: could not read file '{csv_path}'")
+  }
+
+  let rows = parse_csv(content)
+
+  -- Split header from data using list pattern matching
+  when [header, ..data_rows] = rows else {
+    return println("Error: CSV file is empty")
+  }
+
+  println("  Columns: {string.join(header, ", ")}")
+  println("  Rows: {len(data_rows)}")
+
+  -- Find which columns are numeric
+  let numeric_indices = find_numeric_columns(header, data_rows)
+
+  -- Compute stats for each numeric column
+  let stats = numeric_indices |> map { i ->
+    let col_name = match list_get(header, i) {
+      Some(name) -> name
+      None -> "unknown"
+    }
+    let values = extract_column(data_rows, i)
+    compute_column_stats(col_name, values)
+  }
+
+  -- Pretty-print statistics table
+  print_stats_table(stats)
+
+  -- ── Filter: rows where score > 85 ─────────────────────────────
+  -- Find the "score" column index
+  let score_col = 0..(len(header))
+    |> find { i ->
+      match list_get(header, i) {
+        Some(name) -> name == "score"
+        None -> false
+      }
+    }
+
+  match score_col {
+    Some(score_idx) -> {
+      let threshold = 85.0
+      let high_scorers = data_rows |> filter { row ->
+        match list_get(row, score_idx) {
+          Some(val) -> match float.parse(val) {
+            Ok(score) -> score > threshold
+            Err(_) -> false
+          }
+          None -> false
+        }
+      }
+      print_filtered_table(header, high_scorers, "Filtered: score > 85.0")
+    }
+    None -> println("  (no 'score' column found for filtering)")
+  }
+
+  -- ── Filter: rows where age < 30 ──────────────────────────────
+  let age_col = 0..(len(header))
+    |> find { i ->
+      match list_get(header, i) {
+        Some(name) -> name == "age"
+        None -> false
+      }
+    }
+
+  match age_col {
+    Some(age_idx) -> {
+      let age_threshold = 30.0
+      let young = data_rows |> filter { row ->
+        match list_get(row, age_idx) {
+          Some(val) -> match float.parse(val) {
+            Ok(age) -> age < age_threshold
+            Err(_) -> false
+          }
+          None -> false
+        }
+      }
+      print_filtered_table(header, young, "Filtered: age < 30")
+    }
+    None -> println("  (no 'age' column found for filtering)")
+  }
+
+  -- ── Summary: pipe chain combining multiple operations ─────────
+  println("")
+  println("  Grade Distribution")
+  println("  ==================")
+
+  let grade_col = 0..(len(header))
+    |> find { i ->
+      match list_get(header, i) {
+        Some(name) -> name == "grade"
+        None -> false
+      }
+    }
+
+  match grade_col {
+    Some(grade_idx) -> {
+      let grades = extract_column(data_rows, grade_idx)
+
+      -- Count each grade using fold with a map
+      let counts = grades |> fold(#{ "A": 0, "B": 0, "C": 0, "D": 0, "F": 0 }) { acc, grade ->
+        let current = match map.get(acc, grade) {
+          Some(n) -> n
+          None -> 0
+        }
+        map.set(acc, grade, current + 1)
+      }
+
+      -- Print grade distribution
+      ["A", "B", "C", "D", "F"] |> each { grade ->
+        let count = match map.get(counts, grade) {
+          Some(n) -> n
+          None -> 0
+        }
+        let bar = string.repeat("#", count * 3)
+        println("  {grade}: {bar} ({count})")
+      }
+    }
+    None -> println("  (no 'grade' column found)")
+  }
+
+  println("")
+  println("  Done.")
+}

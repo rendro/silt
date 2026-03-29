@@ -1,0 +1,198 @@
+{-
+  Silt Ergonomics Evaluation: Markdown Link Checker
+  ==================================================
+
+  Rating: 6/10
+
+  WHAT WAS EASY / PLEASANT:
+  - Pipe chains (|> filter, |> map, |> each) are genuinely delightful for list
+    processing. The trailing closure syntax { x -> ... } reads very naturally.
+  - String interpolation with {expr} is clean and effortless.
+  - Pattern matching with match is elegant. Using it for branching felt natural.
+  - The when/else guard for early returns is a nice alternative to nested ifs.
+    The "assert + destructure + bail" pattern reads well.
+  - Result/Option as first-class types with ? propagation is solid.
+  - Immutability by default + shadowing is a good design choice.
+  - The language "feels" coherent -- the 17-keyword constraint keeps things tight.
+
+  WHAT WAS AWKWARD / REQUIRED WORKAROUNDS:
+  - NO string.index_of or string.slice/substring. This is the single biggest gap
+    for any text processing task. I had to split on "](" and then split on ")"
+    to extract URLs, which is fragile and lossy. A simple index_of + slice would
+    have made the link parser 3x simpler and far more correct.
+  - NO string.index_of means you cannot locate WHERE a pattern occurs in a
+    string, only WHETHER it occurs (via string.contains). This makes any kind of
+    parsing that goes beyond simple delimiter-splitting extremely painful.
+  - No list concatenation operator (++ or similar). Building up a result list
+    from a recursive parse requires fold or flattening lists of lists, which is
+    clunky for what should be a simple "append item" operation.
+  - No mutable accumulator pattern. The fully immutable approach means you can't
+    do "walk through chars, accumulate state" in the natural imperative way.
+    Fold works but is verbose for stateful parsing.
+  - string.split loses information -- you can't tell if a delimiter appeared at
+    the start/end of the string vs. the middle. Combined with no index_of, this
+    makes robust parsing very hard.
+  - No regex or pattern matching on strings. Even a basic glob or find_all would
+    help enormously for text extraction tasks.
+  - No early break/continue in |> each or |> fold. Once you're in a pipeline,
+    you process everything.
+  - No to_string / Display for Int when you want to manually build strings
+    (though interpolation covers most cases).
+  - List patterns only support [head, ..tail] (rest at end), not [..init, last]
+    (rest at beginning). This means you can't pattern match "the last element"
+    directly -- you need list.last() as a workaround. This came up when trying
+    to get the text after the last "[" in a string split result.
+  - No if/else means using "match true { _ when cond -> ... }" as a workaround
+    for conditional chains. It works but reads oddly -- you're pattern matching
+    against a value you don't care about just to use guards. Something like
+    "cond" blocks or "match { guard -> ... }" (no scrutinee) would feel cleaner.
+
+  MISSING STDLIB FUNCTIONS I WISHED EXISTED:
+  - string.index_of(s, needle) -> Option(Int)
+  - string.slice(s, start, end) -> String
+  - string.find_all(s, needle) -> List(Int)  -- all indices
+  - list.append(xs, x) -> List  or  xs ++ [x]
+  - list.flat_map(xs, fn) -> List
+  - list.enumerate(xs) -> List((Int, a))
+  - list.take(xs, n) / list.drop(xs, n)
+  - string.is_empty(s) -> Bool  (can use string.length(s) == 0, but verbose)
+
+  SYNTAX ISSUES / CONFUSING ASPECTS:
+  - The spec lists string.starts_with under the stdlib table but it's not there;
+    it IS implemented as a builtin -- the spec table is incomplete. This would
+    confuse new users reading only the spec.
+  - Not clear from the spec alone whether builtins like len() work on strings
+    or only lists. Had to read interpreter source.
+  - Block comments {- -} are nice but I wonder if they'll confuse editors that
+    try to match braces.
+  - The language spec says "import io" to use io.read_file, but in practice the
+    builtins are just globally available as io.read_file without import. This is
+    fine for v1 but the spec is misleading.
+-}
+
+-- Extract link text and URL pairs from a single line of markdown.
+-- Returns a list of (text, url) tuples.
+--
+-- Strategy: split on "](" to find link boundaries. Each boundary separates
+-- a "before" segment (containing link text after '[') from an "after" segment
+-- (containing the URL before ')').
+-- This is a workaround for the lack of string.index_of / string.slice.
+fn extract_link_pairs(line) {
+  let segments = string.split(line, "](")
+
+  match segments {
+    [_single] -> []
+    _ -> {
+      -- For each segment boundary, extract text and url
+      let pairs = segments
+        |> zip(list.tail(segments))
+        |> map { pair ->
+          let (before, after) = pair
+          -- Link text: everything after the last "[" in 'before'
+          -- Can't use [..init, last] pattern (not supported), so use list.last
+          let text_parts = string.split(before, "[")
+          let text = match list.last(text_parts) {
+            Some(t) -> t
+            None -> ""
+          }
+          -- URL: everything before the first ")" in 'after'
+          let url_parts = string.split(after, ")")
+          let url = match url_parts {
+            [u, .._] -> string.trim(u)
+            [] -> ""
+          }
+          (text, url)
+        }
+      pairs
+    }
+  }
+}
+
+-- Validate a single URL: must start with http://, https://, or /
+fn validate_url(url) {
+  match true {
+    _ when string.length(url) == 0 -> Err("empty URL")
+    _ when string.starts_with(url, "https://") -> Ok("https")
+    _ when string.starts_with(url, "http://") -> Ok("http")
+    _ when string.starts_with(url, "/") -> Ok("absolute path")
+    _ -> Err("invalid scheme")
+  }
+}
+
+-- Format a link result for display
+fn format_result(text, url, validation) {
+  match validation {
+    Ok(scheme) -> "  OK   [{text}]({url}) -- {scheme}"
+    Err(reason) -> "  FAIL [{text}]({url}) -- {reason}"
+  }
+}
+
+fn main() {
+  -- Get file path from CLI args
+  let args = io.args()
+
+  -- args[0] is the interpreter, args[1] is the script, args[2] is our file
+  -- We need at least 3 args
+  when [_, _, filepath, .._] = args else {
+    println("Usage: silt programs/link_checker.silt <markdown-file>")
+    return Err("missing file argument")
+  }
+
+  println("Checking links in: {filepath}")
+  println(string.repeat("=", 50))
+
+  -- Read the file
+  when Ok(content) = io.read_file(filepath) else {
+    println("Error: could not read file '{filepath}'")
+    return Err("file read failed")
+  }
+
+  -- Split into lines and extract all link pairs
+  let lines = content |> string.split("\n")
+  let all_links = lines
+    |> map { line -> extract_link_pairs(line) }
+    |> flatten
+
+  -- Separate valid and invalid
+  let results = all_links |> map { pair ->
+    let (text, url) = pair
+    let validation = validate_url(url)
+    (text, url, validation)
+  }
+
+  let valid = results |> filter { r ->
+    let (_, _, v) = r
+    result.is_ok(v)
+  }
+
+  let invalid = results |> filter { r ->
+    let (_, _, v) = r
+    result.is_err(v)
+  }
+
+  -- Print results
+  println("")
+  println("Valid links ({len(valid)}):")
+  valid |> each { r ->
+    let (text, url, validation) = r
+    println(format_result(text, url, validation))
+  }
+
+  println("")
+  println("Malformed links ({len(invalid)}):")
+  invalid |> each { r ->
+    let (text, url, validation) = r
+    println(format_result(text, url, validation))
+  }
+
+  -- Summary
+  let total = len(all_links)
+  println("")
+  println(string.repeat("=", 50))
+  println("Summary: {len(valid)} valid, {len(invalid)} malformed, {total} total")
+
+  match len(invalid) {
+    0 -> println("All links OK!")
+    n -> println("{n} link(s) need attention.")
+  }
+}

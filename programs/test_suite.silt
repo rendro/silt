@@ -1,0 +1,688 @@
+{-
+  test_suite.silt -- A mini test framework that tests itself
+  ==========================================================
+
+  TESTING STORY FRICTION REPORT: 5/10
+
+  THE GOOD:
+  - `silt test` with test_ prefix convention is dead simple. Zero config,
+    zero boilerplate. Just name your function test_foo() and it runs. This is
+    genuinely better than Go's testing.T ceremony and on par with Rust's
+    #[test] for ergonomics.
+  - assert, assert_eq, assert_ne are always available as builtins. No imports
+    needed for the basics. That is excellent DX -- the spec says
+    `import test.{ assert_eq }` but the interpreter just registers them globally.
+  - The error messages from assert_eq show both values: "assertion failed: 3 != 4".
+    That is the minimum bar and it is met.
+  - Pattern matching + Result/Option means you can write expressive assertions
+    about structure: match result { Ok(v) -> assert_eq(v, 42), ... }.
+  - The test runner output is clean: PASS/FAIL per test, summary at end.
+
+  THE BAD:
+  - No way to catch panics/assertion failures and continue. If assert_eq fails
+    inside a test function, the whole function aborts. You cannot write a test
+    that checks "this SHOULD fail" (negative tests). There is no try/catch,
+    no Result-returning assert variant, no expect_panic(). This is the single
+    biggest gap.
+  - No setup/teardown hooks. No before_each, after_each, before_all. If five
+    tests need the same record, you build it five times or call a helper. Rust
+    solves this with test fixtures / constructors. Go has TestMain. Jest has
+    beforeEach. Silt has nothing.
+  - No test filtering. `silt test` runs ALL test_ functions in ALL *_test.silt
+    files. You cannot run a single test by name (`silt test --filter test_foo`).
+    During development this means every test runs every time.
+  - No test timeout. An infinite-recursion test hangs forever.
+  - No assert_matches! or structural matching assert. You cannot write
+    `assert_matches(value, Ok(_))` -- you have to manually match + panic.
+  - No skip/ignore mechanism. No way to mark a test as #[ignore] or t.Skip().
+  - No test output capture. println() inside tests leaks into the test runner
+    output, interleaved with PASS/FAIL lines.
+  - No parameterized / table-driven tests. No way to run the same assertion
+    over a list of inputs and get per-case reporting.
+  - No diff on assert_eq failure for long strings or large structures. Just
+    shows the debug representation of both values.
+  - Cannot track pass/fail counts from within a .silt program for self-testing
+    because assertions abort on failure. The only way to count is to never fail
+    (which defeats the purpose of a test framework that tests itself).
+
+  COMPARED TO:
+  - Rust #[test]: Missing ignore, should_panic, custom test harness, --filter,
+    cargo test --test-threads, Result<()> return. Silt is at ~30% of Rust's
+    test features.
+  - Go testing: Missing t.Run subtests, t.Parallel, t.Skip, t.Helper, t.Log,
+    table-driven patterns, benchmarks. Silt is at ~20% of Go.
+  - Jest: Missing describe/it nesting, beforeEach/afterEach, expect().toBe()
+    chaining, snapshot tests, mocking, --watch, coverage. Silt is at ~15%.
+
+  WHAT WOULD MAKE IT A 7:
+  1. A `try(fn)` builtin that catches panics and returns Result
+  2. `silt test --filter <pattern>` for running specific tests
+  3. A setup function convention (e.g., test_setup() runs before each test_*)
+  4. assert_matches(value, pattern) for structural assertions
+
+  WHAT WOULD MAKE IT A 9:
+  5. Table-driven test helper: test_each(cases, fn(input, expected) { ... })
+  6. Test timeout / watchdog
+  7. Output capture (only show stdout on failure)
+  8. Ignore/skip annotation
+-}
+
+-- ============================================================
+-- Custom assertion helpers
+-- ============================================================
+
+fn assert_contains(haystack, needle) {
+  assert(string.contains(haystack, needle))
+}
+
+fn assert_gt(a, b) {
+  assert(a > b)
+}
+
+fn assert_some(opt) {
+  match opt {
+    Some(_) -> assert(true)
+    None -> assert(false)
+  }
+}
+
+fn assert_ok(result) {
+  match result {
+    Ok(_) -> assert(true)
+    Err(_) -> assert(false)
+  }
+}
+
+-- ============================================================
+-- Record types for test framework bookkeeping
+-- ============================================================
+
+type TestResult {
+  name: String,
+  passed: Bool,
+}
+
+type TestSuite {
+  total: Int,
+  passed: Int,
+  failed: Int,
+  results: List,
+}
+
+-- ============================================================
+-- Trait: Display for TestResult
+-- ============================================================
+
+trait Display for TestResult {
+  fn display(self) -> String {
+    match self.passed {
+      true -> "  PASS: {self.name}"
+      false -> "  FAIL: {self.name}"
+    }
+  }
+}
+
+-- ============================================================
+-- Test runner utility
+-- ============================================================
+
+fn empty_suite() {
+  TestSuite { total: 0, passed: 0, failed: 0, results: [] }
+}
+
+-- Run a single test closure and record the result.
+-- Since we cannot catch panics, a failing assert aborts the whole program.
+-- This is the fundamental limitation: we can only count successes.
+fn run_test(suite, name, test_fn) {
+  -- Call the test function. If it throws, we never reach the next line.
+  test_fn()
+
+  let result = TestResult { name: name, passed: true }
+  println(result.display())
+
+  TestSuite {
+    total: suite.total + 1,
+    passed: suite.passed + 1,
+    failed: suite.failed,
+    results: flatten([suite.results, [result]]),
+  }
+}
+
+fn print_summary(suite) {
+  println("")
+  println(string.repeat("=", 50))
+  println("Results: {suite.passed}/{suite.total} passed, {suite.failed} failed")
+  match suite.failed {
+    0 -> println("All tests passed!")
+    n -> println("{n} test(s) FAILED")
+  }
+}
+
+-- ============================================================
+-- Test: arithmetic
+-- ============================================================
+
+fn test_arithmetic() {
+  -- basic ops
+  assert_eq(2 + 3, 5)
+  assert_eq(10 - 4, 6)
+  assert_eq(3 * 7, 21)
+  assert_eq(10 / 3, 3)
+  assert_eq(10 % 3, 1)
+
+  -- negative numbers and precedence
+  assert_eq(0 - 5, -5)
+  assert_eq(2 + 3 * 4, 14)
+  assert_eq((2 + 3) * 4, 20)
+
+  -- float arithmetic
+  assert_eq(1.5 + 2.5, 4.0)
+  assert_eq(3.0 * 2.0, 6.0)
+
+  -- int module
+  assert_eq(int.abs(-42), 42)
+  assert_eq(int.abs(42), 42)
+  assert_eq(int.min(3, 7), 3)
+  assert_eq(int.max(3, 7), 7)
+
+  -- comparisons
+  assert(5 > 3)
+  assert(3 < 5)
+  assert(5 >= 5)
+  assert(5 <= 5)
+  assert_ne(3, 4)
+}
+
+-- ============================================================
+-- Test: string operations
+-- ============================================================
+
+fn test_string_ops() {
+  -- interpolation
+  let name = "world"
+  assert_eq("hello {name}", "hello world")
+
+  -- concatenation via +
+  assert_eq("foo" + "bar", "foobar")
+
+  -- string module functions
+  assert_eq(string.length("hello"), 5)
+  assert_eq(string.trim("  hi  "), "hi")
+  assert(string.contains("hello world", "world"))
+  assert(string.starts_with("hello", "hel"))
+  assert(string.ends_with("hello", "llo"))
+  assert_eq(string.to_upper("hello"), "HELLO")
+  assert_eq(string.to_lower("HELLO"), "hello")
+  assert_eq(string.replace("hello world", "world", "silt"), "hello silt")
+  assert_eq(string.repeat("ab", 3), "ababab")
+
+  -- split and join roundtrip
+  let parts = string.split("a,b,c", ",")
+  assert_eq(len(parts), 3)
+  assert_eq(string.join(parts, ","), "a,b,c")
+
+  -- string.chars
+  let chars = string.chars("hi")
+  assert_eq(len(chars), 2)
+
+  -- len works on strings directly
+  assert_eq(len("hello"), 5)
+
+  -- contains for custom helper
+  assert_contains("the quick brown fox", "quick")
+}
+
+-- ============================================================
+-- Test: list operations
+-- ============================================================
+
+fn test_list_ops() {
+  let xs = [1, 2, 3, 4, 5]
+
+  -- len
+  assert_eq(len(xs), 5)
+
+  -- map
+  let doubled = xs |> map { x -> x * 2 }
+  assert_eq(doubled, [2, 4, 6, 8, 10])
+
+  -- filter
+  let evens = xs |> filter { x -> x % 2 == 0 }
+  assert_eq(evens, [2, 4])
+
+  -- fold
+  let sum = xs |> fold(0) { acc, x -> acc + x }
+  assert_eq(sum, 15)
+
+  -- find
+  let found = xs |> find { x -> x > 3 }
+  assert_eq(found, Some(4))
+  let not_found = xs |> find { x -> x > 100 }
+  assert_eq(not_found, None)
+
+  -- zip
+  let zipped = zip([1, 2], ["a", "b"])
+  assert_eq(len(zipped), 2)
+
+  -- flatten
+  let nested = [[1, 2], [3, 4]]
+  assert_eq(flatten(nested), [1, 2, 3, 4])
+
+  -- list module functions
+  assert_eq(list.head([10, 20, 30]), Some(10))
+  assert_eq(list.head([]), None)
+  assert_eq(list.tail([10, 20, 30]), [20, 30])
+  assert_eq(list.last([10, 20, 30]), Some(30))
+  assert_eq(list.reverse([1, 2, 3]), [3, 2, 1])
+  assert_eq(list.sort([3, 1, 2]), [1, 2, 3])
+  assert(list.contains([1, 2, 3], 2))
+  assert(list.contains([1, 2, 3], 3))
+  assert_eq(list.contains([1, 2, 3], 99), false)
+
+  -- list pattern matching
+  match xs {
+    [first, ..rest] -> {
+      assert_eq(first, 1)
+      assert_eq(len(rest), 4)
+    }
+    _ -> panic("should have matched [first, ..rest]")
+  }
+}
+
+-- ============================================================
+-- Test: map operations
+-- ============================================================
+
+fn test_map_ops() {
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+
+  -- map.get returns Option
+  assert_eq(map.get(m, "a"), Some(1))
+  assert_eq(map.get(m, "z"), None)
+
+  -- map.set returns new map
+  let m2 = map.set(m, "d", 4)
+  assert_eq(map.get(m2, "d"), Some(4))
+  -- original unchanged (immutable)
+  assert_eq(map.get(m, "d"), None)
+
+  -- map.delete
+  let m3 = map.delete(m, "b")
+  assert_eq(map.get(m3, "b"), None)
+  assert_eq(map.get(m3, "a"), Some(1))
+
+  -- map.keys / map.values
+  let keys = map.keys(m) |> list.sort
+  assert_eq(keys, ["a", "b", "c"])
+  let vals = map.values(m) |> list.sort
+  assert_eq(vals, [1, 2, 3])
+
+  -- map.merge
+  let left = #{ "x": 1, "y": 2 }
+  let right = #{ "y": 99, "z": 3 }
+  let merged = map.merge(left, right)
+  assert_eq(map.get(merged, "x"), Some(1))
+  assert_eq(map.get(merged, "y"), Some(99))
+  assert_eq(map.get(merged, "z"), Some(3))
+
+  -- len on maps
+  assert_eq(len(m), 3)
+}
+
+-- ============================================================
+-- Test: Option and Result handling
+-- ============================================================
+
+fn test_option_result() {
+  -- Option basics
+  let s = Some(42)
+  let n = None
+  assert_some(s)
+  assert_eq(option.is_some(s), true)
+  assert_eq(option.is_none(n), true)
+
+  -- unwrap_or
+  assert_eq(unwrap_or(s, 0), 42)
+  assert_eq(unwrap_or(n, 0), 0)
+  assert_eq(option.unwrap_or(s, 0), 42)
+  assert_eq(option.unwrap_or(n, 0), 0)
+
+  -- option.map
+  let doubled = option.map(Some(5), fn(x) { x * 2 })
+  assert_eq(doubled, Some(10))
+  let nope = option.map(None, fn(x) { x * 2 })
+  assert_eq(nope, None)
+
+  -- option.to_result
+  assert_eq(option.to_result(Some(1), "missing"), Ok(1))
+  assert_eq(option.to_result(None, "missing"), Err("missing"))
+
+  -- Result basics
+  let ok = Ok(100)
+  let err = Err("boom")
+  assert_ok(ok)
+  assert_eq(result.is_ok(ok), true)
+  assert_eq(result.is_err(err), true)
+
+  -- map_ok
+  let mapped = map_ok(Ok(5), fn(x) { x + 1 })
+  assert_eq(mapped, Ok(6))
+  let kept = map_ok(Err("no"), fn(x) { x + 1 })
+  assert_eq(kept, Err("no"))
+
+  -- result.map_err
+  let remapped = result.map_err(Err("bad"), fn(e) { "error: " + e })
+  assert_eq(remapped, Err("error: bad"))
+
+  -- result.flatten
+  assert_eq(result.flatten(Ok(Ok(42))), Ok(42))
+  assert_eq(result.flatten(Ok(Err("x"))), Err("x"))
+
+  -- int.parse returns Result
+  assert_ok(int.parse("42"))
+  assert_eq(result.is_err(int.parse("nope")), true)
+
+  -- assert_gt helper
+  assert_gt(10, 5)
+  assert_gt(0, -1)
+}
+
+-- ============================================================
+-- Test: records
+-- ============================================================
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+type Person {
+  name: String,
+  age: Int,
+}
+
+fn test_records() {
+  -- record creation
+  let p = Point { x: 3, y: 4 }
+  assert_eq(p.x, 3)
+  assert_eq(p.y, 4)
+
+  -- record update (returns new record)
+  let p2 = p.{ x: 10 }
+  assert_eq(p2.x, 10)
+  assert_eq(p2.y, 4)
+  -- original unchanged
+  assert_eq(p.x, 3)
+
+  -- update multiple fields
+  let p3 = p.{ x: 100, y: 200 }
+  assert_eq(p3.x, 100)
+  assert_eq(p3.y, 200)
+
+  -- nested record usage
+  let alice = Person { name: "Alice", age: 30 }
+  let older = alice.{ age: alice.age + 1 }
+  assert_eq(older.age, 31)
+  assert_eq(older.name, "Alice")
+
+  -- record in a list
+  let people = [
+    Person { name: "Alice", age: 30 },
+    Person { name: "Bob", age: 25 },
+  ]
+  let names = people |> map { p -> p.name }
+  assert_eq(names, ["Alice", "Bob"])
+
+  -- record pattern matching
+  match alice {
+    Person { name, age, .. } -> {
+      assert_eq(name, "Alice")
+      assert_eq(age, 30)
+    }
+  }
+}
+
+-- ============================================================
+-- Test: pattern matching
+-- ============================================================
+
+type Color {
+  Red
+  Green
+  Blue
+  Custom(Int, Int, Int)
+}
+
+fn test_pattern_matching() {
+  -- literal patterns
+  let describe = fn(n) {
+    match n {
+      0 -> "zero"
+      1 -> "one"
+      _ -> "other"
+    }
+  }
+  assert_eq(describe(0), "zero")
+  assert_eq(describe(1), "one")
+  assert_eq(describe(99), "other")
+
+  -- variant patterns
+  let color_name = fn(c) {
+    match c {
+      Red -> "red"
+      Green -> "green"
+      Blue -> "blue"
+      Custom(r, g, b) -> "rgb({r},{g},{b})"
+    }
+  }
+  assert_eq(color_name(Red), "red")
+  assert_eq(color_name(Custom(255, 128, 0)), "rgb(255,128,0)")
+
+  -- guard patterns (when)
+  let classify = fn(n) {
+    match n {
+      0 -> "zero"
+      x when x > 0 -> "positive"
+      _ -> "negative"
+    }
+  }
+  assert_eq(classify(0), "zero")
+  assert_eq(classify(5), "positive")
+  assert_eq(classify(-3), "negative")
+
+  -- nested Option/Result patterns
+  match Ok(Some(42)) {
+    Ok(Some(v)) -> assert_eq(v, 42)
+    _ -> panic("should have matched Ok(Some(42))")
+  }
+
+  match Ok(None) {
+    Ok(None) -> assert(true)
+    _ -> panic("should have matched Ok(None)")
+  }
+
+  -- list patterns
+  match [1, 2, 3] {
+    [a, b, c] -> {
+      assert_eq(a, 1)
+      assert_eq(b, 2)
+      assert_eq(c, 3)
+    }
+    _ -> panic("should match exact list")
+  }
+
+  match [10, 20, 30, 40] {
+    [head, ..tail] -> {
+      assert_eq(head, 10)
+      assert_eq(tail, [20, 30, 40])
+    }
+    _ -> panic("should match head..tail")
+  }
+
+  -- tuple destructuring
+  let (a, b) = (1, 2)
+  assert_eq(a, 1)
+  assert_eq(b, 2)
+
+  -- bool patterns
+  match true {
+    true -> assert(true)
+    false -> panic("unreachable")
+  }
+}
+
+-- ============================================================
+-- Test: pipe operator
+-- ============================================================
+
+fn test_pipes() {
+  -- basic pipe into function
+  let result = 5 |> int.abs
+  assert_eq(result, 5)
+
+  -- pipe chain
+  let processed = [1, 2, 3, 4, 5]
+    |> filter { x -> x > 2 }
+    |> map { x -> x * 10 }
+    |> fold(0) { acc, x -> acc + x }
+  assert_eq(processed, 120)
+
+  -- pipe into string operations
+  let cleaned = "  Hello World  "
+    |> string.trim
+    |> string.to_lower
+  assert_eq(cleaned, "hello world")
+
+  -- pipe with find (returns Option)
+  let found = [10, 20, 30] |> find { x -> x > 15 }
+  assert_eq(found, Some(20))
+
+  -- pipe with map_ok
+  let parsed = int.parse("7") |> map_ok { n -> n * 3 }
+  assert_eq(parsed, Ok(21))
+
+  -- multi-step pipeline
+  let words = "the quick brown fox"
+    |> string.split(" ")
+    |> map { w -> string.to_upper(w) }
+    |> string.join("-")
+  assert_eq(words, "THE-QUICK-BROWN-FOX")
+}
+
+-- ============================================================
+-- Test: closures
+-- ============================================================
+
+fn test_closures() {
+  -- closure captures outer variable
+  let factor = 10
+  let multiply = fn(x) { x * factor }
+  assert_eq(multiply(3), 30)
+
+  -- closure as argument (trailing syntax)
+  let results = [1, 2, 3] |> map { x -> x + 1 }
+  assert_eq(results, [2, 3, 4])
+
+  -- higher-order function returning closure
+  let make_adder = fn(n) { fn(x) { x + n } }
+  let add5 = make_adder(5)
+  assert_eq(add5(10), 15)
+  assert_eq(add5(0), 5)
+
+  -- closure in fold
+  let product = [2, 3, 4] |> fold(1) { acc, x -> acc * x }
+  assert_eq(product, 24)
+
+  -- nested closures
+  let outer = 100
+  let f = fn(x) {
+    let inner = fn(y) { x + y + outer }
+    inner(10)
+  }
+  assert_eq(f(5), 115)
+
+  -- closure over a list
+  let items = [1, 2, 3]
+  let get_items = fn() { items }
+  assert_eq(get_items(), [1, 2, 3])
+
+  -- closures in list
+  let fns = [fn(x) { x + 1 }, fn(x) { x * 2 }, fn(x) { x - 3 }]
+  let apply_all = fn(fns, val) {
+    fns |> fold(val) { acc, f -> f(acc) }
+  }
+  -- (10 + 1) = 11, (11 * 2) = 22, (22 - 3) = 19
+  assert_eq(apply_all(fns, 10), 19)
+}
+
+-- ============================================================
+-- Test: traits
+-- ============================================================
+
+type Shape {
+  Circle(Float)
+  Rect(Float, Float)
+}
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+    }
+  }
+}
+
+trait Display for Point {
+  fn display(self) -> String {
+    "({self.x}, {self.y})"
+  }
+}
+
+fn test_traits() {
+  -- trait method on enum type
+  let c = Circle(5.0)
+  assert_eq(c.display(), "Circle(r=5)")
+
+  let r = Rect(3.0, 4.0)
+  assert_eq(r.display(), "Rect(3x4)")
+
+  -- trait method on record type
+  let p = Point { x: 1, y: 2 }
+  assert_eq(p.display(), "(1, 2)")
+
+  -- trait method in pipeline via map
+  let shapes = [Circle(1.0), Rect(2.0, 3.0)]
+  let labels = shapes |> map { s -> s.display() }
+  assert_eq(len(labels), 2)
+  assert_contains(labels |> string.join(", "), "Circle")
+  assert_contains(labels |> string.join(", "), "Rect")
+}
+
+-- ============================================================
+-- Main: run all tests via our mini framework
+-- ============================================================
+
+fn main() {
+  println("=== Silt Self-Test Suite ===")
+  println(string.repeat("=", 50))
+  println("")
+
+  let suite = empty_suite()
+
+  -- Run each test and accumulate results.
+  -- Note: if any assert fails, the program aborts immediately.
+  -- This is the key limitation -- we cannot catch failures.
+  let suite = run_test(suite, "test_arithmetic", test_arithmetic)
+  let suite = run_test(suite, "test_string_ops", test_string_ops)
+  let suite = run_test(suite, "test_list_ops", test_list_ops)
+  let suite = run_test(suite, "test_map_ops", test_map_ops)
+  let suite = run_test(suite, "test_option_result", test_option_result)
+  let suite = run_test(suite, "test_records", test_records)
+  let suite = run_test(suite, "test_pattern_matching", test_pattern_matching)
+  let suite = run_test(suite, "test_pipes", test_pipes)
+  let suite = run_test(suite, "test_closures", test_closures)
+  let suite = run_test(suite, "test_traits", test_traits)
+
+  print_summary(suite)
+}

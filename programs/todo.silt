@@ -1,0 +1,380 @@
+{-
+  todo.silt -- Interactive todo list manager with file persistence
+
+  === Friction Report ===
+
+  Overall rating: 5/10
+
+  No list.append or list.push (pain: 9/10)
+    The single most painful gap. To add an item to a list you must use
+    flatten([[todos], [new_todo]]) which is ugly and non-obvious. A simple
+    list.append(list, item) or list.push(list, item) would transform the
+    experience. Every "add" operation reads like a workaround, not intent.
+
+  No list indexing / list.get(list, n) (pain: 8/10)
+    There is no way to access the Nth element of a list. To find a todo by
+    integer id, you must filter the entire list every time. This makes DONE
+    and REMOVE operations O(n) scans even when you know the index. It also
+    means there is no way to implement "get element at position" without
+    writing a recursive helper. For a language with List as a first-class
+    type, this is a surprising omission.
+
+  Accumulator-threading through recursive loop (pain: 7/10)
+    Every branch of the command match must remember to pass (todos, next_id)
+    back to the loop. Miss one and the program silently terminates. A while
+    loop with rebinding (let todos = ...) would halve the ceremony. The
+    recursive pattern is elegant in theory but error-prone in practice when
+    you have 8+ match arms that all need to thread two pieces of state.
+
+  No int.to_string (pain: 4/10)
+    The only way to convert an Int to a String is via interpolation "{n}".
+    This works fine for display but feels indirect when building a
+    serialization format. A to_string() method or int.to_string() would
+    feel more intentional.
+
+  No string.slice / string.substring (pain: 5/10)
+    Parsing "ADD Buy some milk" requires splitting on space and rejoining
+    everything after the command word. string.split + list pattern matching
+    + string.join(rest, " ") works but is a 3-step workaround for what
+    should be a single substring call.
+
+  Record update syntax is excellent (delight: 9/10)
+    todo.{ done: !todo.done } is beautiful. Clear, concise, reads like
+    English. This is the highlight of the record system.
+
+  Pipe + trailing closure chains (delight: 8/10)
+    todos |> filter { t -> t.done } |> each { t -> ... } is expressive
+    and pleasant. The |> operator earns its keep in list-heavy code.
+
+  Pattern matching on list shapes (mixed: 6/10)
+    Matching ["ADD", ..rest] is nice for command parsing. But you cannot
+    match on an empty rest vs non-empty rest in the same pattern, so you
+    still need a guard or nested match to validate argument presence.
+
+  Bool as a type works but lacks ergonomic helpers (pain: 3/10)
+    No bool.to_string, no ternary, no if/else. You pattern match on
+    true/false which is verbose for simple conditional formatting like
+    choosing "[x]" vs "[ ]". match works, but a simple if/else or
+    ternary would reduce noise for boolean-driven formatting.
+-}
+
+-- Todo record type
+type Todo {
+  id: Int,
+  title: String,
+  done: Bool,
+}
+
+-- Format a single todo for display
+fn format_todo(todo) {
+  let check = match todo.done {
+    true -> "x"
+    false -> " "
+  }
+  "[{check}] {todo.id}. {todo.title}"
+}
+
+-- Serialize a single todo to a storable line: "id|done|title"
+fn serialize_todo(todo) {
+  let done_str = match todo.done {
+    true -> "1"
+    false -> "0"
+  }
+  "{todo.id}|{done_str}|{todo.title}"
+}
+
+-- Deserialize a single line back into a Todo record
+-- Returns Some(Todo) on success, None on failure
+fn deserialize_todo(line) {
+  let trimmed = string.trim(line)
+  match string.split(trimmed, "|") {
+    [id_str, done_str, ..title_parts] -> {
+      let title = string.join(title_parts, "|")
+      match int.parse(id_str) {
+        Ok(id) -> {
+          let done = match done_str {
+            "1" -> true
+            _ -> false
+          }
+          Some(Todo { id: id, title: title, done: done })
+        }
+        Err(_) -> None
+      }
+    }
+    _ -> None
+  }
+}
+
+-- Serialize all todos to a string
+fn serialize_all(todos) {
+  todos
+  |> map { t -> serialize_todo(t) }
+  |> string.join("\n")
+}
+
+-- Deserialize a file's contents into a list of todos
+fn deserialize_all(text) {
+  let lines = string.split(text, "\n")
+  lines
+  |> map { line -> deserialize_todo(line) }
+  |> filter { opt -> match opt {
+    Some(_) -> true
+    None -> false
+  }}
+  |> map { opt -> match opt {
+    Some(t) -> t
+    _ -> panic("unreachable")
+  }}
+}
+
+-- Find the highest id in the todo list (for generating next id)
+fn max_id(todos) {
+  todos |> fold(0) { best, t ->
+    match t.id > best {
+      true -> t.id
+      false -> best
+    }
+  }
+}
+
+-- Add a new todo, returns (updated_todos, next_id)
+fn add_todo(todos, next_id, title) {
+  let todo = Todo { id: next_id, title: title, done: false }
+  let new_todos = flatten([todos, [todo]])
+  println("Added: {format_todo(todo)}")
+  (new_todos, next_id + 1)
+}
+
+-- Toggle the done status of a todo by id
+fn toggle_done(todos, id) {
+  let found = todos |> find { t -> t.id == id }
+  match found {
+    Some(_) -> {
+      let updated = todos |> map { t ->
+        match t.id == id {
+          true -> t.{ done: !t.done }
+          false -> t
+        }
+      }
+      let toggled = updated |> find { t -> t.id == id }
+      match toggled {
+        Some(t) -> println("Toggled: {format_todo(t)}")
+        None -> ()
+      }
+      updated
+    }
+    None -> {
+      println("Error: no todo with id {id}")
+      todos
+    }
+  }
+}
+
+-- Remove a todo by id
+fn remove_todo(todos, id) {
+  let found = todos |> find { t -> t.id == id }
+  match found {
+    Some(t) -> {
+      println("Removed: {format_todo(t)}")
+      todos |> filter { t -> t.id != id }
+    }
+    None -> {
+      println("Error: no todo with id {id}")
+      todos
+    }
+  }
+}
+
+-- List all todos
+fn list_all(todos) {
+  match len(todos) {
+    0 -> println("  (no todos)")
+    _ -> todos |> each { t -> println("  {format_todo(t)}") }
+  }
+}
+
+-- List only done todos
+fn list_done(todos) {
+  let done = todos |> filter { t -> t.done }
+  match len(done) {
+    0 -> println("  (no completed todos)")
+    _ -> done |> each { t -> println("  {format_todo(t)}") }
+  }
+}
+
+-- List only undone todos
+fn list_undone(todos) {
+  let undone = todos |> filter { t -> !t.done }
+  match len(undone) {
+    0 -> println("  (all done!)")
+    _ -> undone |> each { t -> println("  {format_todo(t)}") }
+  }
+}
+
+-- Save todos to file
+fn save_todos(todos, filename) {
+  let data = serialize_all(todos)
+  match io.write_file(filename, data) {
+    Ok(_) -> println("Saved {len(todos)} todo(s) to {filename}")
+    Err(e) -> println("Save error: {e}")
+  }
+}
+
+-- Load todos from file, returns (todos, next_id)
+fn load_todos(filename) {
+  match io.read_file(filename) {
+    Ok(content) -> {
+      let todos = deserialize_all(content)
+      let next = max_id(todos) + 1
+      println("Loaded {len(todos)} todo(s) from {filename}")
+      (todos, next)
+    }
+    Err(e) -> {
+      println("Load error: {e}")
+      ([], 1)
+    }
+  }
+}
+
+-- Print help
+fn print_help() {
+  println("Commands:")
+  println("  ADD <title>     -- add a new todo")
+  println("  DONE <id>       -- toggle done status")
+  println("  REMOVE <id>     -- remove a todo")
+  println("  LIST            -- list all todos")
+  println("  LIST DONE       -- list completed todos")
+  println("  LIST UNDONE     -- list pending todos")
+  println("  SAVE [file]     -- save to file (default: todos.txt)")
+  println("  LOAD [file]     -- load from file (default: todos.txt)")
+  println("  HELP            -- show this help")
+  println("  QUIT            -- exit")
+}
+
+-- Parse and execute a command
+-- Returns None to quit, Some((todos, next_id)) to continue
+fn execute(input, todos, next_id) {
+  let trimmed = string.trim(input)
+  let parts = string.split(trimmed, " ")
+
+  match parts {
+    ["QUIT", .._] -> {
+      println("Goodbye!")
+      None
+    }
+
+    ["HELP", .._] -> {
+      print_help()
+      Some((todos, next_id))
+    }
+
+    ["ADD", ..rest] -> {
+      let title = string.trim(string.join(rest, " "))
+      match title {
+        "" -> {
+          println("Error: ADD requires a title. Usage: ADD <title>")
+          Some((todos, next_id))
+        }
+        _ -> {
+          let (new_todos, new_id) = add_todo(todos, next_id, title)
+          Some((new_todos, new_id))
+        }
+      }
+    }
+
+    ["DONE", id_str, .._] -> {
+      match int.parse(id_str) {
+        Ok(id) -> {
+          let updated = toggle_done(todos, id)
+          Some((updated, next_id))
+        }
+        Err(_) -> {
+          println("Error: invalid id '{id_str}'. Usage: DONE <id>")
+          Some((todos, next_id))
+        }
+      }
+    }
+
+    ["REMOVE", id_str, .._] -> {
+      match int.parse(id_str) {
+        Ok(id) -> {
+          let updated = remove_todo(todos, id)
+          Some((updated, next_id))
+        }
+        Err(_) -> {
+          println("Error: invalid id '{id_str}'. Usage: REMOVE <id>")
+          Some((todos, next_id))
+        }
+      }
+    }
+
+    ["LIST", "DONE", .._] -> {
+      list_done(todos)
+      Some((todos, next_id))
+    }
+
+    ["LIST", "UNDONE", .._] -> {
+      list_undone(todos)
+      Some((todos, next_id))
+    }
+
+    ["LIST", .._] -> {
+      list_all(todos)
+      Some((todos, next_id))
+    }
+
+    ["SAVE", filename, .._] -> {
+      save_todos(todos, filename)
+      Some((todos, next_id))
+    }
+
+    ["SAVE"] -> {
+      save_todos(todos, "todos.txt")
+      Some((todos, next_id))
+    }
+
+    ["LOAD", filename, .._] -> {
+      let (new_todos, new_id) = load_todos(filename)
+      Some((new_todos, new_id))
+    }
+
+    ["LOAD"] -> {
+      let (new_todos, new_id) = load_todos("todos.txt")
+      Some((new_todos, new_id))
+    }
+
+    [""] -> Some((todos, next_id))
+
+    _ -> {
+      println("Unknown command: {trimmed}")
+      print_help()
+      Some((todos, next_id))
+    }
+  }
+}
+
+-- Main REPL loop using recursion (no while/for in Silt)
+fn repl(todos, next_id) {
+  print("todo> ")
+  match io.read_line() {
+    Ok(line) -> {
+      match execute(line, todos, next_id) {
+        Some((new_todos, new_id)) -> repl(new_todos, new_id)
+        None -> ()
+      }
+    }
+    Err(e) -> {
+      println("Read error: {e}")
+    }
+  }
+}
+
+fn main() {
+  println("=== Silt Todo Manager ===")
+  print_help()
+  println("")
+
+  let todos = []
+  let next_id = 1
+  repl(todos, next_id)
+}

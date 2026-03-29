@@ -1,0 +1,229 @@
+{-
+  kvstore.silt -- Mini key-value store with interactive command loop
+
+  === Friction Report ===
+
+  Recursive loop pattern vs while loop: 6/10 naturalness
+    The recursive loop is conceptually clean -- you pass the updated db as an
+    argument and the compiler (in theory) can TCO it. But it is noticeably more
+    ceremony than `while true { ... }`. Every command handler must remember to
+    call loop(new_db) at the end, and forgetting means silent termination.
+    The lack of `break` also means QUIT needs a special path (just don't recurse).
+
+  Map operations ergonomics: 7/10
+    map.set / map.get / map.delete are straightforward. The pipe-friendly
+    signatures (map first) work well. The main friction is that map.set returns
+    a new map, so you must thread the result through every code path. In a match
+    with many arms, every arm that modifies the db needs to produce the new map
+    and pass it to the recursive call -- easy to get wrong.
+
+  Lack of mutation pain: 7/10 painful
+    For a stateful REPL program, immutability forces an accumulator-passing
+    style. Every command must thread the db through. This is manageable for a
+    small program but would scale poorly. Shadowing (let db = map.set(db, ...))
+    helps readability but you still need to pass the right db to the loop call.
+    The SAVE/LOAD commands are especially awkward because they need to serialize
+    the map manually (no JSON stdlib).
+
+  Missing stdlib functions:
+    - string.substring / string.slice -- needed to extract "value" part after
+      "SET key " prefix. Had to use string.split + list indexing workaround.
+    - list.get(list, index) or list[index] -- no way to access the Nth element
+      of a list except via head/tail chaining or pattern matching. This is a
+      significant gap for split-and-access patterns.
+    - int.to_string -- only available via string interpolation "{n}" which is
+      fine but feels indirect when building serialization strings.
+    - map.entries or map.to_list -- would help serialization. Had to zip
+      keys and values manually.
+    - string.index_of -- would simplify parsing "SET key value" where the value
+      may contain spaces.
+
+  Confusing patterns / error messages:
+    - The when-else must diverge rule is good in theory, but "must diverge"
+      could be a confusing error message for newcomers.
+    - Pattern matching on the number of list elements from string.split is
+      verbose -- you need [a, b, ..rest] destructuring for every command arity.
+    - No way to do "catch-all with guard" cleanly -- you match the full
+      structure then check conditions.
+
+  Overall experience rating: 6/10
+    The language is pleasant for pure-functional tasks (map/filter/fold chains)
+    but a stateful REPL loop exposes friction: accumulator threading, verbose
+    command parsing without substring/indexing, and manual serialization. The
+    core is solid though -- pattern matching, pipes, and Option/Result are nice.
+-}
+
+-- Serialize a map to a simple "key=value\n" format
+fn serialize(db) {
+  let keys = map.keys(db)
+  keys
+  |> map { k ->
+    let val = map.get(db, k) |> unwrap_or("")
+    "{k}={val}"
+  }
+  |> string.join("\n")
+}
+
+-- Deserialize "key=value\n" format back to a map
+fn deserialize(text, db) {
+  let lines = string.split(text, "\n")
+  lines |> fold(db) { acc, line ->
+    let trimmed = string.trim(line)
+    match string.contains(trimmed, "=") {
+      true -> {
+        let parts = string.split(trimmed, "=")
+        match parts {
+          [key, ..rest] -> {
+            -- Rejoin rest with "=" in case value contained "="
+            let value = string.join(rest, "=")
+            match string.trim(key) {
+              "" -> acc
+              k -> map.set(acc, k, value)
+            }
+          }
+          _ -> acc
+        }
+      }
+      false -> acc
+    }
+  }
+}
+
+-- Extract the rest of a string after the first N space-separated tokens
+-- Returns the part after "CMD key " for SET commands
+fn get_rest_after(parts, skip) {
+  match skip {
+    0 -> string.join(parts, " ")
+    _ -> match parts {
+      [_, ..rest] -> get_rest_after(rest, skip - 1)
+      [] -> ""
+    }
+  }
+}
+
+-- Parse and execute a single command, return the (possibly updated) db
+-- Returns None to signal QUIT, Some(db) to continue
+fn execute(input, db) {
+  let trimmed = string.trim(input)
+  let parts = string.split(trimmed, " ")
+
+  match parts {
+    ["QUIT", .._] -> {
+      println("Goodbye!")
+      None
+    }
+
+    ["GET", key, .._] -> {
+      match map.get(db, key) {
+        Some(val) -> println("{key} = {val}")
+        None -> println("(not found)")
+      }
+      Some(db)
+    }
+
+    ["SET", key, ..rest] -> {
+      let value = string.join(rest, " ")
+      match string.trim(value) {
+        "" -> {
+          println("ERR: SET requires a value. Usage: SET key value")
+          Some(db)
+        }
+        v -> {
+          let new_db = map.set(db, key, v)
+          println("OK")
+          Some(new_db)
+        }
+      }
+    }
+
+    ["DEL", key, .._] -> {
+      match map.get(db, key) {
+        Some(_) -> {
+          let new_db = map.delete(db, key)
+          println("OK (deleted)")
+          Some(new_db)
+        }
+        None -> {
+          println("(not found)")
+          Some(db)
+        }
+      }
+    }
+
+    ["KEYS", .._] -> {
+      let keys = map.keys(db)
+      match len(keys) {
+        0 -> println("(empty)")
+        _ -> {
+          keys |> each { k -> println("  {k}") }
+        }
+      }
+      Some(db)
+    }
+
+    ["COUNT", .._] -> {
+      let keys = map.keys(db)
+      let n = len(keys)
+      println("{n} key(s)")
+      Some(db)
+    }
+
+    ["SAVE", filename, .._] -> {
+      let data = serialize(db)
+      match io.write_file(filename, data) {
+        Ok(_) -> println("OK (saved to {filename})")
+        Err(e) -> println("ERR: {e}")
+      }
+      Some(db)
+    }
+
+    ["LOAD", filename, .._] -> {
+      match io.read_file(filename) {
+        Ok(content) -> {
+          let new_db = deserialize(content, #{})
+          let n = len(map.keys(new_db))
+          println("OK (loaded {n} key(s) from {filename})")
+          Some(new_db)
+        }
+        Err(e) -> {
+          println("ERR: {e}")
+          Some(db)
+        }
+      }
+    }
+
+    ["", .._] -> Some(db)
+
+    _ -> {
+      println("Unknown command: {trimmed}")
+      println("Commands: GET key | SET key value | DEL key | KEYS | COUNT | SAVE file | LOAD file | QUIT")
+      Some(db)
+    }
+  }
+}
+
+-- Main REPL loop using recursion (no while/for in Silt)
+fn repl(db) {
+  print("kvstore> ")
+  match io.read_line() {
+    Ok(line) -> {
+      match execute(line, db) {
+        Some(new_db) -> repl(new_db)
+        None -> db
+      }
+    }
+    Err(e) -> {
+      println("Read error: {e}")
+      db
+    }
+  }
+}
+
+fn main() {
+  println("=== Silt Key-Value Store ===")
+  println("Commands: GET key | SET key value | DEL key | KEYS | COUNT | SAVE file | LOAD file | QUIT")
+  println("")
+
+  let db = #{}
+  repl(db)
+}
