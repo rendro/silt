@@ -67,7 +67,7 @@ pub enum ExprKind {
 
     // Control flow
     Match {
-        expr: Box<Expr>,
+        expr: Option<Box<Expr>>,
         arms: Vec<MatchArm>,
     },
     Return(Option<Box<Expr>>),

@@ -2040,28 +2040,51 @@ impl TypeChecker {
             }
 
             ExprKind::Match { expr: scrutinee, arms } => {
-                let scrutinee_ty = self.infer_expr(scrutinee, env);
-                let result_ty = self.fresh_var();
+                match scrutinee {
+                    Some(scrutinee) => {
+                        let scrutinee_ty = self.infer_expr(scrutinee, env);
+                        let result_ty = self.fresh_var();
 
-                for arm in arms {
-                    let mut arm_env = env.child();
-                    self.check_pattern(&arm.pattern, &scrutinee_ty, &mut arm_env, scrutinee.span);
+                        for arm in arms {
+                            let mut arm_env = env.child();
+                            self.check_pattern(&arm.pattern, &scrutinee_ty, &mut arm_env, scrutinee.span);
 
-                    if let Some(ref guard) = arm.guard {
-                        let guard_ty = self.infer_expr(guard, &mut arm_env);
-                        self.unify(&guard_ty, &Type::Bool, guard.span);
+                            if let Some(ref guard) = arm.guard {
+                                let guard_ty = self.infer_expr(guard, &mut arm_env);
+                                self.unify(&guard_ty, &Type::Bool, guard.span);
+                            }
+
+                            let arm_ty = self.infer_expr(&arm.body, &mut arm_env);
+                            self.unify(&result_ty, &arm_ty, arm.body.span);
+                        }
+
+                        // Check exhaustiveness after pattern checking, so the
+                        // scrutinee type is fully resolved through unification.
+                        let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
+                        self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee.span);
+
+                        result_ty
                     }
+                    None => {
+                        // Guardless match: each arm's guard is a boolean condition
+                        let result_ty = self.fresh_var();
 
-                    let arm_ty = self.infer_expr(&arm.body, &mut arm_env);
-                    self.unify(&result_ty, &arm_ty, arm.body.span);
+                        for arm in arms {
+                            let mut arm_env = env.child();
+
+                            if let Some(ref guard) = arm.guard {
+                                let guard_ty = self.infer_expr(guard, &mut arm_env);
+                                self.unify(&guard_ty, &Type::Bool, guard.span);
+                            }
+
+                            let arm_ty = self.infer_expr(&arm.body, &mut arm_env);
+                            self.unify(&result_ty, &arm_ty, arm.body.span);
+                        }
+
+                        // No exhaustiveness checking for guardless match
+                        result_ty
+                    }
                 }
-
-                // Check exhaustiveness after pattern checking, so the
-                // scrutinee type is fully resolved through unification.
-                let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
-                self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee.span);
-
-                result_ty
             }
 
             ExprKind::Return(maybe_expr) => {

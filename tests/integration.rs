@@ -1078,3 +1078,77 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("greater".into()));
 }
+
+// ── Guardless match ────────────────────────────────────────────────
+
+#[test]
+fn test_guardless_match_basic() {
+    let result = run(r#"
+fn main() {
+  let x = 7
+  match {
+    x > 10 -> "big"
+    x > 5 -> "medium"
+    _ -> "small"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("medium".into()));
+}
+
+#[test]
+fn test_guardless_match_first_wins() {
+    let result = run(r#"
+fn main() {
+  let x = 15
+  match {
+    x > 5 -> "first"
+    x > 10 -> "second"
+    _ -> "default"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("first".into()));
+}
+
+#[test]
+fn test_guardless_match_default() {
+    let result = run(r#"
+fn main() {
+  match {
+    false -> "nope"
+    _ -> "default"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("default".into()));
+}
+
+#[test]
+fn test_guardless_match_as_expression() {
+    let result = run(r#"
+fn main() {
+  let x = 3
+  let label = match {
+    x > 10 -> "big"
+    x > 0 -> "positive"
+    _ -> "non-positive"
+  }
+  label
+}
+    "#);
+    assert_eq!(result, Value::String("positive".into()));
+}
+
+#[test]
+fn test_normal_match_still_works() {
+    let result = run(r#"
+fn main() {
+  match 42 {
+    0 -> "zero"
+    _ -> "nonzero"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("nonzero".into()));
+}

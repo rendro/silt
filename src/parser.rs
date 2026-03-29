@@ -1259,36 +1259,71 @@ impl Parser {
         let span = self.span();
         self.expect(&Token::Match)?;
         self.skip_nl();
-        // Set flag so is_trailing_closure returns false while parsing the
-        // scrutinee. This allows comparison/equality/boolean operators (which
-        // have lower bp than the old threshold of 116) while still preventing
-        // the match body `{` from being consumed as a trailing closure.
-        // Save and restore the flag to handle nested match expressions.
-        let prev = self.in_match_scrutinee;
-        self.in_match_scrutinee = true;
-        let scrutinee = self.parse_expr()?;
-        self.in_match_scrutinee = prev;
+
+        // Guardless match: `match { cond -> body, ... }`
+        let guardless = self.at(&Token::LBrace);
+        let scrutinee = if guardless {
+            None
+        } else {
+            // Set flag so is_trailing_closure returns false while parsing the
+            // scrutinee. This allows comparison/equality/boolean operators (which
+            // have lower bp than the old threshold of 116) while still preventing
+            // the match body `{` from being consumed as a trailing closure.
+            // Save and restore the flag to handle nested match expressions.
+            let prev = self.in_match_scrutinee;
+            self.in_match_scrutinee = true;
+            let expr = self.parse_expr()?;
+            self.in_match_scrutinee = prev;
+            Some(Box::new(expr))
+        };
+
         self.expect(&Token::LBrace)?;
         self.skip_nl();
 
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
-            arms.push(self.parse_match_arm()?);
+            arms.push(self.parse_match_arm(guardless)?);
             self.skip_nl();
         }
         self.expect(&Token::RBrace)?;
 
         Ok(Expr::new(
             ExprKind::Match {
-                expr: Box::new(scrutinee),
+                expr: scrutinee,
                 arms,
             },
             span,
         ))
     }
 
-    fn parse_match_arm(&mut self) -> Result<MatchArm> {
+    fn parse_match_arm(&mut self, guardless: bool) -> Result<MatchArm> {
         self.skip_nl();
+
+        if guardless {
+            // Guardless match: each arm's LHS is a boolean expression or `_`
+            let is_wildcard = matches!(self.peek(), Token::Ident(ref name) if name == "_");
+            if is_wildcard {
+                self.advance();
+                self.expect(&Token::Arrow)?;
+                self.skip_nl();
+                let body = self.parse_expr()?;
+                return Ok(MatchArm {
+                    pattern: Pattern::Wildcard,
+                    guard: None,
+                    body,
+                });
+            }
+            let condition = self.parse_expr()?;
+            self.expect(&Token::Arrow)?;
+            self.skip_nl();
+            let body = self.parse_expr()?;
+            return Ok(MatchArm {
+                pattern: Pattern::Wildcard,
+                guard: Some(Box::new(condition)),
+                body,
+            });
+        }
+
         let pattern = self.parse_pattern()?;
 
         // Optional guard: `when condition`

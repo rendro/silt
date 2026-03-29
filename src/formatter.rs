@@ -404,16 +404,31 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Match { expr, arms } => {
-            let scrutinee = format_expr(expr, depth);
-            let arm_strs: Vec<String> = arms
-                .iter()
-                .map(|arm| format_match_arm(arm, depth + 1))
-                .collect();
-            format!(
-                "match {scrutinee} {{\n{}\n{}}}",
-                arm_strs.join("\n"),
-                indent(depth)
-            )
+            match expr {
+                Some(scrutinee) => {
+                    let scrutinee_str = format_expr(scrutinee, depth);
+                    let arm_strs: Vec<String> = arms
+                        .iter()
+                        .map(|arm| format_match_arm(arm, depth + 1, false))
+                        .collect();
+                    format!(
+                        "match {scrutinee_str} {{\n{}\n{}}}",
+                        arm_strs.join("\n"),
+                        indent(depth)
+                    )
+                }
+                None => {
+                    let arm_strs: Vec<String> = arms
+                        .iter()
+                        .map(|arm| format_match_arm(arm, depth + 1, true))
+                        .collect();
+                    format!(
+                        "match {{\n{}\n{}}}",
+                        arm_strs.join("\n"),
+                        indent(depth)
+                    )
+                }
+            }
         }
 
         ExprKind::Return(val) => {
@@ -497,18 +512,34 @@ fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
     }
 }
 
-fn format_match_arm(arm: &MatchArm, depth: usize) -> String {
+fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
     let prefix = indent(depth);
-    let pat = format_pattern(&arm.pattern);
-    let guard = if let Some(g) = &arm.guard {
-        format!(" when {}", format_expr(g, depth))
+    if guardless {
+        // Guardless match: print the condition expression or `_` for bare wildcard
+        if let Some(g) = &arm.guard {
+            format!(
+                "{prefix}{} -> {}",
+                format_expr(g, depth),
+                format_expr(&arm.body, depth)
+            )
+        } else {
+            format!(
+                "{prefix}_ -> {}",
+                format_expr(&arm.body, depth)
+            )
+        }
     } else {
-        String::new()
-    };
-    format!(
-        "{prefix}{pat}{guard} -> {}",
-        format_expr(&arm.body, depth)
-    )
+        let pat = format_pattern(&arm.pattern);
+        let guard = if let Some(g) = &arm.guard {
+            format!(" when {}", format_expr(g, depth))
+        } else {
+            String::new()
+        };
+        format!(
+            "{prefix}{pat}{guard} -> {}",
+            format_expr(&arm.body, depth)
+        )
+    }
 }
 
 fn format_pattern(pattern: &Pattern) -> String {

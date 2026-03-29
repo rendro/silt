@@ -545,8 +545,13 @@ impl Interpreter {
             }
 
             ExprKind::Match { expr, arms } => {
-                let val = self.eval(expr, env)?;
-                self.eval_match(&val, arms, env, tail)
+                match expr {
+                    Some(scrutinee) => {
+                        let val = self.eval(scrutinee, env)?;
+                        self.eval_match(&val, arms, env, tail)
+                    }
+                    None => self.eval_guardless_match(arms, env, tail),
+                }
             }
 
             ExprKind::Select { arms } => {
@@ -1147,6 +1152,21 @@ impl Interpreter {
             }
         }
         Err(err(format!("non-exhaustive match: no arm matched {val}")))
+    }
+
+    fn eval_guardless_match(&self, arms: &[MatchArm], env: &Env, tail: bool) -> Result<Value> {
+        for arm in arms {
+            if let Some(condition) = &arm.guard {
+                let cond_val = self.eval(condition, env)?;
+                if is_truthy(&cond_val) {
+                    return self.eval_inner(&arm.body, env, tail);
+                }
+            } else {
+                // Bare wildcard — always matches (default/else case)
+                return self.eval_inner(&arm.body, env, tail);
+            }
+        }
+        Err(err("non-exhaustive match: no condition was true"))
     }
 
     fn try_bind_pattern(&self, pattern: &Pattern, val: &Value, env: &Env) -> bool {
