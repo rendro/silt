@@ -677,6 +677,7 @@ impl Interpreter {
             "each" if args.len() == 2 => Some(self.builtin_each(&args[0], &args[1])),
             "fold" if args.len() == 3 => Some(self.builtin_fold(&args[0], &args[1], &args[2])),
             "find" if args.len() == 2 => Some(self.builtin_find(&args[0], &args[1])),
+            "sort_by" if args.len() == 2 => Some(self.builtin_sort_by(&args[0], &args[1])),
             _ => None,
         }
     }
@@ -738,6 +739,20 @@ impl Interpreter {
             }
         }
         Ok(Value::Variant("None".into(), Vec::new()))
+    }
+
+    fn builtin_sort_by(&self, list: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to sort_by must be a list"));
+        };
+        let mut pairs: Vec<(Value, Value)> = Vec::new();
+        for item in xs.iter() {
+            let key = self.call_value(func, &[item.clone()])?;
+            pairs.push((key, item.clone()));
+        }
+        pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
+        Ok(Value::List(Rc::new(sorted)))
     }
 
     // ── Concurrency builtins ────────────────────────────────────────
@@ -1942,6 +1957,17 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(sorted)))
     }));
 
+    // Placeholder: actual closure-based sort_by is handled by try_collection_builtin
+    env.define("sort_by".into(), builtin("sort_by", |args| {
+        if args.len() != 2 {
+            return Err("sort_by takes 2 arguments (list, key_fn)".into());
+        }
+        let Value::List(_) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        Err("sort_by requires closure argument (use pipeline syntax)".into())
+    }));
+
     env.define("list.contains".into(), builtin("list.contains", |args| {
         if args.len() != 2 {
             return Err("list.contains takes 2 arguments".into());
@@ -1960,6 +1986,33 @@ fn register_builtins(env: &Env) {
             return Err("list.length requires a list".into());
         };
         Ok(Value::Int(xs.len() as i64))
+    }));
+
+    env.define("list.append".into(), builtin("list.append", |args| {
+        if args.len() != 2 {
+            return Err("list.append takes 2 arguments (list, element)".into());
+        }
+        let Value::List(xs) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        let mut new = (**xs).clone();
+        new.push(args[1].clone());
+        Ok(Value::List(Rc::new(new)))
+    }));
+
+    env.define("list.concat".into(), builtin("list.concat", |args| {
+        if args.len() != 2 {
+            return Err("list.concat takes 2 arguments (list, list)".into());
+        }
+        let Value::List(a) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        let Value::List(b) = &args[1] else {
+            return Err("second argument must be a list".into());
+        };
+        let mut new = (**a).clone();
+        new.extend((**b).iter().cloned());
+        Ok(Value::List(Rc::new(new)))
     }));
 
     // ── result module ───────────────────────────────────────────────
@@ -2167,6 +2220,101 @@ fn register_builtins(env: &Env) {
             return Err("string.repeat count must be non-negative".into());
         }
         Ok(Value::String(s.repeat(*n as usize)))
+    }));
+
+    // ── list.get ────────────────────────────────────────────────────
+
+    env.define("list.get".into(), builtin("list.get", |args| {
+        if args.len() != 2 { return Err("list.get takes 2 arguments (list, index)".into()); }
+        let Value::List(xs) = &args[0] else { return Err("first argument must be a list".into()); };
+        let Value::Int(n) = &args[1] else { return Err("second argument must be an int".into()); };
+        let idx = *n as usize;
+        match xs.get(idx) {
+            Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+            None => Ok(Value::Variant("None".into(), Vec::new())),
+        }
+    }));
+
+    // ── list.take ───────────────────────────────────────────────────
+
+    env.define("list.take".into(), builtin("list.take", |args| {
+        if args.len() != 2 { return Err("list.take takes 2 arguments (list, n)".into()); }
+        let Value::List(xs) = &args[0] else { return Err("first argument must be a list".into()); };
+        let Value::Int(n) = &args[1] else { return Err("second argument must be an int".into()); };
+        let n = (*n as usize).min(xs.len());
+        Ok(Value::List(Rc::new(xs[..n].to_vec())))
+    }));
+
+    // ── list.drop ───────────────────────────────────────────────────
+
+    env.define("list.drop".into(), builtin("list.drop", |args| {
+        if args.len() != 2 { return Err("list.drop takes 2 arguments (list, n)".into()); }
+        let Value::List(xs) = &args[0] else { return Err("first argument must be a list".into()); };
+        let Value::Int(n) = &args[1] else { return Err("second argument must be an int".into()); };
+        let n = (*n as usize).min(xs.len());
+        Ok(Value::List(Rc::new(xs[n..].to_vec())))
+    }));
+
+    // ── list.enumerate ──────────────────────────────────────────────
+
+    env.define("list.enumerate".into(), builtin("list.enumerate", |args| {
+        if args.len() != 1 { return Err("list.enumerate takes 1 argument".into()); }
+        let Value::List(xs) = &args[0] else { return Err("argument must be a list".into()); };
+        let result: Vec<Value> = xs.iter().enumerate()
+            .map(|(i, v)| Value::Tuple(vec![Value::Int(i as i64), v.clone()]))
+            .collect();
+        Ok(Value::List(Rc::new(result)))
+    }));
+
+    // ── string.index_of ─────────────────────────────────────────────
+
+    env.define("string.index_of".into(), builtin("string.index_of", |args| {
+        if args.len() != 2 { return Err("string.index_of takes 2 arguments".into()); }
+        let (Value::String(s), Value::String(needle)) = (&args[0], &args[1]) else {
+            return Err("string.index_of requires string arguments".into());
+        };
+        match s.find(needle.as_str()) {
+            Some(idx) => Ok(Value::Variant("Some".into(), vec![Value::Int(idx as i64)])),
+            None => Ok(Value::Variant("None".into(), Vec::new())),
+        }
+    }));
+
+    // ── string.slice ────────────────────────────────────────────────
+
+    env.define("string.slice".into(), builtin("string.slice", |args| {
+        if args.len() != 3 { return Err("string.slice takes 3 arguments (string, start, end)".into()); }
+        let Value::String(s) = &args[0] else { return Err("first argument must be a string".into()); };
+        let Value::Int(start) = &args[1] else { return Err("second argument must be an int".into()); };
+        let Value::Int(end) = &args[2] else { return Err("third argument must be an int".into()); };
+        let start = (*start as usize).min(s.len());
+        let end = (*end as usize).min(s.len());
+        if start > end {
+            Ok(Value::String(String::new()))
+        } else {
+            // Handle UTF-8 safely using char indices
+            let chars: Vec<char> = s.chars().collect();
+            let start = start.min(chars.len());
+            let end = end.min(chars.len());
+            Ok(Value::String(chars[start..end].iter().collect()))
+        }
+    }));
+
+    // ── float.min / float.max ───────────────────────────────────────
+
+    env.define("float.min".into(), builtin("float.min", |args| {
+        if args.len() != 2 { return Err("float.min takes 2 arguments".into()); }
+        let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else {
+            return Err("float.min requires float arguments".into());
+        };
+        Ok(Value::Float(a.min(*b)))
+    }));
+
+    env.define("float.max".into(), builtin("float.max", |args| {
+        if args.len() != 2 { return Err("float.max takes 2 arguments".into()); }
+        let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else {
+            return Err("float.max requires float arguments".into());
+        };
+        Ok(Value::Float(a.max(*b)))
     }));
 }
 

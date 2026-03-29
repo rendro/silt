@@ -23,11 +23,12 @@ type Result<T> = std::result::Result<T, ParseError>;
 pub struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
+    in_match_scrutinee: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, in_match_scrutinee: false }
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -1101,11 +1102,29 @@ impl Parser {
     // ── Trailing closures ────────────────────────────────────────────
 
     fn is_trailing_closure(&self) -> bool {
+        // When parsing a match scrutinee, the `{` is always the match body,
+        // never a trailing closure.
+        if self.in_match_scrutinee {
+            return false;
+        }
         // Check if the current `{` starts a trailing closure by looking for `->`.
         if self.peek() != &Token::LBrace {
             return false;
         }
         let mut i = self.pos + 1; // skip `{`
+        // Skip leading newlines to find the first real token
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        // If the first real token is a literal or wildcard `_`, this is a match
+        // body (patterns like `0 ->`, `true ->`, `_ ->`), not a trailing closure.
+        if i < self.tokens.len() {
+            match &self.tokens[i].0 {
+                Token::Int(_) | Token::Float(_) | Token::Bool(_) => return false,
+                Token::Ident(name) if name == "_" => return false,
+                _ => {}
+            }
+        }
         let mut depth = 0;
         while i < self.tokens.len() {
             match &self.tokens[i].0 {
@@ -1240,9 +1259,15 @@ impl Parser {
         let span = self.span();
         self.expect(&Token::Match)?;
         self.skip_nl();
-        // Use min_bp=116 to allow calls (120) and field access (130)
-        // but prevent trailing closure (115) from consuming the match body `{`.
-        let scrutinee = self.parse_expr_bp(116)?;
+        // Set flag so is_trailing_closure returns false while parsing the
+        // scrutinee. This allows comparison/equality/boolean operators (which
+        // have lower bp than the old threshold of 116) while still preventing
+        // the match body `{` from being consumed as a trailing closure.
+        // Save and restore the flag to handle nested match expressions.
+        let prev = self.in_match_scrutinee;
+        self.in_match_scrutinee = true;
+        let scrutinee = self.parse_expr()?;
+        self.in_match_scrutinee = prev;
         self.expect(&Token::LBrace)?;
         self.skip_nl();
 

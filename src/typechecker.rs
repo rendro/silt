@@ -1279,6 +1279,14 @@ impl TypeChecker {
                     "Float" => Type::Float,
                     "Bool" => Type::Bool,
                     "String" => Type::String,
+                    "List" => {
+                        // List without explicit type param => List(fresh_var)
+                        Type::List(Box::new(self.fresh_var()))
+                    }
+                    "Map" => {
+                        // Map without explicit type params => Map(fresh_var, fresh_var)
+                        Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
+                    }
                     _ => {
                         // Could be a record or enum type with no params
                         Type::Generic(name.clone(), vec![])
@@ -1291,8 +1299,14 @@ impl TypeChecker {
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 match name.as_str() {
+                    "List" if resolved_args.is_empty() => {
+                        Type::List(Box::new(self.fresh_var()))
+                    }
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Map" if resolved_args.is_empty() => {
+                        Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
                     }
                     "Map" if resolved_args.len() == 2 => {
                         let mut iter = resolved_args.into_iter();
@@ -3330,5 +3344,65 @@ fn main() {
         "#);
         assert!(errors.iter().any(|e| e.message.contains("does not implement") || e.message.contains("Showable")),
             "expected constraint violation error, got: {:?}", errors);
+    }
+
+    // ── Record types with generic fields (List, Map) ───────────────
+
+    #[test]
+    fn test_record_with_list_field() {
+        assert_no_errors(r#"
+type Bag {
+  items: List,
+  name: String,
+}
+
+fn main() {
+  let b = Bag { items: [1, 2, 3], name: "test" }
+  b.name
+}
+        "#);
+    }
+
+    #[test]
+    fn test_record_with_map_field() {
+        assert_no_errors(r#"
+type Config {
+  data: Map,
+}
+
+fn main() {
+  let c = Config { data: #{ "key": "value" } }
+  c.data
+}
+        "#);
+    }
+
+    #[test]
+    fn test_record_with_list_and_map_fields() {
+        assert_no_errors(r#"
+type Config {
+  values: Map,
+  errors: List,
+}
+
+fn main() {
+  let c = Config { values: #{ "a": 1 }, errors: ["err1", "err2"] }
+  c.values
+}
+        "#);
+    }
+
+    #[test]
+    fn test_record_with_list_field_access() {
+        assert_no_errors(r#"
+type Bag {
+  items: List,
+}
+
+fn main() {
+  let b = Bag { items: [1, 2, 3] }
+  b.items
+}
+        "#);
     }
 }

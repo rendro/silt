@@ -962,3 +962,119 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(3628800));
 }
+
+// ── List append and concat ──────────────────────────────────────────
+
+#[test]
+fn test_list_append() {
+    let result = run(r#"
+fn main() {
+  list.append([1, 2, 3], 4)
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+}
+
+#[test]
+fn test_list_concat() {
+    let result = run(r#"
+fn main() {
+  list.concat([1, 2], [3, 4])
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+}
+
+// ── Stdlib: list.get, string.index_of, string.slice, etc. ──────────
+
+#[test]
+fn test_list_get() {
+    let result = run(r#"fn main() { list.get([10, 20, 30], 1) }"#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(20)]));
+}
+
+#[test]
+fn test_list_get_out_of_bounds() {
+    let result = run(r#"fn main() { list.get([1, 2], 5) }"#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}
+
+#[test]
+fn test_string_index_of() {
+    let result = run(r#"fn main() { string.index_of("hello world", "world") }"#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(6)]));
+}
+
+#[test]
+fn test_string_index_of_not_found() {
+    let result = run(r#"fn main() { string.index_of("hello", "xyz") }"#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}
+
+#[test]
+fn test_string_slice() {
+    let result = run(r#"fn main() { string.slice("hello world", 0, 5) }"#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_list_take() {
+    let result = run(r#"fn main() { list.take([1, 2, 3, 4, 5], 3) }"#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+}
+
+#[test]
+fn test_list_drop() {
+    let result = run(r#"fn main() { list.drop([1, 2, 3, 4, 5], 2) }"#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)])));
+}
+
+#[test]
+fn test_list_enumerate() {
+    let result = run(r#"fn main() { list.enumerate(["a", "b"]) }"#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::Tuple(vec![Value::Int(0), Value::String("a".into())]),
+        Value::Tuple(vec![Value::Int(1), Value::String("b".into())]),
+    ])));
+}
+
+#[test]
+fn test_float_min_max() {
+    let result = run(r#"fn main() { (float.min(3.14, 2.71), float.max(3.14, 2.71)) }"#);
+    assert_eq!(result, Value::Tuple(vec![Value::Float(2.71), Value::Float(3.14)]));
+}
+
+// ── sort_by ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_sort_by() {
+    let result = run(r#"
+fn main() {
+  let words = ["banana", "apple", "cherry"]
+  words |> sort_by { w -> string.length(w) }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::String("apple".into()),
+        Value::String("banana".into()),
+        Value::String("cherry".into()),
+    ])));
+}
+
+// ── Match with comparison scrutinee ─────────────────────────────────
+
+#[test]
+fn test_match_comparison_scrutinee() {
+    let result = run(r#"
+fn classify(a, b) {
+  match a > b {
+    true -> "greater"
+    false -> "not greater"
+  }
+}
+fn main() {
+  classify(5, 3)
+}
+    "#);
+    assert_eq!(result, Value::String("greater".into()));
+}
