@@ -337,7 +337,7 @@ import io
 fn main() {
   let args = io.args()
   -- just verify it returns a list
-  len(args)
+  list.length(args)
 }
     "#).tokenize().expect("lexer error");
     let program = Parser::new(tokens).parse_program().expect("parse error");

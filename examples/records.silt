@@ -15,9 +15,9 @@ fn main() {
   ]
 
   users
-  |> filter { u -> u.active }
-  |> map { u -> birthday(u) }
-  |> each { u ->
+  |> list.filter { u -> u.active }
+  |> list.map { u -> birthday(u) }
+  |> list.each { u ->
     println("{u.name} is now {u.age}")
   }
 }

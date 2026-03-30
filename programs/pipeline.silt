@@ -53,24 +53,24 @@
 
 -- Filter lines containing a pattern
 fn grep(lines, pattern) {
-  lines |> filter { line -> string.contains(line, pattern) }
+  lines |> list.filter { line -> string.contains(line, pattern) }
 }
 
 -- Transform all lines to uppercase
 fn uppercase(lines) {
-  lines |> map { line -> string.to_upper(line) }
+  lines |> list.map { line -> string.to_upper(line) }
 }
 
 -- Transform all lines to lowercase
 fn lowercase(lines) {
-  lines |> map { line -> string.to_lower(line) }
+  lines |> list.map { line -> string.to_lower(line) }
 }
 
 -- Prepend line numbers: "  1 | some text"
 fn numbered(lines) {
-  let indices = 1..(len(lines) + 1)
-  zip(indices, lines)
-  |> map { pair ->
+  let indices = 1..(list.length(lines) + 1)
+  list.zip(indices, lines)
+  |> list.map { pair ->
     let (i, line) = pair
     match i < 10 {
       true -> "  {i} | {line}"
@@ -81,11 +81,11 @@ fn numbered(lines) {
 
 -- Count words per line, return list of (count, line) tuples
 fn word_count(lines) {
-  lines |> map { line ->
+  lines |> list.map { line ->
     let words = line
       |> string.split(" ")
-      |> filter { w -> len(w) > 0 }
-    let count = len(words)
+      |> list.filter { w -> string.length(w) > 0 }
+    let count = list.length(words)
     (count, line)
   }
 }
@@ -93,9 +93,9 @@ fn word_count(lines) {
 -- Sort lines by their length (shortest first)
 -- Strategy: zip with lengths, sort tuples (sorts by first element), extract lines
 fn sort_by_length(lines) {
-  let with_lengths = lines |> map { line -> (string.length(line), line) }
+  let with_lengths = lines |> list.map { line -> (string.length(line), line) }
   let sorted = list.sort(with_lengths)
-  sorted |> map { pair ->
+  sorted |> list.map { pair ->
     let (_, line) = pair
     line
   }
@@ -104,13 +104,13 @@ fn sort_by_length(lines) {
 -- Take the first n items from a list
 -- Strategy: zip with indices, filter by index < n, extract items
 fn take(lines, n) {
-  let indices = 0..(len(lines))
-  zip(indices, lines)
-  |> filter { pair ->
+  let indices = 0..(list.length(lines))
+  list.zip(indices, lines)
+  |> list.filter { pair ->
     let (i, _) = pair
     i < n
   }
-  |> map { pair ->
+  |> list.map { pair ->
     let (_, line) = pair
     line
   }
@@ -119,11 +119,11 @@ fn take(lines, n) {
 -- Remove consecutive duplicate lines
 -- Strategy: fold, keeping track of previous line via tuple accumulator
 fn uniq(lines) {
-  let result = lines |> fold(([], "")) { state, line ->
+  let result = lines |> list.fold(([], "")) { state, line ->
     let (acc, prev) = state
     match line == prev {
       true -> (acc, prev)
-      false -> (flatten([acc, [line]]), line)
+      false -> (list.flatten([acc, [line]]), line)
     }
   }
   let (unique_lines, _) = result
@@ -132,18 +132,18 @@ fn uniq(lines) {
 
 -- Drop lines matching a pattern (inverse of grep)
 fn reject(lines, pattern) {
-  lines |> filter { line -> !string.contains(line, pattern) }
+  lines |> list.filter { line -> !string.contains(line, pattern) }
 }
 
 -- Extract a field by position (split on whitespace, take nth token)
 -- Returns the token or "" if index is out of bounds
 fn extract_field(lines, field_idx) {
-  lines |> map { line ->
+  lines |> list.map { line ->
     let parts = line
       |> string.split(" ")
-      |> filter { w -> len(w) > 0 }
-    let indexed = zip(0..(len(parts)), parts)
-    let found = indexed |> find { pair ->
+      |> list.filter { w -> string.length(w) > 0 }
+    let indexed = list.zip(0..(list.length(parts)), parts)
+    let found = indexed |> list.find { pair ->
       let (i, _) = pair
       i == field_idx
     }
@@ -159,20 +159,20 @@ fn extract_field(lines, field_idx) {
 
 -- Count total items (returns an Int, terminates the pipeline)
 fn count(lines) {
-  len(lines)
+  list.length(lines)
 }
 
 -- Format as a summary string
 fn summarize(lines) {
-  let total = len(lines)
+  let total = list.length(lines)
   let total_words = lines
-    |> map { line ->
+    |> list.map { line ->
       line
       |> string.split(" ")
-      |> filter { w -> len(w) > 0 }
-      |> len()
+      |> list.filter { w -> string.length(w) > 0 }
+      |> list.length()
     }
-    |> fold(0) { acc, n -> acc + n }
+    |> list.fold(0) { acc, n -> acc + n }
   "total lines: {total}, total words: {total_words}"
 }
 
@@ -180,14 +180,14 @@ fn summarize(lines) {
 -- Returns a function that can be used in a pipeline
 fn make_grep(pattern) {
   fn(lines) {
-    lines |> filter { line -> string.contains(line, pattern) }
+    lines |> list.filter { line -> string.contains(line, pattern) }
   }
 }
 
 -- Higher-order: create a transformer that trims and applies a function
 fn make_transformer(transform_fn) {
   fn(lines) {
-    lines |> map { line ->
+    lines |> list.map { line ->
       let trimmed = string.trim(line)
       transform_fn(trimmed)
     }
@@ -214,9 +214,9 @@ fn main() {
   -- Split into lines and remove empty trailing line
   let lines = content
     |> string.split("\n")
-    |> filter { line -> len(line) > 0 }
+    |> list.filter { line -> string.length(line) > 0 }
 
-  println("--- All {len(lines)} log lines loaded ---")
+  println("--- All {list.length(lines)} log lines loaded ---")
   println("")
 
   -- ─── Pipeline 1: Find and display errors ──────────────────
@@ -225,7 +225,7 @@ fn main() {
     |> grep("ERROR")
     |> uppercase()
     |> numbered()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -235,7 +235,7 @@ fn main() {
     |> grep("WARN")
     |> sort_by_length()
     |> numbered()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -244,7 +244,7 @@ fn main() {
   lines
     |> grep("ERROR")
     |> word_count()
-    |> each { pair ->
+    |> list.each { pair ->
       let (wc, line) = pair
       println("  [{wc} words] {line}")
     }
@@ -258,7 +258,7 @@ fn main() {
     |> uniq()
     |> take(5)
     |> numbered()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -267,8 +267,8 @@ fn main() {
   lines
     |> grep("ERROR")
     |> extract_field(1)
-    |> map { time -> "  at {time}" }
-    |> each { line -> println(line) }
+    |> list.map { time -> "  at {time}" }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -316,7 +316,7 @@ fn main() {
     |> sort_by_length()
     |> lowercase()
     |> numbered()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -324,7 +324,7 @@ fn main() {
   println("=== Pipeline 10: Longest error message ===")
   let longest_error = lines
     |> grep("ERROR")
-    |> fold("") { longest, line ->
+    |> list.fold("") { longest, line ->
       match string.length(line) > string.length(longest) {
         true -> line
         false -> longest
@@ -337,14 +337,14 @@ fn main() {
   -- ─── Pipeline 11: Using zip for parallel iteration ────────
   println("=== Pipeline 11: Errors with their severity index ===")
   let error_lines = lines |> grep("ERROR")
-  let severity = 1..(len(error_lines) + 1)
-  zip(severity, error_lines)
-    |> map { pair ->
+  let severity = 1..(list.length(error_lines) + 1)
+  list.zip(severity, error_lines)
+    |> list.map { pair ->
       let (idx, line) = pair
       "  severity #{idx}: {line}"
     }
     |> list.reverse()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
 
@@ -355,7 +355,7 @@ fn main() {
     |> take(3)
     |> uppercase()
     |> numbered()
-    |> each { line -> println(line) }
+    |> list.each { line -> println(line) }
 
   println("")
   println("=== Pipeline Demo Complete ===")

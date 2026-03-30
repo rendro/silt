@@ -33,7 +33,7 @@ pub type ParsedModule = (Program, HashSet<String>, HashMap<String, Vec<String>>)
 /// Known builtin module names whose functions are registered as `module.func`
 /// in the global environment rather than loaded from files.
 const BUILTIN_MODULES: &[&str] = &[
-    "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel",
+    "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
 ];
 
 impl ModuleLoader {

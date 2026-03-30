@@ -86,8 +86,8 @@ fn fizzbuzz(n) {
 
 fn main() {
   1..101
-  |> map { n -> fizzbuzz(n) }
-  |> each { s -> println(s) }
+  |> list.map { n -> fizzbuzz(n) }
+  |> list.each { s -> println(s) }
 }
     "#);
 }
@@ -187,8 +187,8 @@ fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
 
   shapes
-  |> map { s -> (s.display(), area(s)) }
-  |> each { pair -> println("{pair}") }
+  |> list.map { s -> (s.display(), area(s)) }
+  |> list.each { pair -> println("{pair}") }
 }
     "#);
 }
@@ -237,9 +237,9 @@ fn main() {
   ]
 
   users
-  |> filter { u -> u.active }
-  |> map { u -> birthday(u) }
-  |> each { u ->
+  |> list.filter { u -> u.active }
+  |> list.map { u -> birthday(u) }
+  |> list.each { u ->
     println("{u.name} is now {u.age}")
   }
 }
@@ -271,11 +271,11 @@ fn test_error_handling_pipeline() {
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> find { l -> string.contains(l, "host=") } else {
+  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> find { l -> string.contains(l, "port=") } else {
+  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 
@@ -336,9 +336,9 @@ fn test_fold() {
     let result = run(r#"
 fn main() {
   [1, 2, 3, 4, 5]
-  |> filter { x -> x > 2 }
-  |> map { x -> x * 10 }
-  |> fold(0) { acc, x -> acc + x }
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
 }
     "#);
     assert_eq!(result, Value::Int(120));
@@ -421,9 +421,9 @@ fn main() {
 fn test_chan_send_receive_buffered() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
-  send(ch, 42)
-  receive(ch)
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  channel.receive(ch)
 }
     "#);
     assert_eq!(result, Value::Int(42));
@@ -433,13 +433,13 @@ fn main() {
 fn test_chan_send_receive_multiple() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
-  send(ch, 1)
-  send(ch, 2)
-  send(ch, 3)
-  let a = receive(ch)
-  let b = receive(ch)
-  let c = receive(ch)
+  let ch = channel.new(10)
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  channel.send(ch, 3)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
+  let c = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -450,16 +450,16 @@ fn main() {
 fn test_spawn_and_join() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, "hello")
-    send(ch, "world")
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "world")
+  })
 
-  join(producer)
-  let msg1 = receive(ch)
-  let msg2 = receive(ch)
+  task.join(producer)
+  let msg1 = channel.receive(ch)
+  let msg2 = channel.receive(ch)
   "{msg1} {msg2}"
 }
     "#);
@@ -470,10 +470,10 @@ fn main() {
 fn test_spawn_return_value() {
     let result = run(r#"
 fn main() {
-  let h = spawn fn() {
+  let h = task.spawn(fn() {
     42
-  }
-  join(h)
+  })
+  task.join(h)
 }
     "#);
     assert_eq!(result, Value::Int(42));
@@ -483,21 +483,21 @@ fn main() {
 fn test_producer_consumer() {
     run_ok(r#"
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, "hello")
-    send(ch, "world")
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "world")
+  })
 
-  let consumer = spawn fn() {
-    let msg1 = receive(ch)
-    let msg2 = receive(ch)
+  let consumer = task.spawn(fn() {
+    let msg1 = channel.receive(ch)
+    let msg2 = channel.receive(ch)
     println("{msg1} {msg2}")
-  }
+  })
 
-  join(producer)
-  join(consumer)
+  task.join(producer)
+  task.join(consumer)
 }
     "#);
 }
@@ -506,19 +506,19 @@ fn main() {
 fn test_channel_with_integers() {
     let result = run(r#"
 fn main() {
-  let ch = chan(5)
+  let ch = channel.new(5)
 
-  let producer = spawn fn() {
-    send(ch, 10)
-    send(ch, 20)
-    send(ch, 30)
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, 10)
+    channel.send(ch, 20)
+    channel.send(ch, 30)
+  })
 
-  join(producer)
+  task.join(producer)
 
-  let a = receive(ch)
-  let b = receive(ch)
-  let c = receive(ch)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
+  let c = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -529,10 +529,10 @@ fn main() {
 fn test_cancel_task() {
     run_ok(r#"
 fn main() {
-  let h = spawn fn() {
+  let h = task.spawn(fn() {
     42
-  }
-  cancel(h)
+  })
+  task.cancel(h)
 }
     "#);
 }
@@ -541,10 +541,10 @@ fn main() {
 fn test_select_expression() {
     let result = run(r#"
 fn main() {
-  let ch1 = chan(10)
-  let ch2 = chan(10)
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
 
-  send(ch2, "from ch2")
+  channel.send(ch2, "from ch2")
 
   select {
     receive(ch1) as msg -> "got from ch1"
@@ -559,13 +559,13 @@ fn main() {
 fn test_select_with_spawn() {
     let result = run(r#"
 fn main() {
-  let ch1 = chan(10)
-  let ch2 = chan(10)
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
 
-  let p = spawn fn() {
-    send(ch1, "first")
-  }
-  join(p)
+  let p = task.spawn(fn() {
+    channel.send(ch1, "first")
+  })
+  task.join(p)
 
   select {
     receive(ch1) as msg -> msg
@@ -580,14 +580,14 @@ fn main() {
 fn test_unbuffered_channel() {
     let result = run(r#"
 fn main() {
-  let ch = chan()
+  let ch = channel.new()
 
-  let producer = spawn fn() {
-    send(ch, 99)
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, 99)
+  })
 
-  join(producer)
-  receive(ch)
+  task.join(producer)
+  channel.receive(ch)
 }
     "#);
     assert_eq!(result, Value::Int(99));
@@ -597,27 +597,27 @@ fn main() {
 fn test_multiple_spawns() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let h1 = spawn fn() {
-    send(ch, 1)
-  }
+  let h1 = task.spawn(fn() {
+    channel.send(ch, 1)
+  })
 
-  let h2 = spawn fn() {
-    send(ch, 2)
-  }
+  let h2 = task.spawn(fn() {
+    channel.send(ch, 2)
+  })
 
-  let h3 = spawn fn() {
-    send(ch, 3)
-  }
+  let h3 = task.spawn(fn() {
+    channel.send(ch, 3)
+  })
 
-  join(h1)
-  join(h2)
-  join(h3)
+  task.join(h1)
+  task.join(h2)
+  task.join(h3)
 
-  let a = receive(ch)
-  let b = receive(ch)
-  let c = receive(ch)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
+  let c = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -628,9 +628,9 @@ fn main() {
 fn test_channel_passing_complex_values() {
     let result = run(r#"
 fn main() {
-  let ch = chan(5)
-  send(ch, [1, 2, 3])
-  let list = receive(ch)
+  let ch = channel.new(5)
+  channel.send(ch, [1, 2, 3])
+  let list = channel.receive(ch)
   list
 }
     "#);
@@ -649,14 +649,14 @@ fn test_spawn_with_closure_capture() {
     let result = run(r#"
 fn main() {
   let x = 10
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let h = spawn fn() {
-    send(ch, x * 2)
-  }
+  let h = task.spawn(fn() {
+    channel.send(ch, x * 2)
+  })
 
-  join(h)
-  receive(ch)
+  task.join(h)
+  channel.receive(ch)
 }
     "#);
     assert_eq!(result, Value::Int(20));
@@ -669,11 +669,11 @@ fn test_channel_close() {
     // After close, receive on empty channel returns None
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
-  send(ch, 1)
-  close(ch)
-  let a = receive(ch)
-  let b = receive(ch)
+  let ch = channel.new(10)
+  channel.send(ch, 1)
+  channel.close(ch)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
   match b {
     None -> a
     _ -> -1
@@ -688,9 +688,9 @@ fn test_send_on_closed_channel_errors() {
     // Sending on closed channel should error
     let err = run_err(r#"
 fn main() {
-  let ch = chan(10)
-  close(ch)
-  send(ch, 42)
+  let ch = channel.new(10)
+  channel.close(ch)
+  channel.send(ch, 42)
 }
     "#);
     assert!(err.contains("send on closed channel"), "got: {err}");
@@ -700,8 +700,8 @@ fn main() {
 fn test_try_send_success() {
     let result = run(r#"
 fn main() {
-  let ch = chan(1)
-  try_send(ch, 42)
+  let ch = channel.new(1)
+  channel.try_send(ch, 42)
 }
     "#);
     assert_eq!(result, Value::Bool(true));
@@ -711,9 +711,9 @@ fn main() {
 fn test_try_send_full() {
     let result = run(r#"
 fn main() {
-  let ch = chan(1)
-  send(ch, 1)
-  try_send(ch, 2)
+  let ch = channel.new(1)
+  channel.send(ch, 1)
+  channel.try_send(ch, 2)
 }
     "#);
     assert_eq!(result, Value::Bool(false));
@@ -723,9 +723,9 @@ fn main() {
 fn test_try_receive_some() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
-  send(ch, 42)
-  try_receive(ch)
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  channel.try_receive(ch)
 }
     "#);
     assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
@@ -735,8 +735,8 @@ fn main() {
 fn test_try_receive_empty() {
     let result = run(r#"
 fn main() {
-  let ch = chan(10)
-  try_receive(ch)
+  let ch = channel.new(10)
+  channel.try_receive(ch)
 }
     "#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
@@ -1093,7 +1093,7 @@ fn test_sort_by() {
     let result = run(r#"
 fn main() {
   let words = ["banana", "apple", "cherry"]
-  words |> sort_by { w -> string.length(w) }
+  words |> list.sort_by { w -> string.length(w) }
 }
     "#);
     assert_eq!(result, Value::List(Rc::new(vec![
@@ -1193,4 +1193,79 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::String("nonzero".into()));
+}
+
+// ── try() builtin ──────────────────────────────────────────────────
+
+#[test]
+fn test_try_catches_panic() {
+    let result = run(r#"
+fn main() {
+  let result = try(fn() { panic("boom") })
+  match result {
+    Ok(_) -> "ok"
+    Err(msg) -> msg
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("panic: panic: boom".into()));
+}
+
+#[test]
+fn test_try_catches_assertion_failure() {
+    let result = run(r#"
+fn main() {
+  let result = try(fn() { test.assert_eq(1, 2) })
+  match result {
+    Ok(_) -> "passed"
+    Err(msg) -> "caught"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("caught".into()));
+}
+
+#[test]
+fn test_try_returns_ok_on_success() {
+    let result = run(r#"
+fn main() {
+  let result = try(fn() { 42 })
+  match result {
+    Ok(n) -> n
+    Err(_) -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_try_enables_negative_testing() {
+    let result = run(r#"
+fn main() {
+  let passed = 0
+  let failed = 0
+
+  let r1 = try(fn() { test.assert_eq(1, 1) })
+  let passed = match r1 {
+    Ok(_) -> passed + 1
+    _ -> passed
+  }
+
+  let r2 = try(fn() { test.assert_eq(1, 2) })
+  let failed = match r2 {
+    Err(_) -> failed + 1
+    _ -> failed
+  }
+
+  let r3 = try(fn() { panic("intentional") })
+  let failed = match r3 {
+    Err(_) -> failed + 1
+    _ -> failed
+  }
+
+  (passed, failed)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
 }

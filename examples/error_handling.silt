@@ -1,11 +1,11 @@
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> find { l -> string.contains(l, "host=") } else {
+  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> find { l -> string.contains(l, "port=") } else {
+  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 

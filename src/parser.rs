@@ -939,18 +939,7 @@ impl Parser {
                     Ok(Expr::new(ExprKind::Return(Some(Box::new(val))), span))
                 }
             }
-            Token::Spawn => {
-                self.advance();
-                self.skip_nl();
-                let func = self.parse_expr()?;
-                Ok(Expr::new(
-                    ExprKind::Call(
-                        Box::new(Expr::new(ExprKind::Ident("spawn".into()), span)),
-                        vec![func],
-                    ),
-                    span,
-                ))
-            }
+            // spawn is no longer a keyword; use task.spawn(fn() { ... })
             Token::Select => self.parse_select_expr(),
             _ => Err(ParseError {
                 message: format!("expected expression, found {}", self.peek()),

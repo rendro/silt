@@ -62,7 +62,7 @@
 fn clean_word(word) {
   let chars = string.chars(word)
   chars
-  |> map { c ->
+  |> list.map { c ->
     match c {
       "." -> ""
       "," -> ""
@@ -85,8 +85,8 @@ fn clean_word(word) {
 -- Returns ("", 0) for an empty map
 fn find_max_entry(freq) {
   let keys = map.keys(freq)
-  keys |> fold(("", 0)) { best, key ->
-    let count = map.get(freq, key) |> unwrap_or(0)
+  keys |> list.fold(("", 0)) { best, key ->
+    let count = map.get(freq, key) |> result.unwrap_or(0)
     let (_, best_count) = best
     let is_greater = count > best_count
     match is_greater {
@@ -103,7 +103,7 @@ fn print_top_n(freq, n, rank) {
     true -> freq
     false -> {
       let keys = map.keys(freq)
-      match len(keys) {
+      match list.length(keys) {
         0 -> freq
         _ -> {
           let (word, count) = find_max_entry(freq)
@@ -153,27 +153,27 @@ fn main() {
       -- Split into lines
       let lines = string.split(content, "\n")
       let non_empty_lines = lines
-        |> filter { line -> string.length(string.trim(line)) > 0 }
-      let line_count = len(non_empty_lines)
+        |> list.filter { line -> string.length(string.trim(line)) > 0 }
+      let line_count = list.length(non_empty_lines)
 
       -- Total character count
       let char_count = string.length(content)
 
       -- Build word list: split by spaces, flatten, clean, lowercase, filter empty
       let words = lines
-        |> map { line -> string.split(line, " ") }
-        |> flatten
-        |> map { w -> string.trim(w) }
-        |> map { w -> clean_word(w) }
-        |> map { w -> string.to_lower(w) }
-        |> filter { w -> string.length(w) > 0 }
+        |> list.map { line -> string.split(line, " ") }
+        |> list.flatten
+        |> list.map { w -> string.trim(w) }
+        |> list.map { w -> clean_word(w) }
+        |> list.map { w -> string.to_lower(w) }
+        |> list.filter { w -> string.length(w) > 0 }
 
-      let word_count = len(words)
+      let word_count = list.length(words)
 
       -- Average word length using int.to_float for division
       let total_len = words
-        |> map { w -> string.length(w) }
-        |> fold(0) { acc, n -> acc + n }
+        |> list.map { w -> string.length(w) }
+        |> list.fold(0) { acc, n -> acc + n }
       let avg_len = match word_count {
         0 -> 0.0
         _ -> int.to_float(total_len) / int.to_float(word_count)
@@ -182,7 +182,7 @@ fn main() {
       let avg_rounded = int.to_float(float.round(avg_len * 100.0)) / 100.0
 
       -- Find longest word
-      let longest = words |> fold("") { best, word ->
+      let longest = words |> list.fold("") { best, word ->
         let is_longer = string.length(word) > string.length(best)
         match is_longer {
           true -> word
@@ -191,7 +191,7 @@ fn main() {
       }
 
       -- Find shortest non-empty word
-      let shortest = words |> fold("") { best, word ->
+      let shortest = words |> list.fold("") { best, word ->
         let wlen = string.length(word)
         let blen = string.length(best)
         match wlen {
@@ -210,12 +210,12 @@ fn main() {
       }
 
       -- Build word frequency map using fold as accumulator
-      let freq = words |> fold(#{}) { freq, word ->
-        let count = map.get(freq, word) |> unwrap_or(0)
+      let freq = words |> list.fold(#{}) { freq, word ->
+        let count = map.get(freq, word) |> result.unwrap_or(0)
         map.set(freq, word, count + 1)
       }
       let unique_words = map.keys(freq)
-      let unique_count = len(unique_words)
+      let unique_count = list.length(unique_words)
 
       -- Print all results
       println("=== Text Statistics for '{filename}' ===")

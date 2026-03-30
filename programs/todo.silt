@@ -7,7 +7,7 @@
 
   No list.append or list.push (pain: 9/10)
     The single most painful gap. To add an item to a list you must use
-    flatten([[todos], [new_todo]]) which is ugly and non-obvious. A simple
+    list.flatten([[todos], [new_todo]]) which is ugly and non-obvious. A simple
     list.append(list, item) or list.push(list, item) would transform the
     experience. Every "add" operation reads like a workaround, not intent.
 
@@ -43,7 +43,7 @@
     English. This is the highlight of the record system.
 
   Pipe + trailing closure chains (delight: 8/10)
-    todos |> filter { t -> t.done } |> each { t -> ... } is expressive
+    todos |> list.filter { t -> t.done } |> list.each { t -> ... } is expressive
     and pleasant. The |> operator earns its keep in list-heavy code.
 
   Pattern matching on list shapes (mixed: 6/10)
@@ -108,7 +108,7 @@ fn deserialize_todo(line) {
 -- Serialize all todos to a string
 fn serialize_all(todos) {
   todos
-  |> map { t -> serialize_todo(t) }
+  |> list.map { t -> serialize_todo(t) }
   |> string.join("\n")
 }
 
@@ -116,12 +116,12 @@ fn serialize_all(todos) {
 fn deserialize_all(text) {
   let lines = string.split(text, "\n")
   lines
-  |> map { line -> deserialize_todo(line) }
-  |> filter { opt -> match opt {
+  |> list.map { line -> deserialize_todo(line) }
+  |> list.filter { opt -> match opt {
     Some(_) -> true
     None -> false
   }}
-  |> map { opt -> match opt {
+  |> list.map { opt -> match opt {
     Some(t) -> t
     _ -> panic("unreachable")
   }}
@@ -129,7 +129,7 @@ fn deserialize_all(text) {
 
 -- Find the highest id in the todo list (for generating next id)
 fn max_id(todos) {
-  todos |> fold(0) { best, t ->
+  todos |> list.fold(0) { best, t ->
     match t.id > best {
       true -> t.id
       false -> best
@@ -140,23 +140,23 @@ fn max_id(todos) {
 -- Add a new todo, returns (updated_todos, next_id)
 fn add_todo(todos, next_id, title) {
   let todo = Todo { id: next_id, title: title, done: false }
-  let new_todos = flatten([todos, [todo]])
+  let new_todos = list.flatten([todos, [todo]])
   println("Added: {format_todo(todo)}")
   (new_todos, next_id + 1)
 }
 
 -- Toggle the done status of a todo by id
 fn toggle_done(todos, id) {
-  let found = todos |> find { t -> t.id == id }
+  let found = todos |> list.find { t -> t.id == id }
   match found {
     Some(_) -> {
-      let updated = todos |> map { t ->
+      let updated = todos |> list.map { t ->
         match t.id == id {
           true -> t.{ done: !t.done }
           false -> t
         }
       }
-      let toggled = updated |> find { t -> t.id == id }
+      let toggled = updated |> list.find { t -> t.id == id }
       match toggled {
         Some(t) -> println("Toggled: {format_todo(t)}")
         None -> ()
@@ -172,11 +172,11 @@ fn toggle_done(todos, id) {
 
 -- Remove a todo by id
 fn remove_todo(todos, id) {
-  let found = todos |> find { t -> t.id == id }
+  let found = todos |> list.find { t -> t.id == id }
   match found {
     Some(t) -> {
       println("Removed: {format_todo(t)}")
-      todos |> filter { t -> t.id != id }
+      todos |> list.filter { t -> t.id != id }
     }
     None -> {
       println("Error: no todo with id {id}")
@@ -187,27 +187,27 @@ fn remove_todo(todos, id) {
 
 -- List all todos
 fn list_all(todos) {
-  match len(todos) {
+  match list.length(todos) {
     0 -> println("  (no todos)")
-    _ -> todos |> each { t -> println("  {format_todo(t)}") }
+    _ -> todos |> list.each { t -> println("  {format_todo(t)}") }
   }
 }
 
 -- List only done todos
 fn list_done(todos) {
-  let done = todos |> filter { t -> t.done }
-  match len(done) {
+  let done = todos |> list.filter { t -> t.done }
+  match list.length(done) {
     0 -> println("  (no completed todos)")
-    _ -> done |> each { t -> println("  {format_todo(t)}") }
+    _ -> done |> list.each { t -> println("  {format_todo(t)}") }
   }
 }
 
 -- List only undone todos
 fn list_undone(todos) {
-  let undone = todos |> filter { t -> !t.done }
-  match len(undone) {
+  let undone = todos |> list.filter { t -> !t.done }
+  match list.length(undone) {
     0 -> println("  (all done!)")
-    _ -> undone |> each { t -> println("  {format_todo(t)}") }
+    _ -> undone |> list.each { t -> println("  {format_todo(t)}") }
   }
 }
 
@@ -215,7 +215,7 @@ fn list_undone(todos) {
 fn save_todos(todos, filename) {
   let data = serialize_all(todos)
   match io.write_file(filename, data) {
-    Ok(_) -> println("Saved {len(todos)} todo(s) to {filename}")
+    Ok(_) -> println("Saved {list.length(todos)} todo(s) to {filename}")
     Err(e) -> println("Save error: {e}")
   }
 }
@@ -226,7 +226,7 @@ fn load_todos(filename) {
     Ok(content) -> {
       let todos = deserialize_all(content)
       let next = max_id(todos) + 1
-      println("Loaded {len(todos)} todo(s) from {filename}")
+      println("Loaded {list.length(todos)} todo(s) from {filename}")
       (todos, next)
     }
     Err(e) -> {

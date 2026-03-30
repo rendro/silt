@@ -85,8 +85,8 @@ fn extract_link_pairs(line) {
     _ -> {
       -- For each segment boundary, extract text and url
       let pairs = segments
-        |> zip(list.tail(segments))
-        |> map { pair ->
+        |> list.zip(list.tail(segments))
+        |> list.map { pair ->
           let (before, after) = pair
           -- Link text: everything after the last "[" in 'before'
           -- Can't use [..init, last] pattern (not supported), so use list.last
@@ -150,48 +150,48 @@ fn main() {
   -- Split into lines and extract all link pairs
   let lines = content |> string.split("\n")
   let all_links = lines
-    |> map { line -> extract_link_pairs(line) }
-    |> flatten
+    |> list.map { line -> extract_link_pairs(line) }
+    |> list.flatten
 
   -- Separate valid and invalid
-  let results = all_links |> map { pair ->
+  let results = all_links |> list.map { pair ->
     let (text, url) = pair
     let validation = validate_url(url)
     (text, url, validation)
   }
 
-  let valid = results |> filter { r ->
+  let valid = results |> list.filter { r ->
     let (_, _, v) = r
     result.is_ok(v)
   }
 
-  let invalid = results |> filter { r ->
+  let invalid = results |> list.filter { r ->
     let (_, _, v) = r
     result.is_err(v)
   }
 
   -- Print results
   println("")
-  println("Valid links ({len(valid)}):")
-  valid |> each { r ->
+  println("Valid links ({list.length(valid)}):")
+  valid |> list.each { r ->
     let (text, url, validation) = r
     println(format_result(text, url, validation))
   }
 
   println("")
-  println("Malformed links ({len(invalid)}):")
-  invalid |> each { r ->
+  println("Malformed links ({list.length(invalid)}):")
+  invalid |> list.each { r ->
     let (text, url, validation) = r
     println(format_result(text, url, validation))
   }
 
   -- Summary
-  let total = len(all_links)
+  let total = list.length(all_links)
   println("")
   println(string.repeat("=", 50))
-  println("Summary: {len(valid)} valid, {len(invalid)} malformed, {total} total")
+  println("Summary: {list.length(valid)} valid, {list.length(invalid)} malformed, {total} total")
 
-  match len(invalid) {
+  match list.length(invalid) {
     0 -> println("All links OK!")
     n -> println("{n} link(s) need attention.")
   }

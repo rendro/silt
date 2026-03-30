@@ -770,8 +770,16 @@ impl TypeChecker {
 
     // ── Register builtins ───────────────────────────────────────────
 
+    /// Helper: create a fresh type variable and return both the Type::Var and
+    /// its TyVar id.
+    fn fresh_tv(&mut self) -> (Type, TyVar) {
+        let t = self.fresh_var();
+        let v = match &t { Type::Var(v) => *v, _ => unreachable!() };
+        (t, v)
+    }
+
     fn register_builtins(&mut self, env: &mut TypeEnv) {
-        // print/println: String -> ()
+        // ── print / println: (String) -> () ────────────────────────────
         let str_to_unit = Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Unit),
@@ -779,216 +787,198 @@ impl TypeChecker {
         env.define("print".into(), str_to_unit.clone());
         env.define("println".into(), str_to_unit);
 
-        // inspect: a -> String
+        // ── io.inspect: a -> String ──────────────────────────────────
         {
-            let a = self.fresh_var();
-            let tv = match &a {
-                Type::Var(v) => *v,
-                _ => unreachable!(),
-            };
-            env.define(
-                "inspect".into(),
-                Scheme {
-                    vars: vec![tv],
-                    ty: Type::Fun(vec![a], Box::new(Type::String)),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("io.inspect".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a], Box::new(Type::String)),
+            });
         }
 
-        // panic: String -> a (never returns, but we type it as -> a)
+        // ── panic: String -> a ─────────────────────────────────────────
         {
-            let a = self.fresh_var();
-            let tv = match &a {
-                Type::Var(v) => *v,
-                _ => unreachable!(),
-            };
-            env.define(
-                "panic".into(),
-                Scheme {
-                    vars: vec![tv],
-                    ty: Type::Fun(vec![Type::String], Box::new(a)),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("panic".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![Type::String], Box::new(a)),
+            });
         }
 
-        // map: (List(a), (a -> b)) -> List(b)
+        // ── Higher-order list builtins ─────────────────────────────────
+
+        // list.map: (List(a), (a -> b)) -> List(b)
         {
-            let a = self.fresh_var();
-            let b = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let bv = match &b { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "map".into(),
-                Scheme {
-                    vars: vec![av, bv],
-                    ty: Type::Fun(
-                        vec![
-                            Type::List(Box::new(a.clone())),
-                            Type::Fun(vec![a], Box::new(b.clone())),
-                        ],
-                        Box::new(Type::List(Box::new(b))),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.map".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(b.clone())),
+                    ],
+                    Box::new(Type::List(Box::new(b))),
+                ),
+            });
         }
 
-        // filter: (List(a), (a -> Bool)) -> List(a)
+        // list.filter: (List(a), (a -> Bool)) -> List(a)
         {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "filter".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(
-                        vec![
-                            Type::List(Box::new(a.clone())),
-                            Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
-                        ],
-                        Box::new(Type::List(Box::new(a))),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("list.filter".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
+                    ],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
         }
 
-        // fold: (List(a), b, (b, a) -> b) -> b
+        // list.fold: (List(a), b, (b, a) -> b) -> b
         {
-            let a = self.fresh_var();
-            let b = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let bv = match &b { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "fold".into(),
-                Scheme {
-                    vars: vec![av, bv],
-                    ty: Type::Fun(
-                        vec![
-                            Type::List(Box::new(a.clone())),
-                            b.clone(),
-                            Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
-                        ],
-                        Box::new(b),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.fold".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        b.clone(),
+                        Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
+                    ],
+                    Box::new(b),
+                ),
+            });
         }
 
-        // each: (List(a), (a -> ())) -> ()
+        // list.each: (List(a), (a -> ())) -> ()
         {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "each".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(
-                        vec![
-                            Type::List(Box::new(a.clone())),
-                            Type::Fun(vec![a], Box::new(Type::Unit)),
-                        ],
-                        Box::new(Type::Unit),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("list.each".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(Type::Unit)),
+                    ],
+                    Box::new(Type::Unit),
+                ),
+            });
         }
 
-        // find: (List(a), (a -> Bool)) -> Option(a) = Generic("Option", [a])
+        // list.find: (List(a), (a -> Bool)) -> Option(a)
         {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "find".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(
-                        vec![
-                            Type::List(Box::new(a.clone())),
-                            Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
-                        ],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("list.find".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
+                    ],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
         }
 
-        // len: List(a) -> Int
+        // list.zip: (List(a), List(b)) -> List((a, b))
         {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "len".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(
-                        vec![Type::List(Box::new(a))],
-                        Box::new(Type::Int),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.zip".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::List(Box::new(b.clone())),
+                    ],
+                    Box::new(Type::List(Box::new(Type::Tuple(vec![a, b])))),
+                ),
+            });
         }
 
-        // Register builtin variant constructors
-        // Ok(a) and Err(e) for Result(a, e)
+        // list.flatten: (List(List(a))) -> List(a)
         {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let e = self.fresh_var();
-            let ev = match &e { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "Ok".into(),
-                Scheme {
-                    vars: vec![av, ev],
-                    ty: Type::Fun(
-                        vec![a.clone()],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
-                    ),
-                },
-            );
-        }
-        {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let e = self.fresh_var();
-            let ev = match &e { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "Err".into(),
-                Scheme {
-                    vars: vec![av, ev],
-                    ty: Type::Fun(
-                        vec![e.clone()],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
-                    ),
-                },
-            );
-        }
-        // Some(a) and None for Option(a)
-        {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "Some".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(
-                        vec![a.clone()],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
-                    ),
-                },
-            );
-        }
-        {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "None".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Generic("Option".into(), vec![a]),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("list.flatten".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(Type::List(Box::new(a.clone()))))],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
         }
 
-        // Register builtin enum info for Option and Result
+        // list.sort_by: (List(a), (a -> b)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.sort_by".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(b)),
+                    ],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // len removed from globals -- use list.length, string.length, map.length
+
+        // ── Variant constructors ───────────────────────────────────────
+
+        // Ok(a) -> Result(a, e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("Ok".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![a.clone()],
+                    Box::new(Type::Generic("Result".into(), vec![a, e])),
+                ),
+            });
+        }
+        // Err(e) -> Result(a, e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("Err".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![e.clone()],
+                    Box::new(Type::Generic("Result".into(), vec![a, e])),
+                ),
+            });
+        }
+        // Some(a) -> Option(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Some".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![a.clone()],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
+        }
+        // None : Option(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("None".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Generic("Option".into(), vec![a]),
+            });
+        }
+
+        // ── Builtin enum info for Option and Result ────────────────────
+
         self.enums.insert(
             "Option".into(),
             EnumInfo {
@@ -1029,135 +1019,636 @@ impl TypeChecker {
         self.variant_to_enum.insert("Ok".into(), "Result".into());
         self.variant_to_enum.insert("Err".into(), "Result".into());
 
-        // Register stdlib module functions as "module.function" names
-        // string module
-        {
-            // string.split: (String, String) -> List(String)
-            env.define(
-                "string.split".into(),
-                Scheme::mono(Type::Fun(
-                    vec![Type::String, Type::String],
-                    Box::new(Type::List(Box::new(Type::String))),
-                )),
-            );
-            // string.contains: (String, String) -> Bool
-            env.define(
-                "string.contains".into(),
-                Scheme::mono(Type::Fun(
-                    vec![Type::String, Type::String],
-                    Box::new(Type::Bool),
-                )),
-            );
-            // string.replace: (String, String, String) -> String  -- but silt uses replace(str, old) with pipe
-            // Actually interpreter has it as: string.replace(s, old, new) -> String, but sometimes 2 args
-            // Let's be permissive: accept 2 or 3 args by registering with 3
-            env.define(
-                "string.replace".into(),
-                Scheme::mono(Type::Fun(
-                    vec![Type::String, Type::String],
-                    Box::new(Type::String),
-                )),
-            );
-            // string.join: (List(String), String) -> String
-            env.define(
-                "string.join".into(),
-                Scheme::mono(Type::Fun(
-                    vec![Type::List(Box::new(Type::String)), Type::String],
-                    Box::new(Type::String),
-                )),
-            );
-            // string.trim: String -> String
-            env.define(
-                "string.trim".into(),
-                Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
-            );
-        }
+        // ── Test builtins ──────────────────────────────────────────────
 
-        // int module
-        {
-            // int.parse: String -> Result(Int, String)
-            env.define(
-                "int.parse".into(),
-                Scheme::mono(Type::Fun(
-                    vec![Type::String],
-                    Box::new(Type::Generic(
-                        "Result".into(),
-                        vec![Type::Int, Type::String],
-                    )),
-                )),
-            );
-            // int.abs: Int -> Int
-            env.define(
-                "int.abs".into(),
-                Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
-            );
-        }
-
-        // assert_eq: (a, a) -> ()
-        {
-            let a = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "assert_eq".into(),
-                Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
-                },
-            );
-        }
-
-        // assert: Bool -> ()
+        // test.assert: Bool -> ()
         env.define(
-            "assert".into(),
+            "test.assert".into(),
             Scheme::mono(Type::Fun(vec![Type::Bool], Box::new(Type::Unit))),
         );
 
-        // map_ok: (Result(a,e), (a -> b)) -> Result(b,e)
+        // test.assert_eq: (a, a) -> ()
         {
-            let a = self.fresh_var();
-            let b = self.fresh_var();
-            let e = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let bv = match &b { Type::Var(v) => *v, _ => unreachable!() };
-            let ev = match &e { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "map_ok".into(),
-                Scheme {
-                    vars: vec![av, bv, ev],
-                    ty: Type::Fun(
-                        vec![
-                            Type::Generic("Result".into(), vec![a, e.clone()]),
-                            Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
-                        ],
-                        Box::new(Type::Generic("Result".into(), vec![b, e])),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("test.assert_eq".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+            });
         }
 
-        // unwrap_or: (Result(a,e), a) -> a  (or Option version)
+        // test.assert_ne: (a, a) -> ()
         {
-            let a = self.fresh_var();
-            let e = self.fresh_var();
-            let av = match &a { Type::Var(v) => *v, _ => unreachable!() };
-            let ev = match &e { Type::Var(v) => *v, _ => unreachable!() };
-            env.define(
-                "unwrap_or".into(),
-                Scheme {
-                    vars: vec![av, ev],
-                    ty: Type::Fun(
-                        vec![
-                            Type::Generic("Result".into(), vec![a.clone(), e]),
-                            a.clone(),
-                        ],
-                        Box::new(a),
-                    ),
-                },
-            );
+            let (a, av) = self.fresh_tv();
+            env.define("test.assert_ne".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+            });
         }
 
-        // if_nonzero: not a builtin, but user-defined in tests.
-        // We don't need it here.
+        // ── Result/Option helpers (top-level) ──────────────────────────
+
+        // result.map_ok: (Result(a,e), (a -> b)) -> Result(b,e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.map_ok".into(), Scheme {
+                vars: vec![av, bv, ev],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Result".into(), vec![a, e.clone()]),
+                        Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
+                    ],
+                    Box::new(Type::Generic("Result".into(), vec![b, e])),
+                ),
+            });
+        }
+
+        // result.unwrap_or: (Result(a,e), a) -> a
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.unwrap_or".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Result".into(), vec![a.clone(), e]),
+                        a.clone(),
+                    ],
+                    Box::new(a),
+                ),
+            });
+        }
+
+        // ── list module ────────────────────────────────────────────────
+
+        // list.append: (List(a), a) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.append".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), a.clone()],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.concat: (List(a), List(a)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.concat".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::List(Box::new(a.clone())),
+                    ],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.get: (List(a), Int) -> Option(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.get".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), Type::Int],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
+        }
+
+        // list.take: (List(a), Int) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.take".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), Type::Int],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.drop: (List(a), Int) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.drop".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), Type::Int],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.enumerate: (List(a)) -> List((Int, a))
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.enumerate".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::List(Box::new(Type::Tuple(vec![Type::Int, a])))),
+                ),
+            });
+        }
+
+        // list.head: (List(a)) -> Option(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.head".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
+        }
+
+        // list.tail: (List(a)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.tail".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.last: (List(a)) -> Option(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.last".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
+        }
+
+        // list.reverse: (List(a)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.reverse".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.sort: (List(a)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.sort".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.contains: (List(a), a) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.contains".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), a],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
+        // list.length: (List(a)) -> Int
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.length".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a))],
+                    Box::new(Type::Int),
+                ),
+            });
+        }
+
+        // ── string module ──────────────────────────────────────────────
+
+        // string.split: (String, String) -> List(String)
+        env.define("string.split".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
+        )));
+
+        // string.join: (List(String), String) -> String
+        env.define("string.join".into(), Scheme::mono(Type::Fun(
+            vec![Type::List(Box::new(Type::String)), Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.trim: (String) -> String
+        env.define("string.trim".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.contains: (String, String) -> Bool
+        env.define("string.contains".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.replace: (String, String, String) -> String
+        env.define("string.replace".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String, Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.length: (String) -> Int
+        env.define("string.length".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Int),
+        )));
+
+        // string.to_upper: (String) -> String
+        env.define("string.to_upper".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.to_lower: (String) -> String
+        env.define("string.to_lower".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.starts_with: (String, String) -> Bool
+        env.define("string.starts_with".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.ends_with: (String, String) -> Bool
+        env.define("string.ends_with".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.chars: (String) -> List(String)
+        env.define("string.chars".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
+        )));
+
+        // string.repeat: (String, Int) -> String
+        env.define("string.repeat".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int],
+            Box::new(Type::String),
+        )));
+
+        // string.index_of: (String, String) -> Option(Int)
+        env.define("string.index_of".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Option".into(), vec![Type::Int])),
+        )));
+
+        // string.slice: (String, Int, Int) -> String
+        env.define("string.slice".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int, Type::Int],
+            Box::new(Type::String),
+        )));
+
+        // ── int module ─────────────────────────────────────────────────
+
+        // int.parse: (String) -> Result(Int, String)
+        env.define("int.parse".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Generic("Result".into(), vec![Type::Int, Type::String])),
+        )));
+
+        // int.abs: (Int) -> Int
+        env.define("int.abs".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::Int),
+        )));
+
+        // int.min: (Int, Int) -> Int
+        env.define("int.min".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int],
+            Box::new(Type::Int),
+        )));
+
+        // int.max: (Int, Int) -> Int
+        env.define("int.max".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int],
+            Box::new(Type::Int),
+        )));
+
+        // int.to_float: (Int) -> Float
+        env.define("int.to_float".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::Float),
+        )));
+
+        // ── float module ───────────────────────────────────────────────
+
+        // float.parse: (String) -> Result(Float, String)
+        env.define("float.parse".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Generic("Result".into(), vec![Type::Float, Type::String])),
+        )));
+
+        // float.round: (Float) -> Int
+        env.define("float.round".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::Int),
+        )));
+
+        // float.ceil: (Float) -> Int
+        env.define("float.ceil".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::Int),
+        )));
+
+        // float.floor: (Float) -> Int
+        env.define("float.floor".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::Int),
+        )));
+
+        // float.abs: (Float) -> Float
+        env.define("float.abs".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::Float),
+        )));
+
+        // float.min: (Float, Float) -> Float
+        env.define("float.min".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float, Type::Float],
+            Box::new(Type::Float),
+        )));
+
+        // float.max: (Float, Float) -> Float
+        env.define("float.max".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float, Type::Float],
+            Box::new(Type::Float),
+        )));
+
+        // ── io module ──────────────────────────────────────────────────
+
+        // io.read_file: (String) -> Result(String, String)
+        env.define("io.read_file".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Generic("Result".into(), vec![Type::String, Type::String])),
+        )));
+
+        // io.write_file: (String, String) -> Result((), String)
+        env.define("io.write_file".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Result".into(), vec![Type::Unit, Type::String])),
+        )));
+
+        // io.read_line: () -> Result(String, String)
+        env.define("io.read_line".into(), Scheme::mono(Type::Fun(
+            vec![],
+            Box::new(Type::Generic("Result".into(), vec![Type::String, Type::String])),
+        )));
+
+        // io.args: () -> List(String)
+        env.define("io.args".into(), Scheme::mono(Type::Fun(
+            vec![],
+            Box::new(Type::List(Box::new(Type::String))),
+        )));
+
+        // ── map module ─────────────────────────────────────────────────
+        // Maps in the interpreter use String keys, so we type them accordingly.
+        // map.get: (Map(String, v), String) -> Option(v)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.get".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                        Type::String,
+                    ],
+                    Box::new(Type::Generic("Option".into(), vec![v])),
+                ),
+            });
+        }
+
+        // map.set: (Map(String, v), String, v) -> Map(String, v)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.set".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                        Type::String,
+                        v.clone(),
+                    ],
+                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                ),
+            });
+        }
+
+        // map.delete: (Map(String, v), String) -> Map(String, v)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.delete".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                        Type::String,
+                    ],
+                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                ),
+            });
+        }
+
+        // map.keys: (Map(String, v)) -> List(String)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.keys".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![Type::Map(Box::new(Type::String), Box::new(v))],
+                    Box::new(Type::List(Box::new(Type::String))),
+                ),
+            });
+        }
+
+        // map.values: (Map(String, v)) -> List(v)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.values".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![Type::Map(Box::new(Type::String), Box::new(v.clone()))],
+                    Box::new(Type::List(Box::new(v))),
+                ),
+            });
+        }
+
+        // map.merge: (Map(String, v), Map(String, v)) -> Map(String, v)
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.merge".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                    ],
+                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                ),
+            });
+        }
+
+        // ── result module ──────────────────────────────────────────────
+
+        // result.map_err: (Result(a,e), (e -> f)) -> Result(a,f)
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            let (f, fv) = self.fresh_tv();
+            env.define("result.map_err".into(), Scheme {
+                vars: vec![av, ev, fv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                        Type::Fun(vec![e], Box::new(f.clone())),
+                    ],
+                    Box::new(Type::Generic("Result".into(), vec![a, f])),
+                ),
+            });
+        }
+
+        // result.flatten: (Result(Result(a,e),e)) -> Result(a,e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.flatten".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![Type::Generic("Result".into(), vec![
+                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                        e.clone(),
+                    ])],
+                    Box::new(Type::Generic("Result".into(), vec![a, e])),
+                ),
+            });
+        }
+
+        // result.is_ok: (Result(a,e)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.is_ok".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![Type::Generic("Result".into(), vec![a, e])],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
+        // result.is_err: (Result(a,e)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.is_err".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![Type::Generic("Result".into(), vec![a, e])],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
+        // ── option module ──────────────────────────────────────────────
+
+        // option.map: (Option(a), (a -> b)) -> Option(b)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("option.map".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Option".into(), vec![a.clone()]),
+                        Type::Fun(vec![a], Box::new(b.clone())),
+                    ],
+                    Box::new(Type::Generic("Option".into(), vec![b])),
+                ),
+            });
+        }
+
+        // option.unwrap_or: (Option(a), a) -> a
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("option.unwrap_or".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Option".into(), vec![a.clone()]),
+                        a.clone(),
+                    ],
+                    Box::new(a),
+                ),
+            });
+        }
+
+        // option.to_result: (Option(a), e) -> Result(a, e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("option.to_result".into(), Scheme {
+                vars: vec![av, ev],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Option".into(), vec![a.clone()]),
+                        e.clone(),
+                    ],
+                    Box::new(Type::Generic("Result".into(), vec![a, e])),
+                ),
+            });
+        }
+
+        // option.is_some: (Option(a)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("option.is_some".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::Generic("Option".into(), vec![a])],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
+        // option.is_none: (Option(a)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("option.is_none".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::Generic("Option".into(), vec![a])],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
     }
 
     // ── Register type declarations ──────────────────────────────────
@@ -3425,6 +3916,171 @@ type Bag {
 fn main() {
   let b = Bag { items: [1, 2, 3] }
   b.items
+}
+        "#);
+    }
+
+    // ── Tests for newly registered builtins ────────────────────────
+
+    #[test]
+    fn test_list_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let xs = [1, 2, 3]
+  let ys = list.append(xs, 4)
+  let zs = list.concat(xs, ys)
+  let head = list.head(xs)
+  let tail = list.tail(xs)
+  let last = list.last(xs)
+  let rev = list.reverse(xs)
+  let sorted = list.sort(xs)
+  let has = list.contains(xs, 2)
+  let n = list.length(xs)
+  let taken = list.take(xs, 2)
+  let dropped = list.drop(xs, 1)
+  let got = list.get(xs, 0)
+  let pairs = list.enumerate(xs)
+  n
+}
+        "#);
+    }
+
+    #[test]
+    fn test_string_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let s = "hello world"
+  let upper = string.to_upper(s)
+  let lower = string.to_lower(s)
+  let n = string.length(s)
+  let starts = string.starts_with(s, "hello")
+  let ends = string.ends_with(s, "world")
+  let chars = string.chars(s)
+  let repeated = string.repeat(s, 3)
+  let idx = string.index_of(s, "world")
+  let sliced = string.slice(s, 0, 5)
+  let replaced = string.replace(s, "world", "there")
+  n
+}
+        "#);
+    }
+
+    #[test]
+    fn test_float_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let a = 3.14
+  let b = 2.71
+  let mn = float.min(a, b)
+  let mx = float.max(a, b)
+  let parsed = float.parse("3.14")
+  let rounded = float.round(a)
+  let ceiled = float.ceil(a)
+  let floored = float.floor(a)
+  let abs = float.abs(a)
+  rounded
+}
+        "#);
+    }
+
+    #[test]
+    fn test_int_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let a = 5
+  let b = 3
+  let mn = int.min(a, b)
+  let mx = int.max(a, b)
+  let f = int.to_float(a)
+  f
+}
+        "#);
+    }
+
+    #[test]
+    fn test_map_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  let got = map.get(m, "a")
+  let updated = map.set(m, "c", 3)
+  let deleted = map.delete(m, "a")
+  let ks = map.keys(m)
+  let vs = map.values(m)
+  let merged = map.merge(m, #{ "c": 3 })
+  ks
+}
+        "#);
+    }
+
+    #[test]
+    fn test_io_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let result = io.read_file("test.txt")
+  let args = io.args()
+  args
+}
+        "#);
+    }
+
+    #[test]
+    fn test_option_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let opt = Some(42)
+  let is_s = option.is_some(opt)
+  let is_n = option.is_none(opt)
+  let val = option.unwrap_or(opt, 0)
+  let mapped = option.map(opt, fn(x) { x + 1 })
+  let res = option.to_result(opt, "no value")
+  val
+}
+        "#);
+    }
+
+    #[test]
+    fn test_result_module_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let r = Ok(42)
+  let is_ok = result.is_ok(r)
+  let is_err = result.is_err(r)
+  is_ok
+}
+        "#);
+    }
+
+    #[test]
+    fn test_higher_order_builtins() {
+        assert_no_errors(r#"
+fn main() {
+  let xs = [[1, 2], [3, 4], [5]]
+  let flat = flatten(xs)
+  let zipped = zip([1, 2, 3], ["a", "b", "c"])
+  let sorted = sort_by([3, 1, 2], fn(x) { x })
+  flat
+}
+        "#);
+    }
+
+    #[test]
+    fn test_len_accepts_string_and_map() {
+        assert_no_errors(r#"
+fn main() {
+  let list_len = len([1, 2, 3])
+  let str_len = len("hello")
+  let map_len = len(#{ "a": 1 })
+  list_len + str_len + map_len
+}
+        "#);
+    }
+
+    #[test]
+    fn test_assert_ne_builtin() {
+        assert_no_errors(r#"
+fn main() {
+  assert_ne(1, 2)
 }
         "#);
     }

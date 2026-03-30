@@ -9,6 +9,6 @@ fn fizzbuzz(n) {
 
 fn main() {
   1..101
-  |> map { n -> fizzbuzz(n) }
-  |> each { s -> println(s) }
+  |> list.map { n -> fizzbuzz(n) }
+  |> list.each { s -> println(s) }
 }

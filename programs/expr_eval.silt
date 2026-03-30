@@ -143,19 +143,19 @@ fn simplify(expr) {
 fn apply_token(stack, token) {
   match token {
     "+" | "add" -> match stack {
-      [b, a, ..rest] -> flatten([[a + b], rest])
+      [b, a, ..rest] -> list.flatten([[a + b], rest])
       _ -> panic("stack underflow on +")
     }
     "*" | "mul" -> match stack {
-      [b, a, ..rest] -> flatten([[a * b], rest])
+      [b, a, ..rest] -> list.flatten([[a * b], rest])
       _ -> panic("stack underflow on *")
     }
     "-" | "sub" -> match stack {
-      [b, a, ..rest] -> flatten([[a - b], rest])
+      [b, a, ..rest] -> list.flatten([[a - b], rest])
       _ -> panic("stack underflow on -")
     }
     "neg" -> match stack {
-      [a, ..rest] -> flatten([[0 - a], rest])
+      [a, ..rest] -> list.flatten([[0 - a], rest])
       _ -> panic("stack underflow on neg")
     }
     _ -> {
@@ -163,7 +163,7 @@ fn apply_token(stack, token) {
       when Ok(n) = int.parse(token) else {
         return panic("invalid token: {token}")
       }
-      flatten([[n], stack])
+      list.flatten([[n], stack])
     }
   }
 }
@@ -171,10 +171,10 @@ fn apply_token(stack, token) {
 -- Evaluate an RPN expression given as a list of string tokens.
 -- Uses fold for iterative processing (exercises TCO-friendly patterns).
 fn eval_rpn(tokens) {
-  let result_stack = tokens |> fold([]) { stack, tok -> apply_token(stack, tok) }
+  let result_stack = tokens |> list.fold([]) { stack, tok -> apply_token(stack, tok) }
   match result_stack {
     [answer] -> answer
-    [answer, ..rest] -> panic("too many values on stack: {len(result_stack)}")
+    [answer, ..rest] -> panic("too many values on stack: {list.length(result_stack)}")
     [] -> panic("empty expression")
   }
 }
@@ -190,16 +190,16 @@ fn expr_to_rpn(expr) {
     Add(left, right) -> {
       let l = expr_to_rpn(left)
       let r = expr_to_rpn(right)
-      flatten([l, r, ["+"]])
+      list.flatten([l, r, ["+"]])
     }
     Mul(left, right) -> {
       let l = expr_to_rpn(left)
       let r = expr_to_rpn(right)
-      flatten([l, r, ["*"]])
+      list.flatten([l, r, ["*"]])
     }
     Neg(inner) -> {
       let i = expr_to_rpn(inner)
-      flatten([i, ["neg"]])
+      list.flatten([i, ["neg"]])
     }
   }
 }
@@ -343,7 +343,7 @@ fn main() {
     Add(Mul(Add(Num(1), Num(2)), Num(3)), Mul(Num(4), Add(Num(5), Num(6))))
   ]
 
-  exprs |> each { e ->
+  exprs |> list.each { e ->
     let nodes = count_nodes(e)
     let d = depth(e)
     println("  {e.display()} -> {classify_complexity(e)}, depth={d}, nodes={nodes}")
@@ -364,7 +364,7 @@ fn main() {
     Add(Mul(Num(1), Num(5)), Mul(Num(3), Num(0)))
   ]
 
-  test_cases |> each { e ->
+  test_cases |> list.each { e ->
     let original = eval_expr(e)
     let simplified = simplify(e)
     let after = eval_expr(simplified)

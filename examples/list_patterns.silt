@@ -24,7 +24,7 @@ fn describe(xs) {
     [] -> "empty list"
     [x] -> "single element: {x}"
     [a, b] -> "pair: ({a}, {b})"
-    [a, b, ..rest] -> "starts with {a}, {b} and {len(rest)} more"
+    [a, b, ..rest] -> "starts with {a}, {b} and {list.length(rest)} more"
   }
 }
 
@@ -37,5 +37,5 @@ fn main() {
   }
 
   [[], [1], [1, 2], [1, 2, 3, 4, 5]]
-  |> each { xs -> println(describe(xs)) }
+  |> list.each { xs -> println(describe(xs)) }
 }

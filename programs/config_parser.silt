@@ -8,7 +8,7 @@
   Error accumulation without mutable state: 4/10
     Building a list of errors across a fold is natural -- the accumulator carries
     both the config and the error list. But appending to an immutable list means
-    building a new list each time via flatten([old, [new]]). There is no
+    building a new list each time via list.flatten([old, [new]]). There is no
     list.append or list.push, so you must use list concatenation. This works but
     feels heavier than it should for something as common as "collect errors while
     iterating."
@@ -229,7 +229,7 @@ fn parse_config(content) {
 
   let init = (#{}, "", [], 0)
 
-  let final_state = lines |> fold(init) { state, line ->
+  let final_state = lines |> list.fold(init) { state, line ->
     let (config, current_section, errors, prev_num) = state
     let line_num = prev_num + 1
     let token = classify_line(line, line_num)
@@ -252,7 +252,7 @@ fn parse_config(content) {
         match current_section {
           "" -> {
             let err_msg = "line {line_num}: key '{key}' found outside any [section]"
-            (config, current_section, flatten([errors, [err_msg]]), line_num)
+            (config, current_section, list.flatten([errors, [err_msg]]), line_num)
           }
           section -> {
             let value = coerce_value(raw_value)
@@ -263,7 +263,7 @@ fn parse_config(content) {
       }
 
       ParseError(msg) -> {
-        (config, current_section, flatten([errors, [msg]]), line_num)
+        (config, current_section, list.flatten([errors, [msg]]), line_num)
       }
     }
   }
@@ -278,13 +278,13 @@ fn parse_config(content) {
 -- Returns a list of error strings for any missing required keys.
 
 fn validate_required(config, requirements) {
-  requirements |> fold([]) { errors, req ->
+  requirements |> list.fold([]) { errors, req ->
     let (section, key) = req
     match map.get(config, section) {
-      None -> flatten([errors, ["missing required section '[{section}]'"]])
+      None -> list.flatten([errors, ["missing required section '[{section}]'"]])
       Some(section_map) -> {
         match map.get(section_map, key) {
-          None -> flatten([errors, ["missing required key '{key}' in [{section}]"]])
+          None -> list.flatten([errors, ["missing required key '{key}' in [{section}]"]])
           Some(_) -> errors
         }
       }
@@ -296,12 +296,12 @@ fn validate_required(config, requirements) {
 
 fn print_config(config) {
   let sections = map.keys(config)
-  sections |> each { section ->
+  sections |> list.each { section ->
     println("[{section}]")
     match map.get(config, section) {
       Some(section_map) -> {
         let keys = map.keys(section_map)
-        keys |> each { key ->
+        keys |> list.each { key ->
           match map.get(section_map, key) {
             Some(value) -> {
               let displayed = display_value(value)
@@ -321,11 +321,11 @@ fn print_config(config) {
 -- ── Print errors with formatting ───────────────────────────────────
 
 fn print_errors(errors) {
-  match len(errors) {
+  match list.length(errors) {
     0 -> println("No errors.")
     n -> {
       println("{n} error(s) found:")
-      errors |> each { err ->
+      errors |> list.each { err ->
         println("  ERROR: {err}")
       }
     }
@@ -361,7 +361,7 @@ fn main() {
   let (config, parse_errors) = parse_config(content)
 
   -- Report any parse errors
-  match len(parse_errors) {
+  match list.length(parse_errors) {
     0 -> println("Parse: OK (no syntax errors)")
     _ -> print_errors(parse_errors)
   }
@@ -377,7 +377,7 @@ fn main() {
 
   -- Validate required keys
   let validation_errors = validate_required(config, required)
-  match len(validation_errors) {
+  match list.length(validation_errors) {
     0 -> println("Validation: OK (all required keys present)")
     _ -> {
       println("Validation FAILED:")
@@ -459,7 +459,7 @@ recovered=true"
 
   -- Validate the bad config against our requirements (will fail)
   let bad_validation = validate_required(bad_config, required)
-  match len(bad_validation) {
+  match list.length(bad_validation) {
     0 -> println("(unexpectedly passed validation)")
     _ -> {
       println("Expected validation failures:")

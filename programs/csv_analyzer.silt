@@ -28,7 +28,7 @@
     This is a constant friction point when computing averages (int count, float sum).
   - No string padding functions (pad_left, pad_right) makes table formatting
     tedious — had to build a pad_right helper with string.repeat.
-  - fold's 3-argument form in pipes is slightly confusing: list |> fold(init) { acc, x -> ... }.
+  - fold's 3-argument form in pipes is slightly confusing: list |> list.fold(init) { acc, x -> ... }.
     The init value goes in parens, the function goes in trailing closure. Workable
     but takes a moment to parse visually.
   - No way to convert a float to a string with fixed decimal places (e.g., 2 digits).
@@ -164,12 +164,12 @@ fn format_float(f) {
 fn parse_csv(content) {
   let lines = content
     |> string.split("\n")
-    |> filter { line -> string.length(string.trim(line)) > 0 }
+    |> list.filter { line -> string.length(string.trim(line)) > 0 }
 
-  lines |> map { line ->
+  lines |> list.map { line ->
     line
     |> string.split(",")
-    |> map { cell -> string.trim(cell) }
+    |> list.map { cell -> string.trim(cell) }
   }
 }
 
@@ -195,10 +195,10 @@ fn parse_number(s) {
 
 fn compute_column_stats(col_name, values) {
   -- Filter to only numeric values
-  let numeric_strings = values |> filter { v -> is_numeric(v) }
-  let nums = numeric_strings |> map { v -> parse_number(v) }
+  let numeric_strings = values |> list.filter { v -> is_numeric(v) }
+  let nums = numeric_strings |> list.map { v -> parse_number(v) }
 
-  let count = len(nums)
+  let count = list.length(nums)
 
   match count {
     0 -> ColumnStat {
@@ -209,7 +209,7 @@ fn compute_column_stats(col_name, values) {
       max: 0.0,
     }
     _ -> {
-      let sum = nums |> fold(0.0) { acc, x -> acc + x }
+      let sum = nums |> list.fold(0.0) { acc, x -> acc + x }
 
       -- Get first element as initial min/max
       when Some(first) = list.head(nums) else {
@@ -222,8 +222,8 @@ fn compute_column_stats(col_name, values) {
         }
       }
 
-      let min_val = nums |> fold(first) { acc, x -> float_min(acc, x) }
-      let max_val = nums |> fold(first) { acc, x -> float_max(acc, x) }
+      let min_val = nums |> list.fold(first) { acc, x -> float_min(acc, x) }
+      let max_val = nums |> list.fold(first) { acc, x -> float_max(acc, x) }
 
       ColumnStat {
         name: col_name,
@@ -239,7 +239,7 @@ fn compute_column_stats(col_name, values) {
 -- ── Extract a column by index from all rows ────────────────────────
 
 fn extract_column(rows, col_index) {
-  rows |> map { row ->
+  rows |> list.map { row ->
     match list_get(row, col_index) {
       Some(val) -> val
       None -> ""
@@ -289,7 +289,7 @@ fn print_stats_table(stats) {
   print_separator(w)
 
   -- Data rows
-  stats |> each { stat ->
+  stats |> list.each { stat ->
     let avg = average(stat)
     let row = "| "
       + pad_right(stat.name, w) + " | "
@@ -315,22 +315,22 @@ fn print_filtered_table(header, rows, label) {
   let w = 12
 
   -- Print header row
-  let header_line = header |> map { h -> pad_right(h, w) }
+  let header_line = header |> list.map { h -> pad_right(h, w) }
     |> string.join(" | ")
   println("  | {header_line} |")
-  let sep = header |> map { _ -> string.repeat("-", w) }
+  let sep = header |> list.map { _ -> string.repeat("-", w) }
     |> string.join("-+-")
   println("  +-{sep}-+")
 
   -- Print data rows
-  rows |> each { row ->
-    let line = row |> map { cell -> pad_right(cell, w) }
+  rows |> list.each { row ->
+    let line = row |> list.map { cell -> pad_right(cell, w) }
       |> string.join(" | ")
     println("  | {line} |")
   }
 
   println("")
-  println("  ({len(rows)} rows)")
+  println("  ({list.length(rows)} rows)")
 }
 
 -- ── Determine which column indices are numeric ─────────────────────
@@ -343,8 +343,8 @@ fn find_numeric_columns(header, data_rows) {
 
   -- Build list of (index, name) for numeric columns
   -- FRICTION: No list.enumerate, so we must use a counter via fold
-  let indices = 0..(len(header))
-  indices |> filter { i ->
+  let indices = 0..(list.length(header))
+  indices |> list.filter { i ->
     let val = match list_get(first_row, i) {
       Some(v) -> v
       None -> ""
@@ -382,13 +382,13 @@ fn main() {
   }
 
   println("  Columns: {string.join(header, ", ")}")
-  println("  Rows: {len(data_rows)}")
+  println("  Rows: {list.length(data_rows)}")
 
   -- Find which columns are numeric
   let numeric_indices = find_numeric_columns(header, data_rows)
 
   -- Compute stats for each numeric column
-  let stats = numeric_indices |> map { i ->
+  let stats = numeric_indices |> list.map { i ->
     let col_name = match list_get(header, i) {
       Some(name) -> name
       None -> "unknown"
@@ -402,8 +402,8 @@ fn main() {
 
   -- ── Filter: rows where score > 85 ─────────────────────────────
   -- Find the "score" column index
-  let score_col = 0..(len(header))
-    |> find { i ->
+  let score_col = 0..(list.length(header))
+    |> list.find { i ->
       match list_get(header, i) {
         Some(name) -> name == "score"
         None -> false
@@ -413,7 +413,7 @@ fn main() {
   match score_col {
     Some(score_idx) -> {
       let threshold = 85.0
-      let high_scorers = data_rows |> filter { row ->
+      let high_scorers = data_rows |> list.filter { row ->
         match list_get(row, score_idx) {
           Some(val) -> match float.parse(val) {
             Ok(score) -> score > threshold
@@ -428,8 +428,8 @@ fn main() {
   }
 
   -- ── Filter: rows where age < 30 ──────────────────────────────
-  let age_col = 0..(len(header))
-    |> find { i ->
+  let age_col = 0..(list.length(header))
+    |> list.find { i ->
       match list_get(header, i) {
         Some(name) -> name == "age"
         None -> false
@@ -439,7 +439,7 @@ fn main() {
   match age_col {
     Some(age_idx) -> {
       let age_threshold = 30.0
-      let young = data_rows |> filter { row ->
+      let young = data_rows |> list.filter { row ->
         match list_get(row, age_idx) {
           Some(val) -> match float.parse(val) {
             Ok(age) -> age < age_threshold
@@ -458,8 +458,8 @@ fn main() {
   println("  Grade Distribution")
   println("  ==================")
 
-  let grade_col = 0..(len(header))
-    |> find { i ->
+  let grade_col = 0..(list.length(header))
+    |> list.find { i ->
       match list_get(header, i) {
         Some(name) -> name == "grade"
         None -> false
@@ -471,7 +471,7 @@ fn main() {
       let grades = extract_column(data_rows, grade_idx)
 
       -- Count each grade using fold with a map
-      let counts = grades |> fold(#{ "A": 0, "B": 0, "C": 0, "D": 0, "F": 0 }) { acc, grade ->
+      let counts = grades |> list.fold(#{ "A": 0, "B": 0, "C": 0, "D": 0, "F": 0 }) { acc, grade ->
         let current = match map.get(acc, grade) {
           Some(n) -> n
           None -> 0
@@ -480,7 +480,7 @@ fn main() {
       }
 
       -- Print grade distribution
-      ["A", "B", "C", "D", "F"] |> each { grade ->
+      ["A", "B", "C", "D", "F"] |> list.each { grade ->
         let count = match map.get(counts, grade) {
           Some(n) -> n
           None -> 0

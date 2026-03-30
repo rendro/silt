@@ -57,8 +57,8 @@
 fn serialize(db) {
   let keys = map.keys(db)
   keys
-  |> map { k ->
-    let val = map.get(db, k) |> unwrap_or("")
+  |> list.map { k ->
+    let val = map.get(db, k) |> result.unwrap_or("")
     "{k}={val}"
   }
   |> string.join("\n")
@@ -67,7 +67,7 @@ fn serialize(db) {
 -- Deserialize "key=value\n" format back to a map
 fn deserialize(text, db) {
   let lines = string.split(text, "\n")
-  lines |> fold(db) { acc, line ->
+  lines |> list.fold(db) { acc, line ->
     let trimmed = string.trim(line)
     match string.contains(trimmed, "=") {
       true -> {
@@ -152,10 +152,10 @@ fn execute(input, db) {
 
     ["KEYS", .._] -> {
       let keys = map.keys(db)
-      match len(keys) {
+      match list.length(keys) {
         0 -> println("(empty)")
         _ -> {
-          keys |> each { k -> println("  {k}") }
+          keys |> list.each { k -> println("  {k}") }
         }
       }
       Some(db)
@@ -163,7 +163,7 @@ fn execute(input, db) {
 
     ["COUNT", .._] -> {
       let keys = map.keys(db)
-      let n = len(keys)
+      let n = list.length(keys)
       println("{n} key(s)")
       Some(db)
     }
@@ -181,7 +181,7 @@ fn execute(input, db) {
       match io.read_file(filename) {
         Ok(content) -> {
           let new_db = deserialize(content, #{})
-          let n = len(map.keys(new_db))
+          let n = list.length(map.keys(new_db))
           println("OK (loaded {n} key(s) from {filename})")
           Some(new_db)
         }

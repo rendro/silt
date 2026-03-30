@@ -483,15 +483,16 @@ impl Interpreter {
                 };
                 if let Some(ref name) = builtin_name {
                     match name.as_str() {
-                        "chan" | "channel.new" => return self.builtin_chan(args, env),
-                        "send" | "channel.send" => return self.builtin_send(args, env),
-                        "receive" | "channel.receive" => return self.builtin_receive(args, env),
-                        "close" | "channel.close" => return self.builtin_close(args, env),
-                        "try_send" | "channel.try_send" => return self.builtin_try_send(args, env),
-                        "try_receive" | "channel.try_receive" => return self.builtin_try_receive(args, env),
-                        "spawn" => return self.builtin_spawn(args, env),
-                        "join" => return self.builtin_join(args, env),
-                        "cancel" => return self.builtin_cancel(args, env),
+                        "channel.new" => return self.builtin_chan(args, env),
+                        "channel.send" => return self.builtin_send(args, env),
+                        "channel.receive" => return self.builtin_receive(args, env),
+                        "channel.close" => return self.builtin_close(args, env),
+                        "channel.try_send" => return self.builtin_try_send(args, env),
+                        "channel.try_receive" => return self.builtin_try_receive(args, env),
+                        "task.spawn" => return self.builtin_spawn(args, env),
+                        "task.join" => return self.builtin_join(args, env),
+                        "task.cancel" => return self.builtin_cancel(args, env),
+                        "try" => return self.builtin_try(args, env),
                         _ => {}
                     }
                 }
@@ -688,12 +689,12 @@ impl Interpreter {
     /// the interpreter for closure calls (variant method resolution, etc.).
     fn try_collection_builtin(&self, name: &str, args: &[Value]) -> Option<Result<Value>> {
         match name {
-            "map" if args.len() == 2 => Some(self.builtin_map(&args[0], &args[1])),
-            "filter" if args.len() == 2 => Some(self.builtin_filter(&args[0], &args[1])),
-            "each" if args.len() == 2 => Some(self.builtin_each(&args[0], &args[1])),
-            "fold" if args.len() == 3 => Some(self.builtin_fold(&args[0], &args[1], &args[2])),
-            "find" if args.len() == 2 => Some(self.builtin_find(&args[0], &args[1])),
-            "sort_by" if args.len() == 2 => Some(self.builtin_sort_by(&args[0], &args[1])),
+            "list.map" if args.len() == 2 => Some(self.builtin_map(&args[0], &args[1])),
+            "list.filter" if args.len() == 2 => Some(self.builtin_filter(&args[0], &args[1])),
+            "list.each" if args.len() == 2 => Some(self.builtin_each(&args[0], &args[1])),
+            "list.fold" if args.len() == 3 => Some(self.builtin_fold(&args[0], &args[1], &args[2])),
+            "list.find" if args.len() == 2 => Some(self.builtin_find(&args[0], &args[1])),
+            "list.sort_by" if args.len() == 2 => Some(self.builtin_sort_by(&args[0], &args[1])),
             _ => None,
         }
     }
@@ -959,6 +960,24 @@ impl Interpreter {
         };
         self.scheduler.borrow_mut().cancel(handle.id);
         Ok(Value::Unit)
+    }
+
+    fn builtin_try(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(err("try takes 1 argument (a zero-argument function)"));
+        }
+        let func_val = self.eval(&args[0], env)?;
+        match self.call_value(&func_val, &[]) {
+            Ok(val) => Ok(Value::Variant("Ok".into(), vec![val])),
+            Err(RuntimeError::Error(msg)) => {
+                Ok(Value::Variant("Err".into(), vec![Value::String(msg)]))
+            }
+            Err(RuntimeError::Return(val)) => Ok(Value::Variant("Ok".into(), vec![val])),
+            Err(RuntimeError::TailCall(_, _)) => Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String("unexpected tail call".into())],
+            )),
+        }
     }
 
     /// Run one round of pending tasks. Returns true if any progress was made.
@@ -1385,9 +1404,9 @@ fn register_builtins(env: &Env) {
         Ok(Value::Unit)
     }));
 
-    env.define("inspect".into(), builtin("inspect", |args| {
+    env.define("io.inspect".into(), builtin("io.inspect", |args| {
         if args.len() != 1 {
-            return Err("inspect takes 1 argument".into());
+            return Err("io.inspect takes 1 argument".into());
         }
         Ok(Value::String(format!("{:?}", args[0])))
     }));
@@ -1397,19 +1416,16 @@ fn register_builtins(env: &Env) {
         Err(format!("panic: {msg}"))
     }));
 
-    // List operations
-    env.define("map".into(), builtin("map", |_| {
-        Err("map requires closure argument (use pipeline syntax)".into())
-    }));
-    // We'll handle map/filter/each/fold specially in the interpreter
+    // List operations (module-qualified)
+    // We handle map/filter/each/fold/find/sort_by specially in try_collection_builtin
 
-    env.define("map".into(), builtin("map", |args| {
+    env.define("list.map".into(), builtin("list.map", |args| {
         if args.len() != 2 {
-            return Err("map takes 2 arguments (list, fn)".into());
+            return Err("list.map takes 2 arguments (list, fn)".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to map must be a list".into()),
+            _ => return Err("first argument to list.map must be a list".into()),
         };
         let func = &args[1];
         let mut results = Vec::new();
@@ -1420,13 +1436,13 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(results)))
     }));
 
-    env.define("filter".into(), builtin("filter", |args| {
+    env.define("list.filter".into(), builtin("list.filter", |args| {
         if args.len() != 2 {
-            return Err("filter takes 2 arguments (list, fn)".into());
+            return Err("list.filter takes 2 arguments (list, fn)".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to filter must be a list".into()),
+            _ => return Err("first argument to list.filter must be a list".into()),
         };
         let func = &args[1];
         let mut results = Vec::new();
@@ -1439,13 +1455,13 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(results)))
     }));
 
-    env.define("each".into(), builtin("each", |args| {
+    env.define("list.each".into(), builtin("list.each", |args| {
         if args.len() != 2 {
-            return Err("each takes 2 arguments (list, fn)".into());
+            return Err("list.each takes 2 arguments (list, fn)".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to each must be a list".into()),
+            _ => return Err("first argument to list.each must be a list".into()),
         };
         let func = &args[1];
         for item in list.iter() {
@@ -1454,13 +1470,13 @@ fn register_builtins(env: &Env) {
         Ok(Value::Unit)
     }));
 
-    env.define("fold".into(), builtin("fold", |args| {
+    env.define("list.fold".into(), builtin("list.fold", |args| {
         if args.len() != 3 {
-            return Err("fold takes 3 arguments (list, init, fn)".into());
+            return Err("list.fold takes 3 arguments (list, init, fn)".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to fold must be a list".into()),
+            _ => return Err("first argument to list.fold must be a list".into()),
         };
         let mut acc = args[1].clone();
         let func = &args[2];
@@ -1470,13 +1486,13 @@ fn register_builtins(env: &Env) {
         Ok(acc)
     }));
 
-    env.define("find".into(), builtin("find", |args| {
+    env.define("list.find".into(), builtin("list.find", |args| {
         if args.len() != 2 {
-            return Err("find takes 2 arguments (list, fn)".into());
+            return Err("list.find takes 2 arguments (list, fn)".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to find must be a list".into()),
+            _ => return Err("first argument to list.find must be a list".into()),
         };
         let func = &args[1];
         for item in list.iter() {
@@ -1488,17 +1504,17 @@ fn register_builtins(env: &Env) {
         Ok(Value::Variant("None".into(), Vec::new()))
     }));
 
-    env.define("zip".into(), builtin("zip", |args| {
+    env.define("list.zip".into(), builtin("list.zip", |args| {
         if args.len() != 2 {
-            return Err("zip takes 2 arguments".into());
+            return Err("list.zip takes 2 arguments".into());
         }
         let a = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("first argument to zip must be a list".into()),
+            _ => return Err("first argument to list.zip must be a list".into()),
         };
         let b = match &args[1] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("second argument to zip must be a list".into()),
+            _ => return Err("second argument to list.zip must be a list".into()),
         };
         let pairs: Vec<Value> = a
             .iter()
@@ -1508,13 +1524,13 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(pairs)))
     }));
 
-    env.define("flatten".into(), builtin("flatten", |args| {
+    env.define("list.flatten".into(), builtin("list.flatten", |args| {
         if args.len() != 1 {
-            return Err("flatten takes 1 argument".into());
+            return Err("list.flatten takes 1 argument".into());
         }
         let list = match &args[0] {
             Value::List(xs) => xs.clone(),
-            _ => return Err("argument to flatten must be a list".into()),
+            _ => return Err("argument to list.flatten must be a list".into()),
         };
         let mut result = Vec::new();
         for item in list.iter() {
@@ -1526,22 +1542,12 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(result)))
     }));
 
-    env.define("len".into(), builtin("len", |args| {
-        if args.len() != 1 {
-            return Err("len takes 1 argument".into());
-        }
-        match &args[0] {
-            Value::List(xs) => Ok(Value::Int(xs.len() as i64)),
-            Value::String(s) => Ok(Value::Int(s.len() as i64)),
-            Value::Map(m) => Ok(Value::Int(m.len() as i64)),
-            _ => Err("len requires a list, string, or map".into()),
-        }
-    }));
+    // len removed from globals -- use list.length, string.length, map.length
 
-    // Result/Option helpers
-    env.define("unwrap_or".into(), builtin("unwrap_or", |args| {
+    // Result helpers (module-qualified)
+    env.define("result.unwrap_or".into(), builtin("result.unwrap_or", |args| {
         if args.len() != 2 {
-            return Err("unwrap_or takes 2 arguments".into());
+            return Err("result.unwrap_or takes 2 arguments".into());
         }
         match &args[0] {
             Value::Variant(name, fields) if name == "Ok" || name == "Some" => {
@@ -1551,9 +1557,9 @@ fn register_builtins(env: &Env) {
         }
     }));
 
-    env.define("map_ok".into(), builtin("map_ok", |args| {
+    env.define("result.map_ok".into(), builtin("result.map_ok", |args| {
         if args.len() != 2 {
-            return Err("map_ok takes 2 arguments".into());
+            return Err("result.map_ok takes 2 arguments".into());
         }
         match &args[0] {
             Value::Variant(name, fields) if name == "Ok" && fields.len() == 1 => {
@@ -1563,7 +1569,7 @@ fn register_builtins(env: &Env) {
             Value::Variant(name, fields) if name == "Err" => {
                 Ok(Value::Variant(name.clone(), fields.clone()))
             }
-            _ => Err("map_ok requires a Result value".into()),
+            _ => Err("result.map_ok requires a Result value".into()),
         }
     }));
 
@@ -1705,9 +1711,9 @@ fn register_builtins(env: &Env) {
     }));
 
     // Test module
-    env.define("assert".into(), builtin("assert", |args| {
+    env.define("test.assert".into(), builtin("test.assert", |args| {
         if args.len() != 1 {
-            return Err("assert takes 1 argument".into());
+            return Err("test.assert takes 1 argument".into());
         }
         if is_truthy(&args[0]) {
             Ok(Value::Unit)
@@ -1716,9 +1722,9 @@ fn register_builtins(env: &Env) {
         }
     }));
 
-    env.define("assert_eq".into(), builtin("assert_eq", |args| {
+    env.define("test.assert_eq".into(), builtin("test.assert_eq", |args| {
         if args.len() != 2 {
-            return Err("assert_eq takes 2 arguments".into());
+            return Err("test.assert_eq takes 2 arguments".into());
         }
         if args[0] == args[1] {
             Ok(Value::Unit)
@@ -1727,9 +1733,9 @@ fn register_builtins(env: &Env) {
         }
     }));
 
-    env.define("assert_ne".into(), builtin("assert_ne", |args| {
+    env.define("test.assert_ne".into(), builtin("test.assert_ne", |args| {
         if args.len() != 2 {
-            return Err("assert_ne takes 2 arguments".into());
+            return Err("test.assert_ne takes 2 arguments".into());
         }
         if args[0] != args[1] {
             Ok(Value::Unit)
@@ -1905,6 +1911,16 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(vals)))
     }));
 
+    env.define("map.length".into(), builtin("map.length", |args| {
+        if args.len() != 1 {
+            return Err("map.length takes 1 argument".into());
+        }
+        let Value::Map(m) = &args[0] else {
+            return Err("map.length requires a map".into());
+        };
+        Ok(Value::Int(m.len() as i64))
+    }));
+
     env.define("map.merge".into(), builtin("map.merge", |args| {
         if args.len() != 2 {
             return Err("map.merge takes 2 arguments".into());
@@ -1988,15 +2004,15 @@ fn register_builtins(env: &Env) {
         Ok(Value::List(Rc::new(sorted)))
     }));
 
-    // Placeholder: actual closure-based sort_by is handled by try_collection_builtin
-    env.define("sort_by".into(), builtin("sort_by", |args| {
+    // Placeholder: actual closure-based list.sort_by is handled by try_collection_builtin
+    env.define("list.sort_by".into(), builtin("list.sort_by", |args| {
         if args.len() != 2 {
-            return Err("sort_by takes 2 arguments (list, key_fn)".into());
+            return Err("list.sort_by takes 2 arguments (list, key_fn)".into());
         }
         let Value::List(_) = &args[0] else {
             return Err("first argument must be a list".into());
         };
-        Err("sort_by requires closure argument (use pipeline syntax)".into())
+        Err("list.sort_by requires closure argument (use pipeline syntax)".into())
     }));
 
     env.define("list.contains".into(), builtin("list.contains", |args| {
@@ -2540,7 +2556,7 @@ mod tests {
         let result = run(r#"
             fn main() {
                 let xs = [1, 2, 3]
-                xs |> map { x -> x * 2 }
+                xs |> list.map { x -> x * 2 }
             }
         "#);
         assert_eq!(
@@ -2654,7 +2670,7 @@ mod tests {
     fn test_filter() {
         let result = run(r#"
             fn main() {
-                [1, 2, 3, 4, 5] |> filter { x -> x > 3 }
+                [1, 2, 3, 4, 5] |> list.filter { x -> x > 3 }
             }
         "#);
         assert_eq!(
@@ -2667,7 +2683,7 @@ mod tests {
     fn test_fold() {
         let result = run(r#"
             fn main() {
-                [1, 2, 3] |> fold(0) { acc, x -> acc + x }
+                [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
             }
         "#);
         assert_eq!(result, Value::Int(6));
@@ -2765,7 +2781,7 @@ mod tests {
             fn main() {
                 let m = #{"x": 10, "y": 20}
                 let ks = map.keys(m)
-                len(ks)
+                list.length(ks)
             }
         "#);
         assert_eq!(result, Value::Int(2));
@@ -2801,7 +2817,7 @@ mod tests {
                     Some(v) -> v
                     None -> 0
                 }
-                (h, len(t), l)
+                (h, list.length(t), l)
             }
         "#);
         assert_eq!(result, Value::Tuple(vec![Value::Int(10), Value::Int(2), Value::Int(30)]));
@@ -2980,7 +2996,7 @@ mod tests {
         let result = run(r#"
             fn main() {
                 let cs = string.chars("abc")
-                len(cs)
+                list.length(cs)
             }
         "#);
         assert_eq!(result, Value::Int(3));

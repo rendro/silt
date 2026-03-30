@@ -1,18 +1,18 @@
 fn main() {
   let ch = channel.new(10)
 
-  let producer = spawn fn() {
+  let producer = task.spawn(fn() {
     channel.send(ch, "hello")
     channel.send(ch, "world")
     channel.close(ch)
-  }
+  })
 
-  let consumer = spawn fn() {
+  let consumer = task.spawn(fn() {
     let msg1 = channel.receive(ch)
     let msg2 = channel.receive(ch)
     println("{msg1} {msg2}")
-  }
+  })
 
-  join(producer)
-  join(consumer)
+  task.join(producer)
+  task.join(consumer)
 }

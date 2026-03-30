@@ -10,7 +10,6 @@ pub enum Token {
     Match,
     When,
     Return,
-    Spawn,
     Select,
     Pub,
     Mod,
@@ -87,7 +86,7 @@ impl fmt::Display for Token {
             Token::Match => write!(f, "match"),
             Token::When => write!(f, "when"),
             Token::Return => write!(f, "return"),
-            Token::Spawn => write!(f, "spawn"),
+            // spawn is no longer a keyword; it's the task.spawn module function
             Token::Select => write!(f, "select"),
             Token::Pub => write!(f, "pub"),
             Token::Mod => write!(f, "mod"),
@@ -417,7 +416,7 @@ impl Lexer {
             "match" => Token::Match,
             "when" => Token::When,
             "return" => Token::Return,
-            "spawn" => Token::Spawn,
+            // "spawn" is no longer a keyword; it's now task.spawn
             "select" => Token::Select,
             "pub" => Token::Pub,
             "mod" => Token::Mod,

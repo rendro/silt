@@ -23,6 +23,6 @@ fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
 
   shapes
-  |> map { s -> (s.display(), area(s)) }
-  |> each { pair -> println("{pair}") }
+  |> list.map { s -> (s.display(), area(s)) }
+  |> list.each { pair -> println("{pair}") }
 }
