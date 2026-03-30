@@ -742,6 +742,48 @@ fn main() {
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
 
+#[test]
+fn test_channel_module_qualified() {
+    let result = run(r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  channel.receive(ch)
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_channel_module_qualified_close() {
+    let result = run(r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 1)
+  channel.close(ch)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
+  match b {
+    None -> a
+    _ -> -1
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn test_channel_module_try_send_receive() {
+    let result = run(r#"
+fn main() {
+  let ch = channel.new(1)
+  channel.try_send(ch, 99)
+  channel.try_receive(ch)
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(99)]));
+}
+
 // ── List pattern matching ───────────────────────────────────────────
 
 #[test]

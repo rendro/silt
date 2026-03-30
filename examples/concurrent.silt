@@ -1,15 +1,15 @@
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
   let producer = spawn fn() {
-    send(ch, "hello")
-    send(ch, "world")
-    close(ch)
+    channel.send(ch, "hello")
+    channel.send(ch, "world")
+    channel.close(ch)
   }
 
   let consumer = spawn fn() {
-    let msg1 = receive(ch)
-    let msg2 = receive(ch)
+    let msg1 = channel.receive(ch)
+    let msg2 = channel.receive(ch)
     println("{msg1} {msg2}")
   }
 

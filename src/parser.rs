@@ -951,61 +951,6 @@ impl Parser {
                     span,
                 ))
             }
-            Token::Chan => {
-                self.advance();
-                // chan() or chan(n)
-                self.expect(&Token::LParen)?;
-                self.skip_nl();
-                let args = if self.at(&Token::RParen) {
-                    vec![]
-                } else {
-                    let arg = self.parse_expr()?;
-                    vec![arg]
-                };
-                self.expect(&Token::RParen)?;
-                Ok(Expr::new(
-                    ExprKind::Call(
-                        Box::new(Expr::new(ExprKind::Ident("chan".into()), span)),
-                        args,
-                    ),
-                    span,
-                ))
-            }
-            Token::Send => {
-                self.advance();
-                // send(ch, value)
-                self.expect(&Token::LParen)?;
-                self.skip_nl();
-                let ch = self.parse_expr()?;
-                self.expect(&Token::Comma)?;
-                self.skip_nl();
-                let val = self.parse_expr()?;
-                self.skip_nl();
-                self.expect(&Token::RParen)?;
-                Ok(Expr::new(
-                    ExprKind::Call(
-                        Box::new(Expr::new(ExprKind::Ident("send".into()), span)),
-                        vec![ch, val],
-                    ),
-                    span,
-                ))
-            }
-            Token::Receive => {
-                self.advance();
-                // receive(ch)
-                self.expect(&Token::LParen)?;
-                self.skip_nl();
-                let ch = self.parse_expr()?;
-                self.skip_nl();
-                self.expect(&Token::RParen)?;
-                Ok(Expr::new(
-                    ExprKind::Call(
-                        Box::new(Expr::new(ExprKind::Ident("receive".into()), span)),
-                        vec![ch],
-                    ),
-                    span,
-                ))
-            }
             Token::Select => self.parse_select_expr(),
             _ => Err(ParseError {
                 message: format!("expected expression, found {}", self.peek()),
@@ -1234,7 +1179,13 @@ impl Parser {
     fn parse_select_arm(&mut self) -> Result<SelectArm> {
         self.skip_nl();
         // expect: receive(channel_expr) as binding -> body
-        self.expect(&Token::Receive)?;
+        let (name, _) = self.expect_ident()?;
+        if name != "receive" {
+            return Err(ParseError {
+                message: format!("expected 'receive' in select arm, found '{name}'"),
+                span: self.span(),
+            });
+        }
         self.expect(&Token::LParen)?;
         self.skip_nl();
         let channel = self.parse_expr()?;
@@ -1301,7 +1252,7 @@ impl Parser {
 
         if guardless {
             // Guardless match: each arm's LHS is a boolean expression or `_`
-            let is_wildcard = matches!(self.peek(), Token::Ident(ref name) if name == "_");
+            let is_wildcard = matches!(self.peek(), Token::Ident(name) if name == "_");
             if is_wildcard {
                 self.advance();
                 self.expect(&Token::Arrow)?;

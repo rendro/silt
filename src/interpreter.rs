@@ -469,15 +469,26 @@ impl Interpreter {
             }
 
             ExprKind::Call(callee, args) => {
-                // Intercept concurrency builtins by name
-                if let ExprKind::Ident(name) = &callee.kind {
+                // Intercept concurrency builtins by name (bare or qualified)
+                let builtin_name = match &callee.kind {
+                    ExprKind::Ident(name) => Some(name.clone()),
+                    ExprKind::FieldAccess(expr, field) => {
+                        if let ExprKind::Ident(module) = &expr.kind {
+                            Some(format!("{module}.{field}"))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(ref name) = builtin_name {
                     match name.as_str() {
-                        "chan" => return self.builtin_chan(args, env),
-                        "send" => return self.builtin_send(args, env),
-                        "receive" => return self.builtin_receive(args, env),
-                        "close" => return self.builtin_close(args, env),
-                        "try_send" => return self.builtin_try_send(args, env),
-                        "try_receive" => return self.builtin_try_receive(args, env),
+                        "chan" | "channel.new" => return self.builtin_chan(args, env),
+                        "send" | "channel.send" => return self.builtin_send(args, env),
+                        "receive" | "channel.receive" => return self.builtin_receive(args, env),
+                        "close" | "channel.close" => return self.builtin_close(args, env),
+                        "try_send" | "channel.try_send" => return self.builtin_try_send(args, env),
+                        "try_receive" | "channel.try_receive" => return self.builtin_try_receive(args, env),
                         "spawn" => return self.builtin_spawn(args, env),
                         "join" => return self.builtin_join(args, env),
                         "cancel" => return self.builtin_cancel(args, env),
