@@ -2,74 +2,28 @@
   Concurrent File Processor -- Ergonomics Evaluation
   ==================================================
 
+  CONCURRENCY EXPERIENCE RATING: 8/10
+
   WHAT WAS EASY / PLEASANT:
-  - Channel creation is minimal and clean: chan() and chan(10) -- no type annotations
-    needed, inference handles it. This is nicer than Go's make(chan Type, cap).
-  - task.spawn(fn() { ... } with closure capture of channels is natural and lightweight.
-    No need to explicitly pass channels as arguments; they are captured from scope.
-  - receive() returning None on a closed channel is elegant -- it gives you a clean
-    termination signal without a separate "done" channel or sentinel value.
+  - Channel creation is minimal and clean: channel.new() and channel.new(10).
+  - task.spawn with closure capture of channels is natural and lightweight.
+  - receive() returning None on a closed channel is elegant for termination.
   - The pipe operator |> combined with each/map/fold makes result aggregation pleasant.
   - Pattern matching on Ok/Err for file I/O errors inside spawned tasks feels right.
   - Records for structured results are straightforward.
   - select with multiple channels is syntactically clean.
-  - try_receive returning Some/None is consistent with Option everywhere.
+  - list.append eliminates the flatten workaround for collecting results.
+  - Guardless match makes boolean branching cleaner.
 
-  WHAT WAS AWKWARD:
+  REMAINING FRICTION:
   - No way to loop over a channel until it is closed (like Go's `for msg := range ch`).
     Must use recursion to drain a channel, which means writing a helper function for
     every "consume until done" pattern. This is the single biggest ergonomic gap.
-  - Recursion for the worker loop means you have to think about stack depth. For large
-    workloads this could be a problem (no tail-call optimization guarantee mentioned).
-  - No list append/cons operation. Building a list element-by-element requires either
-    list.flatten([[acc], [new_element]]) or collecting into nested structures then flattening.
-    This makes the "collect N results" pattern more awkward than it should be.
-  - receive() returns the raw value on success but None on closed. This means you cannot
-    send None values through a channel and distinguish them from the close signal.
-    Go solves this with `val, ok := <-ch`. Silt could use Result: Ok(val) / Err(Closed).
-  - try_receive returning None for both "empty" and "closed" makes it impossible to
-    distinguish "nothing yet" from "done forever" -- you must use receive() (blocking)
-    to get the closed signal.
-  - The cooperative scheduler means "concurrency" is really interleaved coroutines,
-    not parallelism. Fine for the model, but worth being explicit about.
-
-  PATTERNS THAT WERE HARD TO EXPRESS:
-  - Fan-out/fan-in required manually counting expected results. No WaitGroup equivalent
-    and no way to "receive all until closed" without recursion.
-  - Spawning a dynamic number of workers from a list requires each/map with spawn inside,
-    which works but the join coordination at the end is manual.
-  - Aggregating results from multiple workers into a summary requires a recursive
-    collector function since there is no mutable accumulator.
-
-  TYPE CHECKER GAPS ENCOUNTERED:
-  - string.replace is typed as (String, String) -> String but runtime takes 3 args.
-    Had to work around by splitting per-line instead of replacing newlines with spaces.
-  - len() is only typed for List(a) -> Int, not for String -> Int. Had to use w != ""
-    instead of len(w) > 0 to filter empty strings.
-  - flatten, string.length, string.repeat, etc. are not in the type checker at all.
-  - These gaps are not concurrency-specific but were hit while writing the data
-    processing logic that the concurrent workers execute.
-
-  COMPARISON TO GO CHANNELS:
-  - Silt channels feel like a simplified Go channel model. The core send/receive/close
-    semantics are nearly identical. Missing: for-range over channels, select with default
-    case, and WaitGroup.
-  - Go's `for msg := range ch` is sorely missed -- it is the #1 channel pattern.
-  - Go's `val, ok := <-ch` for distinguishing closed from value is also missing.
-
-  COMPARISON TO ELIXIR PROCESSES:
-  - Elixir's receive with pattern matching in the mailbox is more flexible (selective
-    receive). Silt channels are typed pipes, not mailboxes -- simpler but less powerful.
-  - Elixir's recursion-based receive loops feel similar to what Silt requires, so the
-    recursive drain pattern is actually familiar to Elixir developers.
-  - Missing: process linking, supervisors, monitoring -- but those are higher-level.
-
-  CONCURRENCY EXPERIENCE RATING: 7/10
-  - The primitives are clean, minimal, and well-chosen. Channel inference is great.
-    The main gap is the lack of a channel iteration construct, which forces boilerplate
-    recursive helpers for the most common pattern. Adding a single construct like
-    `for msg in ch { ... }` that loops until closed would push this to 9/10.
-    A list append operator (e.g., xs ++ [y]) would also help significantly.
+  - Recursion for the worker loop means you have to think about stack depth.
+  - receive() returns the raw value on success but None on closed. Cannot send None
+    values through a channel and distinguish them from the close signal.
+  - try_receive returning None for both "empty" and "closed" is ambiguous.
+  - The cooperative scheduler means "concurrency" is really interleaved coroutines.
 -}
 
 -- Record type for file processing results
@@ -126,8 +80,6 @@ fn process_file(path) {
 }
 
 -- Recursive helper: drain the work channel and send results back
--- This is the "consume until closed" pattern that requires recursion.
--- receive() returns the raw value on success, or None when the channel is closed.
 fn worker_loop(work_ch, results_ch) {
   match channel.receive(work_ch) {
     None -> ()
@@ -140,15 +92,13 @@ fn worker_loop(work_ch, results_ch) {
 }
 
 -- Recursive helper: collect N results from the results channel
--- We know exactly how many results to expect, so we count down.
--- Uses flatten to append each result to the accumulator list.
 fn collect_results(results_ch, remaining, acc) {
   match remaining {
     0 -> acc
     n -> {
       match channel.receive(results_ch) {
         None -> acc
-        result -> collect_results(results_ch, n - 1, list.flatten([acc, [result]]))
+        result -> collect_results(results_ch, n - 1, list.append(acc, result))
       }
     }
   }
@@ -196,8 +146,8 @@ fn main() {
   let file_count = list.length(files)
 
   -- Create channels: buffered work channel, buffered results channel
-  let work_ch = channel.new(10)     -- buffered: can enqueue all work before workers start
-  let results_ch = channel.new(10)  -- buffered: workers can send results without blocking
+  let work_ch = channel.new(10)
+  let results_ch = channel.new(10)
 
   -- Spawn 2 workers that pull from the work channel
   println("Spawning 2 workers...")

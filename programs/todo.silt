@@ -3,59 +3,24 @@
 
   === Friction Report ===
 
-  Overall rating: 5/10
+  Overall rating: 7/10
 
-  No list.append or list.push (pain: 9/10)
-    The single most painful gap. To add an item to a list you must use
-    list.flatten([[todos], [new_todo]]) which is ugly and non-obvious. A simple
-    list.append(list, item) or list.push(list, item) would transform the
-    experience. Every "add" operation reads like a workaround, not intent.
+  WHAT WAS EASY / PLEASANT:
+  - list.append makes adding items to lists clean and intentional.
+  - Record update syntax todo.{ done: !todo.done } is beautiful.
+  - Pipe + trailing closure chains are expressive for list operations.
+  - Pattern matching on list shapes works well for command parsing.
+  - when/else for early returns reads naturally.
+  - Guardless match makes simple conditionals cleaner.
 
-  No list indexing / list.get(list, n) (pain: 8/10)
-    There is no way to access the Nth element of a list. To find a todo by
-    integer id, you must filter the entire list every time. This makes DONE
-    and REMOVE operations O(n) scans even when you know the index. It also
-    means there is no way to implement "get element at position" without
-    writing a recursive helper. For a language with List as a first-class
-    type, this is a surprising omission.
-
-  Accumulator-threading through recursive loop (pain: 7/10)
-    Every branch of the command match must remember to pass (todos, next_id)
-    back to the loop. Miss one and the program silently terminates. A while
-    loop with rebinding (let todos = ...) would halve the ceremony. The
-    recursive pattern is elegant in theory but error-prone in practice when
-    you have 8+ match arms that all need to thread two pieces of state.
-
-  No int.to_string (pain: 4/10)
-    The only way to convert an Int to a String is via interpolation "{n}".
-    This works fine for display but feels indirect when building a
-    serialization format. A to_string() method or int.to_string() would
-    feel more intentional.
-
-  No string.slice / string.substring (pain: 5/10)
-    Parsing "ADD Buy some milk" requires splitting on space and rejoining
-    everything after the command word. string.split + list pattern matching
-    + string.join(rest, " ") works but is a 3-step workaround for what
-    should be a single substring call.
-
-  Record update syntax is excellent (delight: 9/10)
-    todo.{ done: !todo.done } is beautiful. Clear, concise, reads like
-    English. This is the highlight of the record system.
-
-  Pipe + trailing closure chains (delight: 8/10)
-    todos |> list.filter { t -> t.done } |> list.each { t -> ... } is expressive
-    and pleasant. The |> operator earns its keep in list-heavy code.
-
-  Pattern matching on list shapes (mixed: 6/10)
-    Matching ["ADD", ..rest] is nice for command parsing. But you cannot
-    match on an empty rest vs non-empty rest in the same pattern, so you
-    still need a guard or nested match to validate argument presence.
-
-  Bool as a type works but lacks ergonomic helpers (pain: 3/10)
-    No bool.to_string, no ternary, no if/else. You pattern match on
-    true/false which is verbose for simple conditional formatting like
-    choosing "[x]" vs "[ ]". match works, but a simple if/else or
-    ternary would reduce noise for boolean-driven formatting.
+  REMAINING FRICTION:
+  - Accumulator-threading through recursive loop (every branch must pass
+    (todos, next_id) back). A while loop with rebinding would halve ceremony.
+  - No int.to_string -- only available via interpolation "{n}".
+  - Parsing "ADD Buy some milk" requires splitting + rejoining, which is
+    a 3-step workaround for what should be a single substring call.
+  - No ternary or if/else -- pattern matching on true/false is verbose
+    for simple conditional formatting.
 -}
 
 -- Todo record type
@@ -92,10 +57,7 @@ fn deserialize_todo(line) {
       let title = string.join(title_parts, "|")
       match int.parse(id_str) {
         Ok(id) -> {
-          let done = match done_str {
-            "1" -> true
-            _ -> false
-          }
+          let done = done_str == "1"
           Some(Todo { id: id, title: title, done: done })
         }
         Err(_) -> None
@@ -117,39 +79,30 @@ fn deserialize_all(text) {
   let lines = string.split(text, "\n")
   lines
   |> list.map { line -> deserialize_todo(line) }
-  |> list.filter { opt -> match opt {
-    Some(_) -> true
-    None -> false
-  }}
-  |> list.map { opt -> match opt {
-    Some(t) -> t
-    _ -> panic("unreachable")
-  }}
+  |> list.filter { opt -> option.is_some(opt) }
+  |> list.map { opt -> option.unwrap_or(opt, Todo { id: 0, title: "", done: false }) }
 }
 
 -- Find the highest id in the todo list (for generating next id)
 fn max_id(todos) {
   todos |> list.fold(0) { best, t ->
-    match t.id > best {
-      true -> t.id
-      false -> best
-    }
+    int.max(t.id, best)
   }
 }
 
 -- Add a new todo, returns (updated_todos, next_id)
 fn add_todo(todos, next_id, title) {
   let todo = Todo { id: next_id, title: title, done: false }
-  let new_todos = list.flatten([todos, [todo]])
+  let new_todos = list.append(todos, todo)
   println("Added: {format_todo(todo)}")
   (new_todos, next_id + 1)
 }
 
 -- Toggle the done status of a todo by id
 fn toggle_done(todos, id) {
-  let found = todos |> list.find { t -> t.id == id }
+  let found = todos |> list.any { t -> t.id == id }
   match found {
-    Some(_) -> {
+    true -> {
       let updated = todos |> list.map { t ->
         match t.id == id {
           true -> t.{ done: !t.done }
@@ -163,7 +116,7 @@ fn toggle_done(todos, id) {
       }
       updated
     }
-    None -> {
+    false -> {
       println("Error: no todo with id {id}")
       todos
     }

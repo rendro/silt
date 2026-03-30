@@ -4,61 +4,25 @@
 
   FRICTION REPORT:
 
-  1. Do recursive/nested algebraic types work?
-     YES. Silt's type system allows defining `type Expr { Add(Expr, Expr) ... }`
-     and the interpreter stores variants as `Value::Variant(name, fields)` with
-     no type-level recursion checks. The runtime happily nests Variant values
-     arbitrarily deep. Constructors like `Add(Num(3), Num(4))` just work.
-     This is a huge win - it means we can model proper ASTs.
+  Rating: 8/10
 
-  2. How deep can pattern matching go?
-     Pattern matching on nested constructors works to arbitrary depth because
-     `try_bind_pattern` for Constructor patterns recursively matches sub-patterns.
-     So `Add(Num(a), Mul(Num(b), Num(c)))` in a match arm is perfectly fine.
-     The depth is limited only by the Rust stack, which is generous.
+  WHAT WAS EASY / PLEASANT:
+  - Algebraic types with recursive nesting just work out of the box.
+  - Pattern matching on nested constructors is natural and readable.
+  - String interpolation makes pretty-printing trivial.
+  - The pipe operator makes RPN evaluation clean and expressive.
+  - Or-patterns for operator matching ("+" | "add" -> ...) are elegant.
+  - list.concat replaces the flatten workaround for list building.
+  - list.append replaces flatten([[n], stack]) for stack push.
+  - Range patterns for complexity classification are concise.
+  - Guardless match available for conditional branching (not needed here
+    since the pattern matching on ADTs covers all cases naturally).
 
-  3. Does TCO help with recursive evaluation?
-     The interpreter implements TCO via TailCall trampolining in `call_closure`.
-     For `eval_expr`, the recursive calls are NOT in tail position (we compute
-     sub-expressions then combine), so TCO does not directly help. However,
-     for the accumulator-based `eval_rpn` fold, TCO kicks in because the last
-     call in each fold iteration is in tail position. The fold builtin itself
-     handles this iteratively anyway.
-
-  4. What was surprisingly easy?
-     - Algebraic types with recursive nesting just work out of the box
-     - Pattern matching on nested constructors is natural and readable
-     - String interpolation makes pretty-printing trivial
-     - The pipe operator makes RPN evaluation clean and expressive
-     - Or-patterns for operator matching ("+" | "add" -> ...) are elegant
-     - Trait impl for Display on custom types works as expected
-
-  5. What was painful or impossible?
-     - No list concatenation operator (no `+` on lists, no `list.concat`)
-       so building lists requires flatten or manual approaches
-     - No `string.slice` or indexing into strings, making tokenization harder
-     - The `int.parse` returns Result, which is fine, but there is no
-       `to_string` builtin for converting Int back to String (string
-       interpolation handles it though)
-     - No way to throw/catch errors within pure functions; must thread Results
-     - No negative literal patterns; cannot write `match x { -1 -> ... }`
-       (would need a guard instead)
-     - Cannot define helper functions inside other functions (no local fn)
-
-  6. How does this compare to writing the same in Haskell/Rust/OCaml?
-     Very close to Haskell/OCaml for the ADT + pattern matching core. The
-     syntax is lighter than Rust (no lifetime annotations, no explicit borrows).
-     Missing: Haskell's `deriving Show`, Rust's `#[derive(Debug)]`, OCaml's
-     `[@@deriving show]`. You must manually implement Display trait. Also no
-     `where` clauses in let-bindings like Haskell. Overall it feels like a
-     simplified ML/Haskell hybrid, which is a sweet spot for this kind of task.
-
-  7. Rate the experience: 7/10
-     The core language features (ADTs, pattern matching, pipes, string interp)
-     are excellent and compose well. Lost points for: missing list concat,
-     limited string manipulation, and no local function definitions. The
-     trait system works but feels slightly verbose compared to Haskell typeclasses.
-     For a v0.2 language, this is impressively capable.
+  REMAINING FRICTION:
+  - No negative literal patterns; cannot write `match x { -1 -> ... }`.
+  - Cannot define helper functions inside other functions (no local fn).
+  - No string indexing makes tokenization harder (not used here).
+  - Recursive loop ceremony for any iterative algorithm.
 -}
 
 -- ============================================================
@@ -104,72 +68,54 @@ fn eval_expr(expr) {
 -- Part 4: Expression Simplifier (deep pattern matching)
 -- ============================================================
 
--- Simplify expressions using algebraic identities.
--- Tests nested constructor matching at depth 2+.
 fn simplify(expr) {
   match expr {
-    -- x + 0 = x
     Add(e, Num(0)) -> simplify(e)
-    -- 0 + x = x
     Add(Num(0), e) -> simplify(e)
-    -- x * 1 = x
     Mul(e, Num(1)) -> simplify(e)
-    -- 1 * x = x
     Mul(Num(1), e) -> simplify(e)
-    -- x * 0 = 0
     Mul(_, Num(0)) -> Num(0)
-    -- 0 * x = 0
     Mul(Num(0), _) -> Num(0)
-    -- double negation: --x = x
     Neg(Neg(inner)) -> simplify(inner)
-    -- negation of zero
     Neg(Num(0)) -> Num(0)
-    -- recurse into subexpressions
     Add(left, right) -> Add(simplify(left), simplify(right))
     Mul(left, right) -> Mul(simplify(left), simplify(right))
     Neg(inner) -> Neg(simplify(inner))
-    -- base case
     other -> other
   }
 }
 
 -- ============================================================
 -- Part 5: RPN (Reverse Polish Notation) Stack Evaluator
--- Exercises: list patterns, or-patterns, fold, string ops
 -- ============================================================
 
--- Evaluate a single RPN token against a stack.
--- Uses or-patterns for operator matching.
 fn apply_token(stack, token) {
   match token {
     "+" | "add" -> match stack {
-      [b, a, ..rest] -> list.flatten([[a + b], rest])
+      [b, a, ..rest] -> list.concat([a + b], rest)
       _ -> panic("stack underflow on +")
     }
     "*" | "mul" -> match stack {
-      [b, a, ..rest] -> list.flatten([[a * b], rest])
+      [b, a, ..rest] -> list.concat([a * b], rest)
       _ -> panic("stack underflow on *")
     }
     "-" | "sub" -> match stack {
-      [b, a, ..rest] -> list.flatten([[a - b], rest])
+      [b, a, ..rest] -> list.concat([a - b], rest)
       _ -> panic("stack underflow on -")
     }
     "neg" -> match stack {
-      [a, ..rest] -> list.flatten([[0 - a], rest])
+      [a, ..rest] -> list.concat([0 - a], rest)
       _ -> panic("stack underflow on neg")
     }
     _ -> {
-      -- Must be a number string; parse it
       when Ok(n) = int.parse(token) else {
         return panic("invalid token: {token}")
       }
-      list.flatten([[n], stack])
+      list.concat([n], stack)
     }
   }
 }
 
--- Evaluate an RPN expression given as a list of string tokens.
--- Uses fold for iterative processing (exercises TCO-friendly patterns).
 fn eval_rpn(tokens) {
   let result_stack = tokens |> list.fold([]) { stack, tok -> apply_token(stack, tok) }
   match result_stack {
@@ -181,7 +127,6 @@ fn eval_rpn(tokens) {
 
 -- ============================================================
 -- Part 6: Expression to RPN converter
--- (Demonstrates recursion producing lists)
 -- ============================================================
 
 fn expr_to_rpn(expr) {
@@ -190,16 +135,16 @@ fn expr_to_rpn(expr) {
     Add(left, right) -> {
       let l = expr_to_rpn(left)
       let r = expr_to_rpn(right)
-      list.flatten([l, r, ["+"]])
+      list.concat(list.concat(l, r), ["+"])
     }
     Mul(left, right) -> {
       let l = expr_to_rpn(left)
       let r = expr_to_rpn(right)
-      list.flatten([l, r, ["*"]])
+      list.concat(list.concat(l, r), ["*"])
     }
     Neg(inner) -> {
       let i = expr_to_rpn(inner)
-      list.flatten([i, ["neg"]])
+      list.concat(i, ["neg"])
     }
   }
 }
@@ -273,11 +218,8 @@ fn main() {
 
   -- Test 2: Nested / complex expressions
   println("--- Test 2: Nested expressions ---")
-  -- (3 + 4) * 2
   let e5 = Mul(Add(Num(3), Num(4)), Num(2))
-  -- -(5 * (2 + 3))
   let e6 = Neg(Mul(Num(5), Add(Num(2), Num(3))))
-  -- (1 + 2) + (3 + 4)
   let e7 = Add(Add(Num(1), Num(2)), Add(Num(3), Num(4)))
 
   println("  {e5.display()} = {eval_expr(e5)}")
@@ -300,15 +242,10 @@ fn main() {
 
   -- Test 4: RPN evaluation (stack-based, or-patterns)
   println("--- Test 4: RPN evaluation ---")
-  -- 3 4 + = 7
   let rpn1 = ["3", "4", "+"]
-  -- 3 4 + 2 * = 14
   let rpn2 = ["3", "4", "add", "2", "mul"]
-  -- 5 2 3 + * = 25
   let rpn3 = ["5", "2", "3", "+", "*"]
-  -- 10 3 - = 7
   let rpn4 = ["10", "3", "sub"]
-  -- 7 neg = -7
   let rpn5 = ["7", "neg"]
 
   println("  [3, 4, +] = {eval_rpn(rpn1)}")

@@ -3,54 +3,26 @@
 
   === Friction Report ===
 
+  Overall rating: 7/10
+
   Recursive loop pattern vs while loop: 6/10 naturalness
     The recursive loop is conceptually clean -- you pass the updated db as an
     argument and the compiler (in theory) can TCO it. But it is noticeably more
     ceremony than `while true { ... }`. Every command handler must remember to
-    call loop(new_db) at the end, and forgetting means silent termination.
-    The lack of `break` also means QUIT needs a special path (just don't recurse).
+    call loop(new_db) at the end.
 
-  Map operations ergonomics: 7/10
-    map.set / map.get / map.delete are straightforward. The pipe-friendly
-    signatures (map first) work well. The main friction is that map.set returns
-    a new map, so you must thread the result through every code path. In a match
-    with many arms, every arm that modifies the db needs to produce the new map
-    and pass it to the recursive call -- easy to get wrong.
+  Map operations ergonomics: 8/10
+    map.set / map.get / map.delete / map.length are straightforward. The
+    pipe-friendly signatures (map first) work well.
 
-  Lack of mutation pain: 7/10 painful
+  Lack of mutation pain: 7/10
     For a stateful REPL program, immutability forces an accumulator-passing
-    style. Every command must thread the db through. This is manageable for a
-    small program but would scale poorly. Shadowing (let db = map.set(db, ...))
-    helps readability but you still need to pass the right db to the loop call.
-    The SAVE/LOAD commands are especially awkward because they need to serialize
-    the map manually (no JSON stdlib).
+    style. This is manageable for a small program. Shadowing helps readability.
 
-  Missing stdlib functions:
-    - string.substring / string.slice -- needed to extract "value" part after
-      "SET key " prefix. Had to use string.split + list indexing workaround.
-    - list.get(list, index) or list[index] -- no way to access the Nth element
-      of a list except via head/tail chaining or pattern matching. This is a
-      significant gap for split-and-access patterns.
-    - int.to_string -- only available via string interpolation "{n}" which is
-      fine but feels indirect when building serialization strings.
-    - map.entries or map.to_list -- would help serialization. Had to zip
-      keys and values manually.
-    - string.index_of -- would simplify parsing "SET key value" where the value
-      may contain spaces.
-
-  Confusing patterns / error messages:
-    - The when-else must diverge rule is good in theory, but "must diverge"
-      could be a confusing error message for newcomers.
-    - Pattern matching on the number of list elements from string.split is
-      verbose -- you need [a, b, ..rest] destructuring for every command arity.
-    - No way to do "catch-all with guard" cleanly -- you match the full
-      structure then check conditions.
-
-  Overall experience rating: 6/10
-    The language is pleasant for pure-functional tasks (map/filter/fold chains)
-    but a stateful REPL loop exposes friction: accumulator threading, verbose
-    command parsing without substring/indexing, and manual serialization. The
-    core is solid though -- pattern matching, pipes, and Option/Result are nice.
+  REMAINING FRICTION:
+  - No while/for loop means recursive accumulator-threading for every REPL.
+  - No JSON stdlib for serialization -- must serialize maps manually.
+  - Pattern matching is the only branching construct (minor).
 -}
 
 -- Serialize a map to a simple "key=value\n" format
@@ -85,18 +57,6 @@ fn deserialize(text, db) {
         }
       }
       false -> acc
-    }
-  }
-}
-
--- Extract the rest of a string after the first N space-separated tokens
--- Returns the part after "CMD key " for SET commands
-fn get_rest_after(parts, skip) {
-  match skip {
-    0 -> string.join(parts, " ")
-    _ -> match parts {
-      [_, ..rest] -> get_rest_after(rest, skip - 1)
-      [] -> ""
     }
   }
 }
@@ -162,8 +122,7 @@ fn execute(input, db) {
     }
 
     ["COUNT", .._] -> {
-      let keys = map.keys(db)
-      let n = list.length(keys)
+      let n = map.length(db)
       println("{n} key(s)")
       Some(db)
     }
@@ -181,7 +140,7 @@ fn execute(input, db) {
       match io.read_file(filename) {
         Ok(content) -> {
           let new_db = deserialize(content, #{})
-          let n = list.length(map.keys(new_db))
+          let n = map.length(new_db)
           println("OK (loaded {n} key(s) from {filename})")
           Some(new_db)
         }

@@ -1,69 +1,30 @@
 {-
-  CSV Analyzer — Silt Language Ergonomics Evaluation
+  CSV Analyzer -- Silt Language Ergonomics Evaluation
   ==================================================
 
-  Overall Rating: 7/10
+  Overall Rating: 8/10
 
   WHAT WAS EASY / PLEASANT:
   - Pipe chains (|>) are excellent for data transformation pipelines. They read
     naturally left-to-right and compose well with map/filter/fold.
-  - String interpolation with {expr} is clean and works on any Display type,
-    which means no explicit to_string() calls needed for printing.
-  - Trailing closure syntax { x -> body } is concise and reads well, especially
-    in map/filter/each chains.
-  - Pattern matching with list destructuring [head, ..tail] is powerful for
-    head/tail splitting (CSV header vs data rows).
+  - String interpolation with {expr} is clean and works on any Display type.
+  - Trailing closure syntax { x -> body } is concise and reads well.
+  - Pattern matching with list destructuring [head, ..tail] is powerful.
   - Record types with named fields make column stats clear and self-documenting.
   - Record update syntax record.{ field: value } is elegant and concise.
-  - The when/else guard statement is great for early-return error handling,
-    very readable compared to nested match.
-  - Immutable-by-default with shadowing feels natural for data transformation.
+  - The when/else guard statement is great for early-return error handling.
+  - list.get for indexed access eliminates the biggest workaround from before.
+  - string.pad_left / string.pad_right make table formatting trivial.
+  - float.min / float.max replace manual comparison helpers.
+  - Guardless match replaces verbose `match bool { true -> ... }` patterns.
 
-  WHAT WAS AWKWARD / REQUIRED WORKAROUNDS:
-  - No list indexing (xs[i] or list.get(xs, i)) means extracting the Nth element
-    from a CSV row requires recursive helper functions or chained head/tail calls.
-    This is the single biggest pain point for CSV work where you need column access.
-  - No Int/Float mixed arithmetic for +, -, / (only * is supported). Must
-    explicitly convert with int.to_float before adding/subtracting/dividing.
-    This is a constant friction point when computing averages (int count, float sum).
-  - No string padding functions (pad_left, pad_right) makes table formatting
-    tedious — had to build a pad_right helper with string.repeat.
-  - fold's 3-argument form in pipes is slightly confusing: list |> list.fold(init) { acc, x -> ... }.
-    The init value goes in parens, the function goes in trailing closure. Workable
-    but takes a moment to parse visually.
-  - No way to convert a float to a string with fixed decimal places (e.g., 2 digits).
-    float.round exists but returns Int, so formatting "92.50" is not possible.
-  - float.parse returns Result(Float, String) — good, but there is no
-    float.min / float.max builtin, requiring manual comparison helpers.
-
-  MISSING STDLIB FUNCTIONS:
-  - list.get(xs, i) or xs[i] — index-based list access (critical for CSV columns)
-  - list.range(start, end) or list.slice — sub-list extraction
-  - string.pad_left / string.pad_right — essential for table formatting
-  - float.min / float.max — parallel to int.min / int.max
-  - float.to_int — explicit conversion (only float.round/ceil/floor exist, which
-    are close but semantically different)
-  - string.format or some way to control decimal places in output
-  - list.enumerate — for index-aware iteration
-  - list.any / list.all — boolean aggregation over lists
-
-  SYNTAX ISSUES / CONFUSING MOMENTS:
-  - Block comments {- ... -} are nice but collision-prone with string interpolation
-    in documentation (must be careful with { inside block comments).
-  - The lack of if/else (match-only branching) means simple boolean checks like
-    "is this column numeric?" require match on true/false which feels heavy.
-  - No early break from each/map/fold loops. Once you start iterating, you
-    must finish — no short-circuit beyond find.
-  - Record field access (stat.sum) is great, but you can't dynamically access
-    fields by name (no reflection), which limits generic column handling.
+  REMAINING FRICTION:
+  - No Int/Float mixed arithmetic for +, -, / -- must explicitly convert with
+    int.to_float before adding/subtracting/dividing.
+  - No way to convert a float to a string with fixed decimal places.
+  - fold's 3-argument form in pipes is slightly confusing visually.
+  - Recursive loop ceremony for any iterative algorithm.
 -}
-
-import io
-import string
-import int
-import float
-import list
-import map
 
 -- ── Record type for per-column statistics ──────────────────────────
 
@@ -75,59 +36,8 @@ type ColumnStat {
   max: Float,
 }
 
--- ── List helper: get Nth element (0-indexed) ───────────────────────
--- FRICTION: This function should not need to exist. A builtin list.get(xs, n)
--- or indexing syntax xs[n] would eliminate ~15 lines of boilerplate.
-
-fn list_get(xs, n) {
-  match xs {
-    [] -> None
-    [head, ..tail] -> match n {
-      0 -> Some(head)
-      _ -> list_get(tail, n - 1)
-    }
-  }
-}
-
--- ── String helper: right-pad to width ──────────────────────────────
--- FRICTION: Should be string.pad_right(s, width, char) in stdlib.
-
-fn pad_right(s, width) {
-  let slen = string.length(s)
-  match slen >= width {
-    true -> s
-    false -> s + string.repeat(" ", width - slen)
-  }
-}
-
-fn pad_left(s, width) {
-  let slen = string.length(s)
-  match slen >= width {
-    true -> s
-    false -> string.repeat(" ", width - slen) + s
-  }
-}
-
--- ── Float helpers ──────────────────────────────────────────────────
--- FRICTION: No float.min / float.max in stdlib, despite int.min / int.max existing.
-
-fn float_min(a, b) {
-  match a < b {
-    true -> a
-    false -> b
-  }
-}
-
-fn float_max(a, b) {
-  match a > b {
-    true -> a
-    false -> b
-  }
-}
-
 -- ── Truncate a float to 2 decimal places (as a string) ─────────────
 -- FRICTION: No string formatting / decimal place control.
--- This is a rough workaround using string manipulation.
 
 fn format_float(f) {
   let s = "{f}"
@@ -135,25 +45,19 @@ fn format_float(f) {
     false -> s + ".00"
     true -> {
       let parts = string.split(s, ".")
-      when Some(int_part) = list_get(parts, 0) else {
+      when Some(int_part) = list.get(parts, 0) else {
         return s
       }
-      when Some(dec_part) = list_get(parts, 1) else {
+      when Some(dec_part) = list.get(parts, 1) else {
         return s
       }
-      -- Truncate or pad decimal part to 2 characters
       let dec_len = string.length(dec_part)
-      match dec_len >= 2 {
-        true -> {
-          -- Take first 2 chars by splitting into chars and rejoining
-          let chars = string.chars(dec_part)
-          when Some(c1) = list_get(chars, 0) else { return s }
-          when Some(c2) = list_get(chars, 1) else {
-            return int_part + "." + dec_part + "0"
-          }
-          int_part + "." + c1 + c2
+      match {
+        dec_len >= 2 -> {
+          let truncated = string.slice(dec_part, 0, 2)
+          int_part + "." + truncated
         }
-        false -> int_part + "." + dec_part + string.repeat("0", 2 - dec_len)
+        _ -> int_part + "." + dec_part + string.repeat("0", 2 - dec_len)
       }
     }
   }
@@ -194,7 +98,6 @@ fn parse_number(s) {
 -- ── Compute stats for a single column of string values ─────────────
 
 fn compute_column_stats(col_name, values) {
-  -- Filter to only numeric values
   let numeric_strings = values |> list.filter { v -> is_numeric(v) }
   let nums = numeric_strings |> list.map { v -> parse_number(v) }
 
@@ -211,7 +114,6 @@ fn compute_column_stats(col_name, values) {
     _ -> {
       let sum = nums |> list.fold(0.0) { acc, x -> acc + x }
 
-      -- Get first element as initial min/max
       when Some(first) = list.head(nums) else {
         return ColumnStat {
           name: col_name,
@@ -222,8 +124,8 @@ fn compute_column_stats(col_name, values) {
         }
       }
 
-      let min_val = nums |> list.fold(first) { acc, x -> float_min(acc, x) }
-      let max_val = nums |> list.fold(first) { acc, x -> float_max(acc, x) }
+      let min_val = nums |> list.fold(first) { acc, x -> float.min(acc, x) }
+      let max_val = nums |> list.fold(first) { acc, x -> float.max(acc, x) }
 
       ColumnStat {
         name: col_name,
@@ -240,7 +142,7 @@ fn compute_column_stats(col_name, values) {
 
 fn extract_column(rows, col_index) {
   rows |> list.map { row ->
-    match list_get(row, col_index) {
+    match list.get(row, col_index) {
       Some(val) -> val
       None -> ""
     }
@@ -248,8 +150,6 @@ fn extract_column(rows, col_index) {
 }
 
 -- ── Compute average from a ColumnStat ──────────────────────────────
--- FRICTION: Can't do stat.sum / stat.count because sum is Float and count is Int.
--- Must convert count to Float first.
 
 fn average(stat) {
   match stat.count {
@@ -279,12 +179,12 @@ fn print_stats_table(stats) {
   -- Header
   print_separator(w)
   let header = "| "
-    + pad_right("Column", w) + " | "
-    + pad_right("Count", w) + " | "
-    + pad_right("Sum", w) + " | "
-    + pad_right("Min", w) + " | "
-    + pad_right("Max", w) + " | "
-    + pad_right("Average", w) + " |"
+    + string.pad_right("Column", w, " ") + " | "
+    + string.pad_right("Count", w, " ") + " | "
+    + string.pad_right("Sum", w, " ") + " | "
+    + string.pad_right("Min", w, " ") + " | "
+    + string.pad_right("Max", w, " ") + " | "
+    + string.pad_right("Average", w, " ") + " |"
   println(header)
   print_separator(w)
 
@@ -292,12 +192,12 @@ fn print_stats_table(stats) {
   stats |> list.each { stat ->
     let avg = average(stat)
     let row = "| "
-      + pad_right(stat.name, w) + " | "
-      + pad_right("{stat.count}", w) + " | "
-      + pad_right(format_float(stat.sum), w) + " | "
-      + pad_right(format_float(stat.min), w) + " | "
-      + pad_right(format_float(stat.max), w) + " | "
-      + pad_right(format_float(avg), w) + " |"
+      + string.pad_right(stat.name, w, " ") + " | "
+      + string.pad_right("{stat.count}", w, " ") + " | "
+      + string.pad_right(format_float(stat.sum), w, " ") + " | "
+      + string.pad_right(format_float(stat.min), w, " ") + " | "
+      + string.pad_right(format_float(stat.max), w, " ") + " | "
+      + string.pad_right(format_float(avg), w, " ") + " |"
     println(row)
   }
 
@@ -315,7 +215,7 @@ fn print_filtered_table(header, rows, label) {
   let w = 12
 
   -- Print header row
-  let header_line = header |> list.map { h -> pad_right(h, w) }
+  let header_line = header |> list.map { h -> string.pad_right(h, w, " ") }
     |> string.join(" | ")
   println("  | {header_line} |")
   let sep = header |> list.map { _ -> string.repeat("-", w) }
@@ -324,7 +224,7 @@ fn print_filtered_table(header, rows, label) {
 
   -- Print data rows
   rows |> list.each { row ->
-    let line = row |> list.map { cell -> pad_right(cell, w) }
+    let line = row |> list.map { cell -> string.pad_right(cell, w, " ") }
       |> string.join(" | ")
     println("  | {line} |")
   }
@@ -336,16 +236,13 @@ fn print_filtered_table(header, rows, label) {
 -- ── Determine which column indices are numeric ─────────────────────
 
 fn find_numeric_columns(header, data_rows) {
-  -- Check each column: if the first data row has a numeric value, it's numeric
   when [first_row, .._] = data_rows else {
     return []
   }
 
-  -- Build list of (index, name) for numeric columns
-  -- FRICTION: No list.enumerate, so we must use a counter via fold
   let indices = 0..(list.length(header))
   indices |> list.filter { i ->
-    let val = match list_get(first_row, i) {
+    let val = match list.get(first_row, i) {
       Some(v) -> v
       None -> ""
     }
@@ -358,9 +255,7 @@ fn find_numeric_columns(header, data_rows) {
 fn main() {
   -- Read CSV file path from args, or use default
   let args = io.args()
-  -- args is [binary, "run", file, ...user_args]
-  -- User args start at index 3
-  let csv_path = match list_get(args, 3) {
+  let csv_path = match list.get(args, 3) {
     Some(path) -> path
     None -> "programs/data.csv"
   }
@@ -389,7 +284,7 @@ fn main() {
 
   -- Compute stats for each numeric column
   let stats = numeric_indices |> list.map { i ->
-    let col_name = match list_get(header, i) {
+    let col_name = match list.get(header, i) {
       Some(name) -> name
       None -> "unknown"
     }
@@ -401,10 +296,9 @@ fn main() {
   print_stats_table(stats)
 
   -- ── Filter: rows where score > 85 ─────────────────────────────
-  -- Find the "score" column index
   let score_col = 0..(list.length(header))
     |> list.find { i ->
-      match list_get(header, i) {
+      match list.get(header, i) {
         Some(name) -> name == "score"
         None -> false
       }
@@ -414,7 +308,7 @@ fn main() {
     Some(score_idx) -> {
       let threshold = 85.0
       let high_scorers = data_rows |> list.filter { row ->
-        match list_get(row, score_idx) {
+        match list.get(row, score_idx) {
           Some(val) -> match float.parse(val) {
             Ok(score) -> score > threshold
             Err(_) -> false
@@ -430,7 +324,7 @@ fn main() {
   -- ── Filter: rows where age < 30 ──────────────────────────────
   let age_col = 0..(list.length(header))
     |> list.find { i ->
-      match list_get(header, i) {
+      match list.get(header, i) {
         Some(name) -> name == "age"
         None -> false
       }
@@ -440,7 +334,7 @@ fn main() {
     Some(age_idx) -> {
       let age_threshold = 30.0
       let young = data_rows |> list.filter { row ->
-        match list_get(row, age_idx) {
+        match list.get(row, age_idx) {
           Some(val) -> match float.parse(val) {
             Ok(age) -> age < age_threshold
             Err(_) -> false
@@ -460,7 +354,7 @@ fn main() {
 
   let grade_col = 0..(list.length(header))
     |> list.find { i ->
-      match list_get(header, i) {
+      match list.get(header, i) {
         Some(name) -> name == "grade"
         None -> false
       }

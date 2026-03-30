@@ -12,10 +12,11 @@ fn sum(xs) {
   }
 }
 
-fn first(xs) {
+fn last(xs) {
   match xs {
-    [head, ..tail] -> Some(head)
-    [] -> None
+    []          -> None
+    [x]         -> Some(x)
+    [_, ..tail] -> last(tail)
   }
 }
 
@@ -31,7 +32,13 @@ fn describe(xs) {
 fn main() {
   println("sum([1,2,3,4,5]) = {sum([1, 2, 3, 4, 5])}")
 
-  match first([10, 20, 30]) {
+  match last([10, 20, 30]) {
+    Some(n) -> println("last element: {n}")
+    None -> println("empty list")
+  }
+
+  -- Use list.head for the first element
+  match list.head([10, 20, 30]) {
     Some(n) -> println("first element: {n}")
     None -> println("empty list")
   }

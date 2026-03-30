@@ -4,7 +4,9 @@
 
 Silt is a minimal, statically-typed, expression-based programming language with CSP-style concurrency. It compiles to a tree-walk interpreter written in Rust.
 
-The language is built around a small set of principles: just 17 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, spawn, and select.
+The language is built around a small set of principles: just 14 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and select.
+
+The global namespace is deliberately small: only 8 names (`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`) are available without qualification. Everything else lives in a module (`list.map`, `string.split`, `channel.new`, `task.spawn`, etc.).
 
 If you like the safety of Rust, the expressiveness of ML-family languages, and the simplicity of Go's concurrency model -- but want something you can learn in an afternoon -- Silt might be for you.
 
@@ -30,6 +32,15 @@ Verify it works:
 silt run examples/hello.silt
 ```
 
+## CLI Commands
+
+```sh
+silt run <file.silt>       -- run a program
+silt test [file.silt]      -- run test functions
+silt repl                  -- interactive read-eval-print loop
+silt fmt <file.silt>       -- format a source file
+```
+
 ## Your First Program
 
 Create a file called `hello.silt`:
@@ -46,7 +57,7 @@ Run it:
 silt run hello.silt
 ```
 
-Every Silt program needs a `main()` function as its entry point. The `println` function is a builtin -- always available, no import needed.
+Every Silt program needs a `main()` function as its entry point. The `println` function is one of 8 global builtins -- always available, no import needed.
 
 ## Language Tour
 
@@ -115,14 +126,26 @@ fn classify(n) {
 }
 ```
 
+Guardless match lets you branch on boolean conditions without a scrutinee:
+
+```silt
+fn classify(n) {
+  match {
+    n == 0 -> "zero"
+    n > 0  -> "positive"
+    _      -> "negative"
+  }
+}
+```
+
 ### The Pipe Operator
 
 The `|>` operator passes the left-hand side as the first argument to the right-hand side. This makes data transformation pipelines easy to read:
 
 ```silt
 1..101
-|> map { n -> fizzbuzz(n) }
-|> each { s -> println(s) }
+|> list.map { n -> fizzbuzz(n) }
+|> list.each { s -> println(s) }
 ```
 
 ### Trailing Closures
@@ -131,16 +154,16 @@ When the last argument to a function is a closure, you can write it outside the 
 
 ```silt
 -- these are equivalent
-[1, 2, 3] |> map(fn(x) { x * 2 })
-[1, 2, 3] |> map { x -> x * 2 }
+[1, 2, 3] |> list.map(fn(x) { x * 2 })
+[1, 2, 3] |> list.map { x -> x * 2 }
 
 -- multi-line
-users |> filter { user ->
+users |> list.filter { user ->
   user.age > 18 && user.active
 }
 
 -- multiple args
-[1, 2, 3] |> fold(0) { acc, x -> acc + x }
+[1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 ```
 
 ### String Interpolation
@@ -164,7 +187,7 @@ Silt has no exceptions. All errors are represented as values using `Result` and 
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> find { l -> string.contains(l, "host=") } else {
+  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
@@ -183,6 +206,13 @@ fn process(input) {
 }
 ```
 
+The `try()` builtin wraps a function call in a `Result`, catching any runtime errors:
+
+```silt
+let result = try(fn() { risky_operation() })
+-- Ok(value) on success, Err(message) on failure
+```
+
 Use `match` for explicit handling, `?` for propagation, and `when`-`else` for inline assertions with destructuring:
 
 ```silt
@@ -194,8 +224,8 @@ match parse_int("42") {
 
 -- pipe-friendly combinators
 parse_int("42")
-|> map_ok { n -> n * 2 }
-|> unwrap_or(0)
+|> result.map_ok { n -> n * 2 }
+|> result.unwrap_or(0)
 ```
 
 ## Working with Files
@@ -212,6 +242,22 @@ This finds the `main()` function in the file and executes it. You can also omit 
 silt myfile.silt
 ```
 
+### Interactive REPL
+
+```sh
+silt repl
+```
+
+Launches an interactive session where you can evaluate expressions and define bindings on the fly.
+
+### Formatting code
+
+```sh
+silt fmt myfile.silt
+```
+
+Formats a Silt source file according to the standard style.
+
 ### Running tests
 
 Test functions are any function whose name starts with `test_`. Put them in files ending with `_test.silt`:
@@ -219,15 +265,14 @@ Test functions are any function whose name starts with `test_`. Put them in file
 ```silt
 -- math_test.silt
 import math
-import test.{ assert_eq }
 
 fn test_add() {
-  assert_eq(math.add(1, 2), 3)
-  assert_eq(math.add(-1, 1), 0)
+  test.assert_eq(math.add(1, 2), 3)
+  test.assert_eq(math.add(-1, 1), 0)
 }
 
 fn test_square() {
-  assert_eq(math.square(5), 25)
+  test.assert_eq(math.square(5), 25)
 }
 ```
 
@@ -292,7 +337,7 @@ Run the project with `silt run main.silt` from the project directory. The interp
 ## Where to Go Next
 
 - **Language Guide** -- `docs/language-guide.md` -- deep dive into all language features
-- **Standard Library Reference** -- `docs/stdlib.md` -- every module, function, and type
-- **Concurrency Guide** -- `docs/concurrency.md` -- channels, spawn, select, and patterns
+- **Standard Library Reference** -- `docs/stdlib-reference.md` -- every module, function, and type
+- **Concurrency Guide** -- `docs/concurrency.md` -- channels, tasks, select, and patterns
 - **Design Decisions** -- `docs/design-decisions.md` -- why Silt is the way it is
 - **Examples** -- the `examples/` directory has working programs covering records, traits, error handling, concurrency, and multi-file projects

@@ -4,6 +4,10 @@ Silt is a statically-typed, expression-based programming language with full immu
 pattern matching as the sole branching construct, and CSP-style concurrency. It compiles
 to a tree-walk interpreter (v1) written in Rust. File extension: `.silt`.
 
+The language has 14 keywords and only 8 global names (`print`, `println`, `panic`, `try`,
+`Ok`, `Err`, `Some`, `None`). Everything else is module-qualified (e.g. `list.map`,
+`string.split`, `channel.new`, `task.spawn`).
+
 This guide walks through every major feature of the language, explains the design
 decisions behind it, and gives you enough examples to start writing real programs.
 
@@ -127,8 +131,8 @@ A classic use is generating sequences for processing:
 ```silt
 fn main() {
   1..11
-  |> map { n -> n * n }
-  |> each { n -> println("{n}") }
+  |> list.map { n -> n * n }
+  |> list.each { n -> println("{n}") }
 }
 ```
 
@@ -239,14 +243,14 @@ let names = ["Alice", "Bob", "Carol"]
 let empty = []
 ```
 
-Lists work with the standard library functions via pipes:
+Lists work with the `list` module functions via pipes:
 
 ```silt
 fn main() {
   [1, 2, 3, 4, 5]
-  |> filter { x -> x > 2 }
-  |> map { x -> x * 10 }
-  |> fold(0) { acc, x -> acc + x }
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
   -- result: 120
 }
 ```
@@ -274,9 +278,9 @@ let (_, _, z) = triple    -- z = "world", first two ignored
 Tuples are excellent for returning multiple values from a function:
 
 ```silt
-fn min_max(list) {
-  let min = list |> fold(999) { acc, x -> match x < acc { true -> x, _ -> acc } }
-  let max = list |> fold(0) { acc, x -> match x > acc { true -> x, _ -> acc } }
+fn min_max(xs) {
+  let min = xs |> list.fold(999) { acc, x -> match x < acc { true -> x, _ -> acc } }
+  let max = xs |> list.fold(0) { acc, x -> match x > acc { true -> x, _ -> acc } }
   (min, max)
 }
 
@@ -554,6 +558,68 @@ fn classify(n) {
 The guard `when x > 0` is checked only after the pattern matches. If the guard fails,
 matching continues to the next arm.
 
+### Guardless match
+
+When you want to branch on boolean conditions without a scrutinee value, use a
+guardless match. Omit the scrutinee entirely:
+
+```silt
+fn classify(n) {
+  match {
+    n == 0 -> "zero"
+    n > 0  -> "positive"
+    _      -> "negative"
+  }
+}
+```
+
+Each arm's left-hand side is a boolean expression (or `_` for the default case).
+The first arm whose condition is true is taken. This is a convenient alternative
+to matching on `true`/`false` for simple conditional logic.
+
+### Or-patterns
+
+Or-patterns let you match multiple alternatives in a single arm using `|`:
+
+```silt
+fn describe(n) {
+  match n {
+    0 | 1 -> "small"
+    2 | 3 -> "medium"
+    _ -> "large"
+  }
+}
+```
+
+### Range patterns
+
+Range patterns match a value against an inclusive numeric range using `..`:
+
+```silt
+fn grade(score) {
+  match score {
+    90..100 -> "A"
+    80..89  -> "B"
+    70..79  -> "C"
+    _       -> "F"
+  }
+}
+```
+
+### Map patterns
+
+Map patterns destructure maps by key, binding values to names:
+
+```silt
+fn greet(config) {
+  match config {
+    #{ "name": name, "greeting": greeting } -> "{greeting}, {name}!"
+    #{ "name": name } -> "hello, {name}!"
+    _ -> "hello, stranger!"
+  }
+}
+```
+
 ### List patterns
 
 Lists can be destructured in both `match` arms and `let` bindings using bracket
@@ -585,7 +651,7 @@ list:
 ```silt
 match xs {
   [] -> "empty"
-  [head, ..tail] -> "head is {head}, rest has {len(tail)} elements"
+  [head, ..tail] -> "head is {head}, rest has {list.length(tail)} elements"
 }
 ```
 
@@ -641,8 +707,8 @@ function on its right:
 
 ```silt
 -- These are equivalent:
-filter(list, fn(x) { x > 0 })
-list |> filter { x -> x > 0 }
+list.filter(xs, fn(x) { x > 0 })
+xs |> list.filter { x -> x > 0 }
 ```
 
 ### Why pipes?
@@ -651,7 +717,7 @@ Without pipes, function composition nests inward:
 
 ```silt
 -- Without pipes: read inside-out
-each(map(filter([1, 2, 3, 4, 5], fn(x) { x > 2 }), fn(x) { x * 10 }), fn(x) { println("{x}") })
+list.each(list.map(list.filter([1, 2, 3, 4, 5], fn(x) { x > 2 }), fn(x) { x * 10 }), fn(x) { println("{x}") })
 ```
 
 With pipes, the same code reads left-to-right, top-to-bottom:
@@ -659,9 +725,9 @@ With pipes, the same code reads left-to-right, top-to-bottom:
 ```silt
 -- With pipes: read top-to-bottom
 [1, 2, 3, 4, 5]
-|> filter { x -> x > 2 }
-|> map { x -> x * 10 }
-|> each { x -> println("{x}") }
+|> list.filter { x -> x > 2 }
+|> list.map { x -> x * 10 }
+|> list.each { x -> println("{x}") }
 ```
 
 Pipes eliminate nesting and make the data flow explicit. You can see at a glance what
@@ -675,9 +741,9 @@ Pipes combine naturally with trailing closures to form readable processing pipel
 fn main() {
   let total =
     [1, 2, 3, 4, 5]
-    |> filter { x -> x > 2 }
-    |> map { x -> x * 10 }
-    |> fold(0) { acc, x -> acc + x }
+    |> list.filter { x -> x > 2 }
+    |> list.map { x -> x * 10 }
+    |> list.fold(0) { acc, x -> acc + x }
 
   println("total: {total}")   -- total: 120
 }
@@ -705,9 +771,9 @@ fn main() {
   ]
 
   users
-  |> filter { u -> u.active }
-  |> map { u -> birthday(u) }
-  |> each { u ->
+  |> list.filter { u -> u.active }
+  |> list.map { u -> birthday(u) }
+  |> list.each { u ->
     println("{u.name} is now {u.age}")
   }
 }
@@ -724,10 +790,10 @@ parentheses using the `{ args -> body }` syntax.
 
 ```silt
 -- Standard call with anonymous function
-[1, 2, 3] |> map(fn(x) { x * 2 })
+[1, 2, 3] |> list.map(fn(x) { x * 2 })
 
 -- Same thing with a trailing closure
-[1, 2, 3] |> map { x -> x * 2 }
+[1, 2, 3] |> list.map { x -> x * 2 }
 ```
 
 The trailing closure form is shorter and reads more naturally, especially in pipelines.
@@ -737,7 +803,7 @@ The trailing closure form is shorter and reads more naturally, especially in pip
 Closures can span multiple lines. The body is everything after the `->`:
 
 ```silt
-users |> filter { user ->
+users |> list.filter { user ->
   user.age > 18 && user.active
 }
 ```
@@ -747,10 +813,10 @@ users |> filter { user ->
 Trailing closures can take multiple parameters, separated by commas:
 
 ```silt
-[1, 2, 3] |> fold(0) { acc, x -> acc + x }
+[1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 ```
 
-Here, `fold` takes an initial value `0` in parentheses and the accumulator function as
+Here, `list.fold` takes an initial value `0` in parentheses and the accumulator function as
 a trailing closure. `acc` is the accumulator, `x` is the current element.
 
 ### Destructuring in closure parameters
@@ -760,7 +826,7 @@ You can destructure tuples directly in closure parameters:
 ```silt
 let pairs = [(1, "one"), (2, "two"), (3, "three")]
 
-pairs |> each { (n, word) ->
+pairs |> list.each { (n, word) ->
   println("{n} is {word}")
 }
 ```
@@ -775,8 +841,8 @@ fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
 
   shapes
-  |> map { s -> (s.display(), area(s)) }
-  |> each { pair -> println("{pair}") }
+  |> list.map { s -> (s.display(), area(s)) }
+  |> list.each { pair -> println("{pair}") }
 }
 ```
 
@@ -877,11 +943,11 @@ or type narrowing -- use `when`-`else`:
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> find { l -> string.contains(l, "host=") } else {
+  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> find { l -> string.contains(l, "port=") } else {
+  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 
@@ -981,7 +1047,7 @@ Use `where` to constrain generic type parameters to types that implement a trait
 
 ```silt
 fn print_all(items: List(a)) where a: Display {
-  items |> each { item -> print(item.display()) }
+  items |> list.each { item -> print(item.display()) }
 }
 ```
 
@@ -1027,8 +1093,8 @@ fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
 
   shapes
-  |> map { s -> (s.display(), area(s)) }
-  |> each { pair -> println("{pair}") }
+  |> list.map { s -> (s.display(), area(s)) }
+  |> list.each { pair -> println("{pair}") }
 }
 ```
 
@@ -1050,7 +1116,7 @@ Any expression can go inside the braces:
 ```silt
 let n = 42
 let msg = "the answer is {n}"                 -- "the answer is 42"
-let debug = "result: {inspect(value)}"        -- calls inspect()
+let debug = "result: {io.inspect(value)}"      -- calls io.inspect()
 let math = "sum is {1 + 2 + 3}"              -- "sum is 6"
 ```
 
@@ -1146,28 +1212,32 @@ fn main() {
 }
 ```
 
-### Built-in modules
+### Globals and built-in modules
 
-Some modules are always available without import. Others are part of the standard
-library and must be imported.
+Silt's global namespace is deliberately small. Only 8 names are available without
+any module qualification:
 
-**Always available (no import needed):**
-`print`, `println`, `inspect`, `panic`
+**Global names (always available, no import needed):**
+`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`
 
-**Standard library modules (import to use):**
+Everything else lives in a module and is accessed with dot notation. This keeps the
+global namespace clean and makes it always clear where a function comes from.
 
-| Module    | Provides                                    |
-|-----------|---------------------------------------------|
-| `io`      | read_file, write_file, read_line, args      |
-| `list`    | map, filter, fold, each, find, zip, flatten |
-| `map`     | get, set, delete, keys, values, merge       |
-| `string`  | split, join, trim, contains, replace        |
-| `int`     | parse, abs, min, max, to_float              |
-| `float`   | parse, round, ceil, floor                   |
-| `result`  | map_ok, map_err, unwrap_or, flatten         |
-| `option`  | map, unwrap_or, to_result                   |
-| `test`    | assert, assert_eq, assert_ne, run           |
-| `channel` | Typed channel operations                    |
+**Standard library modules:**
+
+| Module    | Provides                                                                        |
+|-----------|---------------------------------------------------------------------------------|
+| `io`      | inspect, read_file, write_file, read_line, args                                |
+| `list`    | map, filter, fold, each, find, zip, flatten, flat_map, sort_by, any, all, ...  |
+| `map`     | get, set, delete, keys, values, merge, length                                  |
+| `string`  | split, join, trim, contains, replace, length, pad_left, pad_right, ...         |
+| `int`     | parse, abs, min, max, to_float                                                 |
+| `float`   | parse, round, ceil, floor, abs, min, max                                       |
+| `result`  | map_ok, map_err, unwrap_or, flatten, is_ok, is_err                             |
+| `option`  | map, unwrap_or, to_result, is_some, is_none                                    |
+| `test`    | assert, assert_eq, assert_ne                                                   |
+| `channel` | new, send, receive, close, try_send, try_receive                               |
+| `task`    | spawn, join, cancel                                                            |
 
 Module functions are accessed with dot notation:
 
@@ -1176,6 +1246,7 @@ fn main() {
   let parts = "hello world" |> string.split(" ")
   let upper = "hello" |> string.replace("hello", "HELLO")
   let n = "42" |> int.parse()
+  let len = list.length([1, 2, 3])
 }
 ```
 
@@ -1241,9 +1312,9 @@ fn main() {
 
   -- Pipeline: filter active users, age them up, print
   users
-  |> filter { u -> u.active }
-  |> map { u -> birthday(u) }
-  |> each { u ->
+  |> list.filter { u -> u.active }
+  |> list.map { u -> birthday(u) }
+  |> list.each { u ->
     println("{u.name} is now {u.age}")
   }
 }
@@ -1264,7 +1335,7 @@ fn fizzbuzz(n) {
 
 fn main() {
   1..101
-  |> map { n -> fizzbuzz(n) }
-  |> each { s -> println(s) }
+  |> list.map { n -> fizzbuzz(n) }
+  |> list.each { s -> println(s) }
 }
 ```

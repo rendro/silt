@@ -7,14 +7,13 @@
 
 ## 1. Language Philosophy
 
-### "17 keywords"
+### "14 keywords"
 
-Silt has exactly 17 keywords:
+Silt has exactly 14 keywords:
 
 ```
-let  fn  type  trait  match  when  return
-spawn  chan  send  receive  select
-pub  mod  import  as  else
+as  else  fn  import  let  match  mod
+pub  return  select  trait  type  when  where
 ```
 
 This is not an arbitrary constraint -- it is a forcing function. Every time we
@@ -23,13 +22,20 @@ considered adding a keyword (`if`, `for`, `while`, `mut`, `async`, `await`,
 The answer was almost always yes.
 
 `if`/`else` is subsumed by `match`. Loops are subsumed by recursion and
-higher-order functions (`map`, `filter`, `fold`, `each`). `mut` doesn't exist
-because nothing is mutable. `async`/`await` doesn't exist because concurrency
-is CSP-based. `try`/`catch` doesn't exist because errors are values.
+higher-order functions (`list.map`, `list.filter`, `list.fold`, `list.each`).
+`mut` doesn't exist because nothing is mutable. `async`/`await` doesn't exist
+because concurrency is CSP-based. `try`/`catch` doesn't exist because errors
+are values (`try` is a global builtin function, not a keyword).
+
+We originally had `chan`, `send`, `receive`, and `spawn` as keywords (17 total).
+These were demoted to module-qualified functions (`channel.new`, `channel.send`,
+`channel.receive`, `task.spawn`) to keep the global namespace clean and avoid
+the PHP problem of too many bare globals. The CSP interface is the same; it just
+lives in modules now.
 
 The constraint is practical, not aesthetic. Fewer keywords means fewer
 concepts to learn, fewer ways to express the same thing, and fewer ambiguities
-in the grammar. A language with 17 keywords fits in working memory.
+in the grammar. A language with 14 keywords fits in working memory.
 
 Compare: Rust has ~40 keywords (plus reserved ones). Go has 25. Python has 35.
 The smallest useful languages cluster around 15-25 keywords. We aimed for the
@@ -38,8 +44,15 @@ low end.
 What is _not_ a keyword matters too. `true`, `false` are builtin literals.
 `Ok`, `Err`, `Some`, `None` are builtin variant constructors, not keywords --
 they are ordinary values that happen to be defined in the prelude. `_` is a
-wildcard pattern token, not a keyword. This keeps the keyword count honest and
-means these names live in the value namespace, not the syntax.
+wildcard pattern token, not a keyword. `try` is a builtin function, not a
+keyword. This keeps the keyword count honest and means these names live in
+the value namespace, not the syntax.
+
+The global namespace is deliberately minimal: only 8 names (`print`, `println`,
+`panic`, `try`, `Ok`, `Err`, `Some`, `None`). Everything else requires module
+qualification. This avoids the "PHP problem" where hundreds of functions are
+dumped into the global scope, making it unclear where anything comes from and
+creating name collision risks.
 
 ### Expression-based: everything returns a value
 
@@ -506,12 +519,12 @@ for concurrency. Tasks communicate by sending and receiving values on
 typed channels:
 
 ```
-let ch = chan()
-let handle = spawn fn() {
+let ch = channel.new()
+let handle = task.spawn(fn() {
   let result = do_work()
-  send(ch, result)
-}
-let msg = receive(ch)
+  channel.send(ch, result)
+})
+let msg = channel.receive(ch)
 ```
 
 Compare to async/await:
@@ -592,9 +605,10 @@ The cooperative, single-threaded model has real limitations:
   false). This is sufficient but not sophisticated.
 
 These are acceptable for v1. Real parallelism (OS threads, work-stealing) is
-a v2 consideration. The CSP interface (`chan`, `send`, `receive`, `spawn`) is
-designed to be forward-compatible: the user-facing API works identically
-whether the runtime is cooperative or preemptive.
+a v2 consideration. The CSP interface (`channel.new`, `channel.send`,
+`channel.receive`, `task.spawn`) is designed to be forward-compatible: the
+user-facing API works identically whether the runtime is cooperative or
+preemptive.
 
 ---
 
@@ -608,15 +622,15 @@ right side:
 ```
 let result =
   [1, 2, 3, 4, 5]
-  |> filter { x -> x > 2 }
-  |> map { x -> x * 10 }
-  |> fold(0) { acc, x -> acc + x }
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
 ```
 
 Without pipes, this would be:
 
 ```
-let result = fold(map(filter([1, 2, 3, 4, 5], fn(x) { x > 2 }), fn(x) { x * 10 }), 0, fn(acc, x) { acc + x })
+let result = list.fold(list.map(list.filter([1, 2, 3, 4, 5], fn(x) { x > 2 }), fn(x) { x * 10 }), 0, fn(acc, x) { acc + x })
 ```
 
 The pipe version reads left-to-right, top-to-bottom, in the order that
@@ -625,7 +639,7 @@ For data processing pipelines, pipes are strictly better.
 
 The design is borrowed from Elixir (which got it from F#, which got it from
 OCaml). The choice to pipe into the **first** argument (not the last) matches
-Elixir's convention and works well with collection functions like `map(list,
+Elixir's convention and works well with collection functions like `list.map(xs,
 fn)` where the collection is the natural first argument.
 
 ### Trailing closures: lightweight lambda syntax
@@ -635,8 +649,8 @@ the parentheses:
 
 ```
 -- These are equivalent:
-[1, 2, 3] |> map(fn(x) { x * 2 })
-[1, 2, 3] |> map { x -> x * 2 }
+[1, 2, 3] |> list.map(fn(x) { x * 2 })
+[1, 2, 3] |> list.map { x -> x * 2 }
 ```
 
 The trailing closure syntax `{ params -> body }` is lighter than
@@ -646,10 +660,10 @@ Swift's trailing closures.
 Multiple arguments still work:
 
 ```
-[1, 2, 3] |> fold(0) { acc, x -> acc + x }
+[1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 ```
 
-Here `fold(0)` provides the first explicit argument (initial value), and
+Here `list.fold(0)` provides the first explicit argument (initial value), and
 the trailing closure provides the second (the reducer function). The piped
 value (`[1, 2, 3]`) becomes the first argument.
 
@@ -858,7 +872,7 @@ let result = match x {
 And this code:
 
 ```
-list |> map { x -> x + 1 }
+xs |> list.map { x -> x + 1 }
 ```
 
 Both use `{` ... `}` with `->` inside. The parser must distinguish between
@@ -955,14 +969,14 @@ edge cases where the programmer must be careful about line breaks:
 
 ```
 -- This works (trailing closure on same line):
-list |> map { x -> x + 1 }
+list |> list.map { x -> x + 1 }
 
 -- This also works (trailing closure after function call):
-list |> map
+list |> list.map
   { x -> x + 1 }   -- actually doesn't attach because of newline!
 
 -- To cross lines, use explicit parentheses:
-list |> map(fn(x) { x + 1 })
+list |> list.map(fn(x) { x + 1 })
 ```
 
 This is a genuine ergonomic rough edge. In practice, pipe chains naturally
@@ -970,7 +984,7 @@ put the trailing closure on the same line or use multi-line closures that
 start on the same line:
 
 ```
-list |> filter { user ->
+list |> list.filter { user ->
   user.age > 18 && user.active
 }
 ```
@@ -1041,13 +1055,13 @@ recursion between modules, factor the shared code into a third module.
 ### Builtin modules bypass the file system
 
 Standard library modules (`io`, `string`, `int`, `float`, `list`, `map`,
-`result`, `option`, `test`, `channel`) are registered directly in the global
-environment as builtin functions. They don't correspond to `.silt` files:
+`result`, `option`, `test`, `channel`, `task`) are registered directly in the
+global environment as builtin functions. They don't correspond to `.silt` files:
 
 ```rust
 const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map",
-    "result", "option", "test", "channel",
+    "result", "option", "test", "channel", "task",
 ];
 ```
 
@@ -1063,11 +1077,14 @@ can't be inspected or overridden from Silt code.
 
 ## 11. Known Limitations & Future Directions
 
-Being honest about what is missing:
+Being honest about what is missing (and what has been addressed):
 
-**No REPL.** A read-eval-print loop is planned but not yet implemented.
-The tree-walk interpreter is well-suited for a REPL -- all the pieces are
-there, it just needs a driver loop with readline support.
+**REPL.** A read-eval-print loop is now available via `silt repl`.
+
+**Code formatter.** `silt fmt <file>` formats source files to a standard style.
+
+**Tail-call optimization.** TCO is now implemented. Self-recursive functions
+in tail position are optimized to avoid stack overflow.
 
 **No package manager.** There is no dependency management, no versioning, no
 package registry. Modules are files in the project directory. This is
@@ -1088,11 +1105,6 @@ multiple CPU cores. For I/O-bound workloads this is fine; for CPU-bound
 workloads it is a hard limitation. Real OS threads are a v2 consideration,
 but would require switching from `Rc` to `Arc` and `RefCell` to `Mutex`
 throughout the runtime.
-
-**No tail-call optimization.** Recursive functions consume stack space
-proportional to recursion depth. Deep recursion (10,000+ frames) will stack
-overflow. TCO is possible for the tree-walk interpreter but not yet
-implemented.
 
 **String-keyed maps only.** The runtime `Map` type uses `BTreeMap<String,
 Value>`. Map keys must be strings at runtime, even though the type system
@@ -1141,10 +1153,11 @@ what users can build. A web server handling concurrent connections would
 work (I/O naturally yields), but a parallel computation pipeline would not
 benefit from concurrency at all.
 
-The good news: the CSP interface (`chan`, `send`, `receive`, `spawn`,
-`select`) is runtime-agnostic. Switching to a preemptive, multi-threaded
-scheduler requires changes only in the runtime, not in user code. This was
-a deliberate design choice -- the user-facing API is forward-compatible.
+The good news: the CSP interface (`channel.new`, `channel.send`,
+`channel.receive`, `task.spawn`, `select`) is runtime-agnostic. Switching to
+a preemptive, multi-threaded scheduler requires changes only in the runtime,
+not in user code. This was a deliberate design choice -- the user-facing API
+is forward-compatible.
 
 ### The environment model
 
@@ -1161,7 +1174,8 @@ closures. For a v1 interpreter, the linked-list model is fine.
   week.
 - **The pipe operator.** Data processing code is dramatically more readable.
 - **Errors as values.** No more "which functions can throw?" guessing games.
-- **The 17-keyword constraint.** It forced us to find general solutions
-  instead of special-casing each problem with new syntax.
+- **The keyword constraint (now 14).** It forced us to find general solutions
+  instead of special-casing each problem with new syntax. Demoting concurrency
+  keywords to module functions was a net positive.
 - **Record update syntax.** `u.{ age: 31 }` is the most natural update
   syntax we've seen in any language.

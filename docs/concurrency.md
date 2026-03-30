@@ -4,6 +4,11 @@ Silt provides built-in concurrency based on the CSP (Communicating Sequential
 Processes) model. This guide covers channels, tasks, select, and the cooperative
 scheduler that powers it all.
 
+All concurrency primitives are module-qualified: channels live in the `channel`
+module, tasks live in the `task` module. There are no concurrency keywords --
+`chan`, `send`, `receive`, and `spawn` were removed as keywords and replaced
+with module functions.
+
 -----
 
 ## 1. The CSP Concurrency Model
@@ -59,71 +64,71 @@ come in two flavors: unbuffered and buffered.
 
 ### Creating channels
 
-```
+```silt
 -- Unbuffered channel (rendezvous)
-let ch = chan()
+let ch = channel.new()
 
 -- Buffered channel with capacity 10
-let ch = chan(10)
+let ch = channel.new(10)
 ```
 
-`chan()` creates a channel whose type is inferred from how it is used. You can
-send any value type through a channel -- integers, strings, lists, records, even
-other channels.
+`channel.new()` creates a channel whose type is inferred from how it is used.
+You can send any value type through a channel -- integers, strings, lists,
+records, even other channels.
 
 ### Sending values
 
-```
-send(ch, "hello")
-send(ch, 42)
-send(ch, [1, 2, 3])
+```silt
+channel.send(ch, "hello")
+channel.send(ch, 42)
+channel.send(ch, [1, 2, 3])
 ```
 
-`send(ch, value)` places a value into the channel. If the channel's buffer is
-full (or if it is unbuffered and no receiver is waiting), the sender blocks
-until space becomes available.
+`channel.send(ch, value)` places a value into the channel. If the channel's
+buffer is full (or if it is unbuffered and no receiver is waiting), the sender
+blocks until space becomes available.
 
 ### Receiving values
 
-```
-let msg = receive(ch)
+```silt
+let msg = channel.receive(ch)
 ```
 
-`receive(ch)` takes the next value from the channel. If the channel is empty,
-the receiver blocks until a value arrives.
+`channel.receive(ch)` takes the next value from the channel. If the channel is
+empty, the receiver blocks until a value arrives.
 
 ### Unbuffered channels (rendezvous)
 
-An unbuffered channel created with `chan()` has no internal buffer. This creates
-a *rendezvous point*: the sender blocks until a receiver is ready, and the
-receiver blocks until a sender is ready. The value is handed directly from one
-task to the other.
+An unbuffered channel created with `channel.new()` has no internal buffer. This
+creates a *rendezvous point*: the sender blocks until a receiver is ready, and
+the receiver blocks until a sender is ready. The value is handed directly from
+one task to the other.
 
 ```
--- Task A                      -- Task B
-send(ch, "ping")      <--->    let msg = receive(ch)
--- A blocks here until         -- B blocks here until
--- B calls receive             -- A calls send
+-- Task A                              -- Task B
+channel.send(ch, "ping")      <--->    let msg = channel.receive(ch)
+-- A blocks here until                 -- B blocks here until
+-- B calls channel.receive             -- A calls channel.send
 ```
 
 Use unbuffered channels when you want tight synchronization between tasks.
 
 ### Buffered channels
 
-A buffered channel created with `chan(n)` can hold up to `n` values. Sends
-succeed immediately as long as the buffer is not full. Receives succeed
+A buffered channel created with `channel.new(n)` can hold up to `n` values.
+Sends succeed immediately as long as the buffer is not full. Receives succeed
 immediately as long as the buffer is not empty.
 
-```
-let ch = chan(3)
+```silt
+let ch = channel.new(3)
 
-send(ch, 1)   -- succeeds immediately (buffer: [1])
-send(ch, 2)   -- succeeds immediately (buffer: [1, 2])
-send(ch, 3)   -- succeeds immediately (buffer: [1, 2, 3])
--- send(ch, 4) would block here -- buffer is full
+channel.send(ch, 1)   -- succeeds immediately (buffer: [1])
+channel.send(ch, 2)   -- succeeds immediately (buffer: [1, 2])
+channel.send(ch, 3)   -- succeeds immediately (buffer: [1, 2, 3])
+-- channel.send(ch, 4) would block here -- buffer is full
 
-let a = receive(ch)  -- a = 1, buffer: [2, 3]
-let b = receive(ch)  -- b = 2, buffer: [3]
+let a = channel.receive(ch)  -- a = 1, buffer: [2, 3]
+let b = channel.receive(ch)  -- b = 2, buffer: [3]
 ```
 
 Use buffered channels when the producer and consumer run at different speeds and
@@ -133,51 +138,52 @@ you want to decouple them.
 
 Channels are not restricted to a single primitive type. You can send anything:
 
-```
-let ch = chan(5)
-send(ch, [1, 2, 3])           -- a list
-send(ch, (42, "hello"))       -- a tuple
-send(ch, User { name: "Alice", age: 30, active: true })  -- a record
+```silt
+let ch = channel.new(5)
+channel.send(ch, [1, 2, 3])           -- a list
+channel.send(ch, (42, "hello"))       -- a tuple
+channel.send(ch, User { name: "Alice", age: 30, active: true })  -- a record
 ```
 
 -----
 
 ## 3. Spawning Tasks
 
-### The spawn keyword
+### `task.spawn`
 
-`spawn` takes a zero-argument function and runs it as a concurrent task,
+`task.spawn` takes a zero-argument function and runs it as a concurrent task,
 returning a `Handle` that you can use to join or cancel it later.
 
-```
-let handle = spawn fn() {
+```silt
+let handle = task.spawn(fn() {
   -- this runs concurrently
   let result = expensive_computation()
-  send(ch, result)
-}
+  channel.send(ch, result)
+})
 ```
 
-The function passed to `spawn` is a closure -- it captures variables from the
-surrounding scope. Since all values in Silt are immutable, this is always safe.
+The function passed to `task.spawn` is a closure -- it captures variables from
+the surrounding scope. Since all values in Silt are immutable, this is always
+safe.
 
-```
+```silt
 let multiplier = 10
-let ch = chan(10)
+let ch = channel.new(10)
 
-let h = spawn fn() {
+let h = task.spawn(fn() {
   -- captures `multiplier` and `ch` from outer scope
-  send(ch, multiplier * 2)
-}
+  channel.send(ch, multiplier * 2)
+})
 
-join(h)
-receive(ch)  -- 20
+task.join(h)
+channel.receive(ch)  -- 20
 ```
 
 ### Tasks run cooperatively
 
 Silt tasks are **not** OS threads. They run on a single thread and yield control
-at channel operations (`send`, `receive`, `select`) and at `join`. Between those
-yield points, a task runs without interruption.
+at channel operations (`channel.send`, `channel.receive`, `select`) and at
+`task.join`. Between those yield points, a task runs without interruption.
 
 This means:
 
@@ -187,65 +193,66 @@ This means:
 
 ### Example: producer/consumer
 
-```
+```silt
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, "hello")
-    send(ch, "world")
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "world")
+  })
 
-  let consumer = spawn fn() {
-    let msg1 = receive(ch)
-    let msg2 = receive(ch)
+  let consumer = task.spawn(fn() {
+    let msg1 = channel.receive(ch)
+    let msg2 = channel.receive(ch)
     println("{msg1} {msg2}")
-  }
+  })
 
-  join(producer)
-  join(consumer)
+  task.join(producer)
+  task.join(consumer)
 }
 ```
 
 What happens step by step:
 
 1. `main` creates a buffered channel and spawns two tasks.
-2. `join(producer)` tells the scheduler to run pending tasks until `producer`
-   completes.
+2. `task.join(producer)` tells the scheduler to run pending tasks until
+   `producer` completes.
 3. The producer sends `"hello"` and `"world"` into the channel.
-4. `join(consumer)` runs the consumer, which receives both messages and prints
-   them.
+4. `task.join(consumer)` runs the consumer, which receives both messages and
+   prints them.
 
 -----
 
 ## 4. Joining and Cancellation
 
-### join(handle)
+### `task.join(handle)`
 
-`join` blocks the current task until the spawned task completes, then returns
-its result -- the value of the last expression in the spawned function's body.
+`task.join` blocks the current task until the spawned task completes, then
+returns its result -- the value of the last expression in the spawned function's
+body.
 
-```
-let h = spawn fn() {
+```silt
+let h = task.spawn(fn() {
   42
-}
+})
 
-let result = join(h)  -- result = 42
+let result = task.join(h)  -- result = 42
 ```
 
-If the spawned task fails (runtime error), `join` propagates the error.
+If the spawned task fails (runtime error), `task.join` propagates the error.
 
-### cancel(handle)
+### `task.cancel(handle)`
 
-`cancel` requests that a task be stopped. The task is marked as cancelled and
-will not run further.
+`task.cancel` requests that a task be stopped. The task is marked as cancelled
+and will not run further.
 
-```
-let h = spawn fn() {
+```silt
+let h = task.spawn(fn() {
   -- some work
   42
-}
-cancel(h)
+})
+task.cancel(h)
 -- h will not complete; joining it would return an error
 ```
 
@@ -254,29 +261,29 @@ cancel(h)
 The most common pattern is to spawn several tasks, let them do their work, and
 then join them to collect results.
 
-```
+```silt
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let h1 = spawn fn() {
-    send(ch, 1)
-  }
+  let h1 = task.spawn(fn() {
+    channel.send(ch, 1)
+  })
 
-  let h2 = spawn fn() {
-    send(ch, 2)
-  }
+  let h2 = task.spawn(fn() {
+    channel.send(ch, 2)
+  })
 
-  let h3 = spawn fn() {
-    send(ch, 3)
-  }
+  let h3 = task.spawn(fn() {
+    channel.send(ch, 3)
+  })
 
-  join(h1)
-  join(h2)
-  join(h3)
+  task.join(h1)
+  task.join(h2)
+  task.join(h3)
 
-  let a = receive(ch)
-  let b = receive(ch)
-  let c = receive(ch)
+  let a = channel.receive(ch)
+  let b = channel.receive(ch)
+  let c = channel.receive(ch)
   println("sum = {a + b + c}")  -- sum = 6
 }
 ```
@@ -287,95 +294,95 @@ fn main() {
 
 ### Closing a channel
 
-When a producer is done sending values, it can close the channel with `close(ch)`.
-After closing:
+When a producer is done sending values, it can close the channel with
+`channel.close(ch)`. After closing:
 
 - **Sends** on the closed channel will error.
 - **Receives** return any remaining buffered values. Once the buffer is empty,
-  `receive` returns `None` instead of blocking.
+  `channel.receive` returns `None` instead of blocking.
 
 This lets the consumer detect when the producer is finished without needing to
 know how many values to expect.
 
-```
+```silt
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, 1)
-    send(ch, 2)
-    send(ch, 3)
-    close(ch)
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.close(ch)
+  })
 
-  let consumer = spawn fn() {
-    let a = receive(ch)   -- 1
-    let b = receive(ch)   -- 2
-    let c = receive(ch)   -- 3
-    let d = receive(ch)   -- None (closed and empty)
+  let consumer = task.spawn(fn() {
+    let a = channel.receive(ch)   -- 1
+    let b = channel.receive(ch)   -- 2
+    let c = channel.receive(ch)   -- 3
+    let d = channel.receive(ch)   -- None (closed and empty)
     println("{a} {b} {c} done={d}")
-  }
+  })
 
-  join(producer)
-  join(consumer)
+  task.join(producer)
+  task.join(consumer)
 }
 ```
 
-### Non-blocking send: try_send
+### Non-blocking send: `channel.try_send`
 
-`try_send(ch, value)` attempts to send without blocking. It returns `true` if
-the value was placed in the channel, or `false` if the buffer is full or the
-channel is closed.
+`channel.try_send(ch, value)` attempts to send without blocking. It returns
+`true` if the value was placed in the channel, or `false` if the buffer is full
+or the channel is closed.
 
-```
-let ch = chan(2)
-try_send(ch, "a")   -- true
-try_send(ch, "b")   -- true
-try_send(ch, "c")   -- false (buffer full)
+```silt
+let ch = channel.new(2)
+channel.try_send(ch, "a")   -- true
+channel.try_send(ch, "b")   -- true
+channel.try_send(ch, "c")   -- false (buffer full)
 ```
 
 This is useful when you want to offer a value to a channel without stalling the
 current task -- for example, logging to a channel that a consumer may or may not
 be draining.
 
-### Non-blocking receive: try_receive
+### Non-blocking receive: `channel.try_receive`
 
-`try_receive(ch)` attempts to receive without blocking. It returns `Some(value)`
-if data is available, or `None` if the channel is empty or closed.
+`channel.try_receive(ch)` attempts to receive without blocking. It returns
+`Some(value)` if data is available, or `None` if the channel is empty or closed.
 
-```
-let ch = chan(10)
-send(ch, 42)
+```silt
+let ch = channel.new(10)
+channel.send(ch, 42)
 
-try_receive(ch)   -- Some(42)
-try_receive(ch)   -- None (empty)
+channel.try_receive(ch)   -- Some(42)
+channel.try_receive(ch)   -- None (empty)
 ```
 
 This is useful for polling a channel in a loop or checking for data availability
 without committing to a blocking wait.
 
-### Combining close with try_receive
+### Combining close with `channel.try_receive`
 
 A common pattern is for a consumer to drain a channel until it is closed:
 
-```
+```silt
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, "a")
-    send(ch, "b")
-    send(ch, "c")
-    close(ch)
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, "a")
+    channel.send(ch, "b")
+    channel.send(ch, "c")
+    channel.close(ch)
+  })
 
-  join(producer)
+  task.join(producer)
 
   -- Drain remaining values
-  let v1 = try_receive(ch)   -- Some("a")
-  let v2 = try_receive(ch)   -- Some("b")
-  let v3 = try_receive(ch)   -- Some("c")
-  let v4 = try_receive(ch)   -- None (closed and empty)
+  let v1 = channel.try_receive(ch)   -- Some("a")
+  let v2 = channel.try_receive(ch)   -- Some("b")
+  let v3 = channel.try_receive(ch)   -- Some("c")
+  let v4 = channel.try_receive(ch)   -- None (closed and empty)
   println("{v1} {v2} {v3} {v4}")
 }
 ```
@@ -389,7 +396,7 @@ whichever channel has data available first.
 
 ### Syntax
 
-```
+```silt
 select {
   receive(ch1) as msg -> handle_first(msg)
   receive(ch2) as msg -> handle_second(msg)
@@ -403,22 +410,22 @@ and tries again.
 
 ### Example: multiplexing two producers
 
-```
+```silt
 fn main() {
-  let ch1 = chan(10)
-  let ch2 = chan(10)
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
 
-  let p1 = spawn fn() {
-    send(ch1, "from producer 1")
-  }
+  let p1 = task.spawn(fn() {
+    channel.send(ch1, "from producer 1")
+  })
 
-  let p2 = spawn fn() {
-    send(ch2, "from producer 2")
-  }
+  let p2 = task.spawn(fn() {
+    channel.send(ch2, "from producer 2")
+  })
 
   -- Wait until one of them produces a value
-  join(p1)
-  join(p2)
+  task.join(p1)
+  task.join(p2)
 
   let result = select {
     receive(ch1) as msg -> msg
@@ -434,14 +441,14 @@ fn main() {
 `select` is the building block for fan-in -- combining multiple input channels
 into a single stream.
 
-```
+```silt
 fn fan_in(sources, output) {
   -- Read one value from whichever source is ready first
   let msg = select {
     receive(sources.ch1) as msg -> msg
     receive(sources.ch2) as msg -> msg
   }
-  send(output, msg)
+  channel.send(output, msg)
 }
 ```
 
@@ -466,10 +473,10 @@ actually executes.
 
 Silt's scheduler runs on a single OS thread. Tasks yield at well-defined points:
 
-- `send(ch, val)` -- yields if the channel buffer is full
-- `receive(ch)` -- yields if the channel is empty
+- `channel.send(ch, val)` -- yields if the channel buffer is full
+- `channel.receive(ch)` -- yields if the channel is empty
 - `select { ... }` -- yields if no channel has data
-- `join(handle)` -- yields while the target task has not completed
+- `task.join(handle)` -- yields while the target task has not completed
 
 Between yield points, a task runs to completion of its current expression
 without interruption. There is no preemption, no time-slicing, and no
@@ -497,7 +504,7 @@ Ready  ---------> Running ---------> Completed
   becomes Ready when a value arrives.
 - **Completed** -- the task finished executing. Its result is stored in its
   handle.
-- **Cancelled** -- the task was cancelled via `cancel(handle)`.
+- **Cancelled** -- the task was cancelled via `task.cancel(handle)`.
 
 ### How scheduling works
 
@@ -516,9 +523,9 @@ deadlock (no tasks made progress).
 
 The scheduler detects deadlocks when:
 
-- A `send` finds the buffer full, but no tasks can run to drain it.
-- A `receive` finds the buffer empty, but no tasks can run to fill it.
-- A `join` is waiting for a task that is not making progress.
+- A `channel.send` finds the buffer full, but no tasks can run to drain it.
+- A `channel.receive` finds the buffer empty, but no tasks can run to fill it.
+- A `task.join` is waiting for a task that is not making progress.
 - A `select` finds all channels empty and no tasks can produce data.
 
 In each case, Silt reports a clear error message rather than hanging forever.
@@ -554,25 +561,25 @@ channel connects them.
     Producer ----> [Channel] ----> Consumer
 ```
 
-```
+```silt
 fn main() {
-  let ch = chan(10)
+  let ch = channel.new(10)
 
-  let producer = spawn fn() {
-    send(ch, 10)
-    send(ch, 20)
-    send(ch, 30)
-  }
+  let producer = task.spawn(fn() {
+    channel.send(ch, 10)
+    channel.send(ch, 20)
+    channel.send(ch, 30)
+  })
 
-  let consumer = spawn fn() {
-    let a = receive(ch)
-    let b = receive(ch)
-    let c = receive(ch)
+  let consumer = task.spawn(fn() {
+    let a = channel.receive(ch)
+    let b = channel.receive(ch)
+    let c = channel.receive(ch)
     println("sum = {a + b + c}")
-  }
+  })
 
-  join(producer)
-  join(consumer)
+  task.join(producer)
+  task.join(consumer)
 }
 ```
 
@@ -589,40 +596,40 @@ channel.
               +---> [Worker 3] ---+
 ```
 
-```
+```silt
 fn main() {
-  let jobs = chan(10)
-  let results = chan(10)
+  let jobs = channel.new(10)
+  let results = channel.new(10)
 
   -- Enqueue work
-  send(jobs, 10)
-  send(jobs, 20)
-  send(jobs, 30)
+  channel.send(jobs, 10)
+  channel.send(jobs, 20)
+  channel.send(jobs, 30)
 
   -- Spawn workers that read from jobs and write to results
-  let w1 = spawn fn() {
-    let n = receive(jobs)
-    send(results, n * 2)
-  }
+  let w1 = task.spawn(fn() {
+    let n = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
 
-  let w2 = spawn fn() {
-    let n = receive(jobs)
-    send(results, n * 2)
-  }
+  let w2 = task.spawn(fn() {
+    let n = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
 
-  let w3 = spawn fn() {
-    let n = receive(jobs)
-    send(results, n * 2)
-  }
+  let w3 = task.spawn(fn() {
+    let n = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
 
-  join(w1)
-  join(w2)
-  join(w3)
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
 
   -- Collect results
-  let a = receive(results)
-  let b = receive(results)
-  let c = receive(results)
+  let a = channel.receive(results)
+  let b = channel.receive(results)
+  let c = channel.receive(results)
   println("results: {a}, {b}, {c}")
   -- output: results: 20, 40, 60
 }
@@ -630,7 +637,7 @@ fn main() {
 
 Each worker picks up one job from the `jobs` channel, processes it, and sends
 the result to the `results` channel. The work is distributed automatically --
-whichever worker calls `receive(jobs)` first gets the next job.
+whichever worker calls `channel.receive(jobs)` first gets the next job.
 
 ### Pipeline (chain of channels)
 
@@ -641,42 +648,42 @@ writes to the next.
     [Stage 1] ----> [ch1] ----> [Stage 2] ----> [ch2] ----> [Stage 3]
 ```
 
-```
+```silt
 fn main() {
-  let raw = chan(10)
-  let doubled = chan(10)
-  let results = chan(10)
+  let raw = channel.new(10)
+  let doubled = channel.new(10)
+  let results = channel.new(10)
 
   -- Stage 1: produce raw values
-  let s1 = spawn fn() {
-    send(raw, 1)
-    send(raw, 2)
-    send(raw, 3)
-  }
+  let s1 = task.spawn(fn() {
+    channel.send(raw, 1)
+    channel.send(raw, 2)
+    channel.send(raw, 3)
+  })
 
   -- Stage 2: double each value
-  let s2 = spawn fn() {
-    let a = receive(raw)
-    let b = receive(raw)
-    let c = receive(raw)
-    send(doubled, a * 2)
-    send(doubled, b * 2)
-    send(doubled, c * 2)
-  }
+  let s2 = task.spawn(fn() {
+    let a = channel.receive(raw)
+    let b = channel.receive(raw)
+    let c = channel.receive(raw)
+    channel.send(doubled, a * 2)
+    channel.send(doubled, b * 2)
+    channel.send(doubled, c * 2)
+  })
 
   -- Stage 3: sum the doubled values
-  let s3 = spawn fn() {
-    let a = receive(doubled)
-    let b = receive(doubled)
-    let c = receive(doubled)
-    send(results, a + b + c)
-  }
+  let s3 = task.spawn(fn() {
+    let a = channel.receive(doubled)
+    let b = channel.receive(doubled)
+    let c = channel.receive(doubled)
+    channel.send(results, a + b + c)
+  })
 
-  join(s1)
-  join(s2)
-  join(s3)
+  task.join(s1)
+  task.join(s2)
+  task.join(s3)
 
-  let total = receive(results)
+  let total = channel.receive(results)
   println("pipeline total = {total}")
   -- output: pipeline total = 12
 }
@@ -696,8 +703,8 @@ This makes pipelines easy to extend -- just add another stage in the middle.
   speedup from concurrency.
 
 - **No timeouts.** There is no way to say "receive from this channel, but give
-  up after 5 seconds." A `receive` on an empty channel with no producer will
-  deadlock (though Silt detects and reports this).
+  up after 5 seconds." A `channel.receive` on an empty channel with no producer
+  will deadlock (though Silt detects and reports this).
 
 - **No buffering changes after creation.** A channel's capacity is fixed at
   creation time. You cannot resize a buffer or convert between buffered and
@@ -727,18 +734,18 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 
 | Concept | Syntax | Purpose |
 |---|---|---|
-| Create channel | `chan()` / `chan(n)` | Communication between tasks |
-| Send | `send(ch, val)` | Put a value into a channel |
-| Receive | `receive(ch)` | Take a value from a channel |
-| Spawn | `spawn fn() { ... }` | Run a function as a concurrent task |
-| Join | `join(handle)` | Wait for a task to finish, get its result |
-| Cancel | `cancel(handle)` | Stop a task |
-| Close | `close(ch)` | Close a channel (no more sends) |
-| Try send | `try_send(ch, val)` | Non-blocking send (returns Bool) |
-| Try receive | `try_receive(ch)` | Non-blocking receive (returns Option) |
+| Create channel | `channel.new()` / `channel.new(n)` | Communication between tasks |
+| Send | `channel.send(ch, val)` | Put a value into a channel |
+| Receive | `channel.receive(ch)` | Take a value from a channel |
+| Spawn | `task.spawn(fn() { ... })` | Run a function as a concurrent task |
+| Join | `task.join(handle)` | Wait for a task to finish, get its result |
+| Cancel | `task.cancel(handle)` | Stop a task |
+| Close | `channel.close(ch)` | Close a channel (no more sends) |
+| Try send | `channel.try_send(ch, val)` | Non-blocking send (returns Bool) |
+| Try receive | `channel.try_receive(ch)` | Non-blocking receive (returns Option) |
 | Select | `select { receive(ch) as x -> ... }` | Wait on multiple channels |
 
 The mental model: tasks are independent workers. Channels are the pipes between
-them. `select` is a multiplexer. `join` is a synchronization barrier. Everything
-else -- the scheduler, the task states, the deadlock detection -- is machinery
-that makes this model work reliably under the hood.
+them. `select` is a multiplexer. `task.join` is a synchronization barrier.
+Everything else -- the scheduler, the task states, the deadlock detection -- is
+machinery that makes this model work reliably under the hood.

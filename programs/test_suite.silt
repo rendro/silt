@@ -2,69 +2,32 @@
   test_suite.silt -- A mini test framework that tests itself
   ==========================================================
 
-  TESTING STORY FRICTION REPORT: 5/10
+  TESTING STORY FRICTION REPORT: 6/10
 
   THE GOOD:
-  - `silt test` with test_ prefix convention is dead simple. Zero config,
-    zero boilerplate. Just name your function test_foo() and it runs. This is
-    genuinely better than Go's testing.T ceremony and on par with Rust's
-    #[test] for ergonomics.
-  - assert, assert_eq, assert_ne are always available as builtins. No imports
-    needed for the basics. That is excellent DX -- the spec says
-    `import test.{ assert_eq }` but the interpreter just registers them globally.
-  - The error messages from assert_eq show both values: "assertion failed: 3 != 4".
-    That is the minimum bar and it is met.
-  - Pattern matching + Result/Option means you can write expressive assertions
-    about structure: match result { Ok(v) -> assert_eq(v, 42), ... }.
+  - `silt test` with test_ prefix convention is dead simple. Zero config.
+  - assert, assert_eq, assert_ne are always available as builtins.
+  - Error messages from assert_eq show both values.
+  - Pattern matching + Result/Option means expressive assertions.
   - The test runner output is clean: PASS/FAIL per test, summary at end.
+  - try() builtin enables negative testing (catching expected failures).
+  - list.append replaces the flatten workaround for result collection.
+  - list.get, list.take, list.enumerate, list.sort_by, list.any, list.all
+    are now available for writing richer test assertions.
 
   THE BAD:
-  - No way to catch panics/assertion failures and continue. If assert_eq fails
-    inside a test function, the whole function aborts. You cannot write a test
-    that checks "this SHOULD fail" (negative tests). There is no try/catch,
-    no Result-returning assert variant, no expect_panic(). This is the single
-    biggest gap.
-  - No setup/teardown hooks. No before_each, after_each, before_all. If five
-    tests need the same record, you build it five times or call a helper. Rust
-    solves this with test fixtures / constructors. Go has TestMain. Jest has
-    beforeEach. Silt has nothing.
-  - No test filtering. `silt test` runs ALL test_ functions in ALL *_test.silt
-    files. You cannot run a single test by name (`silt test --filter test_foo`).
-    During development this means every test runs every time.
-  - No test timeout. An infinite-recursion test hangs forever.
-  - No assert_matches! or structural matching assert. You cannot write
-    `assert_matches(value, Ok(_))` -- you have to manually match + panic.
-  - No skip/ignore mechanism. No way to mark a test as #[ignore] or t.Skip().
-  - No test output capture. println() inside tests leaks into the test runner
-    output, interleaved with PASS/FAIL lines.
-  - No parameterized / table-driven tests. No way to run the same assertion
-    over a list of inputs and get per-case reporting.
-  - No diff on assert_eq failure for long strings or large structures. Just
-    shows the debug representation of both values.
-  - Cannot track pass/fail counts from within a .silt program for self-testing
-    because assertions abort on failure. The only way to count is to never fail
-    (which defeats the purpose of a test framework that tests itself).
+  - No setup/teardown hooks.
+  - No test filtering (`silt test --filter test_foo`).
+  - No test timeout.
+  - No assert_matches! or structural matching assert.
+  - No skip/ignore mechanism.
+  - No test output capture.
+  - No parameterized / table-driven tests.
+  - No diff on assert_eq failure for long strings.
 
-  COMPARED TO:
-  - Rust #[test]: Missing ignore, should_panic, custom test harness, --filter,
-    cargo test --test-threads, Result<()> return. Silt is at ~30% of Rust's
-    test features.
-  - Go testing: Missing t.Run subtests, t.Parallel, t.Skip, t.Helper, t.Log,
-    table-driven patterns, benchmarks. Silt is at ~20% of Go.
-  - Jest: Missing describe/it nesting, beforeEach/afterEach, expect().toBe()
-    chaining, snapshot tests, mocking, --watch, coverage. Silt is at ~15%.
-
-  WHAT WOULD MAKE IT A 7:
-  1. A `try(fn)` builtin that catches panics and returns Result
-  2. `silt test --filter <pattern>` for running specific tests
-  3. A setup function convention (e.g., test_setup() runs before each test_*)
-  4. assert_matches(value, pattern) for structural assertions
-
-  WHAT WOULD MAKE IT A 9:
-  5. Table-driven test helper: test_each(cases, fn(input, expected) { ... })
-  6. Test timeout / watchdog
-  7. Output capture (only show stdout on failure)
-  8. Ignore/skip annotation
+  REMAINING FRICTION:
+  - Recursive loop ceremony for any iterative algorithm.
+  - Cannot define helper functions inside other functions (no local fn).
 -}
 
 -- ============================================================
@@ -131,20 +94,32 @@ fn empty_suite() {
 }
 
 -- Run a single test closure and record the result.
--- Since we cannot catch panics, a failing assert aborts the whole program.
--- This is the fundamental limitation: we can only count successes.
+-- Uses try() to catch assertion failures instead of aborting.
 fn run_test(suite, name, test_fn) {
-  -- Call the test function. If it throws, we never reach the next line.
-  test_fn()
+  let outcome = try(test_fn)
 
-  let result = TestResult { name: name, passed: true }
-  println(result.display())
-
-  TestSuite {
-    total: suite.total + 1,
-    passed: suite.passed + 1,
-    failed: suite.failed,
-    results: list.flatten([suite.results, [result]]),
+  match outcome {
+    Ok(_) -> {
+      let result = TestResult { name: name, passed: true }
+      println(result.display())
+      TestSuite {
+        total: suite.total + 1,
+        passed: suite.passed + 1,
+        failed: suite.failed,
+        results: list.append(suite.results, result),
+      }
+    }
+    Err(msg) -> {
+      let result = TestResult { name: name, passed: false }
+      println(result.display())
+      println("    Error: {msg}")
+      TestSuite {
+        total: suite.total + 1,
+        passed: suite.passed,
+        failed: suite.failed + 1,
+        results: list.append(suite.results, result),
+      }
+    }
   }
 }
 
@@ -225,6 +200,18 @@ fn test_string_ops() {
   let chars = string.chars("hi")
   test.assert_eq(list.length(chars), 2)
 
+  -- string.index_of
+  test.assert_eq(string.index_of("hello world", "world"), Some(6))
+  test.assert_eq(string.index_of("hello", "xyz"), None)
+
+  -- string.slice
+  test.assert_eq(string.slice("hello world", 0, 5), "hello")
+  test.assert_eq(string.slice("hello world", 6, 11), "world")
+
+  -- string.pad_left / string.pad_right
+  test.assert_eq(string.pad_left("42", 5, " "), "   42")
+  test.assert_eq(string.pad_right("hi", 5, "."), "hi...")
+
   -- len works on strings directly
   test.assert_eq(string.length("hello"), 5)
 
@@ -239,7 +226,7 @@ fn test_string_ops() {
 fn test_list_ops() {
   let xs = [1, 2, 3, 4, 5]
 
-  -- len
+  -- length
   test.assert_eq(list.length(xs), 5)
 
   -- map
@@ -278,6 +265,31 @@ fn test_list_ops() {
   test.assert(list.contains([1, 2, 3], 2))
   test.assert(list.contains([1, 2, 3], 3))
   test.assert_eq(list.contains([1, 2, 3], 99), false)
+
+  -- list.get
+  test.assert_eq(list.get(xs, 0), Some(1))
+  test.assert_eq(list.get(xs, 4), Some(5))
+  test.assert_eq(list.get(xs, 10), None)
+
+  -- list.append
+  test.assert_eq(list.append([1, 2], 3), [1, 2, 3])
+
+  -- list.concat
+  test.assert_eq(list.concat([1, 2], [3, 4]), [1, 2, 3, 4])
+
+  -- list.take / list.drop
+  test.assert_eq(list.take(xs, 3), [1, 2, 3])
+  test.assert_eq(list.drop(xs, 3), [4, 5])
+
+  -- list.enumerate
+  let enumerated = list.enumerate(["a", "b"])
+  test.assert_eq(enumerated, [(0, "a"), (1, "b")])
+
+  -- list.any / list.all
+  test.assert(xs |> list.any { x -> x > 4 })
+  test.assert_eq(xs |> list.any { x -> x > 10 }, false)
+  test.assert(xs |> list.all { x -> x > 0 })
+  test.assert_eq(xs |> list.all { x -> x > 3 }, false)
 
   -- list pattern matching
   match xs {
@@ -325,7 +337,7 @@ fn test_map_ops() {
   test.assert_eq(map.get(merged, "y"), Some(99))
   test.assert_eq(map.get(merged, "z"), Some(3))
 
-  -- len on maps
+  -- map.length
   test.assert_eq(map.length(m), 3)
 }
 
@@ -524,6 +536,15 @@ fn test_pattern_matching() {
   test.assert_eq(a, 1)
   test.assert_eq(b, 2)
 
+  -- guardless match
+  let x = 42
+  let result = match {
+    x > 100 -> "big"
+    x > 10 -> "medium"
+    _ -> "small"
+  }
+  test.assert_eq(result, "medium")
+
   -- bool patterns
   match true {
     true -> test.assert(true)
@@ -611,7 +632,6 @@ fn test_closures() {
   let apply_all = fn(fns, val) {
     fns |> list.fold(val) { acc, f -> f(acc) }
   }
-  -- (10 + 1) = 11, (11 * 2) = 22, (22 - 3) = 19
   test.assert_eq(apply_all(fns, 10), 19)
 }
 
@@ -660,6 +680,35 @@ fn test_traits() {
 }
 
 -- ============================================================
+-- Test: new stdlib functions
+-- ============================================================
+
+fn test_new_stdlib() {
+  -- float.min / float.max
+  test.assert_eq(float.min(1.5, 2.5), 1.5)
+  test.assert_eq(float.max(1.5, 2.5), 2.5)
+
+  -- list.sort_by
+  let words = ["banana", "apple", "cherry"]
+  let sorted = words |> list.sort_by { w -> string.length(w) }
+  test.assert_eq(sorted, ["apple", "banana", "cherry"])
+
+  -- list.flat_map
+  let expanded = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
+  test.assert_eq(expanded, [1, 10, 2, 20, 3, 30])
+
+  -- try() for catching errors
+  let caught = try(fn() { panic("test error") })
+  test.assert(result.is_err(caught))
+
+  let ok_result = try(fn() { 42 })
+  test.assert_eq(ok_result, Ok(42))
+
+  -- map.length
+  test.assert_eq(map.length(#{ "a": 1, "b": 2 }), 2)
+}
+
+-- ============================================================
 -- Main: run all tests via our mini framework
 -- ============================================================
 
@@ -670,9 +719,6 @@ fn main() {
 
   let suite = empty_suite()
 
-  -- Run each test and accumulate results.
-  -- Note: if any assert fails, the program aborts immediately.
-  -- This is the key limitation -- we cannot catch failures.
   let suite = run_test(suite, "test_arithmetic", test_arithmetic)
   let suite = run_test(suite, "test_string_ops", test_string_ops)
   let suite = run_test(suite, "test_list_ops", test_list_ops)
@@ -683,6 +729,7 @@ fn main() {
   let suite = run_test(suite, "test_pipes", test_pipes)
   let suite = run_test(suite, "test_closures", test_closures)
   let suite = run_test(suite, "test_traits", test_traits)
+  let suite = run_test(suite, "test_new_stdlib", test_new_stdlib)
 
   print_summary(suite)
 }

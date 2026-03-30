@@ -1,54 +1,31 @@
 {-
-  Pipeline — Unix-pipe-style data transformation
+  Pipeline -- Unix-pipe-style data transformation
   ===============================================
 
-  FRICTION RATING: 7/10
+  FRICTION RATING: 8/10
 
   WHAT WORKS WELL:
   - The pipe operator |> is the star of this program. Chaining filter, map, fold,
-    each into multi-step pipelines reads naturally and is the clear "Silt way" to
-    process data. Building `lines |> grep("ERROR") |> uppercase() |> numbered()`
-    reads almost exactly like a Unix pipeline.
-  - Trailing closures with { x -> ... } are excellent for inline transforms. They
-    make filter and map calls feel lightweight and expressive.
-  - String interpolation "{var}" inside strings is clean and avoids concatenation noise.
-  - Custom functions compose perfectly with pipes because |> inserts the left side as
-    the first argument. Writing `fn grep(lines, pattern)` and calling it as
-    `lines |> grep("ERROR")` "just works" with no adapter or special syntax.
-  - fold is a natural fit for aggregation — word counting, building summaries, and
-    implementing custom operations like uniq all fall out of fold cleanly.
-  - Closures capturing outer variables (like the pattern in grep, or the counter in
-    numbered) work seamlessly, enabling higher-order function factories.
+    each into multi-step pipelines reads naturally and is the clear "Silt way."
+  - Trailing closures with { x -> ... } are excellent for inline transforms.
+  - String interpolation "{var}" is clean and avoids concatenation noise.
+  - Custom functions compose perfectly with pipes.
+  - fold is a natural fit for aggregation.
+  - Closures capturing outer variables work seamlessly.
+  - list.take / list.drop replace the zip-filter workaround.
+  - list.sort_by replaces the zip-sort-extract dance.
+  - list.enumerate + string.pad_left make numbered output clean.
+  - list.append replaces the flatten workaround for list building.
+  - Guardless match makes boolean branching concise.
 
-  WHAT WAS AWKWARD:
-  - No list indexing (xs[i]) or slicing (xs[0..n]). Implementing `take(lines, n)` requires
-    zipping with a range and filtering, which is a workaround for something that should
-    be primitive. Same for any index-based access.
-  - No list append or concatenation operator. Building a list element-by-element in fold
-    requires `flatten` tricks — folding into a list of single-element lists and flattening,
-    because there's no `[...acc, item]` spread or `acc + [item]` concat.
-  - sort_by_length requires a zip-sort-map dance: zip with lengths to create sortable
-    tuples, sort, then map to extract originals. A `sort_by(list, fn)` that takes a key
-    function would be much more natural for pipelines.
-  - Tuple destructuring in closures inside fold is verbose. When folding over (index, line)
-    tuples, you need a `match` inside the closure body to pull out components, rather than
-    writing `{ acc, (i, line) -> ... }`.
-  - No way to return early from fold — if you want "take first 5" via fold, you still
-    process every element.
-  - The pattern `fold([]) { acc, x -> ... }` for building new lists requires the flatten
-    workaround mentioned above, making list-building transforms less clean than list-filtering
-    transforms.
-
-  PIPE OPERATOR FEEL:
-  The pipe operator feels natural for data pipelines — 8/10 on its own. The friction
-  comes from missing stdlib primitives (take, sort_by, list concat) that would make
-  the transforms themselves cleaner. The operator itself is well-designed: first-arg
-  insertion is the right default, and it composes beautifully with trailing closures.
+  REMAINING FRICTION:
+  - No way to return early from fold.
+  - Recursive loop ceremony for any iterative algorithm.
+  - Tuple destructuring in closures inside fold is verbose.
 -}
 
 -- ============================================================
--- Pipeline helper functions — all designed to be pipe-friendly
--- (first argument is the data flowing through the pipe)
+-- Pipeline helper functions
 -- ============================================================
 
 -- Filter lines containing a pattern
@@ -68,14 +45,10 @@ fn lowercase(lines) {
 
 -- Prepend line numbers: "  1 | some text"
 fn numbered(lines) {
-  let indices = 1..(list.length(lines) + 1)
-  list.zip(indices, lines)
-  |> list.map { pair ->
+  lines |> list.enumerate |> list.map { pair ->
     let (i, line) = pair
-    match i < 10 {
-      true -> "  {i} | {line}"
-      false -> " {i} | {line}"
-    }
+    let num = string.pad_left("{i + 1}", 3, " ")
+    "{num} | {line}"
   }
 }
 
@@ -91,39 +64,22 @@ fn word_count(lines) {
 }
 
 -- Sort lines by their length (shortest first)
--- Strategy: zip with lengths, sort tuples (sorts by first element), extract lines
 fn sort_by_length(lines) {
-  let with_lengths = lines |> list.map { line -> (string.length(line), line) }
-  let sorted = list.sort(with_lengths)
-  sorted |> list.map { pair ->
-    let (_, line) = pair
-    line
-  }
+  lines |> list.sort_by { line -> string.length(line) }
 }
 
 -- Take the first n items from a list
--- Strategy: zip with indices, filter by index < n, extract items
 fn take(lines, n) {
-  let indices = 0..(list.length(lines))
-  list.zip(indices, lines)
-  |> list.filter { pair ->
-    let (i, _) = pair
-    i < n
-  }
-  |> list.map { pair ->
-    let (_, line) = pair
-    line
-  }
+  list.take(lines, n)
 }
 
 -- Remove consecutive duplicate lines
--- Strategy: fold, keeping track of previous line via tuple accumulator
 fn uniq(lines) {
   let result = lines |> list.fold(([], "")) { state, line ->
     let (acc, prev) = state
     match line == prev {
       true -> (acc, prev)
-      false -> (list.flatten([acc, [line]]), line)
+      false -> (list.append(acc, line), line)
     }
   }
   let (unique_lines, _) = result
@@ -136,22 +92,13 @@ fn reject(lines, pattern) {
 }
 
 -- Extract a field by position (split on whitespace, take nth token)
--- Returns the token or "" if index is out of bounds
 fn extract_field(lines, field_idx) {
   lines |> list.map { line ->
     let parts = line
       |> string.split(" ")
       |> list.filter { w -> string.length(w) > 0 }
-    let indexed = list.zip(0..(list.length(parts)), parts)
-    let found = indexed |> list.find { pair ->
-      let (i, _) = pair
-      i == field_idx
-    }
-    match found {
-      Some(pair) -> {
-        let (_, val) = pair
-        val
-      }
+    match list.get(parts, field_idx) {
+      Some(val) -> val
       None -> ""
     }
   }
@@ -177,7 +124,6 @@ fn summarize(lines) {
 }
 
 -- Higher-order: create a grep function for a specific pattern
--- Returns a function that can be used in a pipeline
 fn make_grep(pattern) {
   fn(lines) {
     lines |> list.filter { line -> string.contains(line, pattern) }
@@ -195,7 +141,7 @@ fn make_transformer(transform_fn) {
 }
 
 -- ============================================================
--- Main — demonstrate pipeline composition
+-- Main -- demonstrate pipeline composition
 -- ============================================================
 
 fn main() {
@@ -296,11 +242,9 @@ fn main() {
 
   -- ─── Pipeline 8: Higher-order function factories ──────────
   println("=== Pipeline 8: Higher-order grep factory ===")
-  -- Create specialized grep functions
   let find_errors = make_grep("ERROR")
   let find_health = make_grep("health check")
 
-  -- Use the manufactured grep in a pipeline
   let error_count = lines |> find_errors() |> count()
   let health_count = lines |> find_health() |> count()
   println("  Errors found: {error_count}")
@@ -325,23 +269,23 @@ fn main() {
   let longest_error = lines
     |> grep("ERROR")
     |> list.fold("") { longest, line ->
-      match string.length(line) > string.length(longest) {
-        true -> line
-        false -> longest
+      match {
+        string.length(line) > string.length(longest) -> line
+        _ -> longest
       }
     }
   println("  {longest_error}")
 
   println("")
 
-  -- ─── Pipeline 11: Using zip for parallel iteration ────────
+  -- ─── Pipeline 11: Using enumerate for indexed iteration ───
   println("=== Pipeline 11: Errors with their severity index ===")
-  let error_lines = lines |> grep("ERROR")
-  let severity = 1..(list.length(error_lines) + 1)
-  list.zip(severity, error_lines)
+  lines
+    |> grep("ERROR")
+    |> list.enumerate
     |> list.map { pair ->
       let (idx, line) = pair
-      "  severity #{idx}: {line}"
+      "  severity #{idx + 1}: {line}"
     }
     |> list.reverse()
     |> list.each { line -> println(line) }
