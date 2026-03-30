@@ -929,6 +929,52 @@ impl TypeChecker {
             });
         }
 
+        // list.flat_map: (List(a), (a -> List(b))) -> List(b)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.flat_map".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(Type::List(Box::new(b.clone())))),
+                    ],
+                    Box::new(Type::List(Box::new(b))),
+                ),
+            });
+        }
+
+        // list.any: (List(a), (a -> Bool)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.any".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(Type::Bool)),
+                    ],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
+        // list.all: (List(a), (a -> Bool)) -> Bool
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.all".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(Type::Bool)),
+                    ],
+                    Box::new(Type::Bool),
+                ),
+            });
+        }
+
         // len removed from globals -- use list.length, string.length, map.length
 
         // ── Variant constructors ───────────────────────────────────────
@@ -1324,6 +1370,18 @@ impl TypeChecker {
         // string.slice: (String, Int, Int) -> String
         env.define("string.slice".into(), Scheme::mono(Type::Fun(
             vec![Type::String, Type::Int, Type::Int],
+            Box::new(Type::String),
+        )));
+
+        // string.pad_left: (String, Int, String) -> String
+        env.define("string.pad_left".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int, Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.pad_right: (String, Int, String) -> String
+        env.define("string.pad_right".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int, Type::String],
             Box::new(Type::String),
         )));
 

@@ -695,6 +695,9 @@ impl Interpreter {
             "list.fold" if args.len() == 3 => Some(self.builtin_fold(&args[0], &args[1], &args[2])),
             "list.find" if args.len() == 2 => Some(self.builtin_find(&args[0], &args[1])),
             "list.sort_by" if args.len() == 2 => Some(self.builtin_sort_by(&args[0], &args[1])),
+            "list.flat_map" if args.len() == 2 => Some(self.builtin_flat_map(&args[0], &args[1])),
+            "list.any" if args.len() == 2 => Some(self.builtin_any(&args[0], &args[1])),
+            "list.all" if args.len() == 2 => Some(self.builtin_all(&args[0], &args[1])),
             _ => None,
         }
     }
@@ -770,6 +773,47 @@ impl Interpreter {
         pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
         Ok(Value::List(Rc::new(sorted)))
+    }
+
+    fn builtin_flat_map(&self, list: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to list.flat_map must be a list"));
+        };
+        let mut results = Vec::new();
+        for item in xs.iter() {
+            let mapped = self.call_value(func, &[item.clone()])?;
+            match mapped {
+                Value::List(inner) => results.extend(inner.iter().cloned()),
+                other => results.push(other),
+            }
+        }
+        Ok(Value::List(Rc::new(results)))
+    }
+
+    fn builtin_any(&self, list: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to list.any must be a list"));
+        };
+        for item in xs.iter() {
+            let result = self.call_value(func, &[item.clone()])?;
+            if is_truthy(&result) {
+                return Ok(Value::Bool(true));
+            }
+        }
+        Ok(Value::Bool(false))
+    }
+
+    fn builtin_all(&self, list: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to list.all must be a list"));
+        };
+        for item in xs.iter() {
+            let result = self.call_value(func, &[item.clone()])?;
+            if !is_truthy(&result) {
+                return Ok(Value::Bool(false));
+            }
+        }
+        Ok(Value::Bool(true))
     }
 
     // ── Concurrency builtins ────────────────────────────────────────
@@ -2015,6 +2059,39 @@ fn register_builtins(env: &Env) {
         Err("list.sort_by requires closure argument (use pipeline syntax)".into())
     }));
 
+    // Placeholder: actual closure-based list.flat_map is handled by try_collection_builtin
+    env.define("list.flat_map".into(), builtin("list.flat_map", |args| {
+        if args.len() != 2 {
+            return Err("list.flat_map takes 2 arguments (list, fn)".into());
+        }
+        let Value::List(_) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        Err("list.flat_map requires closure argument (use pipeline syntax)".into())
+    }));
+
+    // Placeholder: actual closure-based list.any is handled by try_collection_builtin
+    env.define("list.any".into(), builtin("list.any", |args| {
+        if args.len() != 2 {
+            return Err("list.any takes 2 arguments (list, fn)".into());
+        }
+        let Value::List(_) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        Err("list.any requires closure argument (use pipeline syntax)".into())
+    }));
+
+    // Placeholder: actual closure-based list.all is handled by try_collection_builtin
+    env.define("list.all".into(), builtin("list.all", |args| {
+        if args.len() != 2 {
+            return Err("list.all takes 2 arguments (list, fn)".into());
+        }
+        let Value::List(_) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        Err("list.all requires closure argument (use pipeline syntax)".into())
+    }));
+
     env.define("list.contains".into(), builtin("list.contains", |args| {
         if args.len() != 2 {
             return Err("list.contains takes 2 arguments".into());
@@ -2343,6 +2420,38 @@ fn register_builtins(env: &Env) {
             let start = start.min(chars.len());
             let end = end.min(chars.len());
             Ok(Value::String(chars[start..end].iter().collect()))
+        }
+    }));
+
+    // ── string.pad_left / string.pad_right ────────────────────────────
+
+    env.define("string.pad_left".into(), builtin("string.pad_left", |args| {
+        if args.len() != 3 { return Err("string.pad_left takes 3 arguments (string, width, pad_char)".into()); }
+        let Value::String(s) = &args[0] else { return Err("first arg must be string".into()); };
+        let Value::Int(width) = &args[1] else { return Err("second arg must be int".into()); };
+        let Value::String(pad) = &args[2] else { return Err("third arg must be string".into()); };
+        let width = *width as usize;
+        let pad_char = pad.chars().next().unwrap_or(' ');
+        if s.len() >= width {
+            Ok(Value::String(s.clone()))
+        } else {
+            let padding: String = (0..width - s.len()).map(|_| pad_char).collect();
+            Ok(Value::String(format!("{padding}{s}")))
+        }
+    }));
+
+    env.define("string.pad_right".into(), builtin("string.pad_right", |args| {
+        if args.len() != 3 { return Err("string.pad_right takes 3 arguments (string, width, pad_char)".into()); }
+        let Value::String(s) = &args[0] else { return Err("first arg must be string".into()); };
+        let Value::Int(width) = &args[1] else { return Err("second arg must be int".into()); };
+        let Value::String(pad) = &args[2] else { return Err("third arg must be string".into()); };
+        let width = *width as usize;
+        let pad_char = pad.chars().next().unwrap_or(' ');
+        if s.len() >= width {
+            Ok(Value::String(s.clone()))
+        } else {
+            let padding: String = (0..width - s.len()).map(|_| pad_char).collect();
+            Ok(Value::String(format!("{s}{padding}")))
         }
     }));
 

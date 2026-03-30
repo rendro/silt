@@ -1269,3 +1269,83 @@ fn main() {
     "#);
     assert_eq!(result, Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
 }
+
+// ── list.flat_map ──────────────────────────────────────────────────
+
+#[test]
+fn test_list_flat_map() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3] |> list.flat_map { n -> [n, n * 10] }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::Int(1), Value::Int(10),
+        Value::Int(2), Value::Int(20),
+        Value::Int(3), Value::Int(30),
+    ])));
+}
+
+// ── list.any / list.all ────────────────────────────────────────────
+
+#[test]
+fn test_list_any() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3, 4] |> list.any { x -> x > 3 }
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_list_all() {
+    let result = run(r#"
+fn main() {
+  [2, 4, 6] |> list.all { x -> x > 0 }
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+// ── string.pad_left / string.pad_right ─────────────────────────────
+
+#[test]
+fn test_string_pad_left() {
+    let result = run(r#"
+fn main() {
+  string.pad_left("42", 5, "0")
+}
+    "#);
+    assert_eq!(result, Value::String("00042".into()));
+}
+
+#[test]
+fn test_string_pad_right() {
+    let result = run(r#"
+fn main() {
+  string.pad_right("hi", 5, ".")
+}
+    "#);
+    assert_eq!(result, Value::String("hi...".into()));
+}
+
+// ── Negative literal pattern ───────────────────────────────────────
+
+#[test]
+fn test_negative_literal_pattern() {
+    let result = run(r#"
+fn classify(n) {
+  match n {
+    -1 -> "minus one"
+    0 -> "zero"
+    1 -> "one"
+    _ -> "other"
+  }
+}
+fn main() {
+  classify(-1)
+}
+    "#);
+    assert_eq!(result, Value::String("minus one".into()));
+}
