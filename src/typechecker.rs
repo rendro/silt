@@ -1516,6 +1516,129 @@ impl TypeChecker {
             });
         }
 
+        // map.length: (Map(String, v)) -> Int
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.length".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![Type::Map(Box::new(Type::String), Box::new(v))],
+                    Box::new(Type::Int),
+                ),
+            });
+        }
+
+        // ── channel module ─────────────────────────────────────────────
+
+        // channel.new: (Int) -> Channel  (opaque; use fresh var)
+        {
+            let (ch, chv) = self.fresh_tv();
+            env.define("channel.new".into(), Scheme {
+                vars: vec![chv],
+                ty: Type::Fun(vec![Type::Int], Box::new(ch)),
+            });
+        }
+
+        // channel.send: (Channel, a) -> Unit
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("channel.send".into(), Scheme {
+                vars: vec![chv, av],
+                ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
+            });
+        }
+
+        // channel.receive: (Channel) -> a
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("channel.receive".into(), Scheme {
+                vars: vec![chv, av],
+                ty: Type::Fun(vec![ch], Box::new(a)),
+            });
+        }
+
+        // channel.close: (Channel) -> Unit
+        {
+            let (ch, chv) = self.fresh_tv();
+            env.define("channel.close".into(), Scheme {
+                vars: vec![chv],
+                ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
+            });
+        }
+
+        // channel.try_send: (Channel, a) -> Bool
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("channel.try_send".into(), Scheme {
+                vars: vec![chv, av],
+                ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
+            });
+        }
+
+        // channel.try_receive: (Channel) -> Option(a)
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("channel.try_receive".into(), Scheme {
+                vars: vec![chv, av],
+                ty: Type::Fun(
+                    vec![ch],
+                    Box::new(Type::Generic("Option".into(), vec![a])),
+                ),
+            });
+        }
+
+        // ── task module ────────────────────────────────────────────────
+
+        // task.spawn: (() -> a) -> Handle
+        {
+            let (a, av) = self.fresh_tv();
+            let (h, hv) = self.fresh_tv();
+            env.define("task.spawn".into(), Scheme {
+                vars: vec![av, hv],
+                ty: Type::Fun(
+                    vec![Type::Fun(vec![], Box::new(a))],
+                    Box::new(h),
+                ),
+            });
+        }
+
+        // task.join: (Handle) -> a
+        {
+            let (h, hv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("task.join".into(), Scheme {
+                vars: vec![hv, av],
+                ty: Type::Fun(vec![h], Box::new(a)),
+            });
+        }
+
+        // task.cancel: (Handle) -> Unit
+        {
+            let (h, hv) = self.fresh_tv();
+            env.define("task.cancel".into(), Scheme {
+                vars: vec![hv],
+                ty: Type::Fun(vec![h], Box::new(Type::Unit)),
+            });
+        }
+
+        // ── try ────────────────────────────────────────────────────────
+
+        // try: (() -> a) -> Result(a, String)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("try".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::Fun(vec![], Box::new(a.clone()))],
+                    Box::new(Type::Generic("Result".into(), vec![a, Type::String])),
+                ),
+            });
+        }
+
         // ── result module ──────────────────────────────────────────────
 
         // result.map_err: (Result(a,e), (e -> f)) -> Result(a,f)
@@ -4081,6 +4204,50 @@ fn main() {
         assert_no_errors(r#"
 fn main() {
   assert_ne(1, 2)
+}
+        "#);
+    }
+
+    #[test]
+    fn test_channel_new_no_type_error() {
+        assert_no_errors(r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  channel.close(ch)
+  ch
+}
+        "#);
+    }
+
+    #[test]
+    fn test_task_spawn_no_type_error() {
+        assert_no_errors(r#"
+fn main() {
+  let h = task.spawn(fn() { 42 })
+  let result = task.join(h)
+  result
+}
+        "#);
+    }
+
+    #[test]
+    fn test_try_no_type_error() {
+        assert_no_errors(r#"
+fn main() {
+  let result = try(fn() { 1 + 2 })
+  result
+}
+        "#);
+    }
+
+    #[test]
+    fn test_map_length_no_type_error() {
+        assert_no_errors(r#"
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  let n = map.length(m)
+  n
 }
         "#);
     }
