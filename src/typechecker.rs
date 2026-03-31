@@ -680,6 +680,38 @@ impl TypeChecker {
             });
         }
 
+        // Register builtin trait implementations for primitive types.
+        // These allow where clauses like `where a: Equal` to resolve
+        // when `a` is Int, String, Bool, etc.
+        {
+            let dummy_span = Span { line: 0, col: 0, offset: 0 };
+            let primitive_types = ["Int", "Float", "Bool", "String", "()"];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            for type_name in &primitive_types {
+                for trait_name in &all_traits {
+                    self.trait_impls.push(TraitImplInfo {
+                        trait_name: trait_name.to_string(),
+                        target_type: type_name.to_string(),
+                        methods: Vec::new(), // builtin impls have no user-visible methods
+                        span: dummy_span,
+                    });
+                }
+            }
+            // List and Tuple implement these traits when their elements do,
+            // but for now register them unconditionally (a pragmatic choice
+            // matching the runtime behavior where Eq/Ord/Hash work on all Values).
+            for type_name in &["List", "Tuple", "Map"] {
+                for trait_name in &all_traits {
+                    self.trait_impls.push(TraitImplInfo {
+                        trait_name: trait_name.to_string(),
+                        target_type: type_name.to_string(),
+                        methods: Vec::new(),
+                        span: dummy_span,
+                    });
+                }
+            }
+        }
+
         // First pass: register all type declarations
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
@@ -729,6 +761,10 @@ impl TypeChecker {
         // Clone to avoid borrow issues
         let impls = self.trait_impls.clone();
         for impl_info in &impls {
+            // Skip builtin/auto-derived impls (registered with dummy span)
+            if impl_info.span.line == 0 && impl_info.span.col == 0 && impl_info.methods.is_empty() {
+                continue;
+            }
             // Check that the trait exists
             let Some(trait_info) = self.traits.get(&impl_info.trait_name) else {
                 self.error(
@@ -2001,6 +2037,19 @@ impl TypeChecker {
                     },
                 );
             }
+        }
+
+        // Auto-derive builtin traits for user-defined types.
+        // All enums and records get Equal, Compare, Hash, Display since
+        // the runtime supports Eq/Ord/Hash on all Value variants.
+        let dummy_span = Span { line: 0, col: 0, offset: 0 };
+        for trait_name in &["Equal", "Compare", "Hash", "Display"] {
+            self.trait_impls.push(TraitImplInfo {
+                trait_name: trait_name.to_string(),
+                target_type: td.name.clone(),
+                methods: Vec::new(),
+                span: dummy_span,
+            });
         }
     }
 

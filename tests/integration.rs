@@ -2024,3 +2024,58 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(3));
 }
+
+// ── Trait where clause enforcement ──────────────────────────────────
+
+#[test]
+fn test_where_clause_with_display() {
+    run_ok(r#"
+type Shape { Circle(Float) Rect(Float, Float) }
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle({r})"
+      Rect(w, h) -> "Rect({w}, {h})"
+    }
+  }
+}
+
+fn show(x) where x: Display {
+  x.display()
+}
+
+fn main() {
+  let s = Circle(3.14)
+  println(show(s))
+}
+    "#);
+}
+
+#[test]
+fn test_where_clause_with_equal() {
+    run_ok(r#"
+fn are_same(a, b) where a: Equal {
+  a == b
+}
+
+fn main() {
+  are_same(1, 2)
+  are_same("hello", "hello")
+}
+    "#);
+}
+
+#[test]
+fn test_where_clause_with_compare() {
+    run_ok(r#"
+fn is_less(a, b) where a: Compare {
+  a < b
+}
+
+fn main() {
+  is_less(1, 2)
+  is_less("a", "b")
+}
+    "#);
+}
