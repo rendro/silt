@@ -545,10 +545,11 @@ fn test_pattern_matching() {
   }
   test.assert_eq(result, "medium")
 
-  -- bool patterns
-  match true {
-    true -> test.assert(true)
-    false -> panic("unreachable")
+  -- bool patterns with guardless match
+  let flag = true
+  match {
+    flag -> test.assert(true)
+    _ -> panic("unreachable")
   }
 }
 
