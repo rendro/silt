@@ -72,11 +72,6 @@ pub enum ExprKind {
     },
     Return(Option<Box<Expr>>),
 
-    // Concurrency
-    Select {
-        arms: Vec<SelectArm>,
-    },
-
     // Block
     Block(Vec<Stmt>),
 
@@ -142,15 +137,6 @@ pub struct MatchArm {
     pub body: Expr,
 }
 
-// ── Select arms ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub struct SelectArm {
-    pub channel: Expr,
-    pub binding: String,
-    pub body: Expr,
-}
-
 // ── Patterns ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -176,6 +162,8 @@ pub enum Pattern {
     Range(i64, i64),
     /// Map pattern: #{ "key": value }
     Map(Vec<(String, Pattern)>),
+    /// Pin pattern: ^name -- matches against the existing variable's value
+    Pin(String),
 }
 
 // ── Parameters & type expressions ────────────────────────────────────

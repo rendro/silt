@@ -1541,6 +1541,7 @@ can manage blocking).
 | `channel.send` | `channel.send(ch, value) -> Unit` | Send a value into a channel |
 | `channel.receive` | `channel.receive(ch) -> T` | Receive a value from a channel |
 | `channel.close` | `channel.close(ch) -> Unit` | Close a channel; no more sends allowed |
+| `channel.select` | `channel.select(channels) -> (Channel, T)` | Wait on multiple channels; returns `(channel, value)` |
 | `channel.try_send` | `channel.try_send(ch, value) -> Bool` | Non-blocking send; true if sent |
 | `channel.try_receive` | `channel.try_receive(ch) -> Option` | Non-blocking receive; Some(value) or None |
 
@@ -1734,9 +1735,20 @@ fn main() {
 
 -----
 
-## `select` Expression
+### `channel.select`
 
-The `select` expression (a language construct, not a function) waits on multiple channels simultaneously and executes the branch of the first channel that has a value ready.
+```
+channel.select(channels) -> (Channel, T)
+```
+
+Waits on multiple channels simultaneously and returns a `(channel, value)` tuple
+for whichever channel has data first. The channels are polled in order. If no
+channel is ready, the scheduler cooperatively runs pending tasks and retries.
+Errors with a deadlock message if no progress can be made.
+
+Use the `^` pin operator in pattern matching to identify which channel produced
+the value. The `^` prefix matches against the current value of an existing
+variable instead of creating a new binding.
 
 ```silt
 fn main() {
@@ -1745,9 +1757,10 @@ fn main() {
 
   channel.send(ch2, "from ch2")
 
-  select {
-    receive(ch1) as msg -> "got from ch1: {msg}"
-    receive(ch2) as msg -> "got from ch2: {msg}"
+  match channel.select([ch1, ch2]) {
+    (^ch1, msg) -> println("got from ch1: {msg}")
+    (^ch2, msg) -> println("got from ch2: {msg}")
+    _ -> panic("unexpected")
   }
   -- "got from ch2: from ch2"
 }

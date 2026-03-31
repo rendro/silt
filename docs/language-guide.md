@@ -4,7 +4,7 @@ Silt is a statically-typed, expression-based programming language with full immu
 pattern matching as the sole branching construct, and CSP-style concurrency. It compiles
 to a tree-walk interpreter (v1) written in Rust. File extension: `.silt`.
 
-The language has 14 keywords and only 8 global names (`print`, `println`, `panic`, `try`,
+The language has 13 keywords and only 8 global names (`print`, `println`, `panic`, `try`,
 `Ok`, `Err`, `Some`, `None`). Everything else is module-qualified (e.g. `list.map`,
 `string.split`, `channel.new`, `task.spawn`).
 
@@ -689,6 +689,46 @@ fn sum(xs) {
 The `..` syntax is consistent with record rest patterns (`User { name, .. }`),
 though in list patterns the rest is always bound to a name rather than discarded.
 
+### Pin operator (`^`)
+
+The `^` prefix in a pattern matches against the current value of an existing variable
+instead of creating a new binding. Normally, a name in a pattern introduces a fresh
+binding that shadows any outer variable. The pin operator overrides this behavior.
+
+```silt
+let expected = 42
+match input {
+  ^expected -> "got the expected value"
+  other -> "got {other} instead"
+}
+```
+
+Without `^`, the pattern `expected` would just create a new binding (always matching
+any value). With `^expected`, the match only succeeds if `input` equals the current
+value of the `expected` variable.
+
+The pin operator works in any pattern position -- tuples, constructors, lists, and
+nested patterns:
+
+```silt
+let target = "hello"
+match messages {
+  [(^target, data), ..rest] -> handle(data)
+  _ -> skip()
+}
+```
+
+A common use is with `channel.select`, where you need to identify which channel
+produced a value:
+
+```silt
+match channel.select([ch1, ch2]) {
+  (^ch1, msg) -> handle_first(msg)
+  (^ch2, msg) -> handle_second(msg)
+  _ -> panic("unexpected")
+}
+```
+
 ### Exhaustiveness checking
 
 The compiler checks that your match covers all possible cases. If you forget a variant,
@@ -1236,7 +1276,7 @@ global namespace clean and makes it always clear where a function comes from.
 | `result`  | map_ok, map_err, unwrap_or, flatten, is_ok, is_err                             |
 | `option`  | map, unwrap_or, to_result, is_some, is_none                                    |
 | `test`    | assert, assert_eq, assert_ne                                                   |
-| `channel` | new, send, receive, close, try_send, try_receive                               |
+| `channel` | new, send, receive, close, select, try_send, try_receive                       |
 | `task`    | spawn, join, cancel                                                            |
 
 Module functions are accessed with dot notation:

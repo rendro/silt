@@ -11,7 +11,7 @@
   - The pipe operator |> combined with each/map/fold makes result aggregation pleasant.
   - Pattern matching on Ok/Err for file I/O errors inside spawned tasks feels right.
   - Records for structured results are straightforward.
-  - select with multiple channels is syntactically clean.
+  - channel.select with pin patterns is syntactically clean.
   - list.append eliminates the flatten workaround for collecting results.
   - Guardless match makes boolean branching cleaner.
 
@@ -112,11 +112,12 @@ fn print_result(result) {
   }
 }
 
--- Demonstrate select with multiple channels
+-- Demonstrate channel.select with multiple channels
 fn demonstrate_select(ch_high, ch_low) {
-  select {
-    receive(ch_high) as msg -> println("  [high priority] {msg}")
-    receive(ch_low) as msg -> println("  [low priority] {msg}")
+  match channel.select([ch_high, ch_low]) {
+    (^ch_high, msg) -> println("  [high priority] {msg}")
+    (^ch_low, msg) -> println("  [low priority] {msg}")
+    _ -> println("  [no message]")
   }
 }
 
@@ -217,10 +218,10 @@ fn main() {
   }
 
   -- =====================================================
-  -- Part 3: Demonstrate select with priority channels
+  -- Part 3: Demonstrate channel.select with priority channels
   -- =====================================================
   println("")
-  println("=== select demo ===")
+  println("=== channel.select demo ===")
   let high_ch = channel.new(5)
   let low_ch = channel.new(5)
 
@@ -230,14 +231,14 @@ fn main() {
   channel.send(high_ch, "urgent task B")
   channel.send(low_ch, "background task Y")
 
-  -- select picks from whichever has data (order-biased toward first arm)
+  -- channel.select picks from whichever has data (order-biased toward first arm)
   demonstrate_select(high_ch, low_ch)
   demonstrate_select(high_ch, low_ch)
   demonstrate_select(high_ch, low_ch)
   demonstrate_select(high_ch, low_ch)
 
   -- =====================================================
-  -- Part 4: Demonstrate close-signaled drain with select
+  -- Part 4: Demonstrate close-signaled channel drain
   -- =====================================================
   println("")
   println("=== close-signaled channel drain ===")

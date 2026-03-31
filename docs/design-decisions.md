@@ -7,13 +7,13 @@
 
 ## 1. Language Philosophy
 
-### "14 keywords"
+### "13 keywords"
 
-Silt has exactly 14 keywords:
+Silt has exactly 13 keywords:
 
 ```
 as  else  fn  import  let  match  mod
-pub  return  select  trait  type  when  where
+pub  return  trait  type  when  where
 ```
 
 This is not an arbitrary constraint -- it is a forcing function. Every time we
@@ -27,19 +27,21 @@ higher-order functions (`list.map`, `list.filter`, `list.fold`, `list.each`).
 because concurrency is CSP-based. `try`/`catch` doesn't exist because errors
 are values (`try` is a global builtin function, not a keyword).
 
-We originally had `chan`, `send`, `receive`, and `spawn` as keywords (17 total).
-These were demoted to module-qualified functions (`channel.new`, `channel.send`,
-`channel.receive`, `task.spawn`) to keep the global namespace clean and avoid
-the PHP problem of too many bare globals. The CSP interface is the same; it just
-lives in modules now.
+We originally had `chan`, `send`, `receive`, `spawn`, and `select` as keywords
+(17 total). These were all demoted to module-qualified functions (`channel.new`,
+`channel.send`, `channel.receive`, `task.spawn`, `channel.select`) to keep the
+global namespace clean and avoid the PHP problem of too many bare globals. The
+CSP interface is the same; it just lives in modules now. `select` was the last
+to go -- it was replaced by `channel.select([ch1, ch2])` which returns a
+`(channel, value)` tuple, used with `match` and the `^` pin operator.
 
 The constraint is practical, not aesthetic. Fewer keywords means fewer
 concepts to learn, fewer ways to express the same thing, and fewer ambiguities
-in the grammar. A language with 14 keywords fits in working memory.
+in the grammar. A language with 13 keywords fits in working memory.
 
 Compare: Rust has ~40 keywords (plus reserved ones). Go has 25. Python has 35.
 The smallest useful languages cluster around 15-25 keywords. We aimed for the
-low end.
+low end and got there.
 
 What is _not_ a keyword matters too. `true`, `false` are builtin literals.
 `Ok`, `Err`, `Some`, `None` are builtin variant constructors, not keywords --
@@ -551,7 +553,8 @@ channels, and the communication points are visible in the code.
 ### Why cooperative over preemptive
 
 Silt's concurrency is cooperative, not preemptive. Tasks yield control at
-explicit points: `send`, `receive`, `select`, and `join`. Between those
+explicit points: `channel.send`, `channel.receive`, `channel.select`, and
+`task.join`. Between those
 points, a task runs to completion without interruption.
 
 This was chosen for implementation simplicity and determinism:
@@ -1154,7 +1157,7 @@ work (I/O naturally yields), but a parallel computation pipeline would not
 benefit from concurrency at all.
 
 The good news: the CSP interface (`channel.new`, `channel.send`,
-`channel.receive`, `task.spawn`, `select`) is runtime-agnostic. Switching to
+`channel.receive`, `task.spawn`, `channel.select`) is runtime-agnostic. Switching to
 a preemptive, multi-threaded scheduler requires changes only in the runtime,
 not in user code. This was a deliberate design choice -- the user-facing API
 is forward-compatible.
@@ -1174,8 +1177,8 @@ closures. For a v1 interpreter, the linked-list model is fine.
   week.
 - **The pipe operator.** Data processing code is dramatically more readable.
 - **Errors as values.** No more "which functions can throw?" guessing games.
-- **The keyword constraint (now 14).** It forced us to find general solutions
-  instead of special-casing each problem with new syntax. Demoting concurrency
-  keywords to module functions was a net positive.
+- **The keyword constraint (now 13).** It forced us to find general solutions
+  instead of special-casing each problem with new syntax. Demoting all
+  concurrency keywords to module functions was a net positive.
 - **Record update syntax.** `u.{ age: 31 }` is the most natural update
   syntax we've seen in any language.

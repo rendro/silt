@@ -1649,6 +1649,19 @@ impl TypeChecker {
             });
         }
 
+        // channel.select: (List(Channel)) -> (Channel, a)
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            env.define("channel.select".into(), Scheme {
+                vars: vec![chv, av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(ch.clone()))],
+                    Box::new(Type::Tuple(vec![ch, a])),
+                ),
+            });
+        }
+
         // ── task module ────────────────────────────────────────────────
 
         // task.spawn: (() -> a) -> Handle
@@ -2311,6 +2324,18 @@ impl TypeChecker {
                     self.bind_pattern(pat, &resolved_val, env);
                 }
             }
+            Pattern::Pin(name) => {
+                // Pin does not introduce a new binding — it checks against an
+                // existing variable.  Look it up in the parent (pre-match) scope
+                // first, then fall back to the current scope for when/let contexts.
+                let found = env.parent.as_ref().and_then(|p| p.lookup(name).cloned())
+                    .or_else(|| env.lookup(name).cloned());
+                if let Some(scheme) = found {
+                    let pinned_ty = self.instantiate(&scheme);
+                    self.unify(ty, &pinned_ty, Span { line: 0, col: 0, offset: 0 });
+                }
+                // If not found, we just skip — the runtime will handle the missing variable.
+            }
         }
     }
 
@@ -2778,17 +2803,6 @@ impl TypeChecker {
                 last_ty
             }
 
-            ExprKind::Select { arms } => {
-                // Infer the type from the first arm's body; all arms should agree
-                let mut result_ty = self.fresh_var();
-                for arm in arms {
-                    self.infer_expr(&arm.channel, env);
-                    let body_ty = self.infer_expr(&arm.body, env);
-                    self.unify(&result_ty, &body_ty, expr.span);
-                    result_ty = body_ty;
-                }
-                result_ty
-            }
         }
     }
 
@@ -3001,6 +3015,16 @@ impl TypeChecker {
                 let resolved_val = self.apply(&val_ty);
                 for (_key, pat) in entries {
                     self.check_pattern(pat, &resolved_val, env, span);
+                }
+            }
+            Pattern::Pin(name) => {
+                // Look up the pinned variable in the parent (pre-match) scope,
+                // falling back to current scope for when/let contexts.
+                let found = env.parent.as_ref().and_then(|p| p.lookup(name).cloned())
+                    .or_else(|| env.lookup(name).cloned());
+                if let Some(scheme) = found {
+                    let pinned_ty = self.instantiate(&scheme);
+                    self.unify(expected, &pinned_ty, span);
                 }
             }
         }

@@ -551,6 +551,38 @@ fn test_pattern_matching() {
     flag -> test.assert(true)
     _ -> panic("unreachable")
   }
+
+  -- pin operator: ^var matches against existing value
+  let expected = 42
+  let pin_result = match 42 {
+    ^expected -> "pinned"
+    _ -> "not pinned"
+  }
+  test.assert_eq(pin_result, "pinned")
+
+  -- pin mismatch falls through
+  let pin_miss = match 99 {
+    ^expected -> "pinned"
+    _ -> "fell through"
+  }
+  test.assert_eq(pin_miss, "fell through")
+
+  -- pin in tuple: (^x, y) binds y, checks x
+  let target = "hello"
+  match ("hello", 42) {
+    (^target, n) -> test.assert_eq(n, 42)
+    _ -> panic("pin in tuple should have matched")
+  }
+
+  -- pin with channels: identity equality
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  let which = match ch1 {
+    ^ch2 -> "ch2"
+    ^ch1 -> "ch1"
+    _ -> "unknown"
+  }
+  test.assert_eq(which, "ch1")
 }
 
 -- ============================================================

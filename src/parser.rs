@@ -939,8 +939,7 @@ impl Parser {
                     Ok(Expr::new(ExprKind::Return(Some(Box::new(val))), span))
                 }
             }
-            // spawn is no longer a keyword; use task.spawn(fn() { ... })
-            Token::Select => self.parse_select_expr(),
+            // select is no longer a keyword; use channel.select([...])
             _ => Err(ParseError {
                 message: format!("expected expression, found {}", self.peek()),
                 span: self.span(),
@@ -1145,52 +1144,6 @@ impl Parser {
                 Expr::new(ExprKind::Call(Box::new(callee), vec![closure]), span)
             }
         }
-    }
-
-    // ── Select ───────────────────────────────────────────────────────
-
-    fn parse_select_expr(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::Select)?;
-        self.expect(&Token::LBrace)?;
-        self.skip_nl();
-
-        let mut arms = Vec::new();
-        while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
-            arms.push(self.parse_select_arm()?);
-            self.skip_nl();
-        }
-        self.expect(&Token::RBrace)?;
-
-        Ok(Expr::new(ExprKind::Select { arms }, span))
-    }
-
-    fn parse_select_arm(&mut self) -> Result<SelectArm> {
-        self.skip_nl();
-        // expect: receive(channel_expr) as binding -> body
-        let (name, _) = self.expect_ident()?;
-        if name != "receive" {
-            return Err(ParseError {
-                message: format!("expected 'receive' in select arm, found '{name}'"),
-                span: self.span(),
-            });
-        }
-        self.expect(&Token::LParen)?;
-        self.skip_nl();
-        let channel = self.parse_expr()?;
-        self.skip_nl();
-        self.expect(&Token::RParen)?;
-        self.expect(&Token::As)?;
-        let (binding, _) = self.expect_ident()?;
-        self.expect(&Token::Arrow)?;
-        self.skip_nl();
-        let body = self.parse_expr()?;
-
-        Ok(SelectArm {
-            channel,
-            binding,
-            body,
-        })
     }
 
     // ── Match ────────────────────────────────────────────────────────
@@ -1594,6 +1547,20 @@ impl Parser {
                     }
                     _ => Err(ParseError {
                         message: "expected number after -".into(),
+                        span: self.span(),
+                    }),
+                }
+            }
+            Token::Caret => {
+                self.advance();
+                match self.peek().clone() {
+                    Token::Ident(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        Ok(Pattern::Pin(name))
+                    }
+                    _ => Err(ParseError {
+                        message: "expected identifier after ^ in pin pattern".into(),
                         span: self.span(),
                     }),
                 }

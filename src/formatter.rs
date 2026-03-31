@@ -439,26 +439,6 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             }
         }
 
-        ExprKind::Select { arms } => {
-            let arm_strs: Vec<String> = arms
-                .iter()
-                .map(|arm| {
-                    format!(
-                        "{}receive({}) as {} -> {}",
-                        indent(depth + 1),
-                        format_expr(&arm.channel, depth + 1),
-                        arm.binding,
-                        format_expr(&arm.body, depth + 1)
-                    )
-                })
-                .collect();
-            format!(
-                "select {{\n{}\n{}}}",
-                arm_strs.join("\n"),
-                indent(depth)
-            )
-        }
-
         ExprKind::Block(stmts) => {
             if stmts.is_empty() {
                 "{}".to_string()
@@ -611,6 +591,7 @@ fn format_pattern(pattern: &Pattern) -> String {
                 .collect();
             format!("#{{ {} }}", items.join(", "))
         }
+        Pattern::Pin(name) => format!("^{name}"),
     }
 }
 

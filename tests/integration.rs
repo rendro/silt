@@ -546,9 +546,10 @@ fn main() {
 
   channel.send(ch2, "from ch2")
 
-  select {
-    receive(ch1) as msg -> "got from ch1"
-    receive(ch2) as msg -> msg
+  match channel.select([ch1, ch2]) {
+    (^ch1, msg) -> "got from ch1"
+    (^ch2, msg) -> msg
+    _ -> "none"
   }
 }
     "#);
@@ -567,9 +568,10 @@ fn main() {
   })
   task.join(p)
 
-  select {
-    receive(ch1) as msg -> msg
-    receive(ch2) as msg -> msg
+  match channel.select([ch1, ch2]) {
+    (^ch1, msg) -> msg
+    (^ch2, msg) -> msg
+    _ -> "none"
   }
 }
     "#);
@@ -1348,4 +1350,181 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::String("minus one".into()));
+}
+
+// ── Pin operator (^) ────────────────────────────────────────────────
+
+#[test]
+fn test_pin_basic() {
+    let result = run(r#"
+fn main() {
+  let x = 42
+  match 42 {
+    ^x -> "matched"
+    _ -> "no match"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("matched".into()));
+}
+
+#[test]
+fn test_pin_mismatch() {
+    let result = run(r#"
+fn main() {
+  let x = 42
+  match 99 {
+    ^x -> "matched"
+    _ -> "no match"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("no match".into()));
+}
+
+#[test]
+fn test_pin_in_tuple() {
+    let result = run(r#"
+fn main() {
+  let expected = "hello"
+  match ("hello", 42) {
+    (^expected, n) -> n
+    _ -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_pin_nested() {
+    let result = run(r#"
+fn main() {
+  let x = 1
+  let y = 2
+  match (1, (2, 3)) {
+    (^x, (^y, z)) -> z
+    _ -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_pin_with_guard() {
+    let result = run(r#"
+fn main() {
+  let x = 10
+  match 10 {
+    n when n == x -> "guard match"
+    ^x -> "pin match"
+    _ -> "no match"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("guard match".into()));
+}
+
+#[test]
+fn test_pin_channel_equality() {
+    let result = run(r#"
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  match ch1 {
+    ^ch2 -> "wrong"
+    ^ch1 -> "same"
+    _ -> "unknown"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("same".into()));
+}
+
+#[test]
+fn test_pin_sibling_binding() {
+    // In (x, ^x), ^x should reference the OUTER x, not the one just bound
+    let result = run(r#"
+fn main() {
+  let x = 1
+  match (2, 1) {
+    (x, ^x) -> "matched outer x"
+    _ -> "no match"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("matched outer x".into()));
+}
+
+#[test]
+fn test_pin_string() {
+    let result = run(r#"
+fn main() {
+  let cmd = "quit"
+  match "quit" {
+    ^cmd -> "exit"
+    _ -> "continue"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("exit".into()));
+}
+
+// ── channel.select ──────────────────────────────────────────────────
+
+#[test]
+fn test_channel_select_basic() {
+    let result = run(r#"
+fn main() {
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
+  channel.send(ch2, "from ch2")
+
+  match channel.select([ch1, ch2]) {
+    (^ch2, msg) -> msg
+    _ -> "unexpected"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("from ch2".into()));
+}
+
+#[test]
+fn test_channel_select_with_spawn() {
+    let result = run(r#"
+fn main() {
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
+
+  let p = task.spawn(fn() {
+    channel.send(ch1, "first")
+  })
+  task.join(p)
+
+  match channel.select([ch1, ch2]) {
+    (^ch1, msg) -> msg
+    (^ch2, msg) -> msg
+    _ -> "none"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("first".into()));
+}
+
+#[test]
+fn test_channel_select_returns_tuple() {
+    let result = run(r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+
+  let result = channel.select([ch])
+  match result {
+    (_, val) -> val
+    _ -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
 }

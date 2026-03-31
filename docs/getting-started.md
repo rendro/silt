@@ -4,7 +4,7 @@
 
 Silt is a minimal, statically-typed, expression-based programming language with CSP-style concurrency. It compiles to a tree-walk interpreter written in Rust.
 
-The language is built around a small set of principles: just 14 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and select.
+The language is built around a small set of principles: just 13 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and `channel.select`.
 
 The global namespace is deliberately small: only 8 names (`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`) are available without qualification. Everything else lives in a module (`list.map`, `string.split`, `channel.new`, `task.spawn`, etc.).
 
@@ -135,6 +135,16 @@ fn classify(n) {
     n > 0  -> "positive"
     _      -> "negative"
   }
+}
+```
+
+The `^` pin operator matches against an existing variable's value instead of binding:
+
+```silt
+let expected = 42
+match input {
+  ^expected -> "got what we wanted"
+  other -> "got {other} instead"
 }
 ```
 
@@ -338,6 +348,6 @@ Run the project with `silt run main.silt` from the project directory. The interp
 
 - **Language Guide** -- `docs/language-guide.md` -- deep dive into all language features
 - **Standard Library Reference** -- `docs/stdlib-reference.md` -- every module, function, and type
-- **Concurrency Guide** -- `docs/concurrency.md` -- channels, tasks, select, and patterns
+- **Concurrency Guide** -- `docs/concurrency.md` -- channels, tasks, `channel.select`, and patterns
 - **Design Decisions** -- `docs/design-decisions.md` -- why Silt is the way it is
 - **Examples** -- the `examples/` directory has working programs covering records, traits, error handling, concurrency, and multi-file projects

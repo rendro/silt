@@ -251,6 +251,7 @@ impl PartialEq for Value {
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             _ => false,
         }
     }

@@ -489,6 +489,7 @@ impl Interpreter {
                         "channel.close" => return self.builtin_close(args, env),
                         "channel.try_send" => return self.builtin_try_send(args, env),
                         "channel.try_receive" => return self.builtin_try_receive(args, env),
+                        "channel.select" => return self.builtin_select(args, env),
                         "task.spawn" => return self.builtin_spawn(args, env),
                         "task.join" => return self.builtin_join(args, env),
                         "task.cancel" => return self.builtin_cancel(args, env),
@@ -566,10 +567,6 @@ impl Interpreter {
                 }
             }
 
-            ExprKind::Select { arms } => {
-                self.eval_select(arms, env)
-            }
-
             ExprKind::Return(val) => {
                 let v = match val {
                     Some(e) => self.eval(e, env)?,
@@ -610,7 +607,7 @@ impl Interpreter {
                 else_body,
             } => {
                 let val = self.eval(expr, env)?;
-                if !self.try_bind_pattern(pattern, &val, env) {
+                if !self.try_bind_pattern(pattern, &val, env, env) {
                     match self.eval(else_body, env) {
                         Err(RuntimeError::Return(v)) => return Err(RuntimeError::Return(v)),
                         Err(e) => return Err(e),
@@ -943,6 +940,58 @@ impl Interpreter {
         }
     }
 
+    fn builtin_select(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(err("channel.select takes 1 argument (list of channels)"));
+        }
+        let list_val = self.eval(&args[0], env)?;
+        let Value::List(channels) = list_val else {
+            return Err(err("channel.select argument must be a list of channels"));
+        };
+
+        let channel_refs: Vec<Rc<Channel>> = channels
+            .iter()
+            .map(|v| match v {
+                Value::Channel(ch) => Ok(ch.clone()),
+                _ => Err(err("channel.select list must contain only channels")),
+            })
+            .collect::<Result<_>>()?;
+
+        if channel_refs.is_empty() {
+            return Err(err("channel.select requires at least one channel"));
+        }
+
+        let max_retries = 10000;
+        for _ in 0..max_retries {
+            let mut all_closed = true;
+            for ch in &channel_refs {
+                match ch.try_receive() {
+                    TryReceiveResult::Value(val) => {
+                        return Ok(Value::Tuple(vec![
+                            Value::Channel(ch.clone()),
+                            val,
+                        ]));
+                    }
+                    TryReceiveResult::Closed => {
+                        continue;
+                    }
+                    TryReceiveResult::Empty => {
+                        all_closed = false;
+                    }
+                }
+            }
+            if all_closed {
+                return Ok(Value::Variant("None".into(), vec![]));
+            }
+            if !self.run_pending_tasks_once()? {
+                return Err(err(
+                    "channel.select: deadlock detected - no channels have data and no tasks can make progress",
+                ));
+            }
+        }
+        Err(err("channel.select: exceeded maximum retries"))
+    }
+
     fn builtin_spawn(&self, args: &[Expr], env: &Env) -> Result<Value> {
         if args.len() != 1 {
             return Err(err("spawn takes 1 argument (a function)"));
@@ -1068,45 +1117,6 @@ impl Interpreter {
         Ok(made_progress)
     }
 
-    /// Evaluate a select expression: poll multiple channels and execute the first available.
-    fn eval_select(&self, arms: &[SelectArm], env: &Env) -> Result<Value> {
-        let max_retries = 10000;
-        for _ in 0..max_retries {
-            let mut all_closed = true;
-            // Try each arm in order
-            for arm in arms {
-                let ch_val = self.eval(&arm.channel, env)?;
-                let Value::Channel(ch) = ch_val else {
-                    return Err(err("select arm channel must be a channel"));
-                };
-                match ch.try_receive() {
-                    TryReceiveResult::Value(val) => {
-                        // Bind the received value and execute the body
-                        let arm_env = env.child();
-                        arm_env.define(arm.binding.clone(), val);
-                        return self.eval(&arm.body, &arm_env);
-                    }
-                    TryReceiveResult::Closed => {
-                        // Skip closed, empty channels
-                        continue;
-                    }
-                    TryReceiveResult::Empty => {
-                        all_closed = false;
-                    }
-                }
-            }
-            if all_closed {
-                // All channels are closed and drained
-                return Ok(Value::Variant("None".into(), vec![]));
-            }
-            // No channel had data; run pending tasks to try to produce some
-            if !self.run_pending_tasks_once()? {
-                return Err(err("select: deadlock detected - no channels have data and no tasks can make progress"));
-            }
-        }
-        Err(err("select: exceeded maximum retries"))
-    }
-
     fn call_closure(&self, closure: &Closure, args: &[Value]) -> Result<Value> {
         let mut current_closure: Rc<Closure> = Rc::new(Closure {
             params: closure.params.clone(),
@@ -1214,7 +1224,7 @@ impl Interpreter {
     fn eval_match(&self, val: &Value, arms: &[MatchArm], env: &Env, tail: bool) -> Result<Value> {
         for arm in arms {
             let arm_env = env.child();
-            if self.try_bind_pattern(&arm.pattern, val, &arm_env) {
+            if self.try_bind_pattern(&arm.pattern, val, &arm_env, env) {
                 // Check guard
                 if let Some(guard) = &arm.guard {
                     let guard_val = self.eval(guard, &arm_env)?;
@@ -1243,12 +1253,18 @@ impl Interpreter {
         Err(err("non-exhaustive match: no condition was true"))
     }
 
-    fn try_bind_pattern(&self, pattern: &Pattern, val: &Value, env: &Env) -> bool {
+    fn try_bind_pattern(&self, pattern: &Pattern, val: &Value, env: &Env, outer_env: &Env) -> bool {
         match (pattern, val) {
             (Pattern::Wildcard, _) => true,
             (Pattern::Ident(name), _) => {
                 env.define(name.clone(), val.clone());
                 true
+            }
+            (Pattern::Pin(name), _) => {
+                match outer_env.get(name) {
+                    Some(pinned_val) => &pinned_val == val,
+                    None => false,
+                }
             }
             (Pattern::Int(n), Value::Int(v)) => n == v,
             (Pattern::Float(n), Value::Float(v)) => n == v,
@@ -1260,7 +1276,7 @@ impl Interpreter {
                 }
                 pats.iter()
                     .zip(vals.iter())
-                    .all(|(p, v)| self.try_bind_pattern(p, v, env))
+                    .all(|(p, v)| self.try_bind_pattern(p, v, env, outer_env))
             }
             (Pattern::Constructor(name, pats), Value::Variant(vname, fields)) => {
                 if name != vname {
@@ -1271,7 +1287,7 @@ impl Interpreter {
                 }
                 pats.iter()
                     .zip(fields.iter())
-                    .all(|(p, v)| self.try_bind_pattern(p, v, env))
+                    .all(|(p, v)| self.try_bind_pattern(p, v, env, outer_env))
             }
             (Pattern::List(pats, rest), Value::List(list)) => {
                 let items = list.as_ref();
@@ -1285,14 +1301,14 @@ impl Interpreter {
                     }
                 }
                 for (pat, val) in pats.iter().zip(items.iter()) {
-                    if !self.try_bind_pattern(pat, val, env) {
+                    if !self.try_bind_pattern(pat, val, env, outer_env) {
                         return false;
                     }
                 }
                 if let Some(rest_pat) = rest {
                     let remaining: Vec<Value> = items[pats.len()..].to_vec();
                     let rest_val = Value::List(Rc::new(remaining));
-                    if !self.try_bind_pattern(rest_pat, &rest_val, env) {
+                    if !self.try_bind_pattern(rest_pat, &rest_val, env, outer_env) {
                         return false;
                     }
                 }
@@ -1305,7 +1321,7 @@ impl Interpreter {
                     };
                     match sub_pat {
                         Some(pat) => {
-                            if !self.try_bind_pattern(pat, val, env) {
+                            if !self.try_bind_pattern(pat, val, env, outer_env) {
                                 return false;
                             }
                         }
@@ -1322,7 +1338,7 @@ impl Interpreter {
                 true
             }
             (Pattern::Or(alts), _) => {
-                alts.iter().any(|alt| self.try_bind_pattern(alt, val, env))
+                alts.iter().any(|alt| self.try_bind_pattern(alt, val, env, outer_env))
             }
             (Pattern::Range(start, end), Value::Int(n)) => {
                 *n >= *start && *n <= *end
@@ -1330,7 +1346,7 @@ impl Interpreter {
             (Pattern::Map(entries), Value::Map(map)) => {
                 for (key, pat) in entries {
                     let Some(val) = map.get(key) else { return false; };
-                    if !self.try_bind_pattern(pat, val, env) { return false; }
+                    if !self.try_bind_pattern(pat, val, env, outer_env) { return false; }
                 }
                 true
             }
@@ -1347,7 +1363,7 @@ impl Interpreter {
     }
 
     fn bind_pattern(&self, pattern: &Pattern, val: &Value, env: &Env) -> Result<()> {
-        if self.try_bind_pattern(pattern, val, env) {
+        if self.try_bind_pattern(pattern, val, env, env) {
             Ok(())
         } else {
             Err(err(format!(
@@ -2580,6 +2596,13 @@ fn bind_pattern_simple(
                 bind_pattern_simple(pat, val, env)?;
             }
             Ok(())
+        }
+        (Pattern::Pin(name), _) => {
+            match env.get(name) {
+                Some(pinned_val) if &pinned_val == val => Ok(()),
+                Some(_) => Err(format!("pin pattern ^{name} did not match")),
+                None => Err(format!("pinned variable '{name}' not found")),
+            }
         }
         _ => Err("pattern match failed in closure call".into()),
     }

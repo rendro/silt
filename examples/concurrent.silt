@@ -33,4 +33,18 @@ fn main() {
   channel.close(results)
 
   println("Worker results: {channel.receive(results)}, {channel.receive(results)}, {channel.receive(results)}")
+
+  -- Select: wait on multiple channels, match which one fired with ^pin
+  let urgent = channel.new(5)
+  let normal = channel.new(5)
+
+  channel.send(normal, "background task done")
+  channel.send(urgent, "alert!")
+
+  -- channel.select returns (channel, value); ^pin identifies which channel
+  match channel.select([urgent, normal]) {
+    (^urgent, msg) -> println("Urgent: {msg}")
+    (^normal, msg) -> println("Normal: {msg}")
+    _ -> println("No message")
+  }
 }

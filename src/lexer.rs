@@ -10,7 +10,6 @@ pub enum Token {
     Match,
     When,
     Return,
-    Select,
     Pub,
     Mod,
     Import,
@@ -52,6 +51,7 @@ pub enum Token {
     Pipe,     // |>
     Bar,      // |
     Question, // ?
+    Caret,    // ^
     DotDot,   // ..
     Arrow,    // ->
 
@@ -86,8 +86,6 @@ impl fmt::Display for Token {
             Token::Match => write!(f, "match"),
             Token::When => write!(f, "when"),
             Token::Return => write!(f, "return"),
-            // spawn is no longer a keyword; it's the task.spawn module function
-            Token::Select => write!(f, "select"),
             Token::Pub => write!(f, "pub"),
             Token::Mod => write!(f, "mod"),
             Token::Import => write!(f, "import"),
@@ -119,6 +117,7 @@ impl fmt::Display for Token {
             Token::Pipe => write!(f, "|>"),
             Token::Bar => write!(f, "|"),
             Token::Question => write!(f, "?"),
+            Token::Caret => write!(f, "^"),
             Token::DotDot => write!(f, ".."),
             Token::Arrow => write!(f, "->"),
             Token::LParen => write!(f, "("),
@@ -416,8 +415,7 @@ impl Lexer {
             "match" => Token::Match,
             "when" => Token::When,
             "return" => Token::Return,
-            // "spawn" is no longer a keyword; it's now task.spawn
-            "select" => Token::Select,
+            // "select" is no longer a keyword; it's now channel.select
             "pub" => Token::Pub,
             "mod" => Token::Mod,
             "import" => Token::Import,
@@ -483,6 +481,7 @@ impl Lexer {
             '*' => Ok((Token::Star, start)),
             '%' => Ok((Token::Percent, start)),
             '?' => Ok((Token::Question, start)),
+            '^' => Ok((Token::Caret, start)),
             ',' => Ok((Token::Comma, start)),
             ':' => Ok((Token::Colon, start)),
             '(' => Ok((Token::LParen, start)),

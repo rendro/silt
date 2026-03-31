@@ -8,7 +8,7 @@ Compiled from 10 evaluation programs, 9 examples, and full source audit. 2026-03
 
 **Final Rating: 8.5 / 10**
 
-Silt is a small, expression-oriented functional language with 14 keywords, 8 globals, and 87 module-qualified builtins across 11 modules. It compiles to a tree-walking interpreter written in ~12,400 lines of Rust, backed by 142 test functions.
+Silt is a small, expression-oriented functional language with 13 keywords, 8 globals, and 88 module-qualified builtins across 11 modules. It compiles to a tree-walking interpreter written in ~12,400 lines of Rust, backed by 142 test functions.
 
 All 10 evaluation programs have been rewritten to use the current stdlib. No legacy helper functions remain. No `match true { ... }` workarounds remain. No `flatten([acc, [item]])` list-building workarounds remain. The programs now use `list.get`, `list.append`, `list.concat`, `list.sort_by`, `list.take`, `list.enumerate`, `list.any`, `list.all`, `string.index_of`, `string.slice`, `string.pad_left`, `string.pad_right`, `float.min`, `float.max`, guardless match, and `try()`.
 
@@ -17,7 +17,7 @@ All 10 evaluation programs have been rewritten to use the current stdlib. No leg
 - **Module system.** Clean namespace: 8 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
 - **Pattern matching.** Wildcard, literal (including negative), identifier, tuple, constructor, record, list (with rest), or-pattern, range, and map patterns. Guards on every arm. Guardless match for conditional blocks.
 - **Pipe operator.** First-argument insertion with trailing closure syntax. The defining feature of Silt's ergonomics.
-- **Concurrency primitives.** Buffered channels, cooperative tasks, select, try_send/try_receive. Full fan-out/fan-in support.
+- **Concurrency primitives.** Buffered channels, cooperative tasks, `channel.select`, try_send/try_receive. Full fan-out/fan-in support.
 - **Error handling.** Result/Option as first-class types, `?` operator for propagation, `when`/`else` for early return, `try()` for panic recovery.
 - **Records.** Named fields, immutable update syntax (`record.{ field: value }`), pattern matching on record shape.
 - **Traits.** Method dispatch on enum and record types. Display trait for custom formatting.
@@ -45,7 +45,7 @@ All programs have been rewritten to use the full current stdlib. Ratings reflect
 |---|---------|:------:|-----------|-------------------|
 | 1 | `link_checker.silt` | 8.0 | Pipe chains for link extraction; `string.index_of` + `string.slice` for URL parsing; guardless match in `validate_url`; `when`/`else` for CLI args | No regex -- manual split-on-`](` for link extraction |
 | 2 | `csv_analyzer.silt` | 8.0 | Record types for column stats; `list.get` for indexed access; `string.pad_right` for table formatting; `float.min`/`float.max` for aggregation; guardless match | No float formatting control; `format_float` helper needed for 2 decimal places |
-| 3 | `concurrent_processor.silt` | 8.0 | Clean channel/task fan-out; `list.append` for result collection; select with priority channels; try_receive polling | Recursive `worker_loop` and `collect_results` -- channel drain ceremony |
+| 3 | `concurrent_processor.silt` | 8.0 | Clean channel/task fan-out; `list.append` for result collection; `channel.select` with priority channels; try_receive polling | Recursive `worker_loop` and `collect_results` -- channel drain ceremony |
 | 4 | `kvstore.silt` | 7.0 | Map operations for key-value store; pattern matching on command strings; serialize/deserialize with fold | Recursive REPL with accumulator threading; no JSON stdlib |
 | 5 | `expr_eval.silt` | 8.5 | Recursive ADTs; deep pattern matching; or-patterns for RPN operators; `list.concat` for stack operations; range patterns for complexity | No negative literal patterns; recursive loop ceremony |
 | 6 | `todo.silt` | 7.5 | Record update syntax (`t.{ done: !t.done }`); `list.append` for adding items; `list.any` for existence checks; guardless match | Recursive REPL ceremony; no int.to_string (use interpolation) |
@@ -108,9 +108,9 @@ Text extraction tasks (link_checker) must use `string.split`, `string.index_of`,
 
 ## 4. Language Snapshot
 
-### Keywords (14)
+### Keywords (13)
 
-`as`, `else`, `fn`, `import`, `let`, `match`, `mod`, `pub`, `return`, `select`, `trait`, `type`, `when`, `where`
+`as`, `else`, `fn`, `import`, `let`, `match`, `mod`, `pub`, `return`, `trait`, `type`, `when`, `where`
 
 (`true` and `false` are literal tokens, not keywords.)
 
@@ -130,13 +130,13 @@ Text extraction tasks (link_checker) must use `string.split`, `string.index_of`,
 | **io** | 5 | inspect, read_file, write_file, read_line, args |
 | **int** | 5 | parse, abs, min, max, to_float |
 | **option** | 5 | map, unwrap_or, to_result, is_some, is_none |
-| **channel** | 6 | new, send, receive, close, try_send, try_receive |
+| **channel** | 7 | new, send, receive, close, select, try_send, try_receive |
 | **task** | 3 | spawn, join, cancel |
 | **test** | 3 | assert, assert_eq, assert_ne |
 
-### Pattern types (12)
+### Pattern types (13)
 
-Wildcard, identifier, integer (including negative), float, boolean, string, tuple, constructor, record (with rest), list (with rest), or-pattern, range, map.
+Wildcard, identifier, integer (including negative), float, boolean, string, tuple, constructor, record (with rest), list (with rest), or-pattern, range, map, pin (`^`).
 
 ### Codebase
 
@@ -283,6 +283,24 @@ fn run_test(suite, name, test_fn) {
 }
 ```
 
+### Pin operator + channel.select -- matching which channel fired
+
+From `concurrent_processor.silt`:
+
+```silt
+fn demonstrate_select(ch_high, ch_low) {
+  match channel.select([ch_high, ch_low]) {
+    (^ch_high, msg) -> println("  [high priority] {msg}")
+    (^ch_low, msg) -> println("  [low priority] {msg}")
+    _ -> println("  [no message]")
+  }
+}
+```
+
+The `^` pin operator matches against an existing variable's value instead of
+binding a new one. Without it, you'd need a guard: `(ch, msg) when ch == ch_high`.
+Pin keeps the pattern concise and inline.
+
 ---
 
-*Silt has reached a coherent final state. Fourteen keywords, eight globals, eighty-seven module builtins. All evaluation programs use the full current stdlib with no legacy workarounds. The remaining friction -- recursive loop ceremony, channel drain boilerplate, and missing float formatting -- is the cost of the language's core design decisions: no mutation, no looping constructs, expression-oriented everything. These are tradeoffs, not deficiencies.*
+*Silt has reached a coherent final state. Thirteen keywords, eight globals, eighty-eight module builtins. All evaluation programs use the full current stdlib with no legacy workarounds. The remaining friction -- recursive loop ceremony, channel drain boilerplate, and missing float formatting -- is the cost of the language's core design decisions: no mutation, no looping constructs, expression-oriented everything. These are tradeoffs, not deficiencies.*

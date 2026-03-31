@@ -1,7 +1,7 @@
 # Concurrency Guide
 
 Silt provides built-in concurrency based on the CSP (Communicating Sequential
-Processes) model. This guide covers channels, tasks, select, and the cooperative
+Processes) model. This guide covers channels, tasks, `channel.select`, and the cooperative
 scheduler that powers it all.
 
 All concurrency primitives are module-qualified: channels live in the `channel`
@@ -49,11 +49,11 @@ data structures are never modified in place. This makes CSP a natural fit:
 | **Threads + locks** | Shared memory protected by mutexes | Deadlocks, data races, hard to reason about |
 | **Async/await** | Cooperative futures on an event loop | Colored functions, viral `async`, complex lifetimes |
 | **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
-| **CSP (Silt)** | Independent tasks, typed channels, select | No shared state (by design), single-threaded in v1 |
+| **CSP (Silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), single-threaded in v1 |
 
 CSP sits between actors and raw threads. Like actors, tasks do not share state.
 Unlike actors, channels are first-class values that can be passed around, and
-`select` lets a task wait on multiple channels at once.
+`channel.select` lets a task wait on multiple channels at once.
 
 -----
 
@@ -182,8 +182,8 @@ channel.receive(ch)  -- 20
 ### Tasks run cooperatively
 
 Silt tasks are **not** OS threads. They run on a single thread and yield control
-at channel operations (`channel.send`, `channel.receive`, `select`) and at
-`task.join`. Between those yield points, a task runs without interruption.
+at channel operations (`channel.send`, `channel.receive`, `channel.select`) and
+at `task.join`. Between those yield points, a task runs without interruption.
 
 This means:
 
@@ -391,21 +391,29 @@ fn main() {
 
 ## 6. Select
 
-`select` lets a task wait on multiple channels at once and proceed with
-whichever channel has data available first.
+`channel.select` lets a task wait on multiple channels at once and proceed with
+whichever channel has data available first. It takes a list of channels and
+returns a `(channel, value)` tuple identifying which channel produced the value.
+
+Use the `^` pin operator to match against channel identities in the result:
 
 ### Syntax
 
 ```silt
-select {
-  receive(ch1) as msg -> handle_first(msg)
-  receive(ch2) as msg -> handle_second(msg)
+match channel.select([ch1, ch2]) {
+  (^ch1, msg) -> handle_first(msg)
+  (^ch2, msg) -> handle_second(msg)
+  _ -> panic("unexpected")
 }
 ```
 
-Each arm specifies a channel to poll and a binding name for the received value.
-The `select` expression evaluates the arms in order and takes the first one
-whose channel has data. If no channel is ready, the scheduler runs pending tasks
+The `^` pin operator matches against the current value of an existing variable
+instead of creating a new binding. `^ch1` means "match if this is the same
+channel as `ch1`", not "bind a new variable called ch1". The pin operator works
+in any pattern position, not just with `channel.select`.
+
+`channel.select` polls the given channels in order and returns the first one
+that has data. If no channel is ready, the scheduler runs pending tasks
 and tries again.
 
 ### Example: multiplexing two producers
@@ -427,9 +435,10 @@ fn main() {
   task.join(p1)
   task.join(p2)
 
-  let result = select {
-    receive(ch1) as msg -> msg
-    receive(ch2) as msg -> msg
+  let result = match channel.select([ch1, ch2]) {
+    (^ch1, msg) -> msg
+    (^ch2, msg) -> msg
+    _ -> panic("unexpected")
   }
 
   println(result)
@@ -438,15 +447,14 @@ fn main() {
 
 ### Pattern: fan-in
 
-`select` is the building block for fan-in -- combining multiple input channels
-into a single stream.
+`channel.select` is the building block for fan-in -- combining multiple input
+channels into a single stream.
 
 ```silt
-fn fan_in(sources, output) {
+fn fan_in(ch1, ch2, output) {
   -- Read one value from whichever source is ready first
-  let msg = select {
-    receive(sources.ch1) as msg -> msg
-    receive(sources.ch2) as msg -> msg
+  let msg = match channel.select([ch1, ch2]) {
+    (_, msg) -> msg
   }
   channel.send(output, msg)
 }
@@ -454,12 +462,12 @@ fn fan_in(sources, output) {
 
 ### Deadlock detection
 
-If all arms of a `select` are waiting for data and no other task can make
+If all channels passed to `channel.select` are empty and no other task can make
 progress (no ready tasks in the scheduler), Silt detects the deadlock and
 reports an error:
 
 ```
-select: deadlock detected - no channels have data and no tasks can make progress
+channel.select: deadlock detected - no channels have data and no tasks can make progress
 ```
 
 -----
@@ -475,7 +483,7 @@ Silt's scheduler runs on a single OS thread. Tasks yield at well-defined points:
 
 - `channel.send(ch, val)` -- yields if the channel buffer is full
 - `channel.receive(ch)` -- yields if the channel is empty
-- `select { ... }` -- yields if no channel has data
+- `channel.select([...])` -- yields if no channel has data
 - `task.join(handle)` -- yields while the target task has not completed
 
 Between yield points, a task runs to completion of its current expression
@@ -526,7 +534,7 @@ The scheduler detects deadlocks when:
 - A `channel.send` finds the buffer full, but no tasks can run to drain it.
 - A `channel.receive` finds the buffer empty, but no tasks can run to fill it.
 - A `task.join` is waiting for a task that is not making progress.
-- A `select` finds all channels empty and no tasks can produce data.
+- A `channel.select` finds all channels empty and no tasks can produce data.
 
 In each case, Silt reports a clear error message rather than hanging forever.
 
@@ -710,7 +718,7 @@ This makes pipelines easy to extend -- just add another stage in the middle.
   creation time. You cannot resize a buffer or convert between buffered and
   unbuffered.
 
-- **Select only supports receive.** The `select` expression polls channels for
+- **Select only supports receive.** `channel.select` polls channels for
   incoming data. You cannot select on send operations.
 
 ### Future work
@@ -722,11 +730,11 @@ This makes pipelines easy to extend -- just add another stage in the middle.
   threads would provide actual parallel execution. Silt's immutability makes
   this safe by default.
 
-- **Timeouts and deadlines.** Adding a `timeout` arm to `select` would enable
-  patterns like "wait for a response, but give up after 100ms."
+- **Timeouts and deadlines.** Adding a timeout parameter to `channel.select`
+  would enable patterns like "wait for a response, but give up after 100ms."
 
-- **Buffered send in select.** Extending `select` to support `send(ch, val) as
-  _ -> ...` arms.
+- **Buffered send in select.** Extending `channel.select` to support send
+  operations in addition to receive.
 
 -----
 
@@ -743,9 +751,9 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 | Close | `channel.close(ch)` | Close a channel (no more sends) |
 | Try send | `channel.try_send(ch, val)` | Non-blocking send (returns Bool) |
 | Try receive | `channel.try_receive(ch)` | Non-blocking receive (returns Option) |
-| Select | `select { receive(ch) as x -> ... }` | Wait on multiple channels |
+| Select | `channel.select([ch1, ch2])` | Wait on multiple channels (returns `(ch, value)` tuple) |
 
 The mental model: tasks are independent workers. Channels are the pipes between
-them. `select` is a multiplexer. `task.join` is a synchronization barrier.
+them. `channel.select` is a multiplexer. `task.join` is a synchronization barrier.
 Everything else -- the scheduler, the task states, the deadlock detection -- is
 machinery that makes this model work reliably under the hood.

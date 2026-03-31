@@ -1,17 +1,16 @@
 # Silt Language Spec — Draft v0.2
 
 > A minimal, statically-typed, expression-based language with CSP concurrency.
-> 17 keywords. Fully immutable. Pattern matching as the sole branching construct.
+> 13 keywords. Fully immutable. Pattern matching as the sole branching construct.
 > Implemented in Rust. File extension: `.silt`
 
 -----
 
-## Keywords (17)
+## Keywords (13)
 
 ```
 let  fn  type  trait  match  when  return
-spawn  chan  send  receive  select
-pub  mod  import  as  else
+pub  mod  import  as  else  where
 ```
 
 `_` is a wildcard pattern, not a keyword.
@@ -210,6 +209,42 @@ match result {
 }
 ```
 
+### Pin operator (`^`)
+
+The `^` prefix in a pattern matches against the current value of an existing
+variable instead of creating a new binding. Without `^`, a name in a pattern
+always introduces a fresh binding that shadows any outer variable.
+
+```
+let expected = 42
+match input {
+  ^expected -> "got the expected value"
+  other -> "got {other} instead"
+}
+```
+
+The pin operator works in any pattern position -- tuples, constructors, lists,
+and nested patterns:
+
+```
+let target = "hello"
+match messages {
+  [(^target, data), ..rest] -> handle(data)
+  _ -> skip()
+}
+```
+
+This is especially useful with `channel.select`, where you need to identify
+which channel produced a value:
+
+```
+match channel.select([ch1, ch2]) {
+  (^ch1, msg) -> handle1(msg)
+  (^ch2, msg) -> handle2(msg)
+  _ -> panic("unexpected")
+}
+```
+
 ### Let-match (destructuring bind)
 
 ```
@@ -277,44 +312,52 @@ Interpolated values must implement `Display`.
 
 ## 8. Concurrency (CSP)
 
+All concurrency primitives are module-qualified: channels live in the `channel`
+module, tasks live in the `task` module. There are no concurrency keywords.
+
 ### Channels
 
 ```
-let ch = chan()             -- unbuffered channel, type inferred
-let ch = chan(10)           -- buffered with capacity 10
+let ch = channel.new()          -- unbuffered channel, type inferred
+let ch = channel.new(10)        -- buffered with capacity 10
 ```
 
 ### Send / Receive
 
 ```
-send(ch, "hello")           -- blocks if unbuffered and no receiver
-let msg = receive(ch)       -- blocks until message available
+channel.send(ch, "hello")           -- blocks if unbuffered and no receiver
+let msg = channel.receive(ch)       -- blocks until message available
 ```
 
 ### Spawn
 
 ```
-let handle = spawn fn() {
+let handle = task.spawn(fn() {
   let result = do_work()
-  send(ch, result)
-}
+  channel.send(ch, result)
+})
 ```
 
-`spawn` takes a zero-arg function, runs it concurrently, returns a `Handle(a)`.
+`task.spawn` takes a zero-arg function, runs it concurrently, returns a `Handle(a)`.
 
 ### Handles
 
 ```
-let result = join(handle)      -- blocks until task completes, returns Result
-cancel(handle)                 -- request cancellation
+let result = task.join(handle)      -- blocks until task completes, returns Result
+task.cancel(handle)                 -- request cancellation
 ```
 
 ### Select
 
+`channel.select` waits on multiple channels and returns a `(channel, value)` tuple
+for whichever channel has data first. Use the `^` pin operator to match on
+which channel produced the value:
+
 ```
-select {
-  receive(ch1) as msg -> handle_a(msg)
-  receive(ch2) as msg -> handle_b(msg)
+match channel.select([ch1, ch2]) {
+  (^ch1, msg) -> handle_a(msg)
+  (^ch2, msg) -> handle_b(msg)
+  _ -> panic("unexpected")
 }
 ```
 
@@ -396,6 +439,7 @@ This desugars to match + early return of the error variant.
 |>                         -- pipe
 ?                          -- error propagation
 ..                         -- range (1..10)
+^                          -- pin (in patterns)
 ```
 
 ### List / Map literals
@@ -426,7 +470,7 @@ let m = #{ "key": "value", "count": 42 }
 |`result` |map_ok, map_err, unwrap_or, flatten        |
 |`option` |map, unwrap_or, to_result                  |
 |`test`   |assert, assert_eq, assert_ne, run          |
-|`channel`|Typed channel operations (re-exported)     |
+|`channel`|new, send, receive, close, select, try_send, try_receive|
 
 ### Not in v1 (future)
 
@@ -500,13 +544,13 @@ Run with `silt test` or `silt test math_test.silt`.
 
 |Aspect         |Choice                                    |
 |---------------|------------------------------------------|
-|Keywords       |17                                        |
+|Keywords       |13                                        |
 |Branching      |`match` only + `when` guard statement     |
 |Types          |HM inference, algebraic + records + traits|
 |Mutability     |None (rebinding/shadowing ok)             |
 |Iteration      |`                                         |
 |Errors         |`Result`/`Option` + `?` operator          |
-|Concurrency    |`spawn`, typed `chan`, `select`, handles  |
+|Concurrency    |`task.spawn`, typed `channel.new`, `channel.select`, handles|
 |Data structures|Records, tuples, List, Map                |
 |Strings        |Interpolation with `{expr}` via Display   |
 |Visibility     |Private default, `pub` to export          |

@@ -1,9 +1,10 @@
 -- List pattern matching examples
 --
--- Demonstrates the three forms of list patterns:
+-- Demonstrates list patterns and the ^ pin operator:
 --   []           empty list
 --   [a, b, c]    exact length match
 --   [h, ..t]     head/tail destructuring
+--   ^var         match against existing variable's value
 
 fn sum(xs) {
   match xs {
@@ -45,4 +46,22 @@ fn main() {
 
   [[], [1], [1, 2], [1, 2, 3, 4, 5]]
   |> list.each { xs -> println(describe(xs)) }
+
+  -- Pin operator: ^var matches against an existing variable's value
+  let target = 20
+  match [10, 20, 30] {
+    [_, ^target, rest] -> println("found {target} in the middle, followed by {rest}")
+    _ -> println("no match")
+  }
+
+  -- Pin in a search function
+  let needle = "world"
+  let words = ["hello", "world", "goodbye"]
+  let found = words |> list.find { w ->
+    match w { ^needle -> true, _ -> false }
+  }
+  match found {
+    Some(w) -> println("found: {w}")
+    None -> println("not found")
+  }
 }
