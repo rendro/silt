@@ -14,7 +14,7 @@
 
   REMAINING FRICTION:
   - Recursive loop ceremony for any iterative algorithm.
-  - No string formatting / decimal place control for floats.
+  - (Resolved) float.to_string(f, decimals) handles decimal formatting.
   - Many stdlib builtins are not in the type checker (runtime works fine).
 -}
 
@@ -112,8 +112,7 @@ fn main() {
         0 -> 0.0
         _ -> int.to_float(total_len) / int.to_float(word_count)
       }
-      -- Round to 2 decimal places
-      let avg_rounded = int.to_float(float.round(avg_len * 100.0)) / 100.0
+      let avg_rounded = float.to_string(avg_len, 2)
 
       -- Find longest word
       let longest = words |> list.fold("") { best, word ->

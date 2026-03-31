@@ -15,7 +15,7 @@ pub  mod  import  as  else  where  loop
 
 `_` is a wildcard pattern, not a keyword.
 `true`, `false` are builtin literals, not keywords.
-`Ok`, `Err`, `Some`, `None` are builtin variant constructors.
+`Ok`, `Err`, `Some`, `None`, `Stop`, `Continue` are builtin variant constructors.
 
 -----
 
@@ -512,8 +512,8 @@ let m = #{ "key": "value", "count": 42 }
 |`list`   |map, filter, fold, fold_until, unfold, each, find, zip, flatten|
 |`map`    |get, set, delete, keys, values, merge      |
 |`string` |split, join, trim, contains, replace       |
-|`int`    |parse, abs, min, max, to_float             |
-|`float`  |parse, round, ceil, floor                  |
+|`int`    |parse, abs, min, max, to_float, to_string  |
+|`float`  |parse, round, ceil, floor, to_string, to_int|
 |`result` |map_ok, map_err, unwrap_or, flatten        |
 |`option` |map, unwrap_or, to_result                  |
 |`test`   |assert, assert_eq, assert_ne, run          |

@@ -1,6 +1,6 @@
 # Silt Documentation
 
-Silt is a minimal, statically-typed, expression-based language with CSP concurrency. 13 keywords. Fully immutable. Pattern matching as the sole branching construct. Only 8 global names.
+Silt is a minimal, statically-typed, expression-based language with CSP concurrency. 14 keywords. Fully immutable. Pattern matching as the sole branching construct. Only 10 global names.
 
 ## Guides
 
@@ -24,8 +24,8 @@ silt fmt <file.silt>       -- format source code
 
 | Aspect         | Choice                                                 |
 |----------------|--------------------------------------------------------|
-| Keywords       | 13: `as else fn import let match mod pub return trait type when where` |
-| Globals        | 8: `print println panic try Ok Err Some None`          |
+| Keywords       | 14: `as else fn import let loop match mod pub return trait type when where` |
+| Globals        | 10: `print println panic try Ok Err Some None Stop Continue` |
 | Branching      | `match` only + `when` guard + guardless match          |
 | Types          | HM inference, algebraic + records + traits              |
 | Mutability     | None (shadowing ok)                                    |

@@ -21,9 +21,7 @@
   REMAINING FRICTION:
   - No Int/Float mixed arithmetic for +, -, / -- must explicitly convert with
     int.to_float before adding/subtracting/dividing.
-  - No way to convert a float to a string with fixed decimal places.
   - fold's 3-argument form in pipes is slightly confusing visually.
-  - Recursive loop ceremony for any iterative algorithm.
 -}
 
 -- ── Record type for per-column statistics ──────────────────────────
@@ -36,31 +34,8 @@ type ColumnStat {
   max: Float,
 }
 
--- ── Truncate a float to 2 decimal places (as a string) ─────────────
--- FRICTION: No string formatting / decimal place control.
-
 fn format_float(f) {
-  let s = "{f}"
-  match string.contains(s, ".") {
-    false -> s + ".00"
-    true -> {
-      let parts = string.split(s, ".")
-      when Some(int_part) = list.get(parts, 0) else {
-        return s
-      }
-      when Some(dec_part) = list.get(parts, 1) else {
-        return s
-      }
-      let dec_len = string.length(dec_part)
-      match {
-        dec_len >= 2 -> {
-          let truncated = string.slice(dec_part, 0, 2)
-          int_part + "." + truncated
-        }
-        _ -> int_part + "." + dec_part + string.repeat("0", 2 - dec_len)
-      }
-    }
-  }
+  float.to_string(f, 2)
 }
 
 -- ── Parse CSV content into list of rows (each row = list of strings) ───

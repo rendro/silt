@@ -8,13 +8,13 @@ Compiled from 10 evaluation programs, 9 examples, and full source audit. 2026-03
 
 **Final Rating: 8.5 / 10**
 
-Silt is a small, expression-oriented functional language with 13 keywords, 8 globals, and 88 module-qualified builtins across 11 modules. It compiles to a tree-walking interpreter written in ~12,400 lines of Rust, backed by 142 test functions.
+Silt is a small, expression-oriented functional language with 14 keywords, 10 globals, and 93 module-qualified builtins across 11 modules. It compiles to a tree-walking interpreter written in ~12,800 lines of Rust, backed by 275 test functions.
 
 All 10 evaluation programs have been rewritten to use the current stdlib. No legacy helper functions remain. No `match true { ... }` workarounds remain. No `flatten([acc, [item]])` list-building workarounds remain. The programs now use `list.get`, `list.append`, `list.concat`, `list.sort_by`, `list.take`, `list.enumerate`, `list.any`, `list.all`, `string.index_of`, `string.slice`, `string.pad_left`, `string.pad_right`, `float.min`, `float.max`, guardless match, and `try()`.
 
 ### What is complete
 
-- **Module system.** Clean namespace: 8 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
+- **Module system.** Clean namespace: 10 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
 - **Pattern matching.** Wildcard, literal (including negative), identifier, tuple, constructor, record, list (with rest), or-pattern, range, and map patterns. Guards on every arm. Guardless match for conditional blocks.
 - **Pipe operator.** First-argument insertion with trailing closure syntax. The defining feature of Silt's ergonomics.
 - **Concurrency primitives.** Buffered channels, cooperative tasks, `channel.select`, try_send/try_receive. Full fan-out/fan-in support.
@@ -25,13 +25,16 @@ All 10 evaluation programs have been rewritten to use the current stdlib. No leg
 - **Tooling.** REPL (`silt repl`), formatter (`silt fmt`), test runner (`silt test` with `test_` prefix discovery).
 - **Type checker.** Hindley-Milner inference with all builtins registered -- including `channel.*`, `task.*`, `try`, and `map.length`.
 - **TCO.** Tail-call optimization via trampolining. Safe recursion for REPL loops and channel drains.
+- **Loop expression.** `loop x = init { ... loop(new_x) }` provides stack-safe stateful iteration as an expression, without requiring named helper functions. Eliminates the "recursive loop ceremony" for REPL loops, channel drains, and accumulators.
+- **Fold with early termination.** `list.fold_until` with `Stop`/`Continue` constructors. `list.unfold` for generating lists from a seed.
+- **Number formatting.** `float.to_string(f, decimals)` for fixed decimal places, `int.to_string(n)` and `float.to_int(f)` for explicit conversions.
 
 ### What is deliberately omitted
 
-- No `while`/`loop`/`for` -- recursion + TCO is the model.
+- No `while`/`for` -- `loop` expression + higher-order functions is the model.
 - No `if`/`else` -- guardless match covers conditional blocks.
 - No mutation -- shadowing, record update, and map operations handle state.
-- No channel iteration -- recursive drain is the pattern.
+- No channel iteration syntax -- `loop` with `channel.receive` is the pattern.
 
 These are design choices, not gaps.
 
@@ -64,11 +67,11 @@ The per-program average is held down by the two REPL programs (kvstore, todo) wh
 
 Everything below is a conscious design choice, not a bug or missing feature.
 
-### No `while`/`loop`/`for`
+### No `while`/`for`
 
-Silt uses recursive functions for all iteration. TCO makes this stack-safe. The cost is ceremony: every recursive loop must explicitly pass updated state as arguments, and every branch must remember to recurse.
-
-This affects: `kvstore.silt` (REPL loop), `todo.silt` (REPL loop), `concurrent_processor.silt` (worker loop, result collector).
+The `loop` expression handles stateful iteration: `loop x = init { ... loop(new_x) }`.
+Collection traversal uses higher-order functions (`list.map`, `list.filter`, `list.fold`).
+There is no `for x in collection` syntax -- pipes + trailing closures fill that role.
 
 ### No `if`/`else`
 
@@ -76,29 +79,23 @@ Guardless match covers this completely. All programs now use it where appropriat
 
 ### No mutation
 
-Shadowing (`let db = map.set(db, key, val)`) and record update syntax (`todo.{ done: true }`) handle state transformation. The accumulator-threading pattern in fold and recursive loops is the main cost.
+Shadowing (`let db = map.set(db, key, val)`) and record update syntax (`todo.{ done: true }`) handle state transformation. The accumulator-threading pattern in fold and `loop` is the main cost.
 
-### Channel drain is recursive
+### Channel drain uses `loop`
 
 No `for msg in ch { ... }` construct. The idiomatic pattern is:
 
 ```silt
-fn drain(ch) {
+loop {
   match channel.receive(ch) {
     None -> ()
     msg -> {
       println("Received: {msg}")
-      drain(ch)
+      loop()
     }
   }
 }
 ```
-
-This is 8 lines for what Go expresses in 1 (`for msg := range ch`). TCO makes it safe.
-
-### No string formatting
-
-No way to format a float to N decimal places. `csv_analyzer.silt` includes a 20-line `format_float` helper to truncate to 2 decimal places. This is the most noticeable stdlib gap.
 
 ### No regex
 
@@ -108,27 +105,27 @@ Text extraction tasks (link_checker) must use `string.split`, `string.index_of`,
 
 ## 4. Language Snapshot
 
-### Keywords (13)
+### Keywords (14)
 
-`as`, `else`, `fn`, `import`, `let`, `match`, `mod`, `pub`, `return`, `trait`, `type`, `when`, `where`
+`as`, `else`, `fn`, `import`, `let`, `loop`, `match`, `mod`, `pub`, `return`, `trait`, `type`, `when`, `where`
 
 (`true` and `false` are literal tokens, not keywords.)
 
-### Globals (8)
+### Globals (10)
 
-`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`
+`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`
 
-### Module builtins (87 across 11 modules)
+### Module builtins (93 across 11 modules)
 
 | Module | Count | Functions |
 |--------|:-----:|-----------|
-| **list** | 24 | map, filter, each, fold, find, zip, flatten, head, tail, last, reverse, sort, sort_by, flat_map, any, all, contains, length, append, concat, get, take, drop, enumerate |
+| **list** | 26 | map, filter, each, fold, fold_until, unfold, find, zip, flatten, head, tail, last, reverse, sort, sort_by, flat_map, any, all, contains, length, append, concat, get, take, drop, enumerate |
 | **string** | 16 | split, join, trim, contains, replace, length, to_upper, to_lower, starts_with, ends_with, chars, repeat, index_of, slice, pad_left, pad_right |
 | **map** | 7 | get, set, delete, keys, values, length, merge |
-| **float** | 7 | parse, round, ceil, floor, abs, min, max |
+| **float** | 10 | parse, round, ceil, floor, abs, min, max, to_string, to_int |
 | **result** | 6 | unwrap_or, map_ok, map_err, flatten, is_ok, is_err |
 | **io** | 5 | inspect, read_file, write_file, read_line, args |
-| **int** | 5 | parse, abs, min, max, to_float |
+| **int** | 6 | parse, abs, min, max, to_float, to_string |
 | **option** | 5 | map, unwrap_or, to_result, is_some, is_none |
 | **channel** | 7 | new, send, receive, close, select, try_send, try_receive |
 | **task** | 3 | spawn, join, cancel |
@@ -143,8 +140,8 @@ Wildcard, identifier, integer (including negative), float, boolean, string, tupl
 | Metric | Count |
 |--------|------:|
 | Rust source files | 14 |
-| Rust LoC | ~12,400 |
-| Rust test functions | 142 |
+| Rust LoC | ~12,800 |
+| Rust test functions | 275 |
 | Example programs | 9 |
 | Evaluation programs | 10 |
 
@@ -303,4 +300,4 @@ Pin keeps the pattern concise and inline.
 
 ---
 
-*Silt has reached a coherent final state. Thirteen keywords, eight globals, eighty-eight module builtins. All evaluation programs use the full current stdlib with no legacy workarounds. The remaining friction -- recursive loop ceremony, channel drain boilerplate, and missing float formatting -- is the cost of the language's core design decisions: no mutation, no looping constructs, expression-oriented everything. These are tradeoffs, not deficiencies.*
+*Silt has reached a coherent final state. Fourteen keywords, ten globals, ninety-three module builtins. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. The remaining friction -- no regex, no JSON, cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*

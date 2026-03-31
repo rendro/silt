@@ -1966,6 +1966,16 @@ fn register_builtins(env: &Env) {
         Ok(Value::Float(*n as f64))
     }));
 
+    env.define("int.to_string".into(), builtin("int.to_string", |args| {
+        if args.len() != 1 {
+            return Err("int.to_string takes 1 argument".into());
+        }
+        let Value::Int(n) = &args[0] else {
+            return Err("int.to_string requires an int".into());
+        };
+        Ok(Value::String(n.to_string()))
+    }));
+
     // ── float module ────────────────────────────────────────────────
 
     env.define("float.parse".into(), builtin("float.parse", |args| {
@@ -2019,6 +2029,40 @@ fn register_builtins(env: &Env) {
             return Err("float.abs requires a float".into());
         };
         Ok(Value::Float(f.abs()))
+    }));
+
+    env.define("float.to_string".into(), builtin("float.to_string", |args| {
+        match args.len() {
+            1 => {
+                let Value::Float(f) = &args[0] else {
+                    return Err("float.to_string requires a float".into());
+                };
+                Ok(Value::String(f.to_string()))
+            }
+            2 => {
+                let Value::Float(f) = &args[0] else {
+                    return Err("float.to_string requires a float as first argument".into());
+                };
+                let Value::Int(decimals) = &args[1] else {
+                    return Err("float.to_string requires an int for decimal places".into());
+                };
+                if *decimals < 0 {
+                    return Err("decimal places must be non-negative".into());
+                }
+                Ok(Value::String(format!("{:.prec$}", f, prec = *decimals as usize)))
+            }
+            _ => Err("float.to_string takes 1 or 2 arguments (float) or (float, decimals)".into()),
+        }
+    }));
+
+    env.define("float.to_int".into(), builtin("float.to_int", |args| {
+        if args.len() != 1 {
+            return Err("float.to_int takes 1 argument".into());
+        }
+        let Value::Float(f) = &args[0] else {
+            return Err("float.to_int requires a float".into());
+        };
+        Ok(Value::Int(*f as i64))
     }));
 
     // ── map module ──────────────────────────────────────────────────

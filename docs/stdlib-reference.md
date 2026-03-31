@@ -2,7 +2,7 @@
 
 Complete reference for all built-in functions and standard library modules.
 
-Silt has a deliberately small set of **8 global names** that are always available
+Silt has a deliberately small set of **10 global names** that are always available
 without any module qualification. Everything else is organized into modules and
 accessed with dot notation (e.g. `list.map`, `string.split`, `channel.new`).
 
@@ -22,6 +22,8 @@ Always available. No import or qualification needed.
 | `Err` | `Err(value) -> Result` | Construct an error Result |
 | `Some` | `Some(value) -> Option` | Construct a present Option |
 | `None` | value | The absent Option value (not a function) |
+| `Stop` | `Stop(value) -> Step` | Signal early termination from `list.fold_until` |
+| `Continue` | `Continue(value) -> Step` | Signal continuation in `list.fold_until` |
 
 These are the **only** names in the global namespace. There is no global `map`,
 `filter`, `fold`, `len`, `inspect`, `spawn`, `send`, or `receive`. Use the
@@ -170,6 +172,8 @@ operator (`|>`) and trailing closures.
 | `list.filter` | `list.filter(list, fn) -> List` | Keep elements where the function returns truthy |
 | `list.each` | `list.each(list, fn) -> Unit` | Execute a function for each element (side effects) |
 | `list.fold` | `list.fold(list, init, fn) -> T` | Reduce a list to a single value with an accumulator |
+| `list.fold_until` | `list.fold_until(list, init, fn) -> T` | Fold with early termination via `Stop(val)` / `Continue(val)` |
+| `list.unfold` | `list.unfold(seed, fn) -> List` | Generate a list from a seed; fn returns `Some((elem, next))` or `None` |
 | `list.find` | `list.find(list, fn) -> Option` | Return the first element matching the predicate |
 | `list.zip` | `list.zip(list_a, list_b) -> List(Tuple)` | Pair up elements from two lists into tuples |
 | `list.flatten` | `list.flatten(list) -> List` | Flatten one level of nested lists |
@@ -254,6 +258,44 @@ fn main() {
   |> list.fold(0) { acc, x -> acc + x }
   -- 120
 }
+```
+
+### `list.fold_until`
+
+```
+list.fold_until(list, init, fn) -> T
+```
+
+Like `list.fold`, but the callback returns `Continue(acc)` to keep going or `Stop(value)` to terminate early. If the list is exhausted without a `Stop`, returns the last accumulator.
+
+```silt
+-- Sum until exceeding a threshold
+let total = [10, 20, 30, 40] |> list.fold_until(0) { acc, x ->
+  match acc + x > 50 {
+    true -> Stop(acc)
+    _ -> Continue(acc + x)
+  }
+}
+-- total == 60
+```
+
+### `list.unfold`
+
+```
+list.unfold(seed, fn) -> List
+```
+
+Generate a list from a seed value. The callback receives the current state and returns `Some((element, next_state))` to emit an element and continue, or `None` to stop.
+
+```silt
+-- Powers of 2 up to 32
+let powers = list.unfold(1) { n ->
+  match n > 32 {
+    true -> None
+    _ -> Some((n, n * 2))
+  }
+}
+-- [1, 2, 4, 8, 16, 32]
 ```
 
 ### `list.find`
@@ -980,6 +1022,7 @@ Functions for working with integers.
 | `int.min` | `int.min(a, b) -> Int` | Return the smaller of two integers |
 | `int.max` | `int.max(a, b) -> Int` | Return the larger of two integers |
 | `int.to_float` | `int.to_float(n) -> Float` | Convert an integer to a float |
+| `int.to_string` | `int.to_string(n) -> String` | Convert an integer to a string |
 
 ### `int.parse`
 
@@ -1056,6 +1099,21 @@ fn main() {
 }
 ```
 
+### `int.to_string`
+
+```
+int.to_string(n) -> String
+```
+
+Converts an integer to its string representation.
+
+```silt
+fn main() {
+  int.to_string(42)    -- "42"
+  int.to_string(-7)    -- "-7"
+}
+```
+
 -----
 
 ## `float` Module
@@ -1071,6 +1129,9 @@ Functions for working with floating-point numbers.
 | `float.abs` | `float.abs(f) -> Float` | Absolute value |
 | `float.min` | `float.min(a, b) -> Float` | Return the smaller of two floats |
 | `float.max` | `float.max(a, b) -> Float` | Return the larger of two floats |
+| `float.to_string` | `float.to_string(f) -> String` | Convert a float to a string |
+| `float.to_string` | `float.to_string(f, decimals) -> String` | Format a float to N decimal places |
+| `float.to_int` | `float.to_int(f) -> Int` | Truncate a float to an integer |
 
 ### `float.parse`
 
@@ -1173,6 +1234,39 @@ Returns the larger of two floats.
 ```silt
 fn main() {
   float.max(3.14, 2.72)   -- 3.14
+}
+```
+
+### `float.to_string`
+
+```
+float.to_string(f) -> String
+float.to_string(f, decimals) -> String
+```
+
+Converts a float to a string. With one argument, uses default formatting. With two arguments, formats to exactly N decimal places (padding with zeros or truncating as needed).
+
+```silt
+fn main() {
+  float.to_string(3.14)        -- "3.14"
+  float.to_string(3.14159, 2)  -- "3.14"
+  float.to_string(3.1, 4)      -- "3.1000"
+  float.to_string(3.7, 0)      -- "4"
+}
+```
+
+### `float.to_int`
+
+```
+float.to_int(f) -> Int
+```
+
+Truncates a float to an integer (rounds toward zero).
+
+```silt
+fn main() {
+  float.to_int(3.7)    -- 3
+  float.to_int(-2.9)   -- -2
 }
 ```
 

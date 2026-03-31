@@ -1839,3 +1839,79 @@ fn main() {
         ]))
     );
 }
+
+// ── int.to_string ───────────────────────────────────────────────────
+
+#[test]
+fn test_int_to_string() {
+    let result = run(r#"
+fn main() {
+  int.to_string(42)
+}
+    "#);
+    assert_eq!(result, Value::String("42".into()));
+}
+
+#[test]
+fn test_int_to_string_negative() {
+    let result = run(r#"
+fn main() {
+  int.to_string(-7)
+}
+    "#);
+    assert_eq!(result, Value::String("-7".into()));
+}
+
+// ── float.to_string ─────────────────────────────────────────────────
+
+#[test]
+fn test_float_to_string_no_decimals_arg() {
+    let result = run(r#"
+fn main() {
+  float.to_string(3.14)
+}
+    "#);
+    assert_eq!(result, Value::String("3.14".into()));
+}
+
+#[test]
+fn test_float_to_string_with_decimals() {
+    let result = run(r#"
+fn main() {
+  float.to_string(3.14159, 2)
+}
+    "#);
+    assert_eq!(result, Value::String("3.14".into()));
+}
+
+#[test]
+fn test_float_to_string_zero_decimals() {
+    let result = run(r#"
+fn main() {
+  float.to_string(3.7, 0)
+}
+    "#);
+    assert_eq!(result, Value::String("4".into()));
+}
+
+#[test]
+fn test_float_to_string_padding() {
+    let result = run(r#"
+fn main() {
+  float.to_string(3.1, 4)
+}
+    "#);
+    assert_eq!(result, Value::String("3.1000".into()));
+}
+
+// ── float.to_int ────────────────────────────────────────────────────
+
+#[test]
+fn test_float_to_int() {
+    let result = run(r#"
+fn main() {
+  float.to_int(3.7)
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}

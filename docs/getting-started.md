@@ -4,9 +4,9 @@
 
 Silt is a minimal, statically-typed, expression-based programming language with CSP-style concurrency. It compiles to a tree-walk interpreter written in Rust.
 
-The language is built around a small set of principles: just 13 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and `channel.select`.
+The language is built around a small set of principles: just 14 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and `channel.select`.
 
-The global namespace is deliberately small: only 8 names (`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`) are available without qualification. Everything else lives in a module (`list.map`, `string.split`, `channel.new`, `task.spawn`, etc.).
+The global namespace is deliberately small: only 10 names (`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`) are available without qualification. Everything else lives in a module (`list.map`, `string.split`, `channel.new`, `task.spawn`, etc.).
 
 If you like the safety of Rust, the expressiveness of ML-family languages, and the simplicity of Go's concurrency model -- but want something you can learn in an afternoon -- Silt might be for you.
 
