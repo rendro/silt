@@ -2082,3 +2082,85 @@ fn main() {
 }
     "#);
 }
+
+// ── Typed AST verification ──────────────────────────────────────────
+
+#[test]
+fn test_typed_ast_int_literal() {
+    let input = r#"
+fn main() {
+  42
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    silt::typechecker::check(&mut program);
+
+    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+        assert!(f.body.ty.is_some(), "body should be typed");
+        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+    } else {
+        panic!("expected fn decl");
+    }
+}
+
+#[test]
+fn test_typed_ast_string_expr() {
+    let input = r#"
+fn main() {
+  "hello"
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    silt::typechecker::check(&mut program);
+
+    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+        assert_eq!(f.body.ty, Some(silt::types::Type::String));
+    } else {
+        panic!("expected fn decl");
+    }
+}
+
+#[test]
+fn test_typed_ast_list() {
+    let input = r#"
+fn main() {
+  [1, 2, 3]
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    silt::typechecker::check(&mut program);
+
+    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+        assert!(f.body.ty.is_some(), "body should be typed");
+        assert_eq!(
+            f.body.ty,
+            Some(silt::types::Type::List(Box::new(silt::types::Type::Int)))
+        );
+    } else {
+        panic!("expected fn decl");
+    }
+}
+
+#[test]
+fn test_typed_ast_binary_expr() {
+    let input = r#"
+fn main() {
+  let x = 10
+  x + 32
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    silt::typechecker::check(&mut program);
+
+    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+        assert!(f.body.ty.is_some(), "main body should be typed");
+        // Block containing `let x = 10; x + 32` should resolve to Int
+        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+    } else {
+        panic!("expected fn decl");
+    }
+}

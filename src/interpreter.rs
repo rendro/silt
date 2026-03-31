@@ -7,6 +7,8 @@ use crate::ast::*;
 use crate::env::Env;
 use crate::module::ModuleLoader;
 use crate::scheduler::{Scheduler, TaskState};
+#[allow(unused_imports)] // Foundation for future typed fast-paths
+use crate::types::Type;
 use crate::value::{Channel, Closure, TryReceiveResult, TrySendResult, Value};
 
 // ── Runtime error ────────────────────────────────────────────────────
