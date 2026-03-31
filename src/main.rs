@@ -91,7 +91,7 @@ fn run_file(path: &str) {
         }
     };
 
-    let program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{path}:{e}");
@@ -100,7 +100,7 @@ fn run_file(path: &str) {
     };
 
     // Run the type checker
-    let type_errors = typechecker::check(&program);
+    let type_errors = typechecker::check(&mut program);
     let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
         let source_err = SourceError::from_type_error(err, &source, path);

@@ -11,157 +11,9 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::lexer::Span;
+use crate::types::*;
 
-// ── Type representation ─────────────────────────────────────────────
-
-/// A unique identifier for type variables.
-pub type TyVar = usize;
-
-/// The core type representation used during inference.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type {
-    Int,
-    Float,
-    Bool,
-    String,
-    Unit,
-    /// A unification variable, to be resolved during inference.
-    Var(TyVar),
-    /// Function type: param types -> return type.
-    Fun(Vec<Type>, Box<Type>),
-    /// Homogeneous list type.
-    List(Box<Type>),
-    /// Tuple type (fixed length, heterogeneous).
-    Tuple(Vec<Type>),
-    /// A nominal record type: name + field name/type pairs.
-    Record(std::string::String, Vec<(std::string::String, Type)>),
-    /// A variant/constructor from an enum type.
-    Variant(std::string::String, Vec<Type>),
-    /// A generic/parameterized type like Result(Int, String).
-    Generic(std::string::String, Vec<Type>),
-    /// Map type: key type -> value type.
-    Map(Box<Type>, Box<Type>),
-    /// An error type used to allow inference to continue after errors.
-    Error,
-}
-
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Int => write!(f, "Int"),
-            Type::Float => write!(f, "Float"),
-            Type::Bool => write!(f, "Bool"),
-            Type::String => write!(f, "String"),
-            Type::Unit => write!(f, "()"),
-            Type::Var(v) => write!(f, "?{v}"),
-            Type::Fun(params, ret) => {
-                write!(f, "(")?;
-                for (i, p) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{p}")?;
-                }
-                write!(f, ") -> {ret}")
-            }
-            Type::List(inner) => write!(f, "List({inner})"),
-            Type::Tuple(elems) => {
-                write!(f, "(")?;
-                for (i, e) in elems.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{e}")?;
-                }
-                write!(f, ")")
-            }
-            Type::Record(name, fields) => {
-                write!(f, "{name} {{")?;
-                for (i, (n, t)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{n}: {t}")?;
-                }
-                write!(f, "}}")
-            }
-            Type::Variant(name, args) => {
-                write!(f, "{name}")?;
-                if !args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{a}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
-            Type::Generic(name, args) => {
-                write!(f, "{name}")?;
-                if !args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{a}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
-            Type::Map(k, v) => write!(f, "Map({k}, {v})"),
-            Type::Error => write!(f, "<error>"),
-        }
-    }
-}
-
-// ── Type scheme (polymorphic type) ──────────────────────────────────
-
-/// A type scheme represents a polymorphic type: forall vars . ty
-/// The `vars` are the universally quantified type variables.
-#[derive(Debug, Clone)]
-pub struct Scheme {
-    pub vars: Vec<TyVar>,
-    pub ty: Type,
-}
-
-impl Scheme {
-    fn mono(ty: Type) -> Self {
-        Scheme {
-            vars: Vec::new(),
-            ty,
-        }
-    }
-}
-
-// ── Type errors ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone)]
-pub struct TypeError {
-    pub message: std::string::String,
-    pub span: Span,
-    pub severity: Severity,
-}
-
-impl std::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self.severity {
-            Severity::Error => "type error",
-            Severity::Warning => "type warning",
-        };
-        write!(f, "[{}] {}: {}", self.span, label, self.message)
-    }
-}
+pub use crate::types::{Type, TyVar, Scheme, Severity, TypeError};
 
 // ── Type environment ────────────────────────────────────────────────
 
@@ -223,83 +75,6 @@ impl TypeEnv {
             }
         }
         fvs
-    }
-}
-
-/// Collect free type variables in a type.
-/// Count the number of parameters in a function type.
-fn count_params(ty: &Type) -> usize {
-    match ty {
-        Type::Fun(params, _) => params.len(),
-        _ => 0,
-    }
-}
-
-fn free_vars_in(ty: &Type) -> Vec<TyVar> {
-    match ty {
-        Type::Var(v) => vec![*v],
-        Type::Fun(params, ret) => {
-            let mut fvs = Vec::new();
-            for p in params {
-                for v in free_vars_in(p) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            for v in free_vars_in(ret) {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-            fvs
-        }
-        Type::List(inner) => free_vars_in(inner),
-        Type::Tuple(elems) => {
-            let mut fvs = Vec::new();
-            for e in elems {
-                for v in free_vars_in(e) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
-        }
-        Type::Record(_, fields) => {
-            let mut fvs = Vec::new();
-            for (_, t) in fields {
-                for v in free_vars_in(t) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
-        }
-        Type::Variant(_, args) | Type::Generic(_, args) => {
-            let mut fvs = Vec::new();
-            for a in args {
-                for v in free_vars_in(a) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
-        }
-        Type::Map(k, v) => {
-            let mut fvs = free_vars_in(k);
-            for fv in free_vars_in(v) {
-                if !fvs.contains(&fv) {
-                    fvs.push(fv);
-                }
-            }
-            fvs
-        }
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error => {
-            Vec::new()
-        }
     }
 }
 
@@ -642,7 +417,7 @@ impl TypeChecker {
 
     // ── Check a full program ────────────────────────────────────────
 
-    pub fn check_program(&mut self, program: &Program) {
+    pub fn check_program(&mut self, program: &mut Program) {
         let mut env = TypeEnv::new();
 
         // Register builtins in the type environment
@@ -738,21 +513,24 @@ impl TypeChecker {
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
-        // Third pass: type check function bodies
-        for decl in &program.decls {
-            if let Decl::Fn(f) = decl {
+        // Third pass: type check function bodies (mutable access needed)
+        for i in 0..program.decls.len() {
+            if let Decl::Fn(ref mut f) = program.decls[i] {
                 self.check_fn_body(f, &env);
             }
         }
 
-        // Also check trait impl method bodies
-        for decl in &program.decls {
-            if let Decl::TraitImpl(ti) = decl {
-                for method in &ti.methods {
-                    self.check_fn_body(method, &env);
+        // Also check trait impl method bodies (mutable access needed)
+        for i in 0..program.decls.len() {
+            if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                for j in 0..ti.methods.len() {
+                    self.check_fn_body(&mut ti.methods[j], &env);
                 }
             }
         }
+
+        // After all passes, resolve any remaining type variables in annotations
+        self.resolve_all_types(program);
     }
 
     // ── Validate trait implementations ────────────────────────────────
@@ -2249,7 +2027,7 @@ impl TypeChecker {
 
     // ── Check function body ─────────────────────────────────────────
 
-    fn check_fn_body(&mut self, f: &FnDecl, env: &TypeEnv) {
+    fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
         let mut local_env = env.child();
 
         // Validate where clauses
@@ -2283,7 +2061,7 @@ impl TypeChecker {
         }
 
         // Infer the body
-        let _body_type = self.infer_expr(&f.body, &mut local_env);
+        let _body_type = self.infer_expr(&mut f.body, &mut local_env);
 
         // We could unify body_type with ret_type here for stricter checking,
         // but for now we keep it lenient to avoid blocking execution.
@@ -2447,8 +2225,9 @@ impl TypeChecker {
 
     // ── Expression type inference ───────────────────────────────────
 
-    fn infer_expr(&mut self, expr: &Expr, env: &mut TypeEnv) -> Type {
-        match &expr.kind {
+    fn infer_expr(&mut self, expr: &mut Expr, env: &mut TypeEnv) -> Type {
+        let span = expr.span;
+        let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
             ExprKind::Bool(_) => Type::Bool,
@@ -2472,10 +2251,13 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::List(Box::new(tv))
                 } else {
-                    let first = self.infer_expr(&elems[0], env);
-                    for elem in &elems[1..] {
+                    let mut iter = elems.iter_mut();
+                    let first_elem = iter.next().unwrap();
+                    let first = self.infer_expr(first_elem, env);
+                    for elem in iter {
+                        let elem_span = elem.span;
                         let t = self.infer_expr(elem, env);
-                        self.unify(&first, &t, elem.span);
+                        self.unify(&first, &t, elem_span);
                     }
                     Type::List(Box::new(first))
                 }
@@ -2487,13 +2269,17 @@ impl TypeChecker {
                     let v = self.fresh_var();
                     Type::Map(Box::new(k), Box::new(v))
                 } else {
-                    let first_k = self.infer_expr(&entries[0].0, env);
-                    let first_v = self.infer_expr(&entries[0].1, env);
-                    for (k, v) in &entries[1..] {
+                    let mut iter = entries.iter_mut();
+                    let first_entry = iter.next().unwrap();
+                    let first_k = self.infer_expr(&mut first_entry.0, env);
+                    let first_v = self.infer_expr(&mut first_entry.1, env);
+                    for (k, v) in iter {
+                        let k_span = k.span;
+                        let v_span = v.span;
                         let kt = self.infer_expr(k, env);
                         let vt = self.infer_expr(v, env);
-                        self.unify(&first_k, &kt, k.span);
-                        self.unify(&first_v, &vt, v.span);
+                        self.unify(&first_k, &kt, k_span);
+                        self.unify(&first_v, &vt, v_span);
                     }
                     Type::Map(Box::new(first_k), Box::new(first_v))
                 }
@@ -2501,14 +2287,15 @@ impl TypeChecker {
 
             ExprKind::Tuple(elems) => {
                 let types: Vec<Type> = elems
-                    .iter()
+                    .iter_mut()
                     .map(|e| self.infer_expr(e, env))
                     .collect();
                 Type::Tuple(types)
             }
 
             ExprKind::Ident(name) => {
-                if let Some(scheme) = env.lookup(name) {
+                let name = name.clone();
+                if let Some(scheme) = env.lookup(&name) {
                     let scheme = scheme.clone();
                     self.instantiate(&scheme)
                 } else {
@@ -2519,28 +2306,35 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess(obj, field) => {
+                let field = field.clone();
+                // Capture module name before mutable borrow for inference
+                let module_name = if let ExprKind::Ident(n) = &obj.kind { Some(n.clone()) } else { None };
+
                 // Could be record.field, or module.function
                 let obj_ty = self.infer_expr(obj, env);
                 let obj_ty = self.apply(&obj_ty);
 
                 // Check for module-style access first (e.g., string.split)
-                if let ExprKind::Ident(module_name) = &obj.kind {
+                if let Some(ref module_name) = module_name {
                     let qualified = format!("{module_name}.{field}");
                     if let Some(scheme) = env.lookup(&qualified) {
                         let scheme = scheme.clone();
-                        return self.instantiate(&scheme);
+                        let result = self.instantiate(&scheme);
+                        let resolved = self.apply(&result);
+                        expr.ty = Some(resolved.clone());
+                        return resolved;
                     }
                 }
 
                 // Record field access
                 match &obj_ty {
                     Type::Record(rec_name, fields) => {
-                        if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
+                        if let Some((_, ft)) = fields.iter().find(|(n, _)| n == &field) {
                             ft.clone()
                         } else {
                             self.error(
                                 format!("record {rec_name} has no field {field}"),
-                                expr.span,
+                                span,
                             );
                             Type::Error
                         }
@@ -2549,16 +2343,21 @@ impl TypeChecker {
                         // Check if the type has a record definition
                         if let Some(rec_info) = self.records.get(type_name).cloned() {
                             if let Some((_, ft)) =
-                                rec_info.fields.iter().find(|(n, _)| n == field)
+                                rec_info.fields.iter().find(|(n, _)| n == &field)
                             {
-                                return ft.clone();
+                                let resolved = self.apply(&ft);
+                                expr.ty = Some(resolved.clone());
+                                return resolved;
                             }
                         }
                         // Could be a trait method: TypeName.method
                         let key = format!("{type_name}.{field}");
                         if let Some(scheme) = env.lookup(&key) {
                             let scheme = scheme.clone();
-                            return self.instantiate(&scheme);
+                            let result = self.instantiate(&scheme);
+                            let resolved = self.apply(&result);
+                            expr.ty = Some(resolved.clone());
+                            return resolved;
                         }
                         // Lenient: return fresh var
                         self.fresh_var()
@@ -2572,50 +2371,65 @@ impl TypeChecker {
             }
 
             ExprKind::Binary(lhs, op, rhs) => {
+                let op = *op;
+                let lhs_span = lhs.span;
+                let rhs_span = rhs.span;
                 let lt = self.infer_expr(lhs, env);
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                        self.unify(&lt, &rt, expr.span);
+                        self.unify(&lt, &rt, span);
                         lt
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                        self.unify(&lt, &rt, expr.span);
+                        self.unify(&lt, &rt, span);
                         Type::Bool
                     }
                     BinOp::And | BinOp::Or => {
-                        self.unify(&lt, &Type::Bool, lhs.span);
-                        self.unify(&rt, &Type::Bool, rhs.span);
+                        self.unify(&lt, &Type::Bool, lhs_span);
+                        self.unify(&rt, &Type::Bool, rhs_span);
                         Type::Bool
                     }
                 }
             }
 
             ExprKind::Unary(op, operand) => {
+                let op = *op;
+                let operand_span = operand.span;
                 let t = self.infer_expr(operand, env);
                 match op {
                     UnaryOp::Neg => t,
                     UnaryOp::Not => {
-                        self.unify(&t, &Type::Bool, operand.span);
+                        self.unify(&t, &Type::Bool, operand_span);
                         Type::Bool
                     }
                 }
             }
 
             ExprKind::Pipe(lhs, rhs) => {
+                let lhs_span = lhs.span;
                 let arg_type = self.infer_expr(lhs, env);
 
                 // Pipe semantics: a |> f(b) means f(a, b)
                 // If the RHS is a Call, we prepend the pipe LHS as the first argument.
-                match &rhs.kind {
-                    ExprKind::Call(callee, call_args) => {
+                // Check if rhs is a Call before mutable borrow
+                let rhs_is_call = matches!(&rhs.kind, ExprKind::Call(..));
+
+                if rhs_is_call {
+                    // Destructure rhs.kind mutably to get at callee and call_args
+                    if let ExprKind::Call(callee, call_args) = &mut rhs.kind {
+                        // Capture callee name for where clause check
+                        let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind { Some(n.clone()) } else { None };
+                        // Capture arg spans before mutable inference
+                        let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
+
                         let callee_ty = self.infer_expr(callee, env);
                         let callee_ty = self.apply(&callee_ty);
 
                         // Infer types for the explicit call args
                         let explicit_arg_types: Vec<Type> = call_args
-                            .iter()
+                            .iter_mut()
                             .map(|a| self.infer_expr(a, env))
                             .collect();
 
@@ -2627,22 +2441,22 @@ impl TypeChecker {
                             Type::Fun(params, ret) => {
                                 let min_len = params.len().min(all_arg_types.len());
                                 for i in 0..min_len {
-                                    let span = if i == 0 { lhs.span } else { call_args[i - 1].span };
-                                    self.unify(&all_arg_types[i], &params[i], span);
+                                    let s = if i == 0 { lhs_span } else { arg_spans[i - 1] };
+                                    self.unify(&all_arg_types[i], &params[i], s);
                                 }
                                 *ret.clone()
                             }
                             Type::Var(_) => {
                                 let ret = self.fresh_var();
                                 let fn_ty = Type::Fun(all_arg_types.clone(), Box::new(ret.clone()));
-                                self.unify(&callee_ty, &fn_ty, expr.span);
+                                self.unify(&callee_ty, &fn_ty, span);
                                 ret
                             }
                             _ => self.fresh_var(),
                         };
 
                         // Check where clause constraints for piped calls
-                        if let ExprKind::Ident(fn_name) = &callee.kind {
+                        if let Some(ref fn_name) = callee_fn_name {
                             if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
                                 for (param_idx, trait_name) in &clauses {
                                     if let Some(arg_ty) = all_arg_types.get(*param_idx) {
@@ -2657,7 +2471,7 @@ impl TypeChecker {
                                                         "type '{}' does not implement trait '{}'",
                                                         type_name, trait_name
                                                     ),
-                                                    expr.span,
+                                                    span,
                                                 );
                                             }
                                         }
@@ -2667,36 +2481,39 @@ impl TypeChecker {
                         }
 
                         result_ty
+                    } else {
+                        unreachable!()
                     }
-                    _ => {
-                        // RHS is a plain function/lambda, not a call
-                        let fn_type = self.infer_expr(rhs, env);
-                        let fn_type = self.apply(&fn_type);
+                } else {
+                    // RHS is a plain function/lambda, not a call
+                    let fn_type = self.infer_expr(rhs, env);
+                    let fn_type = self.apply(&fn_type);
 
-                        match &fn_type {
-                            Type::Fun(params, ret) => {
-                                if !params.is_empty() {
-                                    self.unify(&arg_type, &params[0], expr.span);
-                                }
-                                *ret.clone()
+                    match &fn_type {
+                        Type::Fun(params, ret) => {
+                            if !params.is_empty() {
+                                self.unify(&arg_type, &params[0], span);
                             }
-                            Type::Var(_) => {
-                                let ret = self.fresh_var();
-                                let fn_ty = Type::Fun(vec![arg_type], Box::new(ret.clone()));
-                                self.unify(&fn_type, &fn_ty, expr.span);
-                                ret
-                            }
-                            _ => self.fresh_var(),
+                            *ret.clone()
                         }
+                        Type::Var(_) => {
+                            let ret = self.fresh_var();
+                            let fn_ty = Type::Fun(vec![arg_type], Box::new(ret.clone()));
+                            self.unify(&fn_type, &fn_ty, span);
+                            ret
+                        }
+                        _ => self.fresh_var(),
                     }
                 }
             }
 
             ExprKind::Range(start, end) => {
+                let start_span = start.span;
+                let end_span = end.span;
                 let st = self.infer_expr(start, env);
                 let et = self.infer_expr(end, env);
-                self.unify(&st, &Type::Int, start.span);
-                self.unify(&et, &Type::Int, end.span);
+                self.unify(&st, &Type::Int, start_span);
+                self.unify(&et, &Type::Int, end_span);
                 Type::List(Box::new(Type::Int))
             }
 
@@ -2721,11 +2538,15 @@ impl TypeChecker {
             }
 
             ExprKind::Call(callee, args) => {
+                // Capture callee name and arg spans before mutable inference
+                let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind { Some(n.clone()) } else { None };
+                let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
+
                 let callee_ty = self.infer_expr(callee, env);
                 let callee_ty = self.apply(&callee_ty);
 
                 let arg_types: Vec<Type> = args
-                    .iter()
+                    .iter_mut()
                     .map(|a| self.infer_expr(a, env))
                     .collect();
 
@@ -2734,7 +2555,7 @@ impl TypeChecker {
                         // Unify argument types with parameter types
                         let min_len = params.len().min(arg_types.len());
                         for i in 0..min_len {
-                            self.unify(&arg_types[i], &params[i], args[i].span);
+                            self.unify(&arg_types[i], &params[i], arg_spans[i]);
                         }
                         *ret.clone()
                     }
@@ -2742,7 +2563,7 @@ impl TypeChecker {
                         // The callee is an unresolved type variable - create a function type
                         let ret = self.fresh_var();
                         let fn_ty = Type::Fun(arg_types.clone(), Box::new(ret.clone()));
-                        self.unify(&callee_ty, &fn_ty, expr.span);
+                        self.unify(&callee_ty, &fn_ty, span);
                         ret
                     }
                     _ => {
@@ -2752,7 +2573,7 @@ impl TypeChecker {
                 };
 
                 // Check where clause constraints
-                if let ExprKind::Ident(fn_name) = &callee.kind {
+                if let Some(ref fn_name) = callee_fn_name {
                     if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
                         for (param_idx, trait_name) in &clauses {
                             if let Some(arg_ty) = arg_types.get(*param_idx) {
@@ -2767,7 +2588,7 @@ impl TypeChecker {
                                                 "type '{}' does not implement trait '{}'",
                                                 type_name, trait_name
                                             ),
-                                            expr.span,
+                                            span,
                                         );
                                     }
                                 }
@@ -2801,9 +2622,10 @@ impl TypeChecker {
             }
 
             ExprKind::RecordCreate { name, fields } => {
-                if let Some(rec_info) = self.records.get(name).cloned() {
+                let name = name.clone();
+                if let Some(rec_info) = self.records.get(&name).cloned() {
                     let field_types: Vec<(std::string::String, Type)> = fields
-                        .iter()
+                        .iter_mut()
                         .map(|(n, e)| {
                             let ty = self.infer_expr(e, env);
                             (n.clone(), ty)
@@ -2815,21 +2637,21 @@ impl TypeChecker {
                         if let Some((_, declared_ty)) =
                             rec_info.fields.iter().find(|(n, _)| n == field_name)
                         {
-                            self.unify(inferred_ty, declared_ty, expr.span);
+                            self.unify(inferred_ty, declared_ty, span);
                         }
                     }
 
-                    Type::Record(name.clone(), rec_info.fields.clone())
+                    Type::Record(name, rec_info.fields.clone())
                 } else {
                     // Unknown record type - infer from fields
                     let field_types: Vec<(std::string::String, Type)> = fields
-                        .iter()
+                        .iter_mut()
                         .map(|(n, e)| {
                             let ty = self.infer_expr(e, env);
                             (n.clone(), ty)
                         })
                         .collect();
-                    Type::Record(name.clone(), field_types)
+                    Type::Record(name, field_types)
                 }
             }
 
@@ -2845,26 +2667,29 @@ impl TypeChecker {
             ExprKind::Match { expr: scrutinee, arms } => {
                 match scrutinee {
                     Some(scrutinee) => {
+                        let scrutinee_span = scrutinee.span;
                         let scrutinee_ty = self.infer_expr(scrutinee, env);
                         let result_ty = self.fresh_var();
 
-                        for arm in arms {
+                        for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
-                            self.check_pattern(&arm.pattern, &scrutinee_ty, &mut arm_env, scrutinee.span);
+                            self.check_pattern(&arm.pattern, &scrutinee_ty, &mut arm_env, scrutinee_span);
 
-                            if let Some(ref guard) = arm.guard {
+                            if let Some(ref mut guard) = arm.guard {
+                                let guard_span = guard.span;
                                 let guard_ty = self.infer_expr(guard, &mut arm_env);
-                                self.unify(&guard_ty, &Type::Bool, guard.span);
+                                self.unify(&guard_ty, &Type::Bool, guard_span);
                             }
 
-                            let arm_ty = self.infer_expr(&arm.body, &mut arm_env);
-                            self.unify(&result_ty, &arm_ty, arm.body.span);
+                            let body_span = arm.body.span;
+                            let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            self.unify(&result_ty, &arm_ty, body_span);
                         }
 
                         // Check exhaustiveness after pattern checking, so the
                         // scrutinee type is fully resolved through unification.
                         let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
-                        self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee.span);
+                        self.check_exhaustiveness(arms, &resolved_scrutinee_ty, scrutinee_span);
 
                         result_ty
                     }
@@ -2872,16 +2697,18 @@ impl TypeChecker {
                         // Guardless match: each arm's guard is a boolean condition
                         let result_ty = self.fresh_var();
 
-                        for arm in arms {
+                        for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
 
-                            if let Some(ref guard) = arm.guard {
+                            if let Some(ref mut guard) = arm.guard {
+                                let guard_span = guard.span;
                                 let guard_ty = self.infer_expr(guard, &mut arm_env);
-                                self.unify(&guard_ty, &Type::Bool, guard.span);
+                                self.unify(&guard_ty, &Type::Bool, guard_span);
                             }
 
-                            let arm_ty = self.infer_expr(&arm.body, &mut arm_env);
-                            self.unify(&result_ty, &arm_ty, arm.body.span);
+                            let body_span = arm.body.span;
+                            let arm_ty = self.infer_expr(&mut arm.body, &mut arm_env);
+                            self.unify(&result_ty, &arm_ty, body_span);
                         }
 
                         // No exhaustiveness checking for guardless match
@@ -2911,9 +2738,10 @@ impl TypeChecker {
 
             ExprKind::Loop { bindings, body } => {
                 let mut loop_env = env.child();
-                for (name, init) in bindings {
-                    let ty = self.infer_expr(init, env);
-                    loop_env.define(name.clone(), Scheme::mono(ty));
+                for i in 0..bindings.len() {
+                    let ty = self.infer_expr(&mut bindings[i].1, env);
+                    let name = bindings[i].0.clone();
+                    loop_env.define(name, Scheme::mono(ty));
                 }
                 self.infer_expr(body, &mut loop_env)
             }
@@ -2925,19 +2753,23 @@ impl TypeChecker {
                 self.fresh_var()
             }
 
-        }
+        };
+        let resolved = self.apply(&ty);
+        expr.ty = Some(resolved.clone());
+        resolved
     }
 
     // ── Statement type inference ────────────────────────────────────
 
-    fn infer_stmt(&mut self, stmt: &Stmt, env: &mut TypeEnv) -> Type {
+    fn infer_stmt(&mut self, stmt: &mut Stmt, env: &mut TypeEnv) -> Type {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
+                let value_span = value.span;
                 let val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
                     let declared = self.resolve_type_expr(te, &HashMap::new());
-                    self.unify(&val_ty, &declared, value.span);
+                    self.unify(&val_ty, &declared, value_span);
                 }
 
                 // Generalize for let-polymorphism
@@ -3291,6 +3123,110 @@ impl TypeChecker {
             );
         }
     }
+
+    // ── Post-inference type resolution ─────────────────────────────────
+
+    /// After all passes, walk the AST and resolve any remaining type variables
+    /// in the `expr.ty` annotations using the final substitution.
+    fn resolve_all_types(&self, program: &mut Program) {
+        for decl in &mut program.decls {
+            match decl {
+                Decl::Fn(f) => self.resolve_expr_types(&mut f.body),
+                Decl::TraitImpl(ti) => {
+                    for m in &mut ti.methods {
+                        self.resolve_expr_types(&mut m.body);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn resolve_expr_types(&self, expr: &mut Expr) {
+        if let Some(ty) = &expr.ty {
+            expr.ty = Some(self.apply(ty));
+        }
+        match &mut expr.kind {
+            ExprKind::Binary(l, _, r) => {
+                self.resolve_expr_types(l);
+                self.resolve_expr_types(r);
+            }
+            ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Return(Some(e)) => {
+                self.resolve_expr_types(e);
+            }
+            ExprKind::Call(callee, args) => {
+                self.resolve_expr_types(callee);
+                for a in args { self.resolve_expr_types(a); }
+            }
+            ExprKind::List(elems) => {
+                for e in elems { self.resolve_expr_types(e); }
+            }
+            ExprKind::Tuple(elems) => {
+                for e in elems { self.resolve_expr_types(e); }
+            }
+            ExprKind::Map(pairs) => {
+                for (k, v) in pairs {
+                    self.resolve_expr_types(k);
+                    self.resolve_expr_types(v);
+                }
+            }
+            ExprKind::Lambda { body, .. } => {
+                self.resolve_expr_types(body);
+            }
+            ExprKind::Match { expr: scrutinee, arms } => {
+                if let Some(s) = scrutinee { self.resolve_expr_types(s); }
+                for arm in arms {
+                    if let Some(ref mut guard) = arm.guard {
+                        self.resolve_expr_types(guard);
+                    }
+                    self.resolve_expr_types(&mut arm.body);
+                }
+            }
+            ExprKind::Block(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { value, .. } => self.resolve_expr_types(value),
+                        Stmt::When { expr, else_body, .. } => {
+                            self.resolve_expr_types(expr);
+                            self.resolve_expr_types(else_body);
+                        }
+                        Stmt::Expr(e) => self.resolve_expr_types(e),
+                    }
+                }
+            }
+            ExprKind::Pipe(l, r) => {
+                self.resolve_expr_types(l);
+                self.resolve_expr_types(r);
+            }
+            ExprKind::Range(l, r) => {
+                self.resolve_expr_types(l);
+                self.resolve_expr_types(r);
+            }
+            ExprKind::FieldAccess(e, _) => self.resolve_expr_types(e),
+            ExprKind::RecordCreate { fields, .. } => {
+                for (_, e) in fields { self.resolve_expr_types(e); }
+            }
+            ExprKind::RecordUpdate { expr, fields } => {
+                self.resolve_expr_types(expr);
+                for (_, e) in fields { self.resolve_expr_types(e); }
+            }
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        self.resolve_expr_types(e);
+                    }
+                }
+            }
+            ExprKind::Loop { bindings, body } => {
+                for (_, e) in bindings { self.resolve_expr_types(e); }
+                self.resolve_expr_types(body);
+            }
+            ExprKind::Recur(args) => {
+                for a in args { self.resolve_expr_types(a); }
+            }
+            _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
+        }
+    }
 }
 
 // ── Helper functions ────────────────────────────────────────────────
@@ -3313,98 +3249,8 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
     }
 }
 
-/// Substitute type variables according to a mapping.
-fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
-    match ty {
-        Type::Var(v) => {
-            if let Some(replacement) = mapping.get(v) {
-                replacement.clone()
-            } else {
-                ty.clone()
-            }
-        }
-        Type::Fun(params, ret) => {
-            let params = params
-                .iter()
-                .map(|p| substitute_vars(p, mapping))
-                .collect();
-            let ret = Box::new(substitute_vars(ret, mapping));
-            Type::Fun(params, ret)
-        }
-        Type::List(inner) => Type::List(Box::new(substitute_vars(inner, mapping))),
-        Type::Tuple(elems) => {
-            Type::Tuple(elems.iter().map(|e| substitute_vars(e, mapping)).collect())
-        }
-        Type::Record(name, fields) => {
-            let fields = fields
-                .iter()
-                .map(|(n, t)| (n.clone(), substitute_vars(t, mapping)))
-                .collect();
-            Type::Record(name.clone(), fields)
-        }
-        Type::Variant(name, args) => {
-            let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
-            Type::Variant(name.clone(), args)
-        }
-        Type::Generic(name, args) => {
-            let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
-            Type::Generic(name.clone(), args)
-        }
-        Type::Map(k, v) => Type::Map(
-            Box::new(substitute_vars(k, mapping)),
-            Box::new(substitute_vars(v, mapping)),
-        ),
-        _ => ty.clone(),
-    }
-}
-
-/// Substitute enum type parameters with concrete type arguments.
-/// This is used when we know e.g. Result(Int, String) and want to
-/// resolve the type of a variant's field.
-fn substitute_enum_params(
-    field_ty: &Type,
-    param_names: &[std::string::String],
-    type_args: &[Type],
-) -> Type {
-    match field_ty {
-        Type::Var(v) => {
-            // If this Var index corresponds to a param position, substitute
-            if (*v) < param_names.len() && (*v) < type_args.len() {
-                type_args[*v].clone()
-            } else {
-                field_ty.clone()
-            }
-        }
-        Type::Fun(params, ret) => {
-            let params = params
-                .iter()
-                .map(|p| substitute_enum_params(p, param_names, type_args))
-                .collect();
-            let ret = Box::new(substitute_enum_params(ret, param_names, type_args));
-            Type::Fun(params, ret)
-        }
-        Type::List(inner) => {
-            Type::List(Box::new(substitute_enum_params(inner, param_names, type_args)))
-        }
-        Type::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| substitute_enum_params(e, param_names, type_args))
-                .collect(),
-        ),
-        Type::Generic(name, args) => {
-            let args = args
-                .iter()
-                .map(|a| substitute_enum_params(a, param_names, type_args))
-                .collect();
-            Type::Generic(name.clone(), args)
-        }
-        _ => field_ty.clone(),
-    }
-}
-
 /// Run the type checker on a program. Returns a list of type errors (warnings).
-pub fn check(program: &Program) -> Vec<TypeError> {
+pub fn check(program: &mut Program) -> Vec<TypeError> {
     let mut checker = TypeChecker::new();
     checker.check_program(program);
     checker.errors
@@ -3424,8 +3270,8 @@ mod tests {
     }
 
     fn check_errors(input: &str) -> Vec<TypeError> {
-        let program = parse(input);
-        check(&program)
+        let mut program = parse(input);
+        check(&mut program)
     }
 
     fn check_program(input: &str) -> Vec<TypeError> {

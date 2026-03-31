@@ -6,21 +6,24 @@ use std::rc::Rc;
 
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
     let mut interp = Interpreter::new();
     interp.run(&program).expect("runtime error")
 }
 
 fn run_ok(input: &str) {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
     let mut interp = Interpreter::new();
     interp.run(&program).expect("runtime error");
 }
 
 fn run_err(input: &str) -> String {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
     let mut interp = Interpreter::new();
     let err = interp.run(&program).expect_err("expected runtime error");
     format!("{err}")

@@ -1,4 +1,5 @@
 use crate::lexer::Span;
+use crate::types::Type;
 
 // ── Expressions ──────────────────────────────────────────────────────
 
@@ -6,11 +7,12 @@ use crate::lexer::Span;
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    pub ty: Option<Type>,
 }
 
 impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span }
+        Self { kind, span, ty: None }
     }
 }
 

@@ -8,5 +8,6 @@ pub mod module;
 pub mod parser;
 pub mod repl;
 pub mod scheduler;
+pub mod types;
 pub mod typechecker;
 pub mod value;
