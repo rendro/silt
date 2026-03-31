@@ -401,10 +401,7 @@ impl Interpreter {
             ExprKind::Map(pairs) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in pairs {
-                    let key = match self.eval(k, env)? {
-                        Value::String(s) => s,
-                        other => other.to_string(),
-                    };
+                    let key = self.eval(k, env)?;
                     let val = self.eval(v, env)?;
                     map.insert(key, val);
                 }
@@ -1482,10 +1479,7 @@ impl Interpreter {
                 let Value::Map(m) = &args[0] else {
                     return Err(err("map.get requires a map as first argument"));
                 };
-                let Value::String(key) = &args[1] else {
-                    return Err(err("map.get requires a string key"));
-                };
-                match m.get(key.as_str()) {
+                match m.get(&args[1]) {
                     Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 }
@@ -1497,11 +1491,8 @@ impl Interpreter {
                 let Value::Map(m) = &args[0] else {
                     return Err(err("map.set requires a map as first argument"));
                 };
-                let Value::String(key) = &args[1] else {
-                    return Err(err("map.set requires a string key"));
-                };
                 let mut new_map = (**m).clone();
-                new_map.insert(key.clone(), args[2].clone());
+                new_map.insert(args[1].clone(), args[2].clone());
                 Ok(Value::Map(Rc::new(new_map)))
             }
             "map.delete" => {
@@ -1511,11 +1502,8 @@ impl Interpreter {
                 let Value::Map(m) = &args[0] else {
                     return Err(err("map.delete requires a map as first argument"));
                 };
-                let Value::String(key) = &args[1] else {
-                    return Err(err("map.delete requires a string key"));
-                };
                 let mut new_map = (**m).clone();
-                new_map.remove(key.as_str());
+                new_map.remove(&args[1]);
                 Ok(Value::Map(Rc::new(new_map)))
             }
             "map.keys" => {
@@ -1525,7 +1513,7 @@ impl Interpreter {
                 let Value::Map(m) = &args[0] else {
                     return Err(err("map.keys requires a map"));
                 };
-                let keys: Vec<Value> = m.keys().map(|k| Value::String(k.clone())).collect();
+                let keys: Vec<Value> = m.keys().cloned().collect();
                 Ok(Value::List(Rc::new(keys)))
             }
             "map.values" => {
@@ -2214,10 +2202,12 @@ impl Interpreter {
                     Err(err(format!("no field '{field}' on tuple")))
                 }
             }
-            Value::Map(m) => m
-                .get(field)
-                .cloned()
-                .ok_or_else(|| err(format!("key '{field}' not found in map"))),
+            Value::Map(m) => {
+                let key_val = Value::String(field.to_string());
+                m.get(&key_val)
+                    .cloned()
+                    .ok_or_else(|| err(format!("key '{field}' not found in map")))
+            }
             _ => Err(err(format!("cannot access field '{field}' on {val}"))),
         }
     }
@@ -2348,7 +2338,8 @@ impl Interpreter {
             }
             (Pattern::Map(entries), Value::Map(map)) => {
                 for (key, pat) in entries {
-                    let Some(val) = map.get(key) else { return false; };
+                    let key_val = Value::String(key.clone());
+                    let Some(val) = map.get(&key_val) else { return false; };
                     if !self.try_bind_pattern(pat, val, env, outer_env) { return false; }
                 }
                 true

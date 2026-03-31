@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::ast::{Expr, Param};
@@ -13,7 +15,7 @@ pub enum Value {
     Bool(bool),
     String(String),
     List(Rc<Vec<Value>>),
-    Map(Rc<BTreeMap<String, Value>>),
+    Map(Rc<BTreeMap<Value, Value>>),
     Tuple(Vec<Value>),
     Record(String, Rc<BTreeMap<String, Value>>),
     Variant(String, Vec<Value>),
@@ -192,7 +194,11 @@ impl fmt::Display for Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "\"{k}\": {v}")?;
+                    if let Value::String(s) = k {
+                        write!(f, "\"{s}\": {v}")?;
+                    } else {
+                        write!(f, "{k}: {v}")?;
+                    }
                 }
                 write!(f, "}}")
             }
@@ -251,19 +257,126 @@ impl PartialEq for Value {
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
+            (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             _ => false,
         }
     }
 }
 
+impl Eq for Value {}
+
 impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let disc = |v: &Value| -> u8 {
+            match v {
+                Value::Unit => 0,
+                Value::Bool(_) => 1,
+                Value::Int(_) => 2,
+                Value::Float(_) => 3,
+                Value::String(_) => 4,
+                Value::List(_) => 5,
+                Value::Tuple(_) => 6,
+                Value::Map(_) => 7,
+                Value::Record(..) => 8,
+                Value::Variant(..) => 9,
+                Value::Channel(_) => 10,
+                Value::Handle(_) => 11,
+                Value::Closure(_) => 12,
+                Value::BuiltinFn(_) => 13,
+                Value::VariantConstructor(..) => 14,
+            }
+        };
+        let d1 = disc(self);
+        let d2 = disc(other);
+        if d1 != d2 {
+            return d1.cmp(&d2);
+        }
         match (self, other) {
-            (Value::Int(a), Value::Int(b)) => a.partial_cmp(b),
-            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
-            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
-            _ => None,
+            (Value::Unit, Value::Unit) => Ordering::Equal,
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Float(a), Value::Float(b)) => {
+                a.partial_cmp(b).unwrap_or_else(|| {
+                    // NaN handling: treat as equal for ordering purposes
+                    a.to_bits().cmp(&b.to_bits())
+                })
+            }
+            (Value::String(a), Value::String(b)) => a.cmp(b),
+            (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
+            (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
+            (Value::Map(a), Value::Map(b)) => {
+                a.iter().cmp(b.iter())
+            }
+            (Value::Record(na, fa), Value::Record(nb, fb)) => {
+                na.cmp(nb).then_with(|| fa.iter().cmp(fb.iter()))
+            }
+            (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
+                na.cmp(nb).then_with(|| fa.cmp(fb))
+            }
+            (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
+            _ => Ordering::Equal,
+        }
+    }
+}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Unit => {}
+            Value::Bool(b) => b.hash(state),
+            Value::Int(n) => n.hash(state),
+            Value::Float(f) => f.to_bits().hash(state),
+            Value::String(s) => s.hash(state),
+            Value::List(xs) => {
+                xs.len().hash(state);
+                for x in xs.iter() {
+                    x.hash(state);
+                }
+            }
+            Value::Tuple(vs) => {
+                vs.len().hash(state);
+                for v in vs {
+                    v.hash(state);
+                }
+            }
+            Value::Map(m) => {
+                m.len().hash(state);
+                for (k, v) in m.iter() {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Value::Record(name, fields) => {
+                name.hash(state);
+                for (k, v) in fields.iter() {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Value::Variant(name, fields) => {
+                name.hash(state);
+                fields.len().hash(state);
+                for f in fields {
+                    f.hash(state);
+                }
+            }
+            Value::Channel(ch) => ch.id.hash(state),
+            Value::Handle(h) => h.id.hash(state),
+            Value::Closure(_) => {} // not meaningfully hashable
+            Value::BuiltinFn(name) => name.hash(state),
+            Value::VariantConstructor(name, arity) => {
+                name.hash(state);
+                arity.hash(state);
+            }
         }
     }
 }

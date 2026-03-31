@@ -1915,3 +1915,112 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(3));
 }
+
+// ── Generic map keys ────────────────────────────────────────────────
+
+#[test]
+fn test_map_int_keys() {
+    let result = run(r#"
+fn main() {
+  let m = #{ 1: "one", 2: "two", 3: "three" }
+  map.get(m, 2)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("two".into())])
+    );
+}
+
+#[test]
+fn test_map_bool_keys() {
+    let result = run(r#"
+fn main() {
+  let m = #{ true: "yes", false: "no" }
+  map.get(m, false)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("no".into())])
+    );
+}
+
+#[test]
+fn test_map_mixed_key_operations() {
+    let result = run(r#"
+fn main() {
+  let m = #{ 1: "a", 2: "b" }
+  let m2 = map.set(m, 3, "c")
+  map.length(m2)
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_map_int_key_delete() {
+    let result = run(r#"
+fn main() {
+  let m = #{ 1: "a", 2: "b", 3: "c" }
+  let m2 = map.delete(m, 2)
+  map.length(m2)
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_map_keys_returns_non_string() {
+    let result = run(r#"
+fn main() {
+  let m = #{ 1: "one", 2: "two" }
+  map.keys(m)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+}
+
+#[test]
+fn test_map_tuple_keys() {
+    let result = run(r#"
+fn main() {
+  let m = #{ (0, 0): "origin", (1, 0): "right", (0, 1): "up" }
+  map.get(m, (1, 0))
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("right".into())])
+    );
+}
+
+#[test]
+fn test_map_string_keys_still_work() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "name": "Alice", "age": "30" }
+  map.get(m, "name")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("Alice".into())])
+    );
+}
+
+#[test]
+fn test_map_merge_mixed_keys() {
+    let result = run(r#"
+fn main() {
+  let m1 = #{ 1: "a", 2: "b" }
+  let m2 = #{ 2: "B", 3: "c" }
+  let merged = map.merge(m1, m2)
+  map.length(merged)
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
