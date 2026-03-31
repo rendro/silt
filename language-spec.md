@@ -1,16 +1,16 @@
 # Silt Language Spec — Draft v0.2
 
 > A minimal, statically-typed, expression-based language with CSP concurrency.
-> 13 keywords. Fully immutable. Pattern matching as the sole branching construct.
+> 14 keywords. Fully immutable. Pattern matching as the sole branching construct.
 > Implemented in Rust. File extension: `.silt`
 
 -----
 
-## Keywords (13)
+## Keywords (14)
 
 ```
 let  fn  type  trait  match  when  return
-pub  mod  import  as  else  where
+pub  mod  import  as  else  where  loop
 ```
 
 `_` is a wildcard pattern, not a keyword.
@@ -284,7 +284,54 @@ error handling, destructuring, or type narrowing beyond Result.
 
 -----
 
-## 6. Pipe Operator
+## 6. Loop Expression
+
+`loop` provides stack-safe iteration as an expression. It binds initial
+state, evaluates a body, and re-enters via `loop(new_values)`.
+
+```
+-- Sum 0..9
+let total = loop i = 0, acc = 0 {
+  match i >= 10 {
+    true -> acc
+    _ -> loop(i + 1, acc + i)
+  }
+}
+```
+
+### Bindings
+
+```
+loop x = init1, y = init2 {
+  -- x and y are available here
+  -- loop(new_x, new_y) re-enters with new values
+  -- any other expression terminates the loop and becomes its value
+}
+```
+
+Zero bindings for infinite-style loops:
+
+```
+loop {
+  match channel.receive(ch) {
+    None -> ()
+    msg -> { process(msg); loop() }
+  }
+}
+```
+
+### Semantics
+
+- `loop` is an expression — it returns a value, can be assigned with `let`
+- `loop(args)` re-enters the loop with new binding values
+- `loop(args)` must provide exactly as many arguments as bindings
+- Any expression that is not `loop(...)` terminates and becomes the result
+- `return` inside a loop body returns from the enclosing function
+- Stack-safe via trampolining (same mechanism as tail-call optimization)
+
+-----
+
+## 7. Pipe Operator
 
 ```
 let result =
@@ -298,7 +345,7 @@ Pipes pass the left side as the **first argument** to the right side.
 
 -----
 
-## 7. String Interpolation
+## 8. String Interpolation
 
 ```
 let greeting = "hello {name}, you are {age} years old"
@@ -310,7 +357,7 @@ Interpolated values must implement `Display`.
 
 -----
 
-## 8. Concurrency (CSP)
+## 9. Concurrency (CSP)
 
 All concurrency primitives are module-qualified: channels live in the `channel`
 module, tasks live in the `task` module. There are no concurrency keywords.
@@ -363,7 +410,7 @@ match channel.select([ch1, ch2]) {
 
 -----
 
-## 9. Modules & Visibility
+## 10. Modules & Visibility
 
 ```
 -- file: math.silt
@@ -385,7 +432,7 @@ Everything is private by default. `pub` exports.
 
 -----
 
-## 10. Error Handling
+## 11. Error Handling
 
 No exceptions. `Result` and `Option` are the only error mechanisms.
 
@@ -424,7 +471,7 @@ This desugars to match + early return of the error variant.
 
 -----
 
-## 11. Builtins
+## 12. Builtins
 
 ### Primitive types
 
@@ -451,7 +498,7 @@ let m = #{ "key": "value", "count": 42 }
 
 -----
 
-## 12. Standard Library (v1)
+## 13. Standard Library (v1)
 
 ### Builtin (always available, no import)
 
@@ -462,7 +509,7 @@ let m = #{ "key": "value", "count": 42 }
 |Module   |Provides                                   |
 |---------|-------------------------------------------|
 |`io`     |read_file, write_file, read_line, args     |
-|`list`   |map, filter, fold, each, find, zip, flatten|
+|`list`   |map, filter, fold, fold_until, unfold, each, find, zip, flatten|
 |`map`    |get, set, delete, keys, values, merge      |
 |`string` |split, join, trim, contains, replace       |
 |`int`    |parse, abs, min, max, to_float             |
@@ -503,7 +550,7 @@ let args = io.args()
 
 -----
 
-## 13. Comments
+## 14. Comments
 
 ```
 -- single line comment
@@ -516,7 +563,7 @@ let args = io.args()
 
 -----
 
-## 14. Testing
+## 15. Testing
 
 Built-in test framework. Tests are functions annotated with a naming convention.
 
@@ -544,11 +591,11 @@ Run with `silt test` or `silt test math_test.silt`.
 
 |Aspect         |Choice                                    |
 |---------------|------------------------------------------|
-|Keywords       |13                                        |
+|Keywords       |14                                        |
 |Branching      |`match` only + `when` guard statement     |
 |Types          |HM inference, algebraic + records + traits|
 |Mutability     |None (rebinding/shadowing ok)             |
-|Iteration      |`                                         |
+|Iteration      |`loop` expression, `list.map/filter/fold` |
 |Errors         |`Result`/`Option` + `?` operator          |
 |Concurrency    |`task.spawn`, typed `channel.new`, `channel.select`, handles|
 |Data structures|Records, tuples, List, Map                |

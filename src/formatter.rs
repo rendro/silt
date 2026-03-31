@@ -448,6 +448,29 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 format!("{{\n{}\n{}}}", inner.join("\n"), indent(depth))
             }
         }
+
+        ExprKind::Loop { bindings, body } => {
+            let body_str = format_expr(body, depth);
+            if bindings.is_empty() {
+                format!("loop {body_str}")
+            } else {
+                let binding_strs: Vec<String> = bindings
+                    .iter()
+                    .map(|(name, init)| format!("{name} = {}", format_expr(init, depth)))
+                    .collect();
+                format!("loop {} {body_str}", binding_strs.join(", "))
+            }
+        }
+
+        ExprKind::Recur(args) => {
+            if args.is_empty() {
+                "loop()".to_string()
+            } else {
+                let arg_strs: Vec<String> =
+                    args.iter().map(|a| format_expr(a, depth)).collect();
+                format!("loop({})", arg_strs.join(", "))
+            }
+        }
     }
 }
 

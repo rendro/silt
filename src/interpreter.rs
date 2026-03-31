@@ -7,7 +7,7 @@ use crate::ast::*;
 use crate::env::Env;
 use crate::module::ModuleLoader;
 use crate::scheduler::{Scheduler, TaskState};
-use crate::value::{Closure, TryReceiveResult, TrySendResult, Value};
+use crate::value::{Channel, Closure, TryReceiveResult, TrySendResult, Value};
 
 // ── Runtime error ────────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ pub enum RuntimeError {
     Error(String),
     Return(Value),
     TailCall(Rc<Closure>, Vec<Value>),
+    LoopRecur(Vec<Value>),
 }
 
 impl std::fmt::Debug for RuntimeError {
@@ -24,6 +25,9 @@ impl std::fmt::Debug for RuntimeError {
             RuntimeError::Return(val) => f.debug_tuple("Return").field(val).finish(),
             RuntimeError::TailCall(_, args) => {
                 f.debug_tuple("TailCall").field(&"<closure>").field(args).finish()
+            }
+            RuntimeError::LoopRecur(args) => {
+                f.debug_tuple("LoopRecur").field(args).finish()
             }
         }
     }
@@ -35,6 +39,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::Error(msg) => write!(f, "runtime error: {msg}"),
             RuntimeError::Return(_) => write!(f, "unexpected return outside function"),
             RuntimeError::TailCall(_, _) => write!(f, "unhandled tail call"),
+            RuntimeError::LoopRecur(_) => write!(f, "loop() used outside of loop body"),
         }
     }
 }
@@ -576,6 +581,51 @@ impl Interpreter {
             }
 
             ExprKind::Block(stmts) => self.eval_block_inner(stmts, env, tail),
+
+            ExprKind::Loop { bindings, body } => {
+                // Evaluate initial binding values
+                let mut current_vals: Vec<Value> = bindings
+                    .iter()
+                    .map(|(_, init)| self.eval(init, env))
+                    .collect::<Result<_>>()?;
+                let names: Vec<&str> = bindings.iter().map(|(n, _)| n.as_str()).collect();
+
+                loop {
+                    let loop_env = env.child();
+                    for (name, val) in names.iter().zip(current_vals.iter()) {
+                        loop_env.define((*name).to_string(), val.clone());
+                    }
+
+                    match self.eval_tail(body, &loop_env) {
+                        Ok(val) => return Ok(val),
+                        Err(RuntimeError::LoopRecur(new_vals)) => {
+                            if new_vals.len() != bindings.len() {
+                                return Err(err(format!(
+                                    "loop() expects {} argument(s), got {}",
+                                    bindings.len(),
+                                    new_vals.len()
+                                )));
+                            }
+                            current_vals = new_vals;
+                        }
+                        Err(RuntimeError::Return(val)) => {
+                            return Err(RuntimeError::Return(val));
+                        }
+                        Err(RuntimeError::TailCall(c, a)) => {
+                            return self.call_closure(&c, &a);
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+
+            ExprKind::Recur(args) => {
+                let arg_vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.eval(a, env))
+                    .collect::<Result<_>>()?;
+                Err(RuntimeError::LoopRecur(arg_vals))
+            }
         }
     }
 
@@ -695,6 +745,10 @@ impl Interpreter {
             "list.flat_map" if args.len() == 2 => Some(self.builtin_flat_map(&args[0], &args[1])),
             "list.any" if args.len() == 2 => Some(self.builtin_any(&args[0], &args[1])),
             "list.all" if args.len() == 2 => Some(self.builtin_all(&args[0], &args[1])),
+            "list.fold_until" if args.len() == 3 => {
+                Some(self.builtin_fold_until(&args[0], &args[1], &args[2]))
+            }
+            "list.unfold" if args.len() == 2 => Some(self.builtin_unfold(&args[0], &args[1])),
             _ => None,
         }
     }
@@ -811,6 +865,62 @@ impl Interpreter {
             }
         }
         Ok(Value::Bool(true))
+    }
+
+    fn builtin_fold_until(&self, list: &Value, init: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to list.fold_until must be a list"));
+        };
+        let mut acc = init.clone();
+        for item in xs.iter() {
+            let result = self.call_value(func, &[acc.clone(), item.clone()])?;
+            match &result {
+                Value::Variant(name, fields) if name == "Continue" && fields.len() == 1 => {
+                    acc = fields[0].clone();
+                }
+                Value::Variant(name, fields) if name == "Stop" && fields.len() == 1 => {
+                    return Ok(fields[0].clone());
+                }
+                _ => {
+                    return Err(err(
+                        "list.fold_until callback must return Continue(acc) or Stop(result)",
+                    ));
+                }
+            }
+        }
+        Ok(acc)
+    }
+
+    fn builtin_unfold(&self, seed: &Value, func: &Value) -> Result<Value> {
+        let mut state = seed.clone();
+        let mut result = Vec::new();
+        loop {
+            let step = self.call_value(func, &[state.clone()])?;
+            match &step {
+                Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+                    match &fields[0] {
+                        Value::Tuple(pair) if pair.len() == 2 => {
+                            result.push(pair[0].clone());
+                            state = pair[1].clone();
+                        }
+                        _ => {
+                            return Err(err(
+                                "list.unfold: Some must contain a (value, next_state) tuple",
+                            ));
+                        }
+                    }
+                }
+                Value::Variant(name, _) if name == "None" => {
+                    break;
+                }
+                _ => {
+                    return Err(err(
+                        "list.unfold callback must return Some((value, next_state)) or None",
+                    ));
+                }
+            }
+        }
+        Ok(Value::List(Rc::new(result)))
     }
 
     // ── Concurrency builtins ────────────────────────────────────────
@@ -1070,6 +1180,10 @@ impl Interpreter {
                 "Err".into(),
                 vec![Value::String("unexpected tail call".into())],
             )),
+            Err(RuntimeError::LoopRecur(_)) => Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String("loop() used outside of loop body".into())],
+            )),
         }
     }
 
@@ -1097,9 +1211,11 @@ impl Interpreter {
                         Err(RuntimeError::Error(msg)) => Err(msg),
                         Err(RuntimeError::Return(val)) => Ok(val),
                         Err(RuntimeError::TailCall(_, _)) => Err("unhandled tail call in task".into()),
+                        Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
                     }
                 }
                 Err(RuntimeError::Error(msg)) => Err(msg),
+                Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
             };
             *task.handle.result.borrow_mut() = Some(result);
             task.state = TaskState::Completed;
@@ -1657,6 +1773,10 @@ fn register_builtins(env: &Env) {
 
     env.define("None".into(), Value::Variant("None".into(), Vec::new()));
 
+    // Stop/Continue constructors for list.fold_until
+    env.define("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
+    env.define("Continue".into(), Value::VariantConstructor("Continue".into(), 1));
+
     // String module functions (available as builtins for now)
     env.define("string.split".into(), builtin("string.split", |args| {
         if args.len() != 2 {
@@ -2108,6 +2228,25 @@ fn register_builtins(env: &Env) {
         Err("list.all requires closure argument (use pipeline syntax)".into())
     }));
 
+    // Placeholder: actual closure-based list.fold_until is handled by try_collection_builtin
+    env.define("list.fold_until".into(), builtin("list.fold_until", |args| {
+        if args.len() != 3 {
+            return Err("list.fold_until takes 3 arguments (list, init, fn)".into());
+        }
+        let Value::List(_) = &args[0] else {
+            return Err("first argument must be a list".into());
+        };
+        Err("list.fold_until requires closure argument (use pipeline syntax)".into())
+    }));
+
+    // Placeholder: actual closure-based list.unfold is handled by try_collection_builtin
+    env.define("list.unfold".into(), builtin("list.unfold", |args| {
+        if args.len() != 2 {
+            return Err("list.unfold takes 2 arguments (seed, fn)".into());
+        }
+        Err("list.unfold requires closure argument (use pipeline syntax)".into())
+    }));
+
     env.define("list.contains".into(), builtin("list.contains", |args| {
         if args.len() != 2 {
             return Err("list.contains takes 2 arguments".into());
@@ -2515,9 +2654,11 @@ fn call_value_static(func: &Value, args: &[Value]) -> std::result::Result<Value,
                         Err(RuntimeError::Error(msg)) => Err(msg),
                         Err(RuntimeError::Return(val)) => Ok(val),
                         Err(RuntimeError::TailCall(_, _)) => Err("unhandled tail call".into()),
+                        Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
                     }
                 }
                 Err(RuntimeError::Error(msg)) => Err(msg),
+                Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
             }
         }
         Value::BuiltinFn(name, f) => f(args).map_err(|e| format!("{name}: {e}")),

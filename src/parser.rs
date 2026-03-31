@@ -925,6 +925,7 @@ impl Parser {
                 }
             }
             Token::Match => self.parse_match_expr(),
+            Token::Loop => self.parse_loop_expr(),
             Token::Fn => self.parse_fn_expr(),
             Token::Return => {
                 self.advance();
@@ -1238,6 +1239,61 @@ impl Parser {
             guard,
             body,
         })
+    }
+
+    // ── Loop expression ──────────────────────────────────────────────
+
+    fn parse_loop_expr(&mut self) -> Result<Expr> {
+        let span = self.span();
+        self.expect(&Token::Loop)?;
+
+        // Check for recur: `loop(args)` — LParen immediately (no newline)
+        if !self.has_newline_before() && self.at(&Token::LParen) {
+            let args = self.parse_call_args()?;
+            return Ok(Expr::new(ExprKind::Recur(args), span));
+        }
+
+        self.skip_nl();
+
+        // Zero-binding variant: `loop { body }`
+        if self.at(&Token::LBrace) {
+            let body = self.parse_block()?;
+            return Ok(Expr::new(
+                ExprKind::Loop {
+                    bindings: Vec::new(),
+                    body: Box::new(body),
+                },
+                span,
+            ));
+        }
+
+        // Binding variant: `loop x = init, y = init { body }`
+        let mut bindings = Vec::new();
+        loop {
+            self.skip_nl();
+            let (name, _) = self.expect_ident()?;
+            self.expect(&Token::Eq)?;
+            self.skip_nl();
+            let init = self.parse_expr()?;
+            bindings.push((name, init));
+            self.skip_nl();
+            if self.at(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        self.skip_nl();
+        let body = self.parse_block()?;
+
+        Ok(Expr::new(
+            ExprKind::Loop {
+                bindings,
+                body: Box::new(body),
+            },
+            span,
+        ))
     }
 
     // ── Fn expression ────────────────────────────────────────────────

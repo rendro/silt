@@ -16,6 +16,7 @@ pub enum Token {
     As,
     Else,
     Where,
+    Loop,
 
     // Literals
     Int(i64),
@@ -92,6 +93,7 @@ impl fmt::Display for Token {
             Token::As => write!(f, "as"),
             Token::Else => write!(f, "else"),
             Token::Where => write!(f, "where"),
+            Token::Loop => write!(f, "loop"),
             Token::Int(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
             Token::Bool(b) => write!(f, "{b}"),
@@ -422,6 +424,7 @@ impl Lexer {
             "as" => Token::As,
             "else" => Token::Else,
             "where" => Token::Where,
+            "loop" => Token::Loop,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             _ => Token::Ident(name),

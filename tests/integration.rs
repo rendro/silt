@@ -1528,3 +1528,314 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(42));
 }
+
+// ── Loop expression ─────────────────────────────────────────────────
+
+#[test]
+fn test_loop_sum() {
+    let result = run(r#"
+fn main() {
+  loop i = 0, acc = 0 {
+    match i >= 10 {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(45));
+}
+
+#[test]
+fn test_loop_collect_squares() {
+    let result = run(r#"
+fn main() {
+  loop i = 0, acc = [] {
+    match i >= 5 {
+      true -> acc
+      _ -> loop(i + 1, list.append(acc, i * i))
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(4),
+            Value::Int(9),
+            Value::Int(16),
+        ]))
+    );
+}
+
+#[test]
+fn test_loop_fibonacci() {
+    let result = run(r#"
+fn main() {
+  loop n = 10, a = 0, b = 1 {
+    match n == 0 {
+      true -> a
+      _ -> loop(n - 1, b, a + b)
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(55));
+}
+
+#[test]
+fn test_loop_single_binding() {
+    let result = run(r#"
+fn main() {
+  loop i = 0 {
+    match i >= 3 {
+      true -> i
+      _ -> loop(i + 1)
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_loop_as_expression() {
+    let result = run(r#"
+fn main() {
+  let total = loop i = 1, acc = 0 {
+    match i > 5 {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+  total * 2
+}
+    "#);
+    assert_eq!(result, Value::Int(30));
+}
+
+#[test]
+fn test_loop_with_pattern_matching() {
+    let result = run(r#"
+fn main() {
+  let items = [Some(1), None, Some(3), None, Some(5)]
+  loop xs = items, acc = 0 {
+    match xs {
+      [] -> acc
+      [head, ..tail] -> {
+        let add = match head {
+          Some(n) -> n
+          None -> 0
+        }
+        loop(tail, acc + add)
+      }
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_loop_arity_mismatch() {
+    let result = run_err(r#"
+fn main() {
+  loop x = 0, y = 0 {
+    loop(1)
+  }
+}
+    "#);
+    assert!(result.contains("expects 2 argument(s)"));
+}
+
+#[test]
+fn test_loop_nested() {
+    let result = run(r#"
+fn main() {
+  loop i = 0, total = 0 {
+    match i >= 3 {
+      true -> total
+      _ -> {
+        let inner = loop j = 0, sum = 0 {
+          match j >= 3 {
+            true -> sum
+            _ -> loop(j + 1, sum + 1)
+          }
+        }
+        loop(i + 1, total + inner)
+      }
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_loop_with_guardless_match() {
+    let result = run(r#"
+fn main() {
+  loop n = 1, acc = [] {
+    match {
+      n > 5 -> acc
+      n % 2 == 0 -> loop(n + 1, list.append(acc, n))
+      _ -> loop(n + 1, acc)
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![Value::Int(2), Value::Int(4)]))
+    );
+}
+
+// ── list.fold_until ────────────────────────────────────────────────
+
+#[test]
+fn test_fold_until_stop() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3, 4, 5]
+  |> list.fold_until(0) { acc, x ->
+    match acc + x > 6 {
+      true -> Stop(acc)
+      _ -> Continue(acc + x)
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_fold_until_all_continue() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3]
+  |> list.fold_until(0) { acc, x -> Continue(acc + x) }
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_fold_until_immediate_stop() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3]
+  |> list.fold_until(99) { acc, x -> Stop(acc) }
+}
+    "#);
+    assert_eq!(result, Value::Int(99));
+}
+
+#[test]
+fn test_fold_until_find_first_even() {
+    let result = run(r#"
+fn main() {
+  [1, 3, 5, 4, 6]
+  |> list.fold_until(None) { acc, x ->
+    match x % 2 == 0 {
+      true -> Stop(Some(x))
+      _ -> Continue(None)
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::Int(4)])
+    );
+}
+
+// ── list.unfold ─────────────────────────────────────────────────────
+
+#[test]
+fn test_unfold_range() {
+    let result = run(r#"
+fn main() {
+  list.unfold(1) { n ->
+    match n > 5 {
+      true -> None
+      _ -> Some((n, n + 1))
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5),
+        ]))
+    );
+}
+
+#[test]
+fn test_unfold_fibonacci() {
+    let result = run(r#"
+fn main() {
+  list.unfold((0, 1)) { state ->
+    let (a, b) = state
+    match a > 20 {
+      true -> None
+      _ -> Some((a, (b, a + b)))
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(5),
+            Value::Int(8),
+            Value::Int(13),
+        ]))
+    );
+}
+
+#[test]
+fn test_unfold_empty() {
+    let result = run(r#"
+fn main() {
+  list.unfold(0) { n -> None }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![])));
+}
+
+#[test]
+fn test_unfold_powers_of_two() {
+    let result = run(r#"
+fn main() {
+  list.unfold(1) { n ->
+    match n > 32 {
+      true -> None
+      _ -> Some((n, n * 2))
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(4),
+            Value::Int(8),
+            Value::Int(16),
+            Value::Int(32),
+        ]))
+    );
+}

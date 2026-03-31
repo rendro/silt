@@ -2803,6 +2803,22 @@ impl TypeChecker {
                 last_ty
             }
 
+            ExprKind::Loop { bindings, body } => {
+                let mut loop_env = env.child();
+                for (name, init) in bindings {
+                    let ty = self.infer_expr(init, env);
+                    loop_env.define(name.clone(), Scheme::mono(ty));
+                }
+                self.infer_expr(body, &mut loop_env)
+            }
+
+            ExprKind::Recur(args) => {
+                for arg in args {
+                    let _ty = self.infer_expr(arg, env);
+                }
+                self.fresh_var()
+            }
+
         }
     }
 

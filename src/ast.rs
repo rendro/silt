@@ -75,6 +75,15 @@ pub enum ExprKind {
     // Block
     Block(Vec<Stmt>),
 
+    // Loop
+    /// Loop expression: `loop x = init, y = init { body }`
+    Loop {
+        bindings: Vec<(String, Expr)>,
+        body: Box<Expr>,
+    },
+    /// Recur: `loop(args)` inside a loop body
+    Recur(Vec<Expr>),
+
     // Unit
     Unit,
 }
