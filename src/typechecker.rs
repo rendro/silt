@@ -975,6 +975,45 @@ impl TypeChecker {
             });
         }
 
+        // list.fold_until: (List(a), b, (b, a) -> Step(b)) -> b
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            let (step, stepv) = self.fresh_tv();
+            env.define("list.fold_until".into(), Scheme {
+                vars: vec![av, bv, stepv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        b.clone(),
+                        Type::Fun(vec![b.clone(), a], Box::new(step)),
+                    ],
+                    Box::new(b),
+                ),
+            });
+        }
+
+        // list.unfold: (a, (a) -> Option((b, a))) -> List(b)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.unfold".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        a.clone(),
+                        Type::Fun(
+                            vec![a.clone()],
+                            Box::new(Type::Generic("Option".into(), vec![
+                                Type::Tuple(vec![b.clone(), a]),
+                            ])),
+                        ),
+                    ],
+                    Box::new(Type::List(Box::new(b))),
+                ),
+            });
+        }
+
         // len removed from globals -- use list.length, string.length, map.length
 
         // ── Variant constructors ───────────────────────────────────────
@@ -1417,6 +1456,12 @@ impl TypeChecker {
             Box::new(Type::Float),
         )));
 
+        // int.to_string: (Int) -> String
+        env.define("int.to_string".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::String),
+        )));
+
         // ── float module ───────────────────────────────────────────────
 
         // float.parse: (String) -> Result(Float, String)
@@ -1459,6 +1504,18 @@ impl TypeChecker {
         env.define("float.max".into(), Scheme::mono(Type::Fun(
             vec![Type::Float, Type::Float],
             Box::new(Type::Float),
+        )));
+
+        // float.to_string: (Float) -> String  (also accepts (Float, Int) at runtime)
+        env.define("float.to_string".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::String),
+        )));
+
+        // float.to_int: (Float) -> Int
+        env.define("float.to_int".into(), Scheme::mono(Type::Fun(
+            vec![Type::Float],
+            Box::new(Type::Int),
         )));
 
         // ── io module ──────────────────────────────────────────────────

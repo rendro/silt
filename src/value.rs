@@ -18,7 +18,7 @@ pub enum Value {
     Record(String, Rc<BTreeMap<String, Value>>),
     Variant(String, Vec<Value>),
     Closure(Rc<Closure>),
-    BuiltinFn(String, fn(&[Value]) -> Result<Value, String>),
+    BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
     Channel(Rc<Channel>),
     Handle(Rc<TaskHandle>),
@@ -160,7 +160,7 @@ impl fmt::Debug for Value {
                 }
             }
             Value::Closure(_) => write!(f, "<closure>"),
-            Value::BuiltinFn(name, _) => write!(f, "<builtin:{name}>"),
+            Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
@@ -231,7 +231,7 @@ impl fmt::Display for Value {
                 }
             }
             Value::Closure(_) => write!(f, "<closure>"),
-            Value::BuiltinFn(name, _) => write!(f, "<builtin:{name}>"),
+            Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
