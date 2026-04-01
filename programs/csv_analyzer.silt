@@ -2,7 +2,7 @@
   CSV Analyzer -- Silt Language Ergonomics Evaluation
   ==================================================
 
-  Overall Rating: 8/10
+  Overall Rating: 8.5/10
 
   WHAT WAS EASY / PLEASANT:
   - Pipe chains (|>) are excellent for data transformation pipelines. They read
@@ -19,9 +19,10 @@
   - Guardless match replaces verbose `match bool { true -> ... }` patterns.
 
   REMAINING FRICTION:
-  - No Int/Float mixed arithmetic for +, -, / -- must explicitly convert with
-    int.to_float before adding/subtracting/dividing.
   - fold's 3-argument form in pipes is slightly confusing visually.
+
+  RESOLVED:
+  - Int/Float mixed arithmetic for +, -, /, % now auto-promotes to Float.
 -}
 
 -- ── Record type for per-column statistics ──────────────────────────

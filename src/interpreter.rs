@@ -2398,9 +2398,17 @@ fn eval_binary(left: Value, op: BinOp, right: Value) -> Result<Value> {
         (Value::Float(a), BinOp::Mul, Value::Float(b)) => Ok(Value::Float(a * b)),
         (Value::Float(a), BinOp::Div, Value::Float(b)) => Ok(Value::Float(a / b)),
 
-        // Mixed int/float
+        // Mixed int/float — auto-promote to float
         (Value::Int(a), BinOp::Mul, Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
         (Value::Float(a), BinOp::Mul, Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+        (Value::Int(a), BinOp::Add, Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
+        (Value::Float(a), BinOp::Add, Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+        (Value::Int(a), BinOp::Sub, Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+        (Value::Float(a), BinOp::Sub, Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+        (Value::Int(a), BinOp::Div, Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
+        (Value::Float(a), BinOp::Div, Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+        (Value::Int(a), BinOp::Mod, Value::Float(b)) => Ok(Value::Float(*a as f64 % b)),
+        (Value::Float(a), BinOp::Mod, Value::Int(b)) => Ok(Value::Float(a % *b as f64)),
 
         // String concatenation
         (Value::String(a), BinOp::Add, Value::String(b)) => {

@@ -1355,6 +1355,20 @@ fn main() {
     assert_eq!(result, Value::String("minus one".into()));
 }
 
+#[test]
+fn test_negative_float_pattern() {
+    let result = run(r#"
+fn main() {
+  let x = -3.14
+  match x {
+    -3.14 -> "neg pi"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("neg pi".into()));
+}
+
 // ── Pin operator (^) ────────────────────────────────────────────────
 
 #[test]
@@ -2210,4 +2224,42 @@ fn main() {
         errors.iter().any(|e| e.severity == silt::types::Severity::Error),
         "should catch Int vs String return type mismatch"
     );
+}
+
+// ── Mixed int/float arithmetic ──────────────────────────────────────
+
+#[test]
+fn test_mixed_int_float_add() {
+    let result = run(r#"
+fn main() { 1 + 2.5 }
+    "#);
+    assert_eq!(result, Value::Float(3.5));
+}
+
+#[test]
+fn test_mixed_float_int_sub() {
+    let result = run(r#"
+fn main() { 10.0 - 3 }
+    "#);
+    assert_eq!(result, Value::Float(7.0));
+}
+
+#[test]
+fn test_mixed_int_float_div() {
+    let result = run(r#"
+fn main() { 7 / 2.0 }
+    "#);
+    assert_eq!(result, Value::Float(3.5));
+}
+
+#[test]
+fn test_mixed_arithmetic_in_pipeline() {
+    let result = run(r#"
+fn main() {
+  let total = 100
+  let ratio = int.to_float(total) / 3.0
+  float.to_string(ratio, 2)
+}
+    "#);
+    assert_eq!(result, Value::String("33.33".into()));
 }
