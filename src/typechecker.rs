@@ -1462,38 +1462,6 @@ impl TypeChecker {
         }
 
         // map.get_in: (Map(k, v), List(k)) -> Option(v)
-        {
-            let (k, kv) = self.fresh_tv();
-            let (v, vv) = self.fresh_tv();
-            env.define("map.get_in".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::List(Box::new(k)),
-                    ],
-                    Box::new(Type::Generic("Option".into(), vec![v])),
-                ),
-            });
-        }
-
-        // map.set_in: (Map(k, v), List(k), v) -> Map(k, v)
-        {
-            let (k, kv) = self.fresh_tv();
-            let (v, vv) = self.fresh_tv();
-            env.define("map.set_in".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::List(Box::new(k.clone())),
-                        v.clone(),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-            });
-        }
-
         // ── channel module ─────────────────────────────────────────────
 
         // channel.new: (Int) -> Channel  (opaque; use fresh var)
