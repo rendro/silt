@@ -118,14 +118,6 @@ struct MethodEntry {
     is_auto_derived: bool,
 }
 
-/// Information about a trait implementation (legacy — being removed).
-#[derive(Debug, Clone)]
-struct TraitImplInfo {
-    trait_name: std::string::String,
-    target_type: std::string::String,
-    methods: Vec<(std::string::String, usize)>,
-    span: Span,
-}
 
 // ── The type checker ────────────────────────────────────────────────
 
@@ -142,8 +134,6 @@ pub struct TypeChecker {
     records: HashMap<std::string::String, RecordInfo>,
     /// Declared traits.
     traits: HashMap<std::string::String, TraitInfo>,
-    /// Trait implementations (legacy — being replaced by method_table).
-    trait_impls: Vec<TraitImplInfo>,
     /// Method table: (type_name, method_name) → method entry.
     method_table: HashMap<(std::string::String, std::string::String), MethodEntry>,
     /// Tracks which (trait_name, type_name) pairs have been implemented.
@@ -166,7 +156,6 @@ impl TypeChecker {
             variant_to_enum: HashMap::new(),
             records: HashMap::new(),
             traits: HashMap::new(),
-            trait_impls: Vec::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
             fn_where_clauses: HashMap::new(),
@@ -489,12 +478,6 @@ impl TypeChecker {
             ];
             for type_name in &primitive_types {
                 for trait_name in &all_traits {
-                    self.trait_impls.push(TraitImplInfo {
-                        trait_name: trait_name.to_string(),
-                        target_type: type_name.to_string(),
-                        methods: Vec::new(),
-                        span: dummy_span,
-                    });
                     self.trait_impl_set.insert((trait_name.to_string(), type_name.to_string()));
                 }
                 // Register method entries for each builtin trait method
@@ -511,12 +494,6 @@ impl TypeChecker {
             }
             for type_name in &["List", "Tuple", "Map"] {
                 for trait_name in &all_traits {
-                    self.trait_impls.push(TraitImplInfo {
-                        trait_name: trait_name.to_string(),
-                        target_type: type_name.to_string(),
-                        methods: Vec::new(),
-                        span: dummy_span,
-                    });
                     self.trait_impl_set.insert((trait_name.to_string(), type_name.to_string()));
                 }
                 for (method_name, method_type) in trait_methods {
@@ -581,46 +558,59 @@ impl TypeChecker {
     // ── Validate trait implementations ────────────────────────────────
 
     fn validate_trait_impls(&mut self) {
-        // Clone to avoid borrow issues
-        let impls = self.trait_impls.clone();
-        for impl_info in &impls {
-            // Skip builtin/auto-derived impls (registered with dummy span)
-            if impl_info.span.line == 0 && impl_info.span.col == 0 && impl_info.methods.is_empty() {
-                continue;
-            }
-            // Check that the trait exists
-            let Some(trait_info) = self.traits.get(&impl_info.trait_name) else {
+        // Validate using method_table + trait_impl_set (the new system).
+        let impl_pairs: Vec<(std::string::String, std::string::String)> =
+            self.trait_impl_set.iter().cloned().collect();
+        for (trait_name, type_name) in &impl_pairs {
+            // Check that the trait exists first.
+            let Some(trait_info) = self.traits.get(trait_name).cloned() else {
+                let span = self.method_table.iter()
+                    .find(|((t, _), _)| t == type_name)
+                    .map(|(_, e)| e.span)
+                    .unwrap_or(Span::new(0, 0));
                 self.error(
-                    format!("trait '{}' is not declared", impl_info.trait_name),
-                    impl_info.span,
+                    format!("trait '{trait_name}' is not declared"),
+                    span,
                 );
                 continue;
             };
 
-            // Check that all required methods are implemented
-            let trait_methods = trait_info.methods.clone();
-            for (method_name, trait_method_type) in &trait_methods {
-                if let Some((_, impl_arity)) =
-                    impl_info.methods.iter().find(|(n, _)| n == method_name)
-                {
-                    // Check arity matches
+            // Skip auto-derived impls (builtin traits on all types).
+            let is_auto = trait_info.methods.first()
+                .and_then(|(m, _)| self.method_table.get(&(type_name.clone(), m.clone())))
+                .map(|e| e.is_auto_derived)
+                .unwrap_or(false);
+            if is_auto {
+                continue;
+            }
+
+            // Check that all required methods are implemented with correct arity.
+            for (method_name, trait_method_type) in &trait_info.methods {
+                let key = (type_name.clone(), method_name.clone());
+                if let Some(entry) = self.method_table.get(&key) {
                     let expected_arity = count_params(trait_method_type);
-                    if *impl_arity != expected_arity {
+                    let actual_arity = count_params(&entry.method_type);
+                    if actual_arity != expected_arity {
                         self.error(
                             format!(
                                 "method '{}' in trait impl '{}' for '{}' has wrong arity: expected {}, got {}",
-                                method_name, impl_info.trait_name, impl_info.target_type, expected_arity, impl_arity
+                                method_name, trait_name, type_name, expected_arity, actual_arity
                             ),
-                            impl_info.span,
+                            entry.span,
                         );
                     }
                 } else {
+                    // Find a span for the error.
+                    let span = self.method_table.iter()
+                        .find(|((t, _), _)| t == type_name)
+                        .map(|(_, e)| e.span)
+                        .unwrap_or(Span::new(0, 0));
                     self.error(
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            impl_info.trait_name, impl_info.target_type, method_name
+                            trait_name, type_name, method_name
                         ),
-                        impl_info.span,
+                        span,
                     );
                 }
             }
@@ -2089,12 +2079,6 @@ impl TypeChecker {
         // the runtime supports Eq/Ord/Hash on all Value variants.
         let dummy_span = Span { line: 0, col: 0, offset: 0 };
         for trait_name in &["Equal", "Compare", "Hash", "Display"] {
-            self.trait_impls.push(TraitImplInfo {
-                trait_name: trait_name.to_string(),
-                target_type: td.name.clone(),
-                methods: Vec::new(),
-                span: dummy_span,
-            });
             self.trait_impl_set.insert((trait_name.to_string(), td.name.clone()));
         }
         // Register auto-derived method entries
@@ -2295,18 +2279,6 @@ impl TypeChecker {
             }
         }
 
-        // Register in both old and new structures.
-        let impl_methods: Vec<(std::string::String, usize)> = ti
-            .methods
-            .iter()
-            .map(|m| (m.name.clone(), m.params.len()))
-            .collect();
-        self.trait_impls.push(TraitImplInfo {
-            trait_name: ti.trait_name.clone(),
-            target_type: ti.target_type.clone(),
-            methods: impl_methods,
-            span: ti.span,
-        });
         self.trait_impl_set.insert(impl_key);
 
         for method in &ti.methods {
