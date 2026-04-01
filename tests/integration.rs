@@ -2463,3 +2463,79 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(2));
 }
+
+// ── map.get_in / map.set_in ─────────────────────────────────────────
+
+#[test]
+fn test_map_get_in() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "a": #{ "b": #{ "c": 42 } } }
+  map.get_in(m, ["a", "b", "c"])
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+}
+
+#[test]
+fn test_map_get_in_missing() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "a": #{ "b": 1 } }
+  map.get_in(m, ["a", "x"])
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}
+
+#[test]
+fn test_map_set_in() {
+    let result = run(r#"
+fn main() {
+  let m = #{}
+  let m = map.set_in(m, ["a", "b"], 42)
+  map.get_in(m, ["a", "b"])
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+}
+
+#[test]
+fn test_map_set_in_existing() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "a": #{ "b": 1, "c": 2 } }
+  let m = map.set_in(m, ["a", "b"], 99)
+  map.get_in(m, ["a", "b"])
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(99)]));
+}
+
+// ── regex.captures ──────────────────────────────────────────────────
+
+#[test]
+fn test_regex_captures() {
+    let result = run(r#"
+fn main() {
+  regex.captures("(\\w+)@(\\w+)", "user@host")
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![
+        Value::List(Rc::new(vec![
+            Value::String("user@host".into()),
+            Value::String("user".into()),
+            Value::String("host".into()),
+        ]))
+    ]));
+}
+
+#[test]
+fn test_regex_captures_no_match() {
+    let result = run(r#"
+fn main() {
+  regex.captures("(\\d+)", "no numbers")
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}

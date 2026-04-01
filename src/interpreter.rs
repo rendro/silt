@@ -1556,6 +1556,63 @@ impl Interpreter {
                 }
                 Ok(Value::Map(Rc::new(merged)))
             }
+            "map.get_in" => {
+                if args.len() != 2 { return Err(err("map.get_in takes 2 arguments (map, path)")); }
+                let Value::List(path) = &args[1] else {
+                    return Err(err("map.get_in: path must be a list"));
+                };
+                let mut current = args[0].clone();
+                for key in path.iter() {
+                    match &current {
+                        Value::Map(m) => {
+                            match m.get(key) {
+                                Some(v) => current = v.clone(),
+                                None => return Ok(Value::Variant("None".into(), Vec::new())),
+                            }
+                        }
+                        _ => return Ok(Value::Variant("None".into(), Vec::new())),
+                    }
+                }
+                Ok(Value::Variant("Some".into(), vec![current]))
+            }
+            "map.set_in" => {
+                if args.len() != 3 { return Err(err("map.set_in takes 3 arguments (map, path, value)")); }
+                let Value::List(path) = &args[1] else {
+                    return Err(err("map.set_in: path must be a list"));
+                };
+                if path.is_empty() {
+                    return Ok(args[2].clone());
+                }
+                fn set_nested(map: &Value, keys: &[Value], val: &Value) -> Value {
+                    if keys.is_empty() {
+                        return val.clone();
+                    }
+                    let key = &keys[0];
+                    let rest = &keys[1..];
+                    let inner = match map {
+                        Value::Map(m) => m.get(key).cloned().unwrap_or(Value::Map(Rc::new(BTreeMap::new()))),
+                        _ => Value::Map(Rc::new(BTreeMap::new())),
+                    };
+                    let new_inner = if rest.is_empty() {
+                        val.clone()
+                    } else {
+                        set_nested(&inner, rest, val)
+                    };
+                    match map {
+                        Value::Map(m) => {
+                            let mut new_map = (**m).clone();
+                            new_map.insert(key.clone(), new_inner);
+                            Value::Map(Rc::new(new_map))
+                        }
+                        _ => {
+                            let mut new_map = BTreeMap::new();
+                            new_map.insert(key.clone(), new_inner);
+                            Value::Map(Rc::new(new_map))
+                        }
+                    }
+                }
+                Ok(set_nested(&args[0], &path, &args[2]))
+            }
 
             // ── io module ───────────────────────────────────────────
             "io.read_file" => {
@@ -1696,6 +1753,25 @@ impl Interpreter {
                 };
                 let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
                 Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
+            }
+            "regex.captures" => {
+                if args.len() != 2 { return Err(err("regex.captures takes 2 arguments (pattern, text)")); }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.captures requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                match re.captures(text) {
+                    Some(caps) => {
+                        let groups: Vec<Value> = caps.iter()
+                            .map(|m| match m {
+                                Some(m) => Value::String(m.as_str().to_string()),
+                                None => Value::String(String::new()),
+                            })
+                            .collect();
+                        Ok(Value::Variant("Some".into(), vec![Value::List(Rc::new(groups))]))
+                    }
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
             }
 
             // ── json module ─────────────────────────────────────────
@@ -2714,6 +2790,8 @@ fn register_builtins(env: &Env) {
         "map.values",
         "map.length",
         "map.merge",
+        "map.get_in",
+        "map.set_in",
         "io.read_file",
         "io.write_file",
         "io.read_line",
@@ -2727,6 +2805,7 @@ fn register_builtins(env: &Env) {
         "regex.split",
         "regex.replace",
         "regex.replace_all",
+        "regex.captures",
         "json.parse",
         "json.stringify",
         "json.pretty",

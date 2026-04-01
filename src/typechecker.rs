@@ -1461,6 +1461,39 @@ impl TypeChecker {
             });
         }
 
+        // map.get_in: (Map(k, v), List(k)) -> Option(v)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.get_in".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::List(Box::new(k)),
+                    ],
+                    Box::new(Type::Generic("Option".into(), vec![v])),
+                ),
+            });
+        }
+
+        // map.set_in: (Map(k, v), List(k), v) -> Map(k, v)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.set_in".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::List(Box::new(k.clone())),
+                        v.clone(),
+                    ],
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
+                ),
+            });
+        }
+
         // ── channel module ─────────────────────────────────────────────
 
         // channel.new: (Int) -> Channel  (opaque; use fresh var)
@@ -1752,6 +1785,12 @@ impl TypeChecker {
         env.define("regex.replace_all".into(), Scheme::mono(Type::Fun(
             vec![Type::String, Type::String, Type::String],
             Box::new(Type::String),
+        )));
+
+        // regex.captures: (String, String) -> Option(List(String))
+        env.define("regex.captures".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Option".into(), vec![Type::List(Box::new(Type::String))])),
         )));
 
         // ── json module ─────────────────────────────────────────────────
