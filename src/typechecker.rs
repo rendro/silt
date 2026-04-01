@@ -1718,6 +1718,83 @@ impl TypeChecker {
                 ),
             });
         }
+
+        // ── regex module ────────────────────────────────────────────────
+
+        // regex.is_match: (String, String) -> Bool
+        env.define("regex.is_match".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // regex.find: (String, String) -> Option(String)
+        env.define("regex.find".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Option".into(), vec![Type::String])),
+        )));
+
+        // regex.find_all: (String, String) -> List(String)
+        env.define("regex.find_all".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
+        )));
+
+        // regex.split: (String, String) -> List(String)
+        env.define("regex.split".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
+        )));
+
+        // regex.replace: (String, String, String) -> String
+        env.define("regex.replace".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String, Type::String],
+            Box::new(Type::String),
+        )));
+
+        // regex.replace_all: (String, String, String) -> String
+        env.define("regex.replace_all".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String, Type::String],
+            Box::new(Type::String),
+        )));
+
+        // ── json module ─────────────────────────────────────────────────
+
+        // json.parse: (String) -> Result(a, String)
+        {
+            let (a, av) = self.fresh_tv();
+            let result_ty = Type::Generic("Result".into(), vec![a, Type::String]);
+            env.define("json.parse".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::String],
+                    Box::new(result_ty),
+                ),
+            });
+        }
+
+        // json.stringify: (a) -> String
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("json.stringify".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![a],
+                    Box::new(Type::String),
+                ),
+            });
+        }
+
+        // json.pretty: (a) -> String
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("json.pretty".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![a],
+                    Box::new(Type::String),
+                ),
+            });
+        }
     }
 
     // ── Register type declarations ──────────────────────────────────

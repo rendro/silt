@@ -2263,3 +2263,199 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("33.33".into()));
 }
+
+// ── Regex module ────────────────────────────────────────────────────
+
+#[test]
+fn test_regex_is_match() {
+    let result = run(r#"
+fn main() {
+  regex.is_match("\\d+", "abc 123 def")
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_regex_is_match_no_match() {
+    let result = run(r#"
+fn main() {
+  regex.is_match("\\d+", "no numbers here")
+}
+    "#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_regex_find() {
+    let result = run(r#"
+fn main() {
+  regex.find("\\d+", "abc 123 def 456")
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("123".into())]));
+}
+
+#[test]
+fn test_regex_find_all() {
+    let result = run(r#"
+fn main() {
+  regex.find_all("\\d+", "abc 123 def 456")
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::String("123".into()),
+        Value::String("456".into()),
+    ])));
+}
+
+#[test]
+fn test_regex_split() {
+    let result = run(r#"
+fn main() {
+  regex.split("\\s+", "hello   world   foo")
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::String("hello".into()),
+        Value::String("world".into()),
+        Value::String("foo".into()),
+    ])));
+}
+
+#[test]
+fn test_regex_replace() {
+    let result = run(r#"
+fn main() {
+  regex.replace("\\d+", "abc 123 def 456", "NUM")
+}
+    "#);
+    assert_eq!(result, Value::String("abc NUM def 456".into()));
+}
+
+#[test]
+fn test_regex_replace_all() {
+    let result = run(r#"
+fn main() {
+  regex.replace_all("\\d+", "abc 123 def 456", "NUM")
+}
+    "#);
+    assert_eq!(result, Value::String("abc NUM def NUM".into()));
+}
+
+// ── JSON module ─────────────────────────────────────────────────────
+
+#[test]
+fn test_json_parse_object() {
+    let result = run(r#"
+fn main() {
+  match json.parse("\{\"name\": \"Alice\", \"age\": 30\}") {
+    Ok(data) -> map.get(data, "name")
+    Err(e) -> None
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("Alice".into())]));
+}
+
+#[test]
+fn test_json_parse_array() {
+    let result = run(r#"
+fn main() {
+  match json.parse("[1, 2, 3]") {
+    Ok(data) -> list.length(data)
+    Err(_) -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_json_parse_error() {
+    let result = run(r#"
+fn main() {
+  match json.parse("not json") {
+    Ok(_) -> false
+    Err(_) -> true
+  }
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_json_stringify() {
+    let result = run(r#"
+fn main() {
+  let data = #{ "name": "Bob", "age": 25 }
+  json.stringify(data)
+}
+    "#);
+    // BTreeMap sorts keys, so output is deterministic
+    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    assert!(s.contains("\"name\""));
+    assert!(s.contains("\"Bob\""));
+    assert!(s.contains("\"age\""));
+}
+
+#[test]
+fn test_json_roundtrip() {
+    let result = run(r#"
+fn main() {
+  let original = #{ "x": 1, "y": 2 }
+  let text = json.stringify(original)
+  match json.parse(text) {
+    Ok(parsed) -> map.get(parsed, "x")
+    Err(_) -> None
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(1)]));
+}
+
+#[test]
+fn test_json_pretty() {
+    let result = run(r#"
+fn main() {
+  let data = #{ "a": 1 }
+  json.pretty(data)
+}
+    "#);
+    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    assert!(s.contains('\n'), "pretty output should have newlines");
+}
+
+#[test]
+fn test_json_null_handling() {
+    let result = run(r#"
+fn main() {
+  match json.parse("null") {
+    Ok(val) -> match val {
+      None -> "got none"
+      _ -> "other"
+    }
+    Err(_) -> "error"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("got none".into()));
+}
+
+#[test]
+fn test_json_nested() {
+    let result = run(r#"
+fn main() {
+  match json.parse("\{\"users\": [\{\"name\": \"A\"\}, \{\"name\": \"B\"\}]\}") {
+    Ok(data) -> {
+      match map.get(data, "users") {
+        Some(users) -> list.length(users)
+        None -> 0
+      }
+    }
+    Err(_) -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}

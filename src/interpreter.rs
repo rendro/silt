@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use regex::Regex;
+use serde_json;
+
 use crate::ast::*;
 use crate::env::Env;
 use crate::module::ModuleLoader;
@@ -1626,6 +1629,103 @@ impl Interpreter {
                 }
             }
 
+            // ── regex module ────────────────────────────────────────
+            "regex.is_match" => {
+                if args.len() != 2 {
+                    return Err(err("regex.is_match takes 2 arguments (pattern, text)"));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.is_match requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                Ok(Value::Bool(re.is_match(text)))
+            }
+            "regex.find" => {
+                if args.len() != 2 {
+                    return Err(err("regex.find takes 2 arguments (pattern, text)"));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.find requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                match re.find(text) {
+                    Some(m) => Ok(Value::Variant("Some".into(), vec![Value::String(m.as_str().to_string())])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "regex.find_all" => {
+                if args.len() != 2 {
+                    return Err(err("regex.find_all takes 2 arguments (pattern, text)"));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.find_all requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                let matches: Vec<Value> = re.find_iter(text)
+                    .map(|m| Value::String(m.as_str().to_string()))
+                    .collect();
+                Ok(Value::List(Rc::new(matches)))
+            }
+            "regex.split" => {
+                if args.len() != 2 {
+                    return Err(err("regex.split takes 2 arguments (pattern, text)"));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.split requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                let parts: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
+                Ok(Value::List(Rc::new(parts)))
+            }
+            "regex.replace" => {
+                if args.len() != 3 {
+                    return Err(err("regex.replace takes 3 arguments (pattern, text, replacement)"));
+                }
+                let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(err("regex.replace requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                Ok(Value::String(re.replace(text, replacement.as_str()).to_string()))
+            }
+            "regex.replace_all" => {
+                if args.len() != 3 {
+                    return Err(err("regex.replace_all takes 3 arguments (pattern, text, replacement)"));
+                }
+                let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(err("regex.replace_all requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
+            }
+
+            // ── json module ─────────────────────────────────────────
+            "json.parse" => {
+                if args.len() != 1 {
+                    return Err(err("json.parse takes 1 argument (string)"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("json.parse requires a string argument"));
+                };
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    Ok(v) => Ok(Value::Variant("Ok".into(), vec![json_to_value(v)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                }
+            }
+            "json.stringify" => {
+                if args.len() != 1 {
+                    return Err(err("json.stringify takes 1 argument"));
+                }
+                let j = value_to_json(&args[0]);
+                Ok(Value::String(j.to_string()))
+            }
+            "json.pretty" => {
+                if args.len() != 1 {
+                    return Err(err("json.pretty takes 1 argument"));
+                }
+                let j = value_to_json(&args[0]);
+                Ok(Value::String(serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())))
+            }
+
             _ => Err(err(format!("unknown builtin: {name}"))),
         }
     }
@@ -2444,6 +2544,82 @@ fn is_truthy(val: &Value) -> bool {
     }
 }
 
+// ── JSON helpers ────────────────────────────────────────────────────
+
+fn json_to_value(v: serde_json::Value) -> Value {
+    match v {
+        serde_json::Value::Null => Value::Variant("None".into(), Vec::new()),
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::Float(f)
+            } else {
+                Value::Float(0.0)
+            }
+        }
+        serde_json::Value::String(s) => Value::String(s),
+        serde_json::Value::Array(arr) => {
+            Value::List(Rc::new(arr.into_iter().map(json_to_value).collect()))
+        }
+        serde_json::Value::Object(obj) => {
+            let map: BTreeMap<Value, Value> = obj
+                .into_iter()
+                .map(|(k, v)| (Value::String(k), json_to_value(v)))
+                .collect();
+            Value::Map(Rc::new(map))
+        }
+    }
+}
+
+fn value_to_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Int(n) => serde_json::Value::Number((*n).into()),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::List(xs) => serde_json::Value::Array(xs.iter().map(value_to_json).collect()),
+        Value::Map(m) => {
+            let obj: serde_json::Map<std::string::String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.to_string(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Tuple(vs) => serde_json::Value::Array(vs.iter().map(value_to_json).collect()),
+        Value::Record(_name, fields) => {
+            let obj: serde_json::Map<std::string::String, serde_json::Value> = fields
+                .iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Variant(name, fields) if name == "None" && fields.is_empty() => {
+            serde_json::Value::Null
+        }
+        Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+            value_to_json(&fields[0])
+        }
+        Value::Variant(name, fields) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("variant".into(), serde_json::Value::String(name.clone()));
+            if !fields.is_empty() {
+                obj.insert(
+                    "fields".into(),
+                    serde_json::Value::Array(fields.iter().map(value_to_json).collect()),
+                );
+            }
+            serde_json::Value::Object(obj)
+        }
+        Value::Unit => serde_json::Value::Null,
+        Value::VariantConstructor(name, _) => serde_json::Value::String(name.clone()),
+        _ => serde_json::Value::Null, // Closure, BuiltinFn, Channel, Handle
+    }
+}
+
 // ── Builtins ─────────────────────────────────────────────────────────
 
 fn register_builtins(env: &Env) {
@@ -2543,6 +2719,15 @@ fn register_builtins(env: &Env) {
         "test.assert",
         "test.assert_eq",
         "test.assert_ne",
+        "regex.is_match",
+        "regex.find",
+        "regex.find_all",
+        "regex.split",
+        "regex.replace",
+        "regex.replace_all",
+        "json.parse",
+        "json.stringify",
+        "json.pretty",
     ];
 
     for name in builtin_names {

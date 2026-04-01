@@ -34,6 +34,7 @@ pub type ParsedModule = (Program, HashSet<String>, HashMap<String, Vec<String>>)
 /// in the global environment rather than loaded from files.
 const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
+    "regex", "json",
 ];
 
 impl ModuleLoader {
