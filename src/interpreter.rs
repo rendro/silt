@@ -1598,33 +1598,48 @@ impl Interpreter {
 
             // ── test module ─────────────────────────────────────────
             "test.assert" => {
-                if args.len() != 1 {
-                    return Err(err("test.assert takes 1 argument"));
+                if args.is_empty() || args.len() > 2 {
+                    return Err(err("test.assert takes 1-2 arguments (value) or (value, message)"));
                 }
                 if is_truthy(&args[0]) {
                     Ok(Value::Unit)
                 } else {
-                    Err(err(format!("assertion failed: {:?}", args[0])))
+                    let msg = if args.len() == 2 {
+                        format!("assertion failed: {}", args[1])
+                    } else {
+                        format!("assertion failed: {:?}", args[0])
+                    };
+                    Err(err(msg))
                 }
             }
             "test.assert_eq" => {
-                if args.len() != 2 {
-                    return Err(err("test.assert_eq takes 2 arguments"));
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(err("test.assert_eq takes 2-3 arguments (left, right) or (left, right, message)"));
                 }
                 if args[0] == args[1] {
                     Ok(Value::Unit)
                 } else {
-                    Err(err(format!("assertion failed: {:?} != {:?}", args[0], args[1])))
+                    let msg = if args.len() == 3 {
+                        format!("assertion failed: {}: {:?} != {:?}", args[2], args[0], args[1])
+                    } else {
+                        format!("assertion failed: {:?} != {:?}", args[0], args[1])
+                    };
+                    Err(err(msg))
                 }
             }
             "test.assert_ne" => {
-                if args.len() != 2 {
-                    return Err(err("test.assert_ne takes 2 arguments"));
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(err("test.assert_ne takes 2-3 arguments (left, right) or (left, right, message)"));
                 }
                 if args[0] != args[1] {
                     Ok(Value::Unit)
                 } else {
-                    Err(err(format!("assertion failed: {:?} == {:?}", args[0], args[1])))
+                    let msg = if args.len() == 3 {
+                        format!("assertion failed: {}: {:?} == {:?}", args[2], args[0], args[1])
+                    } else {
+                        format!("assertion failed: {:?} == {:?}", args[0], args[1])
+                    };
+                    Err(err(msg))
                 }
             }
 

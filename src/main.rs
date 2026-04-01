@@ -141,22 +141,37 @@ fn run_file(path: &str) {
     }
 }
 
-fn run_tests(file: Option<&str>, filter: Option<String>) {
-    let paths: Vec<String> = if let Some(f) = file {
-        vec![f.to_string()]
-    } else {
-        // Find all *_test.silt files in current directory
-        match fs::read_dir(".") {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.path().to_string_lossy().to_string())
-                .filter(|p| p.ends_with("_test.silt") || p.ends_with(".test.silt"))
-                .collect(),
-            Err(e) => {
-                eprintln!("error reading directory: {e}");
-                process::exit(1);
+fn find_test_files(dir: &Path) -> Vec<String> {
+    let mut results = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else { return results };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            results.extend(find_test_files(&path));
+        } else {
+            let name = path.to_string_lossy().to_string();
+            if name.ends_with("_test.silt") || name.ends_with(".test.silt") {
+                results.push(name);
             }
         }
+    }
+    results.sort();
+    results
+}
+
+fn run_tests(file: Option<&str>, filter: Option<String>) {
+    let paths: Vec<String> = if let Some(f) = file {
+        let p = Path::new(f);
+        if p.is_dir() {
+            // silt test dir/ — find all test files in directory recursively
+            find_test_files(p)
+        } else {
+            // silt test file.silt — single file
+            vec![f.to_string()]
+        }
+    } else {
+        // silt test — find all test files in current directory recursively
+        find_test_files(Path::new("."))
     };
 
     if paths.is_empty() {

@@ -2493,3 +2493,60 @@ fn main() {
     "#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
+
+// ── Assertion messages ──────────────────────────────────────────────
+
+#[test]
+fn test_assert_with_message() {
+    let err = run_err(r#"
+fn main() {
+  test.assert(false, "should be true")
+}
+    "#);
+    assert!(err.contains("should be true"), "error should contain message: {err}");
+}
+
+#[test]
+fn test_assert_eq_with_message() {
+    let err = run_err(r#"
+fn main() {
+  test.assert_eq(1, 2, "1 + 0")
+}
+    "#);
+    assert!(err.contains("1 + 0"), "error should contain context: {err}");
+    assert!(err.contains("1 != 2") || err.contains("!= 2"), "error should show values: {err}");
+}
+
+#[test]
+fn test_assert_ne_with_message() {
+    let err = run_err(r#"
+fn main() {
+  test.assert_ne(5, 5, "should differ")
+}
+    "#);
+    assert!(err.contains("should differ"), "error should contain message: {err}");
+}
+
+#[test]
+fn test_assert_without_message_still_works() {
+    run_ok(r#"
+fn main() {
+  test.assert(true)
+  test.assert_eq(1, 1)
+  test.assert_ne(1, 2)
+}
+    "#);
+}
+
+#[test]
+fn test_parameterized_test_pattern() {
+    // Demonstrates the idiomatic parameterized test pattern
+    run_ok(r#"
+fn main() {
+  let cases = [(1, 2, 3), (0, 0, 0), (10, -10, 0)]
+  cases |> list.each { (a, b, expected) ->
+    test.assert_eq(a + b, expected, "{a} + {b}")
+  }
+}
+    "#);
+}
