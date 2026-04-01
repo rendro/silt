@@ -3,7 +3,7 @@
 
   === Friction Report ===
 
-  Overall rating: 8/10
+  Overall rating: 8.5/10
 
   Loop expression: 9/10 naturalness
     The `loop db = #{} { ... }` expression handles the REPL loop cleanly.
@@ -18,46 +18,13 @@
     Immutability is natural with the loop expression -- each iteration
     rebinds state. No accumulator-passing ceremony.
 
+  Serialization: 9/10
+    json.stringify / json.pretty / json.parse handle SAVE/LOAD trivially.
+    No manual serialize/deserialize helpers needed.
+
   REMAINING FRICTION:
-  - No JSON stdlib for serialization -- must serialize maps manually.
   - Pattern matching is the only branching construct (minor).
 -}
-
--- Serialize a map to a simple "key=value\n" format
-fn serialize(db) {
-  let keys = map.keys(db)
-  keys
-  |> list.map { k ->
-    let val = map.get(db, k) |> result.unwrap_or("")
-    "{k}={val}"
-  }
-  |> string.join("\n")
-}
-
--- Deserialize "key=value\n" format back to a map
-fn deserialize(text, db) {
-  let lines = string.split(text, "\n")
-  lines |> list.fold(db) { acc, line ->
-    let trimmed = string.trim(line)
-    match string.contains(trimmed, "=") {
-      true -> {
-        let parts = string.split(trimmed, "=")
-        match parts {
-          [key, ..rest] -> {
-            -- Rejoin rest with "=" in case value contained "="
-            let value = string.join(rest, "=")
-            match string.trim(key) {
-              "" -> acc
-              k -> map.set(acc, k, value)
-            }
-          }
-          _ -> acc
-        }
-      }
-      false -> acc
-    }
-  }
-}
 
 -- Parse and execute a single command, return the (possibly updated) db
 -- Returns None to signal QUIT, Some(db) to continue
@@ -126,7 +93,7 @@ fn execute(input, db) {
     }
 
     ["SAVE", filename, .._] -> {
-      let data = serialize(db)
+      let data = json.pretty(db)
       match io.write_file(filename, data) {
         Ok(_) -> println("OK (saved to {filename})")
         Err(e) -> println("ERR: {e}")
@@ -136,11 +103,16 @@ fn execute(input, db) {
 
     ["LOAD", filename, .._] -> {
       match io.read_file(filename) {
-        Ok(content) -> {
-          let new_db = deserialize(content, #{})
-          let n = map.length(new_db)
-          println("OK (loaded {n} key(s) from {filename})")
-          Some(new_db)
+        Ok(content) -> match json.parse(content) {
+          Ok(new_db) -> {
+            let n = map.length(new_db)
+            println("OK (loaded {n} key(s) from {filename})")
+            Some(new_db)
+          }
+          Err(e) -> {
+            println("ERR: invalid JSON: {e}")
+            Some(db)
+          }
         }
         Err(e) -> {
           println("ERR: {e}")

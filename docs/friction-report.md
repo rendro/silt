@@ -8,7 +8,7 @@ Compiled from 10 evaluation programs, 9 examples, and full source audit. 2026-03
 
 **Final Rating: 8.5 / 10**
 
-Silt is a small, expression-oriented functional language with 14 keywords, 10 globals, and 93 module-qualified builtins across 11 modules. It compiles to a tree-walking interpreter written in ~12,800 lines of Rust, backed by 275 test functions.
+Silt is a small, expression-oriented functional language with 14 keywords, 10 globals, and 102 module-qualified builtins across 13 modules. It compiles to a tree-walking interpreter written in ~12,800 lines of Rust, backed by 275 test functions.
 
 All 10 evaluation programs have been rewritten to use the current stdlib. No legacy helper functions remain. No `match true { ... }` workarounds remain. No `flatten([acc, [item]])` list-building workarounds remain. The programs now use `list.get`, `list.append`, `list.concat`, `list.sort_by`, `list.take`, `list.enumerate`, `list.any`, `list.all`, `string.index_of`, `string.slice`, `string.pad_left`, `string.pad_right`, `float.min`, `float.max`, guardless match, and `try()`.
 
@@ -46,20 +46,20 @@ All programs have been rewritten to use the full current stdlib. Ratings reflect
 
 | # | Program | Rating | Highlight | Remaining friction |
 |---|---------|:------:|-----------|-------------------|
-| 1 | `link_checker.silt` | 8.0 | Pipe chains for link extraction; `string.index_of` + `string.slice` for URL parsing; guardless match in `validate_url`; `when`/`else` for CLI args | No regex -- manual split-on-`](` for link extraction |
-| 2 | `csv_analyzer.silt` | 8.0 | Record types for column stats; `list.get` for indexed access; `string.pad_right` for table formatting; `float.min`/`float.max` for aggregation; guardless match | No float formatting control; `format_float` helper needed for 2 decimal places |
-| 3 | `concurrent_processor.silt` | 8.0 | Clean channel/task fan-out; `list.append` for result collection; `channel.select` with priority channels; try_receive polling | Recursive `worker_loop` and `collect_results` -- channel drain ceremony |
-| 4 | `kvstore.silt` | 7.0 | Map operations for key-value store; pattern matching on command strings; serialize/deserialize with fold | Recursive REPL with accumulator threading; no JSON stdlib |
-| 5 | `expr_eval.silt` | 8.5 | Recursive ADTs; deep pattern matching; or-patterns for RPN operators; `list.concat` for stack operations; range patterns for complexity | No negative literal patterns; recursive loop ceremony |
-| 6 | `todo.silt` | 7.5 | Record update syntax (`t.{ done: !t.done }`); `list.append` for adding items; `list.any` for existence checks; guardless match | Recursive REPL ceremony; no int.to_string (use interpolation) |
-| 7 | `text_stats.silt` | 8.0 | `list.sort_by` + `list.take` for top-N; `list.enumerate` for numbered output; guardless match for comparisons; word frequency via fold + map | No float formatting; recursive loop ceremony |
-| 8 | `config_parser.silt` | 7.5 | Algebraic types for line classification; guardless match for cascading conditions; `string.index_of` + `string.slice` for parsing; `list.append` for error collection | Nested map update ceremony; wide fold accumulator tuples |
-| 9 | `pipeline.silt` | 8.5 | Pipe operator showcase; `list.sort_by`, `list.take`, `list.enumerate`, `string.pad_left`; higher-order function factories; 12 distinct pipeline demos | No early break from fold |
-| 10 | `test_suite.silt` | 7.0 | Self-testing mini framework with `try()` for catching failures; `list.append` for result collection; `list.any`/`list.all` tests; guardless match | No setup/teardown, no test filtering, no parameterized tests |
+| 1 | `link_checker.silt` | 9.0 | `regex.find_all` for markdown link extraction; `regex.is_match` for URL validation; pipes + guardless match | No regex capture groups (minor) |
+| 2 | `csv_analyzer.silt` | 8.5 | Record types for column stats; `float.to_string(f, 2)` for formatting; `float.min`/`float.max`; mixed int/float arithmetic | Fold's 3-arg form in pipes slightly confusing |
+| 3 | `concurrent_processor.silt` | 8.5 | `loop` for channel drain + worker loops; `channel.select` with pin; inline `loop` in `task.spawn` | Cooperative scheduler limits parallelism |
+| 4 | `kvstore.silt` | 8.5 | `loop` for REPL; `json.pretty`/`json.parse` for SAVE/LOAD; generic map keys | None significant |
+| 5 | `expr_eval.silt` | 8.0 | Recursive ADTs; deep pattern matching; or-patterns for RPN; negative literal patterns | None significant |
+| 6 | `todo.silt` | 8.0 | `loop` for REPL; record update syntax; `list.append`; `list.any`; guardless match | None significant |
+| 7 | `text_stats.silt` | 7.5 | `list.sort_by` + `list.take` for top-N; `list.enumerate`; `float.to_string(f, 2)` | Type checker gaps on some builtins |
+| 8 | `config_parser.silt` | 7.0 | Algebraic types for line classification; guardless match; `string.index_of` + `string.slice` | Nested map update ceremony; wide fold tuples |
+| 9 | `pipeline.silt` | 8.0 | Pipe operator showcase; 12 distinct pipeline demos; `list.sort_by`, `list.take`, `list.enumerate` | `fold_until` available but not used here |
+| 10 | `test_suite.silt` | 7.0 | `try()` for catching failures; `--filter` and `skip_test_` in runner | No parameterized tests; no setup/teardown |
 
-**Average: 7.8 / 10**
+**Average: 8.0 / 10**
 
-The per-program average is held down by the two REPL programs (kvstore, todo) which pay the recursive loop tax most heavily, and the test framework which is limited by missing test infrastructure features. The data processing programs (csv_analyzer, text_stats, pipeline) and the ADT-heavy programs (expr_eval, link_checker) score highest because Silt's strengths -- pipes, pattern matching, and module builtins -- map directly to those problem shapes.
+The floor has risen: no program scores below 7.0. The highest scores (link_checker 9.0, csv_analyzer/concurrent_processor/kvstore 8.5) reflect programs where silt's strengths -- pipes, pattern matching, `loop`, regex, JSON -- map directly to the problem. The remaining friction is structural (cooperative concurrency, fold ergonomics) rather than missing features.
 
 ---
 
@@ -97,10 +97,6 @@ loop {
 }
 ```
 
-### No regex
-
-Text extraction tasks (link_checker) must use `string.split`, `string.index_of`, and `string.slice` composition. Workable but verbose compared to a single regex.
-
 ---
 
 ## 4. Language Snapshot
@@ -115,7 +111,7 @@ Text extraction tasks (link_checker) must use `string.split`, `string.index_of`,
 
 `print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`
 
-### Module builtins (93 across 11 modules)
+### Module builtins (102 across 13 modules)
 
 | Module | Count | Functions |
 |--------|:-----:|-----------|
@@ -130,6 +126,8 @@ Text extraction tasks (link_checker) must use `string.split`, `string.index_of`,
 | **channel** | 7 | new, send, receive, close, select, try_send, try_receive |
 | **task** | 3 | spawn, join, cancel |
 | **test** | 3 | assert, assert_eq, assert_ne |
+| **regex** | 6 | is_match, find, find_all, split, replace, replace_all |
+| **json** | 3 | parse, stringify, pretty |
 
 ### Pattern types (13)
 
@@ -300,4 +298,4 @@ Pin keeps the pattern concise and inline.
 
 ---
 
-*Silt has reached a coherent final state. Fourteen keywords, ten globals, ninety-three module builtins. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. The remaining friction -- no regex, no JSON, cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*
+*Silt has reached a coherent final state. Fourteen keywords, ten globals, one hundred and two module builtins across thirteen modules. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. `regex` and `json` modules cover text extraction and data interchange. The remaining friction -- cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*

@@ -2,7 +2,7 @@
   Silt Ergonomics Evaluation: Markdown Link Checker
   ==================================================
 
-  Rating: 8/10
+  Rating: 9/10
 
   WHAT WAS EASY / PLEASANT:
   - Pipe chains (|> filter, |> map, |> each) are genuinely delightful for list
@@ -12,43 +12,37 @@
   - The when/else guard for early returns is a nice alternative to nested ifs.
   - Result/Option as first-class types with ? propagation is solid.
   - Immutability by default + shadowing is a good design choice.
-  - string.index_of + string.slice make link parsing clean and correct.
   - Guardless match replaces verbose `match true { _ when ... }` patterns.
+  - regex.find_all replaced a fragile split/zip/last approach for link extraction
+    with a single pattern match — extract_link_pairs went from 25 lines to 12.
+  - regex.is_match simplifies URL scheme validation into one readable check.
 
   REMAINING FRICTION:
-  - No regex or pattern matching on strings. Even a basic glob or find_all would
-    help enormously for text extraction tasks.
+  - No regex capture groups. regex.find_all returns full matches, so a small
+    amount of string.index_of/string.slice is still needed to split matches.
   - No early break/continue in |> each or |> fold.
   - List patterns only support [head, ..tail] (rest at end), not [..init, last].
   - (The `loop` keyword is available if iterative algorithms are needed.)
 -}
 
--- Extract link text and URL from a segment pair around "]("
--- Uses string.index_of + string.slice for precise extraction.
+-- Extract link text and URL from markdown [text](url) patterns.
+-- Uses regex.find_all to locate links, then string ops to split each match.
 fn extract_link_pairs(line) {
-  let segments = string.split(line, "](")
+  let matches = regex.find_all("\\[[^\\]]*\\]\\([^)]*\\)", line)
 
-  match segments {
-    [_single] -> []
-    _ -> {
-      segments
-        |> list.zip(list.tail(segments))
-        |> list.map { pair ->
-          let (before, after) = pair
-          -- Link text: everything after the last "[" in 'before'
-          let text_parts = string.split(before, "[")
-          let text = match list.last(text_parts) {
-            Some(t) -> t
-            None -> ""
-          }
-          -- URL: everything before the first ")" in 'after'
-          let url = match string.index_of(after, ")") {
-            Some(idx) -> string.trim(string.slice(after, 0, idx))
-            None -> string.trim(after)
-          }
-          (text, url)
-        }
+  matches |> list.map { m ->
+    -- m is e.g. "[link text](https://example.com)"
+    -- Text: between first "[" and "]("
+    let text = match string.index_of(m, "](") {
+      Some(idx) -> string.slice(m, 1, idx)
+      None -> ""
     }
+    -- URL: between "](" and trailing ")"
+    let url = match string.index_of(m, "](") {
+      Some(idx) -> string.trim(string.slice(m, idx + 2, string.length(m) - 1))
+      None -> ""
+    }
+    (text, url)
   }
 }
 
@@ -56,8 +50,8 @@ fn extract_link_pairs(line) {
 fn validate_url(url) {
   match {
     string.length(url) == 0 -> Err("empty URL")
-    string.starts_with(url, "https://") -> Ok("https")
-    string.starts_with(url, "http://") -> Ok("http")
+    regex.is_match("^https://", url) -> Ok("https")
+    regex.is_match("^http://", url) -> Ok("http")
     string.starts_with(url, "/") -> Ok("absolute path")
     _ -> Err("invalid scheme")
   }

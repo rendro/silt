@@ -518,10 +518,12 @@ let m = #{ "key": "value", "count": 42 }
 |`option` |map, unwrap_or, to_result                  |
 |`test`   |assert, assert_eq, assert_ne, run          |
 |`channel`|new, send, receive, close, select, try_send, try_receive|
+|`regex`  |is_match, find, find_all, split, replace, replace_all|
+|`json`   |parse, stringify, pretty                |
 
 ### Not in v1 (future)
 
-JSON, HTTP, networking, package manager, FFI
+HTTP, networking, package manager, FFI
 
 ### I/O examples
 
@@ -613,5 +615,5 @@ Run with `silt test` or `silt test math_test.silt`.
 1. **REPL**
 1. **Bytecode VM** (v2 — performance)
 1. **FFI** (interop with Rust/C)
-1. **JSON / HTTP stdlib modules**
+1. **HTTP stdlib module**
 1. **LSP / editor support** (Zed, VSCode)

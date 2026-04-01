@@ -1859,3 +1859,210 @@ fn main() {
   -- "got from ch2: from ch2"
 }
 ```
+
+-----
+
+## `regex` Module
+
+Regular expression matching and replacement. Patterns are standard regex strings,
+compiled per call. The function is named `is_match` (not `match`) because `match`
+is a keyword.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `regex.is_match` | `regex.is_match(pattern, text) -> Bool` | Test whether the pattern matches anywhere in the text |
+| `regex.find` | `regex.find(pattern, text) -> Option(String)` | Return the first match, or `None` |
+| `regex.find_all` | `regex.find_all(pattern, text) -> List(String)` | Return all non-overlapping matches |
+| `regex.split` | `regex.split(pattern, text) -> List(String)` | Split text on every match of the pattern |
+| `regex.replace` | `regex.replace(pattern, text, replacement) -> String` | Replace the first match |
+| `regex.replace_all` | `regex.replace_all(pattern, text, replacement) -> String` | Replace all matches |
+
+### `regex.is_match`
+
+```
+regex.is_match(pattern, text) -> Bool
+```
+
+Returns `true` if `pattern` matches anywhere in `text`.
+
+```silt
+fn main() {
+  regex.is_match("\\d+", "order 42")   -- true
+  regex.is_match("\\d+", "no digits")  -- false
+}
+```
+
+### `regex.find`
+
+```
+regex.find(pattern, text) -> Option(String)
+```
+
+Returns `Some(match_string)` for the first match, or `None` if there is no match.
+
+```silt
+fn main() {
+  regex.find("\\d+", "order 42 and 99")
+  -- Some("42")
+
+  regex.find("\\d+", "no digits")
+  -- None
+}
+```
+
+### `regex.find_all`
+
+```
+regex.find_all(pattern, text) -> List(String)
+```
+
+Returns a list of all non-overlapping matches.
+
+```silt
+fn main() {
+  regex.find_all("\\d+", "order 42 and 99")
+  -- ["42", "99"]
+
+  regex.find_all("[a-z]+@[a-z.]+", "alice@x.com and bob@y.org")
+  -- ["alice@x.com", "bob@y.org"]
+}
+```
+
+### `regex.split`
+
+```
+regex.split(pattern, text) -> List(String)
+```
+
+Splits `text` on every match of `pattern`. Similar to `string.split` but with regex
+delimiters.
+
+```silt
+fn main() {
+  regex.split("[,;\\s]+", "a, b; c  d")
+  -- ["a", "b", "c", "d"]
+}
+```
+
+### `regex.replace`
+
+```
+regex.replace(pattern, text, replacement) -> String
+```
+
+Replaces the **first** match of `pattern` in `text` with `replacement`.
+
+```silt
+fn main() {
+  regex.replace("\\d+", "order 42 and 99", "N")
+  -- "order N and 99"
+}
+```
+
+### `regex.replace_all`
+
+```
+regex.replace_all(pattern, text, replacement) -> String
+```
+
+Replaces **all** matches of `pattern` in `text` with `replacement`.
+
+```silt
+fn main() {
+  regex.replace_all("\\d+", "order 42 and 99", "N")
+  -- "order N and N"
+}
+```
+
+-----
+
+## `json` Module
+
+Parse and serialize JSON. Values are mapped bidirectionally between JSON and Silt types.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `json.parse` | `json.parse(s) -> Result(T, String)` | Parse a JSON string into Silt values |
+| `json.stringify` | `json.stringify(value) -> String` | Serialize a Silt value to compact JSON |
+| `json.pretty` | `json.pretty(value) -> String` | Serialize a Silt value to pretty-printed JSON |
+
+### Value mapping
+
+| JSON | Silt |
+|------|------|
+| `null` | `None` |
+| `true` / `false` | `Bool` |
+| integer number | `Int` |
+| float number | `Float` |
+| `"string"` | `String` |
+| `[array]` | `List` |
+| `{object}` | `Map(String, T)` |
+
+When serializing back to JSON, Silt `Tuple` values become JSON arrays, and
+`Record` values become JSON objects keyed by field name.
+
+### `json.parse`
+
+```
+json.parse(s) -> Result(T, String)
+```
+
+Parses a JSON string and returns `Ok(value)` on success or `Err(message)` on
+invalid JSON.
+
+```silt
+fn main() {
+  let data = json.parse("{\"name\": \"Alice\", \"age\": 30}")
+  -- Ok(#{ "name": "Alice", "age": 30 })
+
+  let list = json.parse("[1, 2, 3]")
+  -- Ok([1, 2, 3])
+
+  let bad = json.parse("not json")
+  -- Err("expected value at line 1 column 1")
+}
+```
+
+### `json.stringify`
+
+```
+json.stringify(value) -> String
+```
+
+Converts a Silt value to a compact JSON string.
+
+```silt
+fn main() {
+  json.stringify(#{ "name": "Alice", "age": 30 })
+  -- "{\"age\":30,\"name\":\"Alice\"}"
+
+  json.stringify([1, 2, 3])
+  -- "[1,2,3]"
+
+  json.stringify(None)
+  -- "null"
+}
+```
+
+### `json.pretty`
+
+```
+json.pretty(value) -> String
+```
+
+Converts a Silt value to a pretty-printed JSON string with indentation.
+
+```silt
+fn main() {
+  let s = json.pretty(#{ "name": "Alice", "scores": [95, 87, 92] })
+  println(s)
+  -- {
+  --   "name": "Alice",
+  --   "scores": [
+  --     95,
+  --     87,
+  --     92
+  --   ]
+  -- }
+}
+```
