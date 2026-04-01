@@ -2294,6 +2294,56 @@ fn main() { 3 == 3.0 }
     assert!(err.contains("unsupported operation"), "got: {err}");
 }
 
+// ── Builtin trait methods ────────────────────────────────────────────
+
+#[test]
+fn test_builtin_display_int() {
+    let result = run(r#"
+fn main() { 42.display() }
+    "#);
+    assert_eq!(result, Value::String("42".into()));
+}
+
+#[test]
+fn test_builtin_display_string() {
+    let result = run(r#"
+fn main() { "hello".display() }
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_builtin_display_bool() {
+    let result = run(r#"
+fn main() { true.display() }
+    "#);
+    assert_eq!(result, Value::String("true".into()));
+}
+
+#[test]
+fn test_builtin_display_list() {
+    let result = run(r#"
+fn main() { [1, 2, 3].display() }
+    "#);
+    assert_eq!(result, Value::String("[1, 2, 3]".into()));
+}
+
+#[test]
+fn test_builtin_equal_int() {
+    let result = run(r#"
+fn main() { 42.equal(42) }
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_builtin_compare_int() {
+    let result = run(r#"
+fn main() { 3.compare(5) }
+    "#);
+    assert_eq!(result, Value::Int(-1));
+}
+
 // ── Math module ─────────────────────────────────────────────────────
 
 #[test]

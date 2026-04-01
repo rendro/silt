@@ -92,6 +92,21 @@ fn err_at(msg: impl Into<String>, span: Span) -> RuntimeError {
 /// Number of expression evaluations between scheduler checks.
 const YIELD_INTERVAL: usize = 1000;
 
+/// Runtime method dispatch entry.
+#[derive(Clone)]
+enum RuntimeMethod {
+    Closure(Rc<Closure>),
+    Builtin(BuiltinTraitMethod),
+}
+
+#[derive(Clone, Copy)]
+enum BuiltinTraitMethod {
+    Display,
+    Equal,
+    Compare,
+    Hash,
+}
+
 pub struct Interpreter {
     global: Env,
     /// Maps variant constructor names to their parent type name.
@@ -104,6 +119,11 @@ pub struct Interpreter {
     step_counter: std::cell::Cell<usize>,
     /// Call stack for error reporting.
     call_stack: RefCell<Vec<CallFrame>>,
+    /// Method table: (type_name, method_name) → dispatch entry.
+    method_table: std::collections::HashMap<(String, String), RuntimeMethod>,
+    /// Temporary storage for builtin trait method receiver (set during access_field,
+    /// consumed during dispatch_builtin for __trait.* methods).
+    trait_method_receiver: RefCell<Option<Value>>,
 }
 
 impl Interpreter {
@@ -114,6 +134,7 @@ impl Interpreter {
     pub fn with_project_root(project_root: PathBuf) -> Self {
         let global = Env::new();
         register_builtins(&global);
+        let method_table = Self::builtin_method_table();
         Self {
             global,
             variant_types: std::collections::HashMap::new(),
@@ -121,7 +142,31 @@ impl Interpreter {
             module_loader: RefCell::new(ModuleLoader::new(project_root)),
             step_counter: std::cell::Cell::new(0),
             call_stack: RefCell::new(Vec::new()),
+            method_table,
+            trait_method_receiver: RefCell::new(None),
         }
+    }
+
+    /// Build the builtin method table: auto-derived Display/Equal/Compare/Hash
+    /// for all primitive and collection types.
+    fn builtin_method_table() -> std::collections::HashMap<(String, String), RuntimeMethod> {
+        let mut table = std::collections::HashMap::new();
+        let types = ["Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map"];
+        let methods = [
+            ("display", BuiltinTraitMethod::Display),
+            ("equal", BuiltinTraitMethod::Equal),
+            ("compare", BuiltinTraitMethod::Compare),
+            ("hash", BuiltinTraitMethod::Hash),
+        ];
+        for type_name in &types {
+            for (method_name, method) in &methods {
+                table.insert(
+                    (type_name.to_string(), method_name.to_string()),
+                    RuntimeMethod::Builtin(*method),
+                );
+            }
+        }
+        table
     }
 
     /// Snapshot the current call stack (for error reporting).
@@ -185,15 +230,20 @@ impl Interpreter {
                 self.register_type(td)?;
             }
             Decl::TraitImpl(ti) => {
-                // Register trait methods as `TypeName.method_name`
                 for method in &ti.methods {
-                    let key = format!("{}.{}", ti.target_type, method.name);
-                    let closure = Value::Closure(Rc::new(Closure {
+                    let closure = Rc::new(Closure {
                         params: method.params.clone(),
                         body: method.body.clone(),
                         env: self.global.clone(),
-                    }));
-                    self.global.define(key, closure);
+                    });
+                    // Register in method table (new system).
+                    self.method_table.insert(
+                        (ti.target_type.clone(), method.name.clone()),
+                        RuntimeMethod::Closure(closure.clone()),
+                    );
+                    // Legacy: also register as "TypeName.method_name" in global env.
+                    let key = format!("{}.{}", ti.target_type, method.name);
+                    self.global.define(key, Value::Closure(closure));
                 }
             }
             Decl::Trait(_) => {
@@ -858,6 +908,7 @@ impl Interpreter {
                 "regex" => self.dispatch_regex(func, args),
                 "json" => self.dispatch_json(func, args),
                 "math" => self.dispatch_math(func, args),
+                "__trait" => self.dispatch_trait_method(func, args),
                 _ => Err(err(format!("unknown module: {module}"))),
             }
         } else {
@@ -2098,6 +2149,34 @@ impl Interpreter {
         }
     }
 
+    fn dispatch_trait_method(&self, name: &str, args: &[Value]) -> Result<Value> {
+        let receiver = self.trait_method_receiver.borrow_mut().take()
+            .ok_or_else(|| err("internal: no receiver for trait method"))?;
+        match name {
+            "display" => Ok(Value::String(format!("{receiver}"))),
+            "equal" => {
+                let other = args.first().ok_or_else(|| err("equal() requires 1 argument"))?;
+                Ok(Value::Bool(receiver == *other))
+            }
+            "compare" => {
+                let other = args.first().ok_or_else(|| err("compare() requires 1 argument"))?;
+                let ord = receiver.cmp(other);
+                Ok(Value::Int(match ord {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                }))
+            }
+            "hash" => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                receiver.hash(&mut hasher);
+                Ok(Value::Int(hasher.finish() as i64))
+            }
+            _ => Err(err(format!("unknown trait method: {name}"))),
+        }
+    }
+
     fn builtin_map(&self, list: &Value, func: &Value) -> Result<Value> {
         let Value::List(xs) = list else {
             return Err(err("first argument to map must be a list"));
@@ -2605,79 +2684,97 @@ impl Interpreter {
     // ── Field access ─────────────────────────────────────────────────
 
     fn access_field(&self, val: &Value, field: &str) -> Result<Value> {
+        // 1. Direct field access (records, tuples, maps)
         match val {
-            Value::Record(type_name, fields) => {
-                // First check for direct field access
+            Value::Record(_, fields) => {
                 if let Some(v) = fields.get(field) {
                     return Ok(v.clone());
                 }
-                // Then check for trait method
-                let method_key = format!("{type_name}.{field}");
-                if let Some(method) = self.global.get(&method_key) {
-                    match method {
-                        Value::Closure(c) => {
-                            let bound_env = c.env.child();
-                            bound_env.define("self".to_string(), val.clone());
-                            let remaining_params: Vec<Param> =
-                                c.params.iter().skip(1).cloned().collect();
-                            Ok(Value::Closure(Rc::new(Closure {
-                                params: remaining_params,
-                                body: c.body.clone(),
-                                env: bound_env,
-                            })))
-                        }
-                        _ => Ok(method),
-                    }
-                } else {
-                    Err(err(format!(
-                        "no field or method '{field}' on {type_name}"
-                    )))
-                }
-            }
-            Value::Variant(variant_name, _) => {
-                let parent_type = self
-                    .variant_types
-                    .get(variant_name)
-                    .cloned()
-                    .unwrap_or_else(|| variant_name.clone());
-                let method_key = format!("{parent_type}.{field}");
-                if let Some(method) = self.global.get(&method_key) {
-                    match method {
-                        Value::Closure(c) => {
-                            let bound_env = c.env.child();
-                            bound_env.define("self".to_string(), val.clone());
-                            let remaining_params: Vec<Param> =
-                                c.params.iter().skip(1).cloned().collect();
-                            Ok(Value::Closure(Rc::new(Closure {
-                                params: remaining_params,
-                                body: c.body.clone(),
-                                env: bound_env,
-                            })))
-                        }
-                        _ => Ok(method),
-                    }
-                } else {
-                    Err(err(format!("no method '{field}' on {parent_type}")))
-                }
             }
             Value::Tuple(elems) => {
-                // Numeric field access on tuples
                 if let Ok(idx) = field.parse::<usize>() {
-                    elems
-                        .get(idx)
-                        .cloned()
-                        .ok_or_else(|| err(format!("tuple index {idx} out of bounds")))
-                } else {
-                    Err(err(format!("no field '{field}' on tuple")))
+                    return elems.get(idx).cloned()
+                        .ok_or_else(|| err(format!("tuple index {idx} out of bounds")));
                 }
             }
             Value::Map(m) => {
                 let key_val = Value::String(field.to_string());
-                m.get(&key_val)
-                    .cloned()
-                    .ok_or_else(|| err(format!("key '{field}' not found in map")))
+                if let Some(v) = m.get(&key_val) {
+                    return Ok(v.clone());
+                }
             }
-            _ => Err(err(format!("cannot access field '{field}' on {val}"))),
+            _ => {}
+        }
+
+        // 2. Method table lookup
+        let type_name = self.value_type_name(val);
+        if let Some(method) = self.method_table.get(&(type_name.clone(), field.to_string())) {
+            return self.dispatch_method(val, method);
+        }
+
+        // 3. Legacy fallback: "TypeName.method" in global env
+        let legacy_key = format!("{type_name}.{field}");
+        if let Some(method) = self.global.get(&legacy_key) {
+            return match method {
+                Value::Closure(c) => {
+                    let bound_env = c.env.child();
+                    bound_env.define("self".to_string(), val.clone());
+                    let remaining_params: Vec<Param> =
+                        c.params.iter().skip(1).cloned().collect();
+                    Ok(Value::Closure(Rc::new(Closure {
+                        params: remaining_params,
+                        body: c.body.clone(),
+                        env: bound_env,
+                    })))
+                }
+                _ => Ok(method),
+            };
+        }
+
+        // 4. Error
+        Err(err(format!("no field or method '{field}' on {type_name}")))
+    }
+
+    fn dispatch_method(&self, receiver: &Value, method: &RuntimeMethod) -> Result<Value> {
+        match method {
+            RuntimeMethod::Closure(c) => {
+                let bound_env = c.env.child();
+                bound_env.define("self".to_string(), receiver.clone());
+                let remaining_params: Vec<Param> =
+                    c.params.iter().skip(1).cloned().collect();
+                Ok(Value::Closure(Rc::new(Closure {
+                    params: remaining_params,
+                    body: c.body.clone(),
+                    env: bound_env,
+                })))
+            }
+            RuntimeMethod::Builtin(b) => {
+                *self.trait_method_receiver.borrow_mut() = Some(receiver.clone());
+                let name = match b {
+                    BuiltinTraitMethod::Display => "__trait.display",
+                    BuiltinTraitMethod::Equal => "__trait.equal",
+                    BuiltinTraitMethod::Compare => "__trait.compare",
+                    BuiltinTraitMethod::Hash => "__trait.hash",
+                };
+                Ok(Value::BuiltinFn(name.to_string()))
+            }
+        }
+    }
+
+    fn value_type_name(&self, val: &Value) -> String {
+        match val {
+            Value::Int(_) => "Int".into(),
+            Value::Float(_) => "Float".into(),
+            Value::Bool(_) => "Bool".into(),
+            Value::String(_) => "String".into(),
+            Value::Unit => "Unit".into(),
+            Value::List(_) => "List".into(),
+            Value::Tuple(_) => "Tuple".into(),
+            Value::Map(_) => "Map".into(),
+            Value::Record(name, _) => name.clone(),
+            Value::Variant(name, _) => self.variant_types.get(name).cloned().unwrap_or_else(|| name.clone()),
+            Value::Channel(_) => "Channel".into(),
+            _ => "<unknown>".into(),
         }
     }
 
