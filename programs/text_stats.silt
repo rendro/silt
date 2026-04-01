@@ -1,7 +1,7 @@
 {-
   text_stats.silt -- Compute detailed text statistics from a file
 
-  === Friction Report ===  Rating: 7/10
+  === Friction Report ===  Rating: 7.5/10
 
   WHAT WAS EASY / PLEASANT:
   - Pipe chains are pleasant for data transformation pipelines. fold, map,
@@ -13,7 +13,6 @@
   - list.enumerate provides indexed iteration without manual counters.
 
   REMAINING FRICTION:
-  - Recursive loop ceremony for any iterative algorithm.
   - (Resolved) float.to_string(f, decimals) handles decimal formatting.
   - Many stdlib builtins are not in the type checker (runtime works fine).
 -}

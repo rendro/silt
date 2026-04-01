@@ -3,7 +3,7 @@
 
   === Friction Report ===
 
-  Overall rating: 7/10
+  Overall rating: 8/10
 
   WHAT WAS EASY / PLEASANT:
   - list.append makes adding items to lists clean and intentional.
@@ -12,10 +12,10 @@
   - Pattern matching on list shapes works well for command parsing.
   - when/else for early returns reads naturally.
   - Guardless match makes simple conditionals cleaner.
+  - The `loop` expression handles the REPL loop with state bindings --
+    no separate recursive helper or accumulator-threading needed.
 
   REMAINING FRICTION:
-  - Accumulator-threading through recursive loop (every branch must pass
-    (todos, next_id) back). A while loop with rebinding would halve ceremony.
   - No int.to_string -- only available via interpolation "{n}".
   - Parsing "ADD Buy some milk" requires splitting + rejoining, which is
     a 3-step workaround for what should be a single substring call.
@@ -306,28 +306,19 @@ fn execute(input, todos, next_id) {
   }
 }
 
--- Main REPL loop using recursion (no while/for in Silt)
-fn repl(todos, next_id) {
-  print("todo> ")
-  match io.read_line() {
-    Ok(line) -> {
-      match execute(line, todos, next_id) {
-        Some((new_todos, new_id)) -> repl(new_todos, new_id)
-        None -> ()
-      }
-    }
-    Err(e) -> {
-      println("Read error: {e}")
-    }
-  }
-}
-
 fn main() {
   println("=== Silt Todo Manager ===")
   print_help()
   println("")
 
-  let todos = []
-  let next_id = 1
-  repl(todos, next_id)
+  loop todos = [], next_id = 1 {
+    print("todo> ")
+    match io.read_line() {
+      Ok(line) -> match execute(line, todos, next_id) {
+        Some((new_todos, new_id)) -> loop(new_todos, new_id)
+        None -> ()
+      }
+      Err(e) -> println("Read error: {e}")
+    }
+  }
 }

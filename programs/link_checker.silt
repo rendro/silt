@@ -20,8 +20,7 @@
     help enormously for text extraction tasks.
   - No early break/continue in |> each or |> fold.
   - List patterns only support [head, ..tail] (rest at end), not [..init, last].
-  - Recursive loop ceremony for any iterative algorithm (minor here since the
-    link extraction is naturally recursive over segments).
+  - (The `loop` keyword is available if iterative algorithms are needed.)
 -}
 
 -- Extract link text and URL from a segment pair around "]("

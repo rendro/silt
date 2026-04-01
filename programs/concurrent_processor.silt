@@ -2,7 +2,7 @@
   Concurrent File Processor -- Ergonomics Evaluation
   ==================================================
 
-  CONCURRENCY EXPERIENCE RATING: 8/10
+  CONCURRENCY EXPERIENCE RATING: 8.5/10
 
   WHAT WAS EASY / PLEASANT:
   - Channel creation is minimal and clean: channel.new() and channel.new(10).
@@ -14,12 +14,10 @@
   - channel.select with pin patterns is syntactically clean.
   - list.append eliminates the flatten workaround for collecting results.
   - Guardless match makes boolean branching cleaner.
+  - The loop expression handles channel draining, worker loops, and result collection
+    inline without needing recursive helper functions. No stack-depth concerns.
 
   REMAINING FRICTION:
-  - No way to loop over a channel until it is closed (like Go's `for msg := range ch`).
-    Must use recursion to drain a channel, which means writing a helper function for
-    every "consume until done" pattern. This is the single biggest ergonomic gap.
-  - Recursion for the worker loop means you have to think about stack depth.
   - receive() returns the raw value on success but None on closed. Cannot send None
     values through a channel and distinguish them from the close signal.
   - try_receive returning None for both "empty" and "closed" is ambiguous.
@@ -79,31 +77,6 @@ fn process_file(path) {
   }
 }
 
--- Recursive helper: drain the work channel and send results back
-fn worker_loop(work_ch, results_ch) {
-  match channel.receive(work_ch) {
-    None -> ()
-    path -> {
-      let result = process_file(path)
-      channel.send(results_ch, result)
-      worker_loop(work_ch, results_ch)
-    }
-  }
-}
-
--- Recursive helper: collect N results from the results channel
-fn collect_results(results_ch, remaining, acc) {
-  match remaining {
-    0 -> acc
-    n -> {
-      match channel.receive(results_ch) {
-        None -> acc
-        result -> collect_results(results_ch, n - 1, list.append(acc, result))
-      }
-    }
-  }
-}
-
 -- Print a single file result
 fn print_result(result) {
   match result.ok {
@@ -118,17 +91,6 @@ fn demonstrate_select(ch_high, ch_low) {
     (^ch_high, msg) -> println("  [high priority] {msg}")
     (^ch_low, msg) -> println("  [low priority] {msg}")
     _ -> println("  [no message]")
-  }
-}
-
--- Recursive drain: receive from channel until closed
-fn drain(ch) {
-  match channel.receive(ch) {
-    None -> println("  Channel closed, drain complete")
-    msg -> {
-      println("  Received: {msg}")
-      drain(ch)
-    }
   }
 }
 
@@ -153,10 +115,28 @@ fn main() {
   -- Spawn 2 workers that pull from the work channel
   println("Spawning 2 workers...")
   let w1 = task.spawn(fn() {
-    worker_loop(work_ch, results_ch)
+    loop {
+      match channel.receive(work_ch) {
+        None -> ()
+        path -> {
+          let result = process_file(path)
+          channel.send(results_ch, result)
+          loop()
+        }
+      }
+    }
   })
   let w2 = task.spawn(fn() {
-    worker_loop(work_ch, results_ch)
+    loop {
+      match channel.receive(work_ch) {
+        None -> ()
+        path -> {
+          let result = process_file(path)
+          channel.send(results_ch, result)
+          loop()
+        }
+      }
+    }
   })
 
   -- Distribute work: send all file paths to the work channel
@@ -167,7 +147,15 @@ fn main() {
   channel.close(work_ch)
 
   -- Collect all results (we know exactly how many to expect)
-  let results = collect_results(results_ch, file_count, [])
+  let results = loop remaining = file_count, acc = [] {
+    match remaining {
+      0 -> acc
+      n -> match channel.receive(results_ch) {
+        None -> acc
+        result -> loop(n - 1, list.append(acc, result))
+      }
+    }
+  }
 
   -- Wait for workers to finish
   task.join(w1)
@@ -251,7 +239,15 @@ fn main() {
     channel.close(stream_ch)
   })
 
-  drain(stream_ch)
+  loop {
+    match channel.receive(stream_ch) {
+      None -> println("  Channel closed, drain complete")
+      msg -> {
+        println("  Received: {msg}")
+        loop()
+      }
+    }
+  }
   task.join(producer)
 
   -- =====================================================

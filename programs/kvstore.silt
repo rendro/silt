@@ -3,24 +3,22 @@
 
   === Friction Report ===
 
-  Overall rating: 7/10
+  Overall rating: 8/10
 
-  Recursive loop pattern vs while loop: 6/10 naturalness
-    The recursive loop is conceptually clean -- you pass the updated db as an
-    argument and the compiler (in theory) can TCO it. But it is noticeably more
-    ceremony than `while true { ... }`. Every command handler must remember to
-    call loop(new_db) at the end.
+  Loop expression: 9/10 naturalness
+    The `loop db = #{} { ... }` expression handles the REPL loop cleanly.
+    State is threaded via loop bindings -- call loop(new_db) to continue,
+    or evaluate to a final value to exit. No separate recursive helper needed.
 
   Map operations ergonomics: 8/10
     map.set / map.get / map.delete / map.length are straightforward. The
     pipe-friendly signatures (map first) work well.
 
-  Lack of mutation pain: 7/10
-    For a stateful REPL program, immutability forces an accumulator-passing
-    style. This is manageable for a small program. Shadowing helps readability.
+  Lack of mutation pain: 8/10
+    Immutability is natural with the loop expression -- each iteration
+    rebinds state. No accumulator-passing ceremony.
 
   REMAINING FRICTION:
-  - No while/for loop means recursive accumulator-threading for every REPL.
   - No JSON stdlib for serialization -- must serialize maps manually.
   - Pattern matching is the only branching construct (minor).
 -}
@@ -161,28 +159,19 @@ fn execute(input, db) {
   }
 }
 
--- Main REPL loop using recursion (no while/for in Silt)
-fn repl(db) {
-  print("kvstore> ")
-  match io.read_line() {
-    Ok(line) -> {
-      match execute(line, db) {
-        Some(new_db) -> repl(new_db)
-        None -> db
-      }
-    }
-    Err(e) -> {
-      println("Read error: {e}")
-      db
-    }
-  }
-}
-
 fn main() {
   println("=== Silt Key-Value Store ===")
   println("Commands: GET key | SET key value | DEL key | KEYS | COUNT | SAVE file | LOAD file | QUIT")
   println("")
 
-  let db = #{}
-  repl(db)
+  loop db = #{} {
+    print("kvstore> ")
+    match io.read_line() {
+      Ok(line) -> match execute(line, db) {
+        Some(new_db) -> loop(new_db)
+        None -> db
+      }
+      Err(e) -> { println("Read error: {e}"); db }
+    }
+  }
 }

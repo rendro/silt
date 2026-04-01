@@ -22,7 +22,6 @@
     so tuples are used for accumulators containing collections.
   - fold accumulator tuples get wide; destructuring on every iteration is
     ceremonial.
-  - Recursive loop ceremony for any iterative algorithm.
 -}
 
 -- ── Typed config values ────────────────────────────────────────────

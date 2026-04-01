@@ -20,7 +20,6 @@
 
   REMAINING FRICTION:
   - No way to return early from fold.
-  - Recursive loop ceremony for any iterative algorithm.
   - Tuple destructuring in closures inside fold is verbose.
 -}
 

@@ -22,7 +22,6 @@
   - No negative literal patterns; cannot write `match x { -1 -> ... }`.
   - Cannot define helper functions inside other functions (no local fn).
   - No string indexing makes tokenization harder (not used here).
-  - Recursive loop ceremony for any iterative algorithm.
 -}
 
 -- ============================================================

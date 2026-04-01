@@ -26,7 +26,6 @@
   - No diff on assert_eq failure for long strings.
 
   REMAINING FRICTION:
-  - Recursive loop ceremony for any iterative algorithm.
   - Cannot define helper functions inside other functions (no local fn).
 -}
 
