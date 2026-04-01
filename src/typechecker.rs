@@ -922,6 +922,33 @@ impl TypeChecker {
         self.variant_to_enum.insert("Ok".into(), "Result".into());
         self.variant_to_enum.insert("Err".into(), "Result".into());
 
+        // Stop(a) / Continue(a) — for list.fold_until
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Stop".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+            });
+        }
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Continue".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+            });
+        }
+
+        // Message(a) / Closed / Empty — for channel.receive / channel.try_receive
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Message".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+            });
+        }
+        env.define("Closed".into(), Scheme::mono(self.fresh_var()));
+        env.define("Empty".into(), Scheme::mono(self.fresh_var()));
+
         // ── Test builtins ──────────────────────────────────────────────
 
         // test.assert: Bool -> ()

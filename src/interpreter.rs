@@ -422,6 +422,23 @@ impl Interpreter {
             }
 
             ExprKind::Binary(left, op, right) => {
+                // Short-circuit && and ||
+                if *op == BinOp::And {
+                    let l = self.eval(left, env)?;
+                    return if !is_truthy(&l) {
+                        Ok(Value::Bool(false))
+                    } else {
+                        Ok(Value::Bool(is_truthy(&self.eval(right, env)?)))
+                    };
+                }
+                if *op == BinOp::Or {
+                    let l = self.eval(left, env)?;
+                    return if is_truthy(&l) {
+                        Ok(Value::Bool(true))
+                    } else {
+                        Ok(Value::Bool(is_truthy(&self.eval(right, env)?)))
+                    };
+                }
                 let l = self.eval(left, env)?;
                 let r = self.eval(right, env)?;
                 eval_binary(l, *op, r)

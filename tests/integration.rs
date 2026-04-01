@@ -2550,3 +2550,47 @@ fn main() {
 }
     "#);
 }
+
+// ── Short-circuit && and || ─────────────────────────────────────────
+
+#[test]
+fn test_and_short_circuit() {
+    // false && panic() should NOT panic — right side not evaluated
+    run_ok(r#"
+fn main() {
+  let result = false && panic("should not reach")
+  test.assert_eq(result, false)
+}
+    "#);
+}
+
+#[test]
+fn test_or_short_circuit() {
+    // true || panic() should NOT panic — right side not evaluated
+    run_ok(r#"
+fn main() {
+  let result = true || panic("should not reach")
+  test.assert_eq(result, true)
+}
+    "#);
+}
+
+#[test]
+fn test_and_evaluates_right_when_left_true() {
+    let result = run(r#"
+fn main() {
+  true && (1 == 1)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_or_evaluates_right_when_left_false() {
+    let result = run(r#"
+fn main() {
+  false || (2 > 1)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
