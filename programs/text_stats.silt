@@ -35,7 +35,7 @@ fn clean_word(word) {
 fn print_top_n(freq, n) {
   let entries = map.keys(freq)
     |> list.map { key ->
-      let count = map.get(freq, key) |> result.unwrap_or(0)
+      let count = map.get(freq, key) |> option.unwrap_or(0)
       (key, count)
     }
     |> list.sort_by { entry ->
@@ -135,7 +135,7 @@ fn main() {
 
       -- Build word frequency map using fold as accumulator
       let freq = words |> list.fold(#{}) { freq, word ->
-        let count = map.get(freq, word) |> result.unwrap_or(0)
+        let count = map.get(freq, word) |> option.unwrap_or(0)
         map.set(freq, word, count + 1)
       }
       let unique_words = map.keys(freq)

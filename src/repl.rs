@@ -1,6 +1,13 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
-use rustyline::Editor;
+use rustyline::validate::Validator;
+use rustyline::{Editor, Helper, Context};
 
 use crate::ast::{Decl, Stmt};
 use crate::interpreter::Interpreter;
@@ -9,8 +16,61 @@ use crate::parser::Parser;
 
 const HISTORY_FILE: &str = ".silt_history";
 
+// ── Tab completion helper ───────────────────────────────────────────
+
+struct SiltHelper {
+    names: Rc<RefCell<Vec<String>>>,
+}
+
+impl Completer for SiltHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        // Find the word being completed (go back from cursor to whitespace/delimiter).
+        let start = line[..pos]
+            .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '|')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &line[start..pos];
+
+        if prefix.is_empty() {
+            return Ok((pos, Vec::new()));
+        }
+
+        let names = self.names.borrow();
+        let matches: Vec<Pair> = names
+            .iter()
+            .filter(|n| n.starts_with(prefix))
+            .map(|n| Pair {
+                display: n.clone(),
+                replacement: n.clone(),
+            })
+            .collect();
+
+        Ok((start, matches))
+    }
+}
+
+impl Hinter for SiltHelper {
+    type Hint = String;
+}
+impl Highlighter for SiltHelper {}
+impl Validator for SiltHelper {}
+impl Helper for SiltHelper {}
+
+// ── REPL ────────────────────────────────────────────────────────────
+
 pub fn run_repl() {
-    let mut rl: Editor<(), DefaultHistory> = Editor::new().expect("failed to create editor");
+    let names = Rc::new(RefCell::new(builtin_names()));
+    let helper = SiltHelper { names: names.clone() };
+
+    let mut rl: Editor<SiltHelper, DefaultHistory> = Editor::new().expect("failed to create editor");
+    rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
 
     let mut interp = Interpreter::new();
@@ -67,16 +127,17 @@ pub fn run_repl() {
                 } else {
                     eval_expression(&mut interp, &input);
                 }
+
+                // Update completions with newly defined names
+                let mut all = builtin_names();
+                all.extend(interp.defined_names());
+                *names.borrow_mut() = all;
             }
             Err(ReadlineError::Interrupted) => {
-                // Ctrl-C: clear current buffer
                 buffer.clear();
                 println!("^C");
             }
-            Err(ReadlineError::Eof) => {
-                // Ctrl-D: exit
-                break;
-            }
+            Err(ReadlineError::Eof) => break,
             Err(err) => {
                 eprintln!("error: {err}");
                 break;
@@ -87,11 +148,57 @@ pub fn run_repl() {
     let _ = rl.save_history(HISTORY_FILE);
 }
 
+fn builtin_names() -> Vec<String> {
+    let mut names = vec![
+        // Keywords / commands
+        ":quit", ":help", ":env",
+        "fn", "let", "type", "trait", "match", "when", "return",
+        "import", "loop", "true", "false",
+        // Globals
+        "print", "println", "panic", "try",
+        "Ok", "Err", "Some", "None", "Stop", "Continue",
+        "Message", "Closed", "Empty",
+        // Modules
+        "list.map", "list.filter", "list.fold", "list.each", "list.find",
+        "list.sort", "list.sort_by", "list.reverse", "list.head", "list.tail",
+        "list.last", "list.length", "list.contains", "list.append", "list.concat",
+        "list.zip", "list.flatten", "list.flat_map", "list.any", "list.all",
+        "list.get", "list.take", "list.drop", "list.enumerate", "list.group_by",
+        "list.fold_until", "list.unfold",
+        "string.split", "string.trim", "string.join", "string.length",
+        "string.contains", "string.replace", "string.to_upper", "string.to_lower",
+        "string.starts_with", "string.ends_with", "string.chars", "string.repeat",
+        "string.index_of", "string.slice", "string.pad_left", "string.pad_right",
+        "int.parse", "int.abs", "int.min", "int.max", "int.to_float", "int.to_string",
+        "float.parse", "float.round", "float.ceil", "float.floor", "float.abs",
+        "float.to_string", "float.to_int", "float.min", "float.max",
+        "map.get", "map.set", "map.delete", "map.keys", "map.values",
+        "map.length", "map.merge", "map.filter", "map.map", "map.entries", "map.from_entries",
+        "result.unwrap_or", "result.map_ok", "result.map_err", "result.flatten",
+        "result.is_ok", "result.is_err",
+        "option.map", "option.unwrap_or", "option.to_result", "option.is_some", "option.is_none",
+        "io.read_file", "io.write_file", "io.read_line", "io.inspect", "io.args",
+        "math.sqrt", "math.pow", "math.log", "math.log10",
+        "math.sin", "math.cos", "math.tan", "math.asin", "math.acos", "math.atan", "math.atan2",
+        "math.pi", "math.e",
+        "channel.new", "channel.send", "channel.receive", "channel.close",
+        "channel.try_send", "channel.try_receive", "channel.select",
+        "task.spawn", "task.join", "task.cancel",
+        "regex.is_match", "regex.find", "regex.find_all", "regex.split",
+        "regex.replace", "regex.replace_all", "regex.captures",
+        "json.parse", "json.stringify", "json.pretty",
+        "test.assert", "test.assert_eq", "test.assert_ne",
+    ];
+    names.sort();
+    names.into_iter().map(String::from).collect()
+}
+
 fn print_help() {
     println!("Commands:");
     println!("  :help, :h    Show this help");
     println!("  :env         Show defined names");
     println!("  :quit, :q    Exit the REPL");
+    println!("  <Tab>        Autocomplete builtins and user-defined names");
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
     println!("Multi-line input: unclosed braces/parens/brackets continue on the next line.");

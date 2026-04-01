@@ -353,8 +353,6 @@ fn test_option_result() {
   test.assert_eq(option.is_none(n), true)
 
   -- unwrap_or
-  test.assert_eq(result.unwrap_or(s, 0), 42)
-  test.assert_eq(result.unwrap_or(n, 0), 0)
   test.assert_eq(option.unwrap_or(s, 0), 42)
   test.assert_eq(option.unwrap_or(n, 0), 0)
 

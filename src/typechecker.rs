@@ -2557,8 +2557,17 @@ impl TypeChecker {
                         if let Some((_, ft)) = fields.iter().find(|(n, _)| n == &field) {
                             ft.clone()
                         } else {
+                            // Not a direct field — check for trait methods
+                            let key = format!("{rec_name}.{field}");
+                            if let Some(scheme) = env.lookup(&key) {
+                                let scheme = scheme.clone();
+                                let result = self.instantiate(&scheme);
+                                let resolved = self.apply(&result);
+                                expr.ty = Some(resolved.clone());
+                                return resolved;
+                            }
                             self.error(
-                                format!("record {rec_name} has no field {field}"),
+                                format!("record {rec_name} has no field or method '{field}'"),
                                 span,
                             );
                             Type::Error
@@ -3370,6 +3379,12 @@ impl TypeChecker {
                 let sub_pats: Vec<Pattern> = elem_tys.iter().map(|_| Pattern::Wildcard).collect();
                 let tuple_q = Pattern::Tuple(sub_pats);
                 self.is_useful(matrix, &tuple_q, ty)
+            }
+            // Record types have a single constructor — a wildcard is NOT useful
+            // if any row already matches (record pattern, wildcard, or ident).
+            Type::Record(..) => {
+                !matrix.iter().any(|p| matches!(p,
+                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }))
             }
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => {
