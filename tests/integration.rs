@@ -2234,26 +2234,26 @@ fn main() {
 
 #[test]
 fn test_mixed_int_float_add() {
-    let result = run(r#"
+    let err = run_err(r#"
 fn main() { 1 + 2.5 }
     "#);
-    assert_eq!(result, Value::Float(3.5));
+    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
 #[test]
 fn test_mixed_float_int_sub() {
-    let result = run(r#"
+    let err = run_err(r#"
 fn main() { 10.0 - 3 }
     "#);
-    assert_eq!(result, Value::Float(7.0));
+    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
 #[test]
 fn test_mixed_int_float_div() {
-    let result = run(r#"
+    let err = run_err(r#"
 fn main() { 7 / 2.0 }
     "#);
-    assert_eq!(result, Value::Float(3.5));
+    assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
 #[test]
@@ -2266,6 +2266,134 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::String("33.33".into()));
+}
+
+// ── Cross-type comparison errors ────────────────────────────────────
+
+#[test]
+fn test_cross_type_eq_is_error() {
+    let err = run_err(r#"
+fn main() { 5 == "hello" }
+    "#);
+    assert!(err.contains("unsupported operation"), "got: {err}");
+}
+
+#[test]
+fn test_cross_type_lt_is_error() {
+    let err = run_err(r#"
+fn main() { 3 < true }
+    "#);
+    assert!(err.contains("unsupported operation"), "got: {err}");
+}
+
+#[test]
+fn test_cross_type_int_float_eq_is_error() {
+    let err = run_err(r#"
+fn main() { 3 == 3.0 }
+    "#);
+    assert!(err.contains("unsupported operation"), "got: {err}");
+}
+
+// ── Math module ─────────────────────────────────────────────────────
+
+#[test]
+fn test_math_sqrt() {
+    let result = run(r#"
+fn main() { math.sqrt(16.0) }
+    "#);
+    assert_eq!(result, Value::Float(4.0));
+}
+
+#[test]
+fn test_math_pow() {
+    let result = run(r#"
+fn main() { math.pow(2.0, 10.0) }
+    "#);
+    assert_eq!(result, Value::Float(1024.0));
+}
+
+#[test]
+fn test_math_pi() {
+    let result = run(r#"
+fn main() { math.pi }
+    "#);
+    assert_eq!(result, Value::Float(std::f64::consts::PI));
+}
+
+#[test]
+fn test_math_trig() {
+    let result = run(r#"
+fn main() { math.sin(0.0) }
+    "#);
+    assert_eq!(result, Value::Float(0.0));
+}
+
+#[test]
+fn test_math_log() {
+    let result = run(r#"
+fn main() { math.log(math.e) }
+    "#);
+    // ln(e) = 1.0
+    if let Value::Float(f) = result {
+        assert!((f - 1.0).abs() < 1e-10);
+    } else {
+        panic!("expected float");
+    }
+}
+
+// ── Map functional operations ───────────────────────────────────────
+
+#[test]
+fn test_map_filter() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+  let big = map.filter(m) { k, v -> v > 1 }
+  map.length(big)
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_map_map() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "x": 1, "y": 2 }
+  let doubled = map.map(m) { k, v -> (k, v * 2) }
+  map.get(doubled, "x")
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(2)]));
+}
+
+#[test]
+fn test_map_entries_roundtrip() {
+    let result = run(r#"
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  let entries = map.entries(m)
+  let rebuilt = map.from_entries(entries)
+  map.get(rebuilt, "a")
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(1)]));
+}
+
+// ── list.group_by ───────────────────────────────────────────────────
+
+#[test]
+fn test_list_group_by() {
+    let result = run(r#"
+fn main() {
+  let xs = [1, 2, 3, 4, 5, 6]
+  let groups = xs |> list.group_by { x -> x % 2 }
+  map.get(groups, 0)
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![
+        Value::List(Rc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
+    ]));
 }
 
 // ── Regex module ────────────────────────────────────────────────────

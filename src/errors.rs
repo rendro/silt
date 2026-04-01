@@ -85,6 +85,18 @@ impl SourceError {
             is_warning: false,
         }
     }
+
+    pub fn runtime_at(message: impl Into<String>, span: Span, source: &str, file: impl Into<String>) -> Self {
+        let source_line = get_source_line(source, span.line);
+        Self {
+            kind: ErrorKind::Runtime,
+            message: message.into(),
+            span,
+            source_line,
+            file: Some(file.into()),
+            is_warning: false,
+        }
+    }
 }
 
 /// Extract the source line for the given 1-based line number.

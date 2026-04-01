@@ -14,6 +14,7 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: silt run <file.silt>");
+        eprintln!("       silt check <file.silt>");
         eprintln!("       silt test [file.silt]");
         process::exit(1);
     }
@@ -45,6 +46,13 @@ fn main() {
                 }
             }
             run_tests(file.as_deref(), filter);
+        }
+        "check" => {
+            if args.len() < 3 {
+                eprintln!("Usage: silt check <file.silt>");
+                process::exit(1);
+            }
+            check_file(&args[2]);
         }
         "repl" => {
             silt::repl::run_repl();
@@ -136,7 +144,53 @@ fn run_file(path: &str) {
 
     let mut interp = Interpreter::with_project_root(project_root);
     if let Err(e) = interp.run(&program) {
-        eprintln!("{e}");
+        if let Some(span) = e.span() {
+            let source_err = SourceError::runtime_at(
+                e.message().unwrap_or("runtime error"),
+                span,
+                &source,
+                path,
+            );
+            eprintln!("{source_err}");
+        } else {
+            eprintln!("{e}");
+        }
+        process::exit(1);
+    }
+}
+
+fn check_file(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    let tokens = match Lexer::new(&source).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{path}:{e}");
+            process::exit(1);
+        }
+    };
+
+    let mut program = match Parser::new(tokens).parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{path}:{e}");
+            process::exit(1);
+        }
+    };
+
+    let type_errors = typechecker::check(&mut program);
+    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    for err in &type_errors {
+        let source_err = SourceError::from_type_error(err, &source, path);
+        eprintln!("{source_err}");
+    }
+    if has_hard_errors {
         process::exit(1);
     }
 }

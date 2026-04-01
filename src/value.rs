@@ -64,9 +64,10 @@ pub enum TryReceiveResult {
 
 impl Channel {
     pub fn new(id: usize, capacity: usize) -> Self {
-        // In a cooperative scheduler, capacity 0 (unbuffered / rendezvous) is
-        // promoted to 1 because we cannot park a sender mid-execution to wait
-        // for a matching receiver.  See the struct-level doc comment for details.
+        // Capacity 0 (rendezvous) is promoted to buffered-1. With preemptive
+        // yielding, the sender's retry loop interleaves with other tasks,
+        // giving a close approximation of rendezvous semantics: the sender
+        // deposits one value and yields until a receiver consumes it.
         let effective_capacity = if capacity == 0 { 1 } else { capacity };
         Self {
             id,

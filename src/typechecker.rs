@@ -1488,7 +1488,116 @@ impl TypeChecker {
             });
         }
 
-        // map.get_in: (Map(k, v), List(k)) -> Option(v)
+        // map.filter: (Map(k, v), (k, v) -> Bool) -> Map(k, v)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.filter".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::Fun(vec![k.clone(), v.clone()], Box::new(Type::Bool)),
+                    ],
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
+                ),
+            });
+        }
+
+        // map.map: (Map(k, v), (k, v) -> (k2, v2)) -> Map(k2, v2)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            let (k2, k2v) = self.fresh_tv();
+            let (v2, v2v) = self.fresh_tv();
+            env.define("map.map".into(), Scheme {
+                vars: vec![kv, vv, k2v, v2v],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::Fun(vec![k, v], Box::new(Type::Tuple(vec![k2.clone(), v2.clone()]))),
+                    ],
+                    Box::new(Type::Map(Box::new(k2), Box::new(v2))),
+                ),
+            });
+        }
+
+        // map.entries: (Map(k, v)) -> List((k, v))
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.entries".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![Type::Map(Box::new(k.clone()), Box::new(v.clone()))],
+                    Box::new(Type::List(Box::new(Type::Tuple(vec![k, v])))),
+                ),
+            });
+        }
+
+        // map.from_entries: (List((k, v))) -> Map(k, v)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.from_entries".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(Type::Tuple(vec![k.clone(), v.clone()])))],
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
+                ),
+            });
+        }
+
+        // ── list.group_by ──────────────────────────────────────────────
+
+        // list.group_by: (List(a), (a -> k)) -> Map(k, List(a))
+        {
+            let (a, av) = self.fresh_tv();
+            let (k, kv) = self.fresh_tv();
+            env.define("list.group_by".into(), Scheme {
+                vars: vec![av, kv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(k.clone())),
+                    ],
+                    Box::new(Type::Map(Box::new(k), Box::new(Type::List(Box::new(a))))),
+                ),
+            });
+        }
+
+        // ── math module ────────────────────────────────────────────────
+
+        // math.sqrt, math.log, math.log10, math.sin, math.cos, math.tan,
+        // math.asin, math.acos, math.atan: (Float) -> Float
+        {
+            let float_to_float = Scheme::mono(Type::Fun(
+                vec![Type::Float],
+                Box::new(Type::Float),
+            ));
+            for name in &[
+                "math.sqrt", "math.log", "math.log10",
+                "math.sin", "math.cos", "math.tan",
+                "math.asin", "math.acos", "math.atan",
+            ] {
+                env.define(name.to_string(), float_to_float.clone());
+            }
+        }
+
+        // math.pow, math.atan2: (Float, Float) -> Float
+        {
+            let ff_to_f = Scheme::mono(Type::Fun(
+                vec![Type::Float, Type::Float],
+                Box::new(Type::Float),
+            ));
+            env.define("math.pow".into(), ff_to_f.clone());
+            env.define("math.atan2".into(), ff_to_f);
+        }
+
+        // math.pi, math.e: Float (constants — typed as zero-arg functions)
+        env.define("math.pi".into(), Scheme::mono(Type::Float));
+        env.define("math.e".into(), Scheme::mono(Type::Float));
+
         // ── channel module ─────────────────────────────────────────────
 
         // channel.new: (Int) -> Channel  (opaque; use fresh var)
@@ -2469,19 +2578,45 @@ impl TypeChecker {
                         // Could be a trait method: TypeName.method
                         let key = format!("{type_name}.{field}");
                         if let Some(scheme) = env.lookup(&key) {
+                            // Validate that a trait impl actually provides this
+                            // method for this type. If we find the key in env but
+                            // no trait impl backs it, the dispatch is invalid.
+                            let has_trait_impl = self.trait_impls.iter().any(|imp| {
+                                imp.target_type == *type_name
+                                    && imp.methods.iter().any(|(m, _)| m == &field)
+                            });
+                            if !has_trait_impl {
+                                self.error(
+                                    format!(
+                                        "type '{}' does not implement a trait providing method '{}'",
+                                        type_name, field
+                                    ),
+                                    span,
+                                );
+                                return Type::Error;
+                            }
                             let scheme = scheme.clone();
                             let result = self.instantiate(&scheme);
                             let resolved = self.apply(&result);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        // Lenient: return fresh var
+                        self.error(
+                            format!("unknown field or method '{field}' on type {type_name}"),
+                            span,
+                        );
+                        Type::Error
+                    }
+                    Type::Var(_) | Type::Error => {
+                        // Unresolved type variable or prior error — stay lenient
                         self.fresh_var()
                     }
                     _ => {
-                        // Try to find a trait method dynamically
-                        // For now, be lenient and return a fresh var
-                        self.fresh_var()
+                        self.error(
+                            format!("unknown field or method '{field}' on type {obj_ty}"),
+                            span,
+                        );
+                        Type::Error
                     }
                 }
             }
@@ -3138,7 +3273,11 @@ impl TypeChecker {
         }
     }
 
-    // ── Exhaustiveness checking ─────────────────────────────────────
+    // ── Exhaustiveness checking (Maranget-style usefulness) ──────────
+    //
+    // Based on "Warnings for pattern matching" (Maranget, JFP 2007).
+    // A match is exhaustive iff the wildcard pattern is NOT useful after
+    // all arms have been processed.
 
     fn check_exhaustiveness(
         &mut self,
@@ -3146,135 +3285,388 @@ impl TypeChecker {
         scrutinee_ty: &Type,
         span: Span,
     ) {
-        // If any arm has a wildcard or an identifier pattern (which matches anything),
-        // the match is exhaustive (for purposes of this analysis).
-        let has_catch_all = arms.iter().any(|arm| {
-            arm.guard.is_none()
-                && matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_))
-        });
-        if has_catch_all {
-            return;
-        }
+        // Collect patterns from arms without guards (guarded arms don't
+        // guarantee coverage since the guard may be false).
+        let patterns: Vec<&Pattern> = arms
+            .iter()
+            .filter(|a| a.guard.is_none())
+            .map(|a| &a.pattern)
+            .collect();
 
         let scrutinee_ty = self.apply(scrutinee_ty);
 
-        // For enum types, check that all variants are covered
-        let enum_name = match &scrutinee_ty {
-            Type::Generic(name, _) => Some(name.clone()),
-            _ => None,
-        };
-
-        if let Some(ref enum_name) = enum_name {
-            if let Some(enum_info) = self.enums.get(enum_name).cloned() {
-                let required_variants: Vec<&str> = enum_info
-                    .variants
-                    .iter()
-                    .map(|v| v.name.as_str())
-                    .collect();
-
-                let mut covered_variants: Vec<std::string::String> = Vec::new();
-
-                fn collect_constructors(pat: &Pattern, covered: &mut Vec<std::string::String>) {
-                    match pat {
-                        Pattern::Constructor(name, _) => {
-                            if !covered.contains(name) {
-                                covered.push(name.clone());
-                            }
-                        }
-                        Pattern::Or(alts) => {
-                            for alt in alts {
-                                collect_constructors(alt, covered);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                for arm in arms {
-                    match &arm.pattern {
-                        Pattern::Wildcard | Pattern::Ident(_) => {
-                            if arm.guard.is_none() {
-                                // catch-all, already handled above
-                                return;
-                            }
-                        }
-                        _ => collect_constructors(&arm.pattern, &mut covered_variants),
-                    }
-                }
-
-                let missing: Vec<&str> = required_variants
-                    .iter()
-                    .filter(|v| !covered_variants.iter().any(|c| c == *v))
-                    .copied()
-                    .collect();
-
-                if !missing.is_empty() {
-                    self.error(
-                        format!(
-                            "non-exhaustive match on {enum_name}: missing variant(s) {}",
-                            missing.join(", ")
-                        ),
-                        span,
-                    );
-                }
-            }
+        if self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty) {
+            let msg = self.missing_description(&patterns, &scrutinee_ty);
+            self.error(format!("non-exhaustive match: {msg}"), span);
         }
 
-        // For Bool type, check true/false coverage
-        if matches!(&scrutinee_ty, Type::Bool) {
-            let mut has_true = false;
-            let mut has_false = false;
-            fn collect_bools(pat: &Pattern, has_true: &mut bool, has_false: &mut bool) {
-                match pat {
-                    Pattern::Bool(true) => *has_true = true,
-                    Pattern::Bool(false) => *has_false = true,
-                    Pattern::Or(alts) => {
-                        for alt in alts {
-                            collect_bools(alt, has_true, has_false);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            for arm in arms {
-                match &arm.pattern {
-                    Pattern::Wildcard | Pattern::Ident(_) => {
-                        if arm.guard.is_none() {
-                            return;
-                        }
-                    }
-                    _ => collect_bools(&arm.pattern, &mut has_true, &mut has_false),
-                }
-            }
-            if !has_true || !has_false {
-                let mut missing = Vec::new();
-                if !has_true {
-                    missing.push("true");
-                }
-                if !has_false {
-                    missing.push("false");
-                }
-                self.error(
-                    format!(
-                        "non-exhaustive match on Bool: missing {}",
-                        missing.join(", ")
-                    ),
-                    span,
-                );
-            }
-        }
-
-        // For tuple patterns containing constructors, do basic checking
-        // For Int/Float/String, we can't easily check exhaustiveness
-        // unless there's a wildcard, which we already checked above.
-        // Guards make arms potentially non-covering, so we warn if ALL
-        // arms have guards and there's no catch-all.
-        if arms.iter().all(|a| a.guard.is_some()) {
+        // Warn if ALL arms have guards.
+        if !arms.is_empty() && arms.iter().all(|a| a.guard.is_some()) {
             self.error(
                 "match may be non-exhaustive: all arms have guards".into(),
                 span,
             );
+        }
+    }
+
+    /// Check if `query` is useful with respect to existing patterns.
+    /// Returns true if there exists a value matching `query` not matched by `matrix`.
+    fn is_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type) -> bool {
+        if matrix.is_empty() {
+            return true;
+        }
+
+        // Expand or-patterns in the query.
+        if let Pattern::Or(alts) = query {
+            return alts.iter().any(|alt| self.is_useful(matrix, alt, ty));
+        }
+
+        // Expand or-patterns in the matrix.
+        let expanded: Vec<&Pattern> = matrix.iter().flat_map(|p| Self::expand_or(p)).collect();
+        let matrix = &expanded[..];
+
+        if matches!(query, Pattern::Wildcard | Pattern::Ident(_)) {
+            return self.is_wildcard_useful(matrix, ty);
+        }
+
+        self.is_constructor_useful(matrix, query, ty)
+    }
+
+    fn expand_or(pat: &Pattern) -> Vec<&Pattern> {
+        match pat {
+            Pattern::Or(alts) => alts.iter().flat_map(Self::expand_or).collect(),
+            _ => vec![pat],
+        }
+    }
+
+    /// Check if a wildcard is useful: enumerate constructors of the type
+    /// and see if they're all covered.
+    fn is_wildcard_useful(&self, matrix: &[&Pattern], ty: &Type) -> bool {
+        match ty {
+            Type::Bool => {
+                let true_pat = Pattern::Bool(true);
+                let false_pat = Pattern::Bool(false);
+                self.is_useful(matrix, &true_pat, ty)
+                    || self.is_useful(matrix, &false_pat, ty)
+            }
+            Type::Generic(name, _) => {
+                if let Some(enum_info) = self.enums.get(name).cloned() {
+                    for variant in &enum_info.variants {
+                        let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
+                            .map(|_| Pattern::Wildcard)
+                            .collect();
+                        let ctor = Pattern::Constructor(variant.name.clone(), sub_pats.clone());
+                        if self.is_useful(matrix, &ctor, ty) {
+                            return true;
+                        }
+                    }
+                    false
+                } else {
+                    false
+                }
+            }
+            Type::Tuple(elem_tys) => {
+                // Single constructor: the tuple itself.
+                let sub_pats: Vec<Pattern> = elem_tys.iter().map(|_| Pattern::Wildcard).collect();
+                let tuple_q = Pattern::Tuple(sub_pats);
+                self.is_useful(matrix, &tuple_q, ty)
+            }
+            // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
+            _ => {
+                !matrix.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)))
+            }
+        }
+    }
+
+    /// Check if a specific constructor pattern is useful.
+    fn is_constructor_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type) -> bool {
+        match query {
+            Pattern::Bool(b) => {
+                let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
+                    matches!(p, Pattern::Bool(pb) if pb == b)
+                        || matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                }).copied().collect();
+                specialized.is_empty()
+            }
+            Pattern::Constructor(name, sub_pats) => {
+                let specialized = self.specialize_constructor(matrix, name, sub_pats.len());
+                if sub_pats.is_empty() {
+                    specialized.is_empty()
+                } else {
+                    let sub_ty = self.sub_type_for_constructor(name, ty);
+                    let sub_query = if sub_pats.len() == 1 {
+                        sub_pats[0].clone()
+                    } else {
+                        Pattern::Tuple(sub_pats.clone())
+                    };
+                    let sub_refs: Vec<&Pattern> = specialized.iter().collect();
+                    self.is_useful(&sub_refs, &sub_query, &sub_ty)
+                }
+            }
+            Pattern::Tuple(sub_pats) => {
+                let arity = sub_pats.len();
+                // Specialize: keep rows with matching tuple arity, extract sub-patterns.
+                // Wildcards expand to N wildcards.
+                let specialized = self.specialize_tuple(matrix, arity);
+                let spec_refs: Vec<&Pattern> = specialized.iter().collect();
+                if arity == 0 {
+                    specialized.is_empty()
+                } else if arity == 1 {
+                    let elem_ty = match ty {
+                        Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+                        _ => Type::Error,
+                    };
+                    // Unwrap the single element from each specialized tuple.
+                    let unwrapped: Vec<Pattern> = specialized.iter().map(|p| {
+                        match p {
+                            Pattern::Tuple(ps) if !ps.is_empty() => ps[0].clone(),
+                            _ => p.clone(),
+                        }
+                    }).collect();
+                    let unwrapped_refs: Vec<&Pattern> = unwrapped.iter().collect();
+                    self.is_useful(&unwrapped_refs, &sub_pats[0], &elem_ty)
+                } else {
+                    // Multi-element tuple: decompose column-by-column on the
+                    // specialized matrix.
+                    self.is_tuple_useful_recursive(&spec_refs, sub_pats, ty)
+                }
+            }
+            // Literal patterns — useful iff no wildcard covers them.
+            Pattern::Int(_) | Pattern::Float(_) | Pattern::StringLit(_)
+            | Pattern::Range(..) | Pattern::Pin(_) => {
+                !matrix.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check multi-element tuple usefulness by specializing on the first column.
+    /// This implements the proper Maranget column decomposition.
+    fn is_tuple_useful_recursive(&self, matrix: &[&Pattern], sub_pats: &[Pattern], ty: &Type) -> bool {
+        let arity = sub_pats.len();
+        if arity == 0 {
+            return matrix.is_empty();
+        }
+        if arity == 1 {
+            let col_ty = match ty {
+                Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+                _ => Type::Error,
+            };
+            let col_pats: Vec<&Pattern> = matrix.iter().filter_map(|p| {
+                match p {
+                    Pattern::Tuple(ps) if ps.len() == 1 => Some(&ps[0]),
+                    Pattern::Wildcard | Pattern::Ident(_) => Some(*p),
+                    _ => None,
+                }
+            }).collect();
+            return self.is_useful(&col_pats, &sub_pats[0], &col_ty);
+        }
+
+        // Multi-column: specialize on first column, then recurse on rest.
+        let first_ty = match ty {
+            Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
+            _ => Type::Error,
+        };
+        let rest_ty = match ty {
+            Type::Tuple(ts) if ts.len() > 1 => Type::Tuple(ts[1..].to_vec()),
+            _ => Type::Error,
+        };
+
+        // Get the constructors to check from the first column of the query.
+        let query_first = &sub_pats[0];
+        let query_rest = Pattern::Tuple(sub_pats[1..].to_vec());
+
+        // For each constructor that query_first could be, specialize the matrix
+        // on that constructor in the first column and check if query_rest is useful.
+        let first_constructors = self.constructors_for_query(query_first, &first_ty);
+
+        for ctor in &first_constructors {
+            // Specialize: keep rows whose first column matches this constructor,
+            // replace with the remaining columns.
+            let mut specialized_rest: Vec<Pattern> = Vec::new();
+            for pat in matrix {
+                match pat {
+                    Pattern::Tuple(ps) if ps.len() == arity => {
+                        if Self::first_col_matches(&ps[0], ctor) {
+                            specialized_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                        }
+                    }
+                    Pattern::Wildcard | Pattern::Ident(_) => {
+                        let wilds: Vec<Pattern> = (0..arity - 1).map(|_| Pattern::Wildcard).collect();
+                        specialized_rest.push(Pattern::Tuple(wilds));
+                    }
+                    _ => {}
+                }
+            }
+            let rest_refs: Vec<&Pattern> = specialized_rest.iter().collect();
+            if self.is_useful(&rest_refs, &query_rest, &rest_ty) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the set of constructors to check for a query pattern against a type.
+    fn constructors_for_query(&self, query: &Pattern, ty: &Type) -> Vec<Pattern> {
+        match query {
+            Pattern::Wildcard | Pattern::Ident(_) => {
+                // Need to enumerate all constructors of the type.
+                match ty {
+                    Type::Bool => vec![Pattern::Bool(true), Pattern::Bool(false)],
+                    Type::Generic(name, _) => {
+                        if let Some(info) = self.enums.get(name) {
+                            info.variants.iter().map(|v| {
+                                let sub_pats: Vec<Pattern> = (0..v.field_types.len())
+                                    .map(|_| Pattern::Wildcard).collect();
+                                Pattern::Constructor(v.name.clone(), sub_pats)
+                            }).collect()
+                        } else {
+                            vec![Pattern::Wildcard]
+                        }
+                    }
+                    _ => vec![Pattern::Wildcard],
+                }
+            }
+            // Specific constructor: just check itself.
+            _ => vec![query.clone()],
+        }
+    }
+
+    /// Check if a pattern in the first column matches a specific constructor.
+    fn first_col_matches(pat: &Pattern, ctor: &Pattern) -> bool {
+        match (pat, ctor) {
+            // Wildcards/idents match anything.
+            (Pattern::Wildcard | Pattern::Ident(_), _) => true,
+            // A wildcard constructor means "anything" — all patterns match.
+            (_, Pattern::Wildcard | Pattern::Ident(_)) => true,
+            (Pattern::Bool(a), Pattern::Bool(b)) => a == b,
+            (Pattern::Constructor(a, _), Pattern::Constructor(b, _)) => a == b,
+            (Pattern::Int(a), Pattern::Int(b)) => a == b,
+            (Pattern::StringLit(a), Pattern::StringLit(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    /// Specialize the matrix for a specific enum constructor.
+    fn specialize_constructor(&self, matrix: &[&Pattern], ctor_name: &str, arity: usize) -> Vec<Pattern> {
+        let mut result = Vec::new();
+        for pat in matrix {
+            match pat {
+                Pattern::Constructor(name, sub_pats) if name == ctor_name => {
+                    if arity <= 1 {
+                        result.push(sub_pats.first().cloned().unwrap_or(Pattern::Wildcard));
+                    } else {
+                        result.push(Pattern::Tuple(sub_pats.clone()));
+                    }
+                }
+                Pattern::Wildcard | Pattern::Ident(_) => {
+                    if arity <= 1 {
+                        result.push(Pattern::Wildcard);
+                    } else {
+                        let wilds = (0..arity).map(|_| Pattern::Wildcard).collect();
+                        result.push(Pattern::Tuple(wilds));
+                    }
+                }
+                _ => {}
+            }
+        }
+        result
+    }
+
+    /// Specialize the matrix for a tuple constructor with the given arity.
+    fn specialize_tuple(&self, matrix: &[&Pattern], arity: usize) -> Vec<Pattern> {
+        let mut result = Vec::new();
+        for pat in matrix {
+            match pat {
+                Pattern::Tuple(sub_pats) if sub_pats.len() == arity => {
+                    result.push(Pattern::Tuple(sub_pats.clone()));
+                }
+                Pattern::Wildcard | Pattern::Ident(_) => {
+                    let wilds = (0..arity).map(|_| Pattern::Wildcard).collect();
+                    result.push(Pattern::Tuple(wilds));
+                }
+                _ => {}
+            }
+        }
+        result
+    }
+
+    /// Get the sub-type for a constructor's fields.
+    fn sub_type_for_constructor(&self, ctor_name: &str, parent_ty: &Type) -> Type {
+        if let Some(enum_name) = self.variant_to_enum.get(ctor_name) {
+            if let Some(enum_info) = self.enums.get(enum_name) {
+                if let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name) {
+                    if variant.field_types.len() == 1 {
+                        if let Type::Generic(_, type_args) = parent_ty {
+                            return substitute_enum_params(
+                                &variant.field_types[0],
+                                &enum_info.params,
+                                type_args,
+                            );
+                        }
+                        return variant.field_types[0].clone();
+                    } else if variant.field_types.len() > 1 {
+                        let field_types: Vec<Type> = if let Type::Generic(_, type_args) = parent_ty {
+                            variant.field_types.iter()
+                                .map(|ft| substitute_enum_params(ft, &enum_info.params, type_args))
+                                .collect()
+                        } else {
+                            variant.field_types.clone()
+                        };
+                        return Type::Tuple(field_types);
+                    }
+                }
+            }
+        }
+        Type::Error
+    }
+
+    /// Generate a human-readable description of what's missing.
+    fn missing_description(&self, patterns: &[&Pattern], ty: &Type) -> std::string::String {
+        match ty {
+            Type::Bool => {
+                let has_true = patterns.iter().any(|p| Self::covers_bool(p, true));
+                let has_false = patterns.iter().any(|p| Self::covers_bool(p, false));
+                let mut missing = Vec::new();
+                if !has_true { missing.push("true"); }
+                if !has_false { missing.push("false"); }
+                if missing.is_empty() {
+                    "not all patterns are covered".into()
+                } else {
+                    format!("missing {}", missing.join(", "))
+                }
+            }
+            Type::Generic(name, _) => {
+                if let Some(enum_info) = self.enums.get(name).cloned() {
+                    let mut missing = Vec::new();
+                    for variant in &enum_info.variants {
+                        let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
+                            .map(|_| Pattern::Wildcard)
+                            .collect();
+                        let ctor = Pattern::Constructor(variant.name.clone(), sub_pats);
+                        if self.is_useful(patterns, &ctor, ty) {
+                            missing.push(variant.name.clone());
+                        }
+                    }
+                    if missing.is_empty() {
+                        "not all patterns are covered".into()
+                    } else {
+                        format!("missing variant(s) {}", missing.join(", "))
+                    }
+                } else {
+                    "not all patterns are covered".into()
+                }
+            }
+            _ => "not all patterns are covered".into(),
+        }
+    }
+
+    fn covers_bool(pat: &Pattern, val: bool) -> bool {
+        match pat {
+            Pattern::Bool(b) => *b == val,
+            Pattern::Wildcard | Pattern::Ident(_) => true,
+            Pattern::Or(alts) => alts.iter().any(|a| Self::covers_bool(a, val)),
+            _ => false,
         }
     }
 
@@ -3720,6 +4112,70 @@ fn main() {
             "#,
             "non-exhaustive",
         );
+    }
+
+    #[test]
+    fn test_match_non_exhaustive_nested_option() {
+        // The new Maranget algorithm catches nested patterns.
+        // Matching Ok(Some(x)) and Err(e) misses Ok(None).
+        assert_has_error(
+            r#"
+fn handle(r) {
+  match r {
+    Ok(Some(x)) -> x
+    Err(e) -> 0
+  }
+}
+fn main() { handle(Ok(Some(1))) }
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_exhaustive_nested_option() {
+        // Full coverage of nested Option inside Result.
+        assert_no_errors(r#"
+fn handle(r) {
+  match r {
+    Ok(Some(x)) -> x
+    Ok(None) -> 0
+    Err(e) -> 0
+  }
+}
+fn main() { handle(Ok(Some(1))) }
+        "#);
+    }
+
+    #[test]
+    fn test_match_non_exhaustive_bool_in_tuple() {
+        // Tuple of bools: (true, true) and (false, false) misses mixed cases.
+        assert_has_error(
+            r#"
+fn check(pair) {
+  match pair {
+    (true, true) -> "both"
+    (false, false) -> "neither"
+  }
+}
+fn main() { check((true, true)) }
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_exhaustive_bool_tuple() {
+        assert_no_errors(r#"
+fn check(pair) {
+  match pair {
+    (true, true) -> "both true"
+    (true, false) -> "first true"
+    (false, _) -> "first false"
+  }
+}
+fn main() { check((true, true)) }
+        "#);
     }
 
     // ── Generic types ───────────────────────────────────────────────
