@@ -1,32 +1,45 @@
-use std::io::{self, BufRead, Write};
+use rustyline::error::ReadlineError;
+use rustyline::history::DefaultHistory;
+use rustyline::Editor;
 
 use crate::ast::{Decl, Stmt};
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
+const HISTORY_FILE: &str = ".silt_history";
+
 pub fn run_repl() {
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
+    let mut rl: Editor<(), DefaultHistory> = Editor::new().expect("failed to create editor");
+    let _ = rl.load_history(HISTORY_FILE);
+
     let mut interp = Interpreter::new();
 
-    println!("Silt REPL (type :quit to exit)");
+    println!("Silt REPL (type :quit to exit, :help for commands)");
 
     let mut buffer = String::new();
-    let mut prompt = "silt> ";
 
     loop {
-        print!("{prompt}");
-        io::stdout().flush().ok();
+        let prompt = if buffer.is_empty() { "silt> " } else { "  ... " };
 
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                let line = line.trim_end_matches('\n').trim_end_matches('\r');
+        match rl.readline(prompt) {
+            Ok(line) => {
+                let line = line.trim_end();
 
-                if buffer.is_empty() && line.trim() == ":quit" {
-                    break;
+                if buffer.is_empty() {
+                    match line.trim() {
+                        ":quit" | ":q" => break,
+                        ":help" | ":h" => {
+                            print_help();
+                            continue;
+                        }
+                        ":env" => {
+                            print_env(&interp);
+                            continue;
+                        }
+                        "" => continue,
+                        _ => {}
+                    }
                 }
 
                 if buffer.is_empty() {
@@ -36,19 +49,18 @@ pub fn run_repl() {
                     buffer.push_str(line);
                 }
 
-                // Check for unclosed delimiters
                 if has_unclosed_delimiters(&buffer) {
-                    prompt = "  ... ";
                     continue;
                 }
 
                 let input = buffer.trim().to_string();
                 buffer.clear();
-                prompt = "silt> ";
 
                 if input.is_empty() {
                     continue;
                 }
+
+                let _ = rl.add_history_entry(&input);
 
                 if is_declaration(&input) {
                     eval_declaration(&mut interp, &input);
@@ -56,10 +68,42 @@ pub fn run_repl() {
                     eval_expression(&mut interp, &input);
                 }
             }
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl-C: clear current buffer
+                buffer.clear();
+                println!("^C");
+            }
+            Err(ReadlineError::Eof) => {
+                // Ctrl-D: exit
+                break;
+            }
             Err(err) => {
                 eprintln!("error: {err}");
                 break;
             }
+        }
+    }
+
+    let _ = rl.save_history(HISTORY_FILE);
+}
+
+fn print_help() {
+    println!("Commands:");
+    println!("  :help, :h    Show this help");
+    println!("  :env         Show defined names");
+    println!("  :quit, :q    Exit the REPL");
+    println!();
+    println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
+    println!("Multi-line input: unclosed braces/parens/brackets continue on the next line.");
+}
+
+fn print_env(interp: &Interpreter) {
+    let names = interp.defined_names();
+    if names.is_empty() {
+        println!("  (no user-defined names)");
+    } else {
+        for name in &names {
+            println!("  {name}");
         }
     }
 }
@@ -128,7 +172,6 @@ fn eval_declaration(interp: &mut Interpreter, input: &str) {
 }
 
 fn eval_expression(interp: &mut Interpreter, input: &str) {
-    // Wrap expression in a function so it parses as statements
     let wrapped = format!("fn __repl__() {{\n{input}\n}}");
     let tokens = match Lexer::new(&wrapped).tokenize() {
         Ok(t) => t,
@@ -145,7 +188,6 @@ fn eval_expression(interp: &mut Interpreter, input: &str) {
         }
     };
 
-    // Extract the body statements from the wrapper function
     let stmts: Vec<Stmt> = program
         .decls
         .into_iter()

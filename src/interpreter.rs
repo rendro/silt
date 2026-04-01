@@ -15,6 +15,14 @@ use crate::scheduler::{Scheduler, TaskState};
 use crate::types::Type;
 use crate::value::{Channel, Closure, TryReceiveResult, TrySendResult, Value};
 
+// ── Call stack frame ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct CallFrame {
+    pub name: String,
+    pub span: Span,
+}
+
 // ── Runtime error ────────────────────────────────────────────────────
 
 pub enum RuntimeError {
@@ -94,6 +102,8 @@ pub struct Interpreter {
     module_loader: RefCell<ModuleLoader>,
     /// Step counter for preemptive yielding to the scheduler.
     step_counter: std::cell::Cell<usize>,
+    /// Call stack for error reporting.
+    call_stack: RefCell<Vec<CallFrame>>,
 }
 
 impl Interpreter {
@@ -110,7 +120,30 @@ impl Interpreter {
             scheduler: RefCell::new(Scheduler::new()),
             module_loader: RefCell::new(ModuleLoader::new(project_root)),
             step_counter: std::cell::Cell::new(0),
+            call_stack: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Snapshot the current call stack (for error reporting).
+    pub fn call_stack(&self) -> Vec<CallFrame> {
+        self.call_stack.borrow().clone()
+    }
+
+    /// List user-defined names (excluding builtins) for REPL :env command.
+    pub fn defined_names(&self) -> Vec<String> {
+        let all = self.global.bindings_with_prefix("");
+        let mut names: Vec<String> = all.into_iter()
+            .filter(|(k, v)| {
+                !matches!(v, Value::BuiltinFn(_))
+                    && !k.contains('.')
+                    && !matches!(k.as_str(),
+                        "Ok" | "Err" | "Some" | "None" | "Stop" | "Continue"
+                        | "Message" | "Closed" | "Empty")
+            })
+            .map(|(k, _)| k)
+            .collect();
+        names.sort();
+        names
     }
 
     pub fn run(&mut self, program: &Program) -> Result<Value> {
@@ -121,7 +154,17 @@ impl Interpreter {
 
         // Find and call main()
         match self.global.get("main") {
-            Some(Value::Closure(c)) => self.call_closure(&c, &[]),
+            Some(Value::Closure(c)) => {
+                self.call_stack.borrow_mut().push(CallFrame {
+                    name: "main".into(),
+                    span: c.body.span,
+                });
+                let result = self.call_closure(&c, &[]);
+                if result.is_ok() {
+                    self.call_stack.borrow_mut().pop();
+                }
+                result
+            }
             Some(Value::BuiltinFn(_)) => Err(err("main cannot be a builtin")),
             Some(_) => Err(err("main is not a function")),
             None => Err(err("no main() function found")),
@@ -563,12 +606,31 @@ impl Interpreter {
                     .iter()
                     .map(|a| self.eval(a, env))
                     .collect::<Result<_>>()?;
+                // Push call frame for stack traces
+                let frame_name = builtin_name.as_deref()
+                    .unwrap_or_else(|| match &callee.kind {
+                        ExprKind::Ident(n) => n.as_str(),
+                        _ => "<closure>",
+                    }).to_string();
                 if tail {
                     if let Value::Closure(c) = &func {
                         return Err(RuntimeError::TailCall(c.clone(), arg_vals));
                     }
                 }
-                self.call_value(&func, &arg_vals)
+                self.call_stack.borrow_mut().push(CallFrame {
+                    name: frame_name,
+                    span: expr.span,
+                });
+                let result = self.call_value(&func, &arg_vals);
+                match &result {
+                    Err(RuntimeError::Error(_, _)) => {
+                        // Leave frame on stack for diagnostics.
+                    }
+                    _ => {
+                        self.call_stack.borrow_mut().pop();
+                    }
+                }
+                result
             }
 
             ExprKind::Lambda { params, body } => Ok(Value::Closure(Rc::new(Closure {

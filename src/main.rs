@@ -9,6 +9,12 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum OutputFormat {
+    Human,
+    Json,
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -48,11 +54,28 @@ fn main() {
             run_tests(file.as_deref(), filter);
         }
         "check" => {
-            if args.len() < 3 {
-                eprintln!("Usage: silt check <file.silt>");
-                process::exit(1);
+            let mut file: Option<String> = None;
+            let mut format = OutputFormat::Human;
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--format" {
+                    if i + 1 < args.len() && args[i + 1] == "json" {
+                        format = OutputFormat::Json;
+                        i += 2;
+                    } else {
+                        eprintln!("--format requires 'json'");
+                        process::exit(1);
+                    }
+                } else {
+                    file = Some(args[i].clone());
+                    i += 1;
+                }
             }
-            check_file(&args[2]);
+            let Some(path) = file else {
+                eprintln!("Usage: silt check [--format json] <file.silt>");
+                process::exit(1);
+            };
+            check_file(&path, format);
         }
         "repl" => {
             silt::repl::run_repl();
@@ -115,13 +138,15 @@ fn run_file(path: &str) {
         }
     };
 
-    let mut program = match Parser::new(tokens).parse_program() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{path}:{e}");
-            process::exit(1);
+    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let source_err = SourceError::from_parse_error(e, &source, path);
+            eprintln!("{source_err}");
         }
-    };
+        process::exit(1);
+    }
 
     // Run the type checker
     let type_errors = typechecker::check(&mut program);
@@ -155,11 +180,15 @@ fn run_file(path: &str) {
         } else {
             eprintln!("{e}");
         }
+        let stack = interp.call_stack();
+        if !stack.is_empty() {
+            eprint!("{}", silt::errors::format_call_stack(&stack, &source, path));
+        }
         process::exit(1);
     }
 }
 
-fn check_file(path: &str) {
+fn check_file(path: &str, format: OutputFormat) {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -168,31 +197,66 @@ fn check_file(path: &str) {
         }
     };
 
+    let mut errors: Vec<SourceError> = Vec::new();
+
     let tokens = match Lexer::new(&source).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("{path}:{e}");
+            if format == OutputFormat::Json {
+                let source_err = SourceError::from_lex_error(&e, &source, path);
+                errors.push(source_err);
+                print_json_errors(&errors);
+            } else {
+                eprintln!("{path}:{e}");
+            }
             process::exit(1);
         }
     };
 
-    let mut program = match Parser::new(tokens).parse_program() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{path}:{e}");
-            process::exit(1);
-        }
-    };
+    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
 
+    let mut has_parse_errors = false;
+    for e in &parse_errors {
+        has_parse_errors = true;
+        let source_err = SourceError::from_parse_error(e, &source, path);
+        errors.push(source_err);
+    }
+
+    // Run the type checker even if there were parse errors (on partial program)
     let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    let has_hard_errors = has_parse_errors || type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
         let source_err = SourceError::from_type_error(err, &source, path);
-        eprintln!("{source_err}");
+        errors.push(source_err);
     }
+
+    if format == OutputFormat::Json {
+        print_json_errors(&errors);
+    } else {
+        for err in &errors {
+            eprintln!("{err}");
+        }
+    }
+
     if has_hard_errors {
         process::exit(1);
     }
+}
+
+fn print_json_errors(errors: &[SourceError]) {
+    let json_errors: Vec<serde_json::Value> = errors
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "file": e.file.as_deref().unwrap_or("<unknown>"),
+                "line": e.span.line,
+                "col": e.span.col,
+                "message": e.message,
+                "severity": if e.is_warning { "warning" } else { "error" },
+            })
+        })
+        .collect();
+    println!("{}", serde_json::to_string(&json_errors).unwrap());
 }
 
 fn find_test_files(dir: &Path) -> Vec<String> {

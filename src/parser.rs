@@ -24,11 +24,12 @@ pub struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
     in_match_scrutinee: bool,
+    errors: Vec<ParseError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Self { tokens, pos: 0, in_match_scrutinee: false }
+        Self { tokens, pos: 0, in_match_scrutinee: false, errors: Vec::new() }
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -117,6 +118,34 @@ impl Parser {
             self.skip_nl();
         }
         Ok(Program { decls })
+    }
+
+    /// Like `parse_program`, but recovers from errors and continues parsing.
+    /// Returns the (possibly partial) program and all collected parse errors.
+    pub fn parse_program_recovering(&mut self) -> (Program, Vec<ParseError>) {
+        let mut decls = Vec::new();
+        self.skip_nl();
+        while !self.at(&Token::Eof) {
+            match self.parse_decl() {
+                Ok(decl) => decls.push(decl),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
+            self.skip_nl();
+        }
+        (Program { decls }, std::mem::take(&mut self.errors))
+    }
+
+    /// Skip tokens until we find one that could start a new declaration.
+    fn synchronize(&mut self) {
+        loop {
+            match self.peek() {
+                Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Eof => break,
+                _ => { self.advance(); }
+            }
+        }
     }
 
     // ── Declarations ─────────────────────────────────────────────────

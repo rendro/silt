@@ -99,6 +99,33 @@ impl SourceError {
     }
 }
 
+/// Format a call stack trace for display below a runtime error.
+pub fn format_call_stack(
+    frames: &[crate::interpreter::CallFrame],
+    source: &str,
+    file: &str,
+) -> String {
+    if frames.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str("\ncall stack:\n");
+    for (i, frame) in frames.iter().rev().enumerate() {
+        let src_line = get_source_line(source, frame.span.line)
+            .unwrap_or_default();
+        let trimmed = src_line.trim();
+        if i == 0 {
+            out.push_str(&format!("  → {}  at {file}:{}:{}\n", frame.name, frame.span.line, frame.span.col));
+        } else {
+            out.push_str(&format!("    {}  at {file}:{}:{}\n", frame.name, frame.span.line, frame.span.col));
+        }
+        if !trimmed.is_empty() {
+            out.push_str(&format!("      {trimmed}\n"));
+        }
+    }
+    out
+}
+
 /// Extract the source line for the given 1-based line number.
 fn get_source_line(source: &str, line: usize) -> Option<String> {
     if line == 0 {

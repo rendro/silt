@@ -4,6 +4,139 @@ use crate::parser::Parser;
 
 const INDENT: &str = "  ";
 
+// ── Comment extraction ──────────────────────────────────────────────
+
+/// A standalone comment (on its own line) extracted from source.
+#[derive(Debug, Clone)]
+struct Comment {
+    line: usize,        // 1-based line number where the comment starts
+    text: String,       // the raw comment text including `--` or `{- ... -}`
+}
+
+/// Extract standalone comments from source text.
+///
+/// A "standalone" comment is one that occupies its own line(s) — the line has
+/// only whitespace before the comment marker and nothing after it (for line
+/// comments) or the block comment starts on its own line.
+fn extract_comments(source: &str) -> Vec<Comment> {
+    let mut comments = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        // Line comment: entire line is `-- ...`
+        if trimmed.starts_with("--") {
+            comments.push(Comment {
+                line: i + 1, // 1-based
+                text: line.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // Block comment starting on its own line
+        if trimmed.starts_with("{-") {
+            let mut block = String::new();
+            let start_line = i + 1; // 1-based
+            // Accumulate lines until we close all nested block comments
+            let mut depth: i32 = 0;
+            let mut found_end = false;
+            while i < lines.len() {
+                if !block.is_empty() {
+                    block.push('\n');
+                }
+                block.push_str(lines[i]);
+                // Count openers and closers in this line
+                let mut chars = lines[i].chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '{' && chars.peek() == Some(&'-') {
+                        chars.next();
+                        depth += 1;
+                    } else if ch == '-' && chars.peek() == Some(&'}') {
+                        chars.next();
+                        depth -= 1;
+                        if depth == 0 {
+                            // Check if there's only whitespace after the closer
+                            let rest: String = chars.collect();
+                            if rest.trim().is_empty() {
+                                found_end = true;
+                            } else {
+                                // Not a standalone block comment — skip
+                                found_end = false;
+                            }
+                            break;
+                        }
+                    }
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            if found_end || depth == 0 {
+                comments.push(Comment {
+                    line: start_line,
+                    text: block,
+                });
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+    comments
+}
+
+/// Get the start line (1-based) of a declaration from its span, if available.
+fn decl_start_line(decl: &Decl) -> Option<usize> {
+    match decl {
+        Decl::Fn(f) => Some(f.span.line),
+        Decl::Type(t) => Some(t.span.line),
+        Decl::Trait(t) => Some(t.span.line),
+        Decl::TraitImpl(t) => Some(t.span.line),
+        Decl::Import(_) => None, // no span on ImportTarget
+    }
+}
+
+/// Find 1-based line numbers of top-level `import` statements in source.
+fn find_import_lines(source: &str) -> Vec<usize> {
+    let mut result = Vec::new();
+    for (i, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") || trimmed == "import" {
+            result.push(i + 1); // 1-based
+        }
+    }
+    result
+}
+
+/// Resolve the start line for every declaration. For most decls we use the
+/// AST span; for `Import` (which has no span) we match against source lines.
+fn resolve_decl_lines(decls: &[Decl], source: &str) -> Vec<usize> {
+    let import_lines = find_import_lines(source);
+    let mut import_idx = 0;
+    let mut result = Vec::with_capacity(decls.len());
+    for decl in decls {
+        if let Some(line) = decl_start_line(decl) {
+            result.push(line);
+        } else {
+            // Import without span — use next available import line from source
+            if import_idx < import_lines.len() {
+                result.push(import_lines[import_idx]);
+                import_idx += 1;
+            } else {
+                // Fallback: use 0 so comments before it won't be lost
+                result.push(0);
+            }
+        }
+    }
+    result
+}
+
+// ── Public entry point ──────────────────────────────────────────────
+
 pub fn format(source: &str) -> Result<String, String> {
     let tokens = Lexer::new(source)
         .tokenize()
@@ -11,15 +144,95 @@ pub fn format(source: &str) -> Result<String, String> {
     let program = Parser::new(tokens)
         .parse_program()
         .map_err(|e| format!("parse error: {e}"))?;
-    Ok(format_program(&program))
+    Ok(format_program_with_comments(&program, source))
 }
 
-fn format_program(program: &Program) -> String {
-    let mut parts = Vec::new();
-    for decl in &program.decls {
-        parts.push(format_decl(decl, 0));
+fn format_program_with_comments(program: &Program, source: &str) -> String {
+    if program.decls.is_empty() {
+        // Even with no declarations, there might be comments
+        let comments = extract_comments(source);
+        if comments.is_empty() {
+            return String::from("\n");
+        }
+        let mut result: String = comments
+            .iter()
+            .map(|c| c.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        return result;
     }
-    let mut result = parts.join("\n\n");
+
+    let comments = extract_comments(source);
+    let decl_lines = resolve_decl_lines(&program.decls, source);
+
+    // Group comments into buckets: bucket[i] holds comments that appear
+    // before decl[i]. bucket[n] holds comments after the last decl.
+    let n = program.decls.len();
+    let mut buckets: Vec<Vec<&Comment>> = vec![Vec::new(); n + 1];
+
+    for comment in &comments {
+        // Find which bucket this comment belongs to.
+        // It goes before the first decl whose start line is > comment.line.
+        let mut placed = false;
+        for (i, &dline) in decl_lines.iter().enumerate() {
+            if comment.line < dline {
+                buckets[i].push(comment);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            // After the last declaration
+            buckets[n].push(comment);
+        }
+    }
+
+    let formatted_decls: Vec<String> = program
+        .decls
+        .iter()
+        .map(|d| format_decl(d, 0))
+        .collect();
+
+    let mut result = String::new();
+
+    // Comments before first declaration
+    for c in &buckets[0] {
+        result.push_str(&c.text);
+        result.push('\n');
+    }
+    if !buckets[0].is_empty() {
+        result.push('\n');
+    }
+
+    for (i, decl_str) in formatted_decls.iter().enumerate() {
+        if i > 0 {
+            // Insert separator: blank line, then any comments, then blank line
+            if buckets[i].is_empty() {
+                result.push_str("\n\n");
+            } else {
+                result.push_str("\n\n");
+                for c in &buckets[i] {
+                    result.push_str(&c.text);
+                    result.push('\n');
+                }
+                result.push('\n');
+            }
+        }
+        result.push_str(decl_str);
+    }
+
+    // Comments after last declaration
+    if !buckets[n].is_empty() {
+        result.push_str("\n\n");
+        for c in &buckets[n] {
+            result.push_str(&c.text);
+            result.push('\n');
+        }
+    }
+
     if !result.ends_with('\n') {
         result.push('\n');
     }
@@ -665,4 +878,134 @@ fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: 
         }
     }
     format_expr(expr, depth)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comment_between_decls() {
+        let source = r#"fn foo() = 1
+
+-- helper function
+fn bar() = 2
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("-- helper function"), "comment should be preserved");
+        assert!(result.contains("fn foo() = 1"));
+        assert!(result.contains("fn bar() = 2"));
+    }
+
+    #[test]
+    fn test_comment_before_first_decl() {
+        let source = r#"-- module header
+fn main() = 42
+"#;
+        let result = format(source).unwrap();
+        assert!(result.starts_with("-- module header\n"), "header comment should be at top");
+        assert!(result.contains("fn main() = 42"));
+    }
+
+    #[test]
+    fn test_multiple_comments_between_decls() {
+        let source = r#"fn a() = 1
+
+-- first comment
+-- second comment
+fn b() = 2
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("-- first comment\n-- second comment"), "multiple comments preserved");
+    }
+
+    #[test]
+    fn test_block_comment_preserved() {
+        let source = r#"fn a() = 1
+
+{- block comment -}
+fn b() = 2
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("{- block comment -}"), "block comment should be preserved");
+    }
+
+    #[test]
+    fn test_no_comments_unchanged() {
+        let source = r#"fn a() = 1
+
+fn b() = 2
+"#;
+        let result = format(source).unwrap();
+        let expected = "fn a() = 1\n\nfn b() = 2\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_idempotent_with_comments() {
+        let source = r#"fn foo() = 1
+
+-- a comment
+fn bar() = 2
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_with_header_comment() {
+        let source = r#"-- header
+fn foo() = 1
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_with_multiple_comments() {
+        let source = r#"-- header
+
+fn a() = 1
+
+-- between
+fn b() = 2
+
+-- another
+fn c() = 3
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_comment_after_last_decl() {
+        let source = r#"fn foo() = 1
+
+-- trailing comment
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("-- trailing comment"), "trailing comment should be preserved");
+    }
+
+    #[test]
+    fn test_extract_comments_basic() {
+        let comments = extract_comments("-- hello\nfn foo() = 1\n-- bye");
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].line, 1);
+        assert_eq!(comments[0].text, "-- hello");
+        assert_eq!(comments[1].line, 3);
+        assert_eq!(comments[1].text, "-- bye");
+    }
+
+    #[test]
+    fn test_extract_block_comment() {
+        let comments = extract_comments("{- block\ncomment -}\nfn foo() = 1");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line, 1);
+        assert!(comments[0].text.contains("{- block"));
+        assert!(comments[0].text.contains("comment -}"));
+    }
 }
