@@ -27,8 +27,24 @@ fn main() {
             run_file(&args[2]);
         }
         "test" => {
-            let file = args.get(2).map(|s| s.as_str());
-            run_tests(file);
+            let mut file: Option<String> = None;
+            let mut filter: Option<String> = None;
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--filter" {
+                    if i + 1 < args.len() {
+                        filter = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        eprintln!("--filter requires a pattern");
+                        process::exit(1);
+                    }
+                } else {
+                    file = Some(args[i].clone());
+                    i += 1;
+                }
+            }
+            run_tests(file.as_deref(), filter);
         }
         "repl" => {
             silt::repl::run_repl();
@@ -125,7 +141,7 @@ fn run_file(path: &str) {
     }
 }
 
-fn run_tests(file: Option<&str>) {
+fn run_tests(file: Option<&str>, filter: Option<String>) {
     let paths: Vec<String> = if let Some(f) = file {
         vec![f.to_string()]
     } else {
@@ -151,6 +167,7 @@ fn run_tests(file: Option<&str>) {
     let mut total = 0;
     let mut passed = 0;
     let mut failed = 0;
+    let mut skipped = 0;
 
     for path in &paths {
         let source = match fs::read_to_string(path) {
@@ -196,7 +213,18 @@ fn run_tests(file: Option<&str>) {
 
         for decl in &program.decls {
             if let silt::ast::Decl::Fn(f) = decl {
+                if f.name.starts_with("skip_test_") {
+                    total += 1;
+                    println!("  SKIP {path}::{}", f.name);
+                    skipped += 1;
+                    continue;
+                }
                 if f.name.starts_with("test_") {
+                    if let Some(ref filter) = filter {
+                        if !f.name.contains(filter.as_str()) {
+                            continue;
+                        }
+                    }
                     total += 1;
                     match interp.run_test(&f.name) {
                         Ok(()) => {
@@ -204,7 +232,8 @@ fn run_tests(file: Option<&str>) {
                             passed += 1;
                         }
                         Err(e) => {
-                            println!("  FAIL {path}::{}: {e}", f.name);
+                            println!("  FAIL {path}::{}", f.name);
+                            println!("    Error: {e}");
                             failed += 1;
                         }
                     }
@@ -213,7 +242,7 @@ fn run_tests(file: Option<&str>) {
         }
     }
 
-    println!("\n{total} tests: {passed} passed, {failed} failed");
+    println!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
     if failed > 0 {
         process::exit(1);
     }

@@ -139,6 +139,9 @@ pub struct TypeChecker {
     fn_where_clauses: HashMap<std::string::String, Vec<(usize, std::string::String)>>,
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
+    /// Tracks the number of bindings in the enclosing `loop` (if any),
+    /// so that `recur` arity can be validated.
+    loop_binding_count: Option<usize>,
 }
 
 impl TypeChecker {
@@ -153,6 +156,7 @@ impl TypeChecker {
             trait_impls: Vec::new(),
             fn_where_clauses: HashMap::new(),
             errors: Vec::new(),
+            loop_binding_count: None,
         }
     }
 
@@ -2298,7 +2302,13 @@ impl TypeChecker {
                     self.instantiate(&scheme)
                 } else {
                     // Unknown variable - could be from an unresolved import
-                    // Don't error, just return a fresh variable (lenient mode)
+                    // Warn unless it looks like a module-qualified name or `self`
+                    if !name.contains('.') && name != "self" {
+                        self.warning(
+                            format!("possibly undefined variable '{name}'"),
+                            span,
+                        );
+                    }
                     self.fresh_var()
                 }
             }
@@ -2538,6 +2548,7 @@ impl TypeChecker {
             ExprKind::Call(callee, args) => {
                 // Capture callee name and arg spans before mutable inference
                 let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind { Some(n.clone()) } else { None };
+                let is_method_call = matches!(&callee.kind, ExprKind::FieldAccess(..));
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
                 let callee_ty = self.infer_expr(callee, env);
@@ -2554,6 +2565,25 @@ impl TypeChecker {
                         let min_len = params.len().min(arg_types.len());
                         for i in 0..min_len {
                             self.unify(&arg_types[i], &params[i], arg_spans[i]);
+                        }
+                        // Check arity. For method calls (obj.method(...)),
+                        // the type signature includes `self` but the call
+                        // site does not, so allow a difference of exactly 1.
+                        let arity_ok = if is_method_call {
+                            arg_types.len() == params.len()
+                                || arg_types.len() + 1 == params.len()
+                        } else {
+                            arg_types.len() == params.len()
+                        };
+                        if !arity_ok {
+                            self.warning(
+                                format!(
+                                    "function expects {} argument(s), got {}",
+                                    params.len(),
+                                    arg_types.len()
+                                ),
+                                span,
+                            );
                         }
                         *ret.clone()
                     }
@@ -2736,17 +2766,35 @@ impl TypeChecker {
 
             ExprKind::Loop { bindings, body } => {
                 let mut loop_env = env.child();
-                for i in 0..bindings.len() {
+                let binding_count = bindings.len();
+                for i in 0..binding_count {
                     let ty = self.infer_expr(&mut bindings[i].1, env);
                     let name = bindings[i].0.clone();
                     loop_env.define(name, Scheme::mono(ty));
                 }
-                self.infer_expr(body, &mut loop_env)
+                let prev_loop = self.loop_binding_count;
+                self.loop_binding_count = Some(binding_count);
+                let result = self.infer_expr(body, &mut loop_env);
+                self.loop_binding_count = prev_loop;
+                result
             }
 
             ExprKind::Recur(args) => {
+                let recur_count = args.len();
                 for arg in args {
                     let _ty = self.infer_expr(arg, env);
+                }
+                if let Some(expected) = self.loop_binding_count {
+                    if recur_count != expected {
+                        self.warning(
+                            format!(
+                                "loop has {} binding(s), but recur supplies {} argument(s)",
+                                expected,
+                                recur_count
+                            ),
+                            span,
+                        );
+                    }
                 }
                 self.fresh_var()
             }
@@ -3278,10 +3326,11 @@ mod tests {
 
     fn assert_no_errors(input: &str) {
         let errors = check_program(input);
-        if !errors.is_empty() {
+        let hard_errors: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
+        if !hard_errors.is_empty() {
             panic!(
                 "expected no type errors, got:\n{}",
-                errors
+                hard_errors
                     .iter()
                     .map(|e| format!("  {e}"))
                     .collect::<Vec<_>>()

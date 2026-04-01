@@ -21,7 +21,10 @@
   - receive() returns the raw value on success but None on closed. Cannot send None
     values through a channel and distinguish them from the close signal.
   - try_receive returning None for both "empty" and "closed" is ambiguous.
-  - The cooperative scheduler means "concurrency" is really interleaved coroutines.
+  - The cooperative scheduler means "concurrency" is really interleaved coroutines
+    on a single thread. Tasks yield only at channel ops and task.join -- no
+    parallelism, no preemption. CPU-bound work in one task blocks all others.
+    The CSP API is forward-compatible with a future preemptive runtime.
 -}
 
 -- Record type for file processing results

@@ -2,25 +2,25 @@
   test_suite.silt -- A mini test framework that tests itself
   ==========================================================
 
-  TESTING STORY FRICTION REPORT: 6/10
+  TESTING STORY FRICTION REPORT: 7/10
 
   THE GOOD:
   - `silt test` with test_ prefix convention is dead simple. Zero config.
   - assert, assert_eq, assert_ne are always available as builtins.
   - Error messages from assert_eq show both values.
   - Pattern matching + Result/Option means expressive assertions.
-  - The test runner output is clean: PASS/FAIL per test, summary at end.
+  - The test runner output is clean: PASS/FAIL/SKIP per test, summary at end.
   - try() builtin enables negative testing (catching expected failures).
   - list.append replaces the flatten workaround for result collection.
   - list.get, list.take, list.enumerate, list.sort_by, list.any, list.all
     are now available for writing richer test assertions.
+  - `silt test --filter pattern` runs only tests whose names match.
+  - `skip_test_` prefix skips tests with SKIP status in output.
 
   THE BAD:
   - No setup/teardown hooks.
-  - No test filtering (`silt test --filter test_foo`).
   - No test timeout.
   - No assert_matches! or structural matching assert.
-  - No skip/ignore mechanism.
   - No test output capture.
   - No parameterized / table-driven tests.
   - No diff on assert_eq failure for long strings.

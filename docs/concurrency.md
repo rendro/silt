@@ -1,8 +1,10 @@
 # Concurrency Guide
 
 Silt provides built-in concurrency based on the CSP (Communicating Sequential
-Processes) model. This guide covers channels, tasks, `channel.select`, and the cooperative
-scheduler that powers it all.
+Processes) model with a **cooperative, single-threaded scheduler**. Tasks
+interleave on one OS thread -- they do not run in parallel. This guide covers
+channels, tasks, `channel.select`, and the cooperative scheduler that powers
+it all.
 
 All concurrency primitives are module-qualified: channels live in the `channel`
 module, tasks live in the `task` module. There are no concurrency keywords --
@@ -28,6 +30,12 @@ In CSP, each task runs its own sequential code. When two tasks need to
 coordinate, one sends a value into a channel and the other receives it. There is
 no shared mutable state, no locks, and no data races.
 
+**Note:** Silt v1 implements CSP with cooperative scheduling on a single thread.
+Tasks are coroutines that yield at channel operations, not OS threads or
+goroutines that run in parallel. The CSP *API* (channels, spawn, select) is the
+same as in Go or Erlang, but the *execution model* is cooperative interleaving,
+not preemptive parallelism. See Section 7 for details.
+
 ### Why CSP for Silt?
 
 Silt is fully immutable -- every binding is `let`, there is no mutation, and
@@ -49,11 +57,16 @@ data structures are never modified in place. This makes CSP a natural fit:
 | **Threads + locks** | Shared memory protected by mutexes | Deadlocks, data races, hard to reason about |
 | **Async/await** | Cooperative futures on an event loop | Colored functions, viral `async`, complex lifetimes |
 | **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
-| **CSP (Silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), single-threaded in v1 |
+| **CSP (Silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), cooperative single-threaded scheduling in v1 |
 
 CSP sits between actors and raw threads. Like actors, tasks do not share state.
 Unlike actors, channels are first-class values that can be passed around, and
 `channel.select` lets a task wait on multiple channels at once.
+
+Unlike Go's goroutines, which are multiplexed onto OS threads by a preemptive
+runtime, Silt tasks are coroutines on a single thread. They yield only at
+channel operations and `task.join`. The CSP API is forward-compatible with a
+future preemptive runtime -- user code would not need to change.
 
 -----
 
@@ -85,8 +98,8 @@ channel.send(ch, [1, 2, 3])
 ```
 
 `channel.send(ch, value)` places a value into the channel. If the channel's
-buffer is full (or if it is unbuffered and no receiver is waiting), the sender
-blocks until space becomes available.
+buffer is full, the sending task yields until space becomes available. (See the
+note on unbuffered channels below for how this works with `channel.new()`.)
 
 ### Receiving values
 
@@ -99,19 +112,30 @@ empty, the receiver blocks until a value arrives.
 
 ### Unbuffered channels (rendezvous)
 
-An unbuffered channel created with `channel.new()` has no internal buffer. This
-creates a *rendezvous point*: the sender blocks until a receiver is ready, and
-the receiver blocks until a sender is ready. The value is handed directly from
-one task to the other.
+`channel.new()` creates a channel with no explicit buffer. Conceptually, this is
+a *rendezvous point*: the sender and receiver synchronize around a single value.
 
 ```
 -- Task A                              -- Task B
 channel.send(ch, "ping")      <--->    let msg = channel.receive(ch)
--- A blocks here until                 -- B blocks here until
--- B calls channel.receive             -- A calls channel.send
+-- A blocks here until                 -- B calls channel.receive to
+-- B calls channel.receive             -- pick up the value
 ```
 
-Use unbuffered channels when you want tight synchronization between tasks.
+**Implementation note (cooperative model):** In a preemptive runtime, an
+unbuffered channel would park the sender mid-execution until a receiver appears.
+Because Silt v1 uses cooperative scheduling, a task cannot be suspended inside
+`channel.send` -- it must either complete the send or yield. In practice,
+"unbuffered" channels are promoted to capacity-1 internally: the send succeeds
+immediately (placing the value in a single-slot buffer), and the sender blocks
+only if that slot is already occupied. This means a `channel.new()` send can
+complete before any receiver is ready, which differs from true rendezvous
+semantics in Go. For most patterns this is transparent, but it matters if you
+rely on send-blocking-until-received for synchronization.
+
+Use unbuffered channels when you want tight synchronization between tasks. Be
+aware that in v1, the synchronization is "at most one value in flight" rather
+than strict rendezvous.
 
 ### Buffered channels
 
@@ -179,16 +203,27 @@ task.join(h)
 channel.receive(ch)  -- 20
 ```
 
-### Tasks run cooperatively
+### Tasks run cooperatively (not in parallel)
 
-Silt tasks are **not** OS threads. They run on a single thread and yield control
-at channel operations (`channel.send`, `channel.receive`, `channel.select`) and
-at `task.join`. Between those yield points, a task runs without interruption.
+Silt tasks are **coroutines**, not OS threads or green threads. They run on a
+single OS thread and yield control only at explicit yield points:
+
+- `channel.send(ch, val)` -- yields if the buffer is full
+- `channel.receive(ch)` -- yields if the buffer is empty
+- `channel.select([...])` -- yields if no channel has data
+- `task.join(handle)` -- yields while the target task is incomplete
+
+Between those yield points, a task runs without interruption. There is no
+preemption and no time-slicing.
 
 This means:
 
-- Tasks do not run in parallel -- only one task executes at a time.
-- A task that does a long computation without touching a channel will not yield.
+- **No parallelism.** Only one task executes at a time. Multiple CPU cores are
+  not utilized.
+- **CPU-bound tasks block everything.** A task that does a long computation
+  without touching a channel will not yield, starving all other tasks.
+- **Deterministic scheduling.** The same inputs always produce the same task
+  interleaving. This makes concurrent programs reproducible and easy to test.
 - The scheduler advances tasks in round-robin order when they block on channels.
 
 ### Example: producer/consumer
@@ -474,8 +509,10 @@ channel.select: deadlock detected - no channels have data and no tasks can make 
 
 ## 7. The Cooperative Scheduler
 
-Understanding the scheduler helps you reason about how your concurrent code
-actually executes.
+Understanding the scheduler is essential for reasoning about how concurrent Silt
+code actually executes. Silt v1 uses **cooperative scheduling on a single OS
+thread**. This is a deliberate design choice, not a temporary limitation -- it
+prioritizes determinism, simplicity, and safety over raw parallelism.
 
 ### Single-threaded, cooperative
 
@@ -553,8 +590,11 @@ philosophy: simplicity, safety, and predictability. Combined with full
 immutability, cooperative scheduling means concurrent programs are deterministic
 -- the same inputs always produce the same outputs, in the same order.
 
-The downside is no true parallelism, which is acceptable for v1 and can be
-addressed in future versions (see Section 8).
+The downside is no true parallelism. CPU-bound workloads get no speedup from
+spawning tasks. This is acceptable for v1 -- the CSP API (`channel.new`,
+`channel.send`, `channel.receive`, `task.spawn`, `channel.select`) is
+forward-compatible with a preemptive, multi-threaded runtime in a future
+version. User code would not change; only the scheduler implementation would.
 
 -----
 
@@ -706,9 +746,26 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 
 ### Current limitations (v1)
 
-- **No true parallelism.** The cooperative scheduler runs on a single thread.
-  Tasks interleave but never execute simultaneously. CPU-bound work gets no
-  speedup from concurrency.
+- **Single-threaded, cooperative scheduling.** Tasks are coroutines on a single
+  OS thread. They interleave but never execute simultaneously. CPU-bound work
+  gets no speedup from spawning tasks. A task that performs heavy computation
+  between yield points blocks all other tasks until it yields.
+
+- **Tasks yield only at channel operations and `task.join`.** There is no
+  preemption. If a task enters a long-running `loop` that never touches a
+  channel, no other task can make progress until that loop completes.
+
+- **Unbuffered channels are capacity-1.** Because the cooperative scheduler
+  cannot park a sender mid-execution, `channel.new()` is internally promoted to
+  a single-slot buffer. A send on an "unbuffered" channel succeeds immediately
+  if the slot is empty, which differs from true rendezvous semantics where the
+  sender blocks until a receiver is ready.
+
+- **Deterministic scheduling.** This is both a strength and a limitation. The
+  same inputs always produce the same interleaving, which is excellent for
+  testing and debugging. However, it means performance characteristics are
+  tightly coupled to task ordering -- you cannot rely on "whichever task
+  finishes first" for load balancing the way you would with OS threads.
 
 - **No timeouts.** There is no way to say "receive from this channel, but give
   up after 5 seconds." A `channel.receive` on an empty channel with no producer
@@ -721,14 +778,21 @@ This makes pipelines easy to extend -- just add another stage in the middle.
 - **Select only supports receive.** `channel.select` polls channels for
   incoming data. You cannot select on send operations.
 
+### Forward compatibility
+
+The CSP API (`channel.new`, `channel.send`, `channel.receive`, `task.spawn`,
+`channel.select`) is designed to be **runtime-agnostic**. User code written
+against this API today will work without modification on a future preemptive
+runtime. Only the scheduler implementation would change.
+
 ### Future work
 
-- **Tokio integration.** Running tasks on a real async runtime would enable true
-  parallelism and non-blocking I/O while keeping the same channel-based API.
+- **Preemptive runtime.** Running tasks on a real async runtime (e.g., Tokio) or
+  OS threads would enable true parallelism. Silt's full immutability makes this
+  safe by default -- no data races, no locking needed.
 
-- **Real OS threads.** For CPU-bound workloads, spawning tasks on separate
-  threads would provide actual parallel execution. Silt's immutability makes
-  this safe by default.
+- **True unbuffered channels.** A preemptive scheduler would allow genuine
+  rendezvous semantics where the sender parks until a receiver is ready.
 
 - **Timeouts and deadlines.** Adding a timeout parameter to `channel.select`
   would enable patterns like "wait for a response, but give up after 100ms."
@@ -757,3 +821,8 @@ The mental model: tasks are independent workers. Channels are the pipes between
 them. `channel.select` is a multiplexer. `task.join` is a synchronization barrier.
 Everything else -- the scheduler, the task states, the deadlock detection -- is
 machinery that makes this model work reliably under the hood.
+
+**Remember:** In v1, all of this runs cooperatively on a single thread. Tasks
+interleave at channel operations but never execute in parallel. The API is the
+same CSP model used by Go and Erlang, and is forward-compatible with a
+preemptive runtime in a future version.
