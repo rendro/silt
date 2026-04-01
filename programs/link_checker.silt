@@ -18,8 +18,8 @@
   - regex.is_match simplifies URL scheme validation into one readable check.
 
   REMAINING FRICTION:
-  - No regex capture groups. regex.find_all returns full matches, so a small
-    amount of string.index_of/string.slice is still needed to split matches.
+  - regex.captures now exists and could simplify link splitting (currently uses
+    string.index_of/string.slice to split regex.find_all matches).
   - No early break/continue in |> each or |> fold.
   - List patterns only support [head, ..tail] (rest at end), not [..init, last].
   - (The `loop` keyword is available if iterative algorithms are needed.)

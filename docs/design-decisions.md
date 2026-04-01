@@ -52,9 +52,9 @@ wildcard pattern token, not a keyword. `try` is a builtin function, not a
 keyword. This keeps the keyword count honest and means these names live in
 the value namespace, not the syntax.
 
-The global namespace is deliberately minimal: only 10 names (`print`, `println`,
-`panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`). Everything
-else requires module qualification. This avoids the "PHP problem" where hundreds of functions are
+The global namespace is deliberately minimal: only 13 names (`print`, `println`,
+`panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`,
+`Closed`, `Empty`). Everything else requires module qualification. This avoids the "PHP problem" where hundreds of functions are
 dumped into the global scope, making it unclear where anything comes from and
 creating name collision risks.
 

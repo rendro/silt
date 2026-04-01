@@ -8,13 +8,13 @@ Compiled from 10 evaluation programs, 9 examples, and full source audit. 2026-03
 
 **Final Rating: 8.5 / 10**
 
-Silt is a small, expression-oriented functional language with 14 keywords, 10 globals, and 102 module-qualified builtins across 13 modules. It compiles to a tree-walking interpreter written in ~12,800 lines of Rust, backed by 275 test functions.
+Silt is a small, expression-oriented functional language with 14 keywords, 13 globals, and 103 module-qualified builtins across 13 modules. It compiles to a tree-walking interpreter written in ~13,300 lines of Rust, backed by 323 test functions.
 
 All 10 evaluation programs have been rewritten to use the current stdlib. No legacy helper functions remain. No `match true { ... }` workarounds remain. No `flatten([acc, [item]])` list-building workarounds remain. The programs now use `list.get`, `list.append`, `list.concat`, `list.sort_by`, `list.take`, `list.enumerate`, `list.any`, `list.all`, `string.index_of`, `string.slice`, `string.pad_left`, `string.pad_right`, `float.min`, `float.max`, guardless match, and `try()`.
 
 ### What is complete
 
-- **Module system.** Clean namespace: 10 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
+- **Module system.** Clean namespace: 13 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
 - **Pattern matching.** Wildcard, literal (including negative), identifier, tuple, constructor, record, list (with rest), or-pattern, range, and map patterns. Guards on every arm. Guardless match for conditional blocks.
 - **Pipe operator.** First-argument insertion with trailing closure syntax. The defining feature of Silt's ergonomics.
 - **Concurrency primitives.** Buffered channels, cooperative tasks, `channel.select`, try_send/try_receive. Full fan-out/fan-in support.
@@ -46,7 +46,7 @@ All programs have been rewritten to use the full current stdlib. Ratings reflect
 
 | # | Program | Rating | Highlight | Remaining friction |
 |---|---------|:------:|-----------|-------------------|
-| 1 | `link_checker.silt` | 9.0 | `regex.find_all` for markdown link extraction; `regex.is_match` for URL validation; pipes + guardless match | No regex capture groups (minor) |
+| 1 | `link_checker.silt` | 9.0 | `regex.find_all` for markdown link extraction; `regex.is_match` for URL validation; pipes + guardless match | `regex.captures` now available; could simplify link splitting |
 | 2 | `csv_analyzer.silt` | 8.5 | Record types for column stats; `float.to_string(f, 2)` for formatting; `float.min`/`float.max`; mixed int/float arithmetic | Fold's 3-arg form in pipes slightly confusing |
 | 3 | `concurrent_processor.silt` | 8.5 | `loop` for channel drain + worker loops; `channel.select` with pin; inline `loop` in `task.spawn` | Cooperative scheduler limits parallelism |
 | 4 | `kvstore.silt` | 8.5 | `loop` for REPL; `json.pretty`/`json.parse` for SAVE/LOAD; generic map keys | None significant |
@@ -107,11 +107,11 @@ loop {
 
 (`true` and `false` are literal tokens, not keywords.)
 
-### Globals (10)
+### Globals (13)
 
-`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`
+`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`, `Empty`
 
-### Module builtins (102 across 13 modules)
+### Module builtins (103 across 13 modules)
 
 | Module | Count | Functions |
 |--------|:-----:|-----------|
@@ -126,7 +126,7 @@ loop {
 | **channel** | 7 | new, send, receive, close, select, try_send, try_receive |
 | **task** | 3 | spawn, join, cancel |
 | **test** | 3 | assert, assert_eq, assert_ne |
-| **regex** | 6 | is_match, find, find_all, split, replace, replace_all |
+| **regex** | 7 | is_match, find, find_all, captures, split, replace, replace_all |
 | **json** | 3 | parse, stringify, pretty |
 
 ### Pattern types (13)
@@ -138,8 +138,8 @@ Wildcard, identifier, integer (including negative), float, boolean, string, tupl
 | Metric | Count |
 |--------|------:|
 | Rust source files | 14 |
-| Rust LoC | ~12,800 |
-| Rust test functions | 275 |
+| Rust LoC | ~13,300 |
+| Rust test functions | 323 |
 | Example programs | 9 |
 | Evaluation programs | 10 |
 
@@ -298,4 +298,4 @@ Pin keeps the pattern concise and inline.
 
 ---
 
-*Silt has reached a coherent final state. Fourteen keywords, ten globals, one hundred and two module builtins across thirteen modules. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. `regex` and `json` modules cover text extraction and data interchange. The remaining friction -- cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*
+*Silt has reached a coherent final state. Fourteen keywords, thirteen globals, one hundred and three module builtins across thirteen modules. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. `regex` and `json` modules cover text extraction and data interchange. The remaining friction -- cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*

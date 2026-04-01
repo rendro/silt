@@ -2,7 +2,7 @@
 
 Complete reference for all built-in functions and standard library modules.
 
-Silt has a deliberately small set of **10 global names** that are always available
+Silt has a deliberately small set of **13 global names** that are always available
 without any module qualification. Everything else is organized into modules and
 accessed with dot notation (e.g. `list.map`, `string.split`, `channel.new`).
 
@@ -24,6 +24,9 @@ Always available. No import or qualification needed.
 | `None` | value | The absent Option value (not a function) |
 | `Stop` | `Stop(value) -> Step` | Signal early termination from `list.fold_until` |
 | `Continue` | `Continue(value) -> Step` | Signal continuation in `list.fold_until` |
+| `Message` | `Message(value) -> ChannelResult` | Wraps a received channel value |
+| `Closed` | value | Channel is closed (from `channel.receive`/`try_receive`) |
+| `Empty` | value | Channel buffer empty (from `channel.try_receive`) |
 
 These are the **only** names in the global namespace. There is no global `map`,
 `filter`, `fold`, `len`, `inspect`, `spawn`, `send`, or `receive`. Use the
@@ -1878,6 +1881,7 @@ is a keyword.
 | `regex.find_all` | `regex.find_all(pattern, text) -> List(String)` | Return all non-overlapping matches |
 | `regex.split` | `regex.split(pattern, text) -> List(String)` | Split text on every match of the pattern |
 | `regex.replace` | `regex.replace(pattern, text, replacement) -> String` | Replace the first match |
+| `regex.captures` | `regex.captures(pattern, text) -> Option(List(String))` | Return capture groups from the first match |
 | `regex.replace_all` | `regex.replace_all(pattern, text, replacement) -> String` | Replace all matches |
 
 ### `regex.is_match`
@@ -1974,6 +1978,25 @@ Replaces **all** matches of `pattern` in `text` with `replacement`.
 fn main() {
   regex.replace_all("\\d+", "order 42 and 99", "N")
   -- "order N and N"
+}
+```
+
+### `regex.captures`
+
+```
+regex.captures(pattern, text) -> Option(List(String))
+```
+
+Returns capture groups from the first match as `Some(list)`, or `None` if there is
+no match. Index 0 is the full match, indices 1+ are the capture groups.
+
+```silt
+fn main() {
+  regex.captures("(\\w+)@(\\w+)", "user@host")
+  -- Some(["user@host", "user", "host"])
+
+  regex.captures("(\\d+)-(\\d+)", "no match here")
+  -- None
 }
 ```
 

@@ -502,24 +502,27 @@ let m = #{ "key": "value", "count": 42 }
 
 ### Builtin (always available, no import)
 
-`print`, `println`, `inspect`, `panic`
+`print`, `println`, `panic`, `try`
+
+`Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`, `Empty` are builtin variant constructors.
 
 ### Stdlib modules (import to use)
 
-|Module   |Provides                                   |
-|---------|-------------------------------------------|
-|`io`     |read_file, write_file, read_line, args     |
-|`list`   |map, filter, fold, fold_until, unfold, each, find, zip, flatten|
-|`map`    |get, set, delete, keys, values, merge      |
-|`string` |split, join, trim, contains, replace       |
-|`int`    |parse, abs, min, max, to_float, to_string  |
-|`float`  |parse, round, ceil, floor, to_string, to_int|
-|`result` |map_ok, map_err, unwrap_or, flatten        |
-|`option` |map, unwrap_or, to_result                  |
-|`test`   |assert, assert_eq, assert_ne, run          |
-|`channel`|new, send, receive, close, select, try_send, try_receive|
-|`regex`  |is_match, find, find_all, split, replace, replace_all|
-|`json`   |parse, stringify, pretty                |
+| Module | Provides |
+|--------|----------|
+| `io` | inspect, read_file, write_file, read_line, args |
+| `list` | map, filter, fold, fold_until, unfold, each, find, zip, flatten, flat_map, any, all, head, tail, last, reverse, sort, sort_by, contains, length, append, concat, get, take, drop, enumerate |
+| `map` | get, set, delete, keys, values, length, merge |
+| `string` | split, join, trim, contains, replace, length, to_upper, to_lower, starts_with, ends_with, chars, repeat, index_of, slice, pad_left, pad_right |
+| `int` | parse, abs, min, max, to_float, to_string |
+| `float` | parse, round, ceil, floor, abs, min, max, to_string, to_int |
+| `result` | map_ok, map_err, unwrap_or, flatten, is_ok, is_err |
+| `option` | map, unwrap_or, to_result, is_some, is_none |
+| `test` | assert, assert_eq, assert_ne |
+| `channel` | new, send, receive, close, select, try_send, try_receive |
+| `task` | spawn, join, cancel |
+| `regex` | is_match, find, find_all, captures, split, replace, replace_all |
+| `json` | parse, stringify, pretty |
 
 ### Not in v1 (future)
 
@@ -612,7 +615,6 @@ Run with `silt test` or `silt test math_test.silt`.
 ## Future Work
 
 1. **Package management / dependencies**
-1. **REPL**
 1. **Bytecode VM** (v2 — performance)
 1. **FFI** (interop with Rust/C)
 1. **HTTP stdlib module**

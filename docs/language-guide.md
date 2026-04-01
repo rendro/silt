@@ -4,9 +4,9 @@ Silt is a statically-typed, expression-based programming language with full immu
 pattern matching as the sole branching construct, and CSP-style concurrency. It compiles
 to a tree-walk interpreter (v1) written in Rust. File extension: `.silt`.
 
-The language has 14 keywords and only 10 global names (`print`, `println`, `panic`, `try`,
-`Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`). Everything else is module-qualified
-(e.g. `list.map`, `string.split`, `channel.new`, `task.spawn`).
+The language has 14 keywords and only 13 global names (`print`, `println`, `panic`, `try`,
+`Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`, `Empty`). Everything
+else is module-qualified (e.g. `list.map`, `string.split`, `channel.new`, `task.spawn`).
 
 This guide walks through every major feature of the language, explains the design
 decisions behind it, and gives you enough examples to start writing real programs.
