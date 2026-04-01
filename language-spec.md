@@ -314,8 +314,8 @@ Zero bindings for infinite-style loops:
 ```
 loop {
   match channel.receive(ch) {
-    None -> ()
-    msg -> { process(msg); loop() }
+    Closed -> ()
+    Message(msg) -> { process(msg); loop() }
   }
 }
 ```
@@ -372,8 +372,8 @@ let ch = channel.new(10)        -- buffered with capacity 10
 ### Send / Receive
 
 ```
-channel.send(ch, "hello")           -- blocks if unbuffered and no receiver
-let msg = channel.receive(ch)       -- blocks until message available
+channel.send(ch, "hello")                  -- blocks if unbuffered and no receiver
+let Message(msg) = channel.receive(ch)     -- blocks until message available; returns Message(val) or Closed
 ```
 
 ### Spawn

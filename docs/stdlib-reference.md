@@ -1633,11 +1633,11 @@ can manage blocking).
 |----------|-----------|-------------|
 | `channel.new` | `channel.new() -> Channel` / `channel.new(n) -> Channel` | Create a channel |
 | `channel.send` | `channel.send(ch, value) -> Unit` | Send a value into a channel |
-| `channel.receive` | `channel.receive(ch) -> T` | Receive a value from a channel |
+| `channel.receive` | `channel.receive(ch) -> Message(T) \| Closed` | Receive a value from a channel |
 | `channel.close` | `channel.close(ch) -> Unit` | Close a channel; no more sends allowed |
 | `channel.select` | `channel.select(channels) -> (Channel, T)` | Wait on multiple channels; returns `(channel, value)` |
 | `channel.try_send` | `channel.try_send(ch, value) -> Bool` | Non-blocking send; true if sent |
-| `channel.try_receive` | `channel.try_receive(ch) -> Option` | Non-blocking receive; Some(value) or None |
+| `channel.try_receive` | `channel.try_receive(ch) -> Message(T) \| Empty \| Closed` | Non-blocking receive |
 
 ### `channel.new`
 
@@ -1675,16 +1675,16 @@ fn main() {
 ### `channel.receive`
 
 ```
-channel.receive(ch) -> T
+channel.receive(ch) -> Message(T) | Closed
 ```
 
-Receives a value from a channel. If the channel is empty, cooperatively yields to other tasks until a value is available. Errors with a deadlock message if no progress can be made.
+Receives a value from a channel. Returns `Message(value)` when a value is available, or `Closed` when the channel is closed and drained. If the channel is empty (but not closed), cooperatively yields to other tasks until a value is available. Errors with a deadlock message if no progress can be made.
 
 ```silt
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
-  let value = channel.receive(ch)
+  let Message(value) = channel.receive(ch)
   println(value)   -- 42
 }
 ```
@@ -1695,7 +1695,7 @@ fn main() {
 channel.close(ch) -> Unit
 ```
 
-Closes a channel. After closing, `channel.send` on the channel will error. `channel.receive` on a closed channel returns any remaining buffered values; once the buffer is empty, it returns `None`.
+Closes a channel. After closing, `channel.send` on the channel will error. `channel.receive` on a closed channel returns any remaining buffered values as `Message(value)`; once the buffer is empty, it returns `Closed`.
 
 ```silt
 fn main() {
@@ -1708,9 +1708,9 @@ fn main() {
   })
 
   let consumer = task.spawn(fn() {
-    let msg1 = channel.receive(ch)
-    let msg2 = channel.receive(ch)
-    let msg3 = channel.receive(ch)   -- None (channel closed and empty)
+    let Message(msg1) = channel.receive(ch)
+    let Message(msg2) = channel.receive(ch)
+    let msg3 = channel.receive(ch)   -- Closed (channel closed and empty)
     println("{msg1} {msg2}")
   })
 
@@ -1742,21 +1742,24 @@ fn main() {
 ### `channel.try_receive`
 
 ```
-channel.try_receive(ch) -> Option
+channel.try_receive(ch) -> Message(T) | Empty | Closed
 ```
 
-Attempts a non-blocking receive. Returns `Some(value)` if a value is available, `None` if the channel is empty or closed. Never blocks.
+Attempts a non-blocking receive. Returns `Message(value)` if a value is available, `Empty` if the channel has no data yet, or `Closed` if the channel is closed and drained. Never blocks.
 
 ```silt
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
 
-  let got1 = channel.try_receive(ch)   -- Some(42)
-  let got2 = channel.try_receive(ch)   -- None (channel empty)
+  let got1 = channel.try_receive(ch)   -- Message(42)
+  let got2 = channel.try_receive(ch)   -- Empty
 
-  println("got1: {got1}")   -- Some(42)
-  println("got2: {got2}")   -- None
+  match got1 {
+    Message(val) -> println("got: {val}")   -- got: 42
+    Empty -> println("nothing yet")
+    Closed -> println("channel closed")
+  }
 }
 ```
 
@@ -1790,8 +1793,8 @@ fn main() {
   })
 
   task.join(producer)
-  let msg1 = channel.receive(ch)
-  let msg2 = channel.receive(ch)
+  let Message(msg1) = channel.receive(ch)
+  let Message(msg2) = channel.receive(ch)
   println("{msg1} {msg2}")
 }
 ```

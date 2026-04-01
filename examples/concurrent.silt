@@ -11,9 +11,9 @@ fn main() {
 
   -- Consumer receives until the channel is closed
   let consumer = task.spawn(fn() {
-    let msg1 = channel.receive(ch)
-    let msg2 = channel.receive(ch)
-    let msg3 = channel.receive(ch)
+    let Message(msg1) = channel.receive(ch)
+    let Message(msg2) = channel.receive(ch)
+    let Message(msg3) = channel.receive(ch)
     println("{msg1} {msg2} {msg3}")
   })
 
@@ -32,7 +32,10 @@ fn main() {
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
-  println("Worker results: {channel.receive(results)}, {channel.receive(results)}, {channel.receive(results)}")
+  let Message(r1) = channel.receive(results)
+  let Message(r2) = channel.receive(results)
+  let Message(r3) = channel.receive(results)
+  println("Worker results: {r1}, {r2}, {r3}")
 
   -- Select: wait on multiple channels, match which one fired with ^pin
   let urgent = channel.new(5)

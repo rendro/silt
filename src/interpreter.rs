@@ -1963,10 +1963,10 @@ impl Interpreter {
         let max_retries = 10000;
         for _ in 0..max_retries {
             match ch.try_receive() {
-                TryReceiveResult::Value(val) => return Ok(val),
+                TryReceiveResult::Value(val) => return Ok(Value::Variant("Message".into(), vec![val])),
                 TryReceiveResult::Closed => {
-                    // Channel is closed and drained — return None variant.
-                    return Ok(Value::Variant("None".into(), vec![]));
+                    // Channel is closed and drained — return Closed variant.
+                    return Ok(Value::Variant("Closed".into(), vec![]));
                 }
                 TryReceiveResult::Empty => {}
             }
@@ -2020,10 +2020,9 @@ impl Interpreter {
             return Err(err("try_receive: argument must be a channel"));
         };
         match ch.try_receive() {
-            TryReceiveResult::Value(val) => Ok(Value::Variant("Some".into(), vec![val])),
-            TryReceiveResult::Empty | TryReceiveResult::Closed => {
-                Ok(Value::Variant("None".into(), Vec::new()))
-            }
+            TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
+            TryReceiveResult::Empty => Ok(Value::Variant("Empty".into(), Vec::new())),
+            TryReceiveResult::Closed => Ok(Value::Variant("Closed".into(), Vec::new())),
         }
     }
 
@@ -2068,7 +2067,7 @@ impl Interpreter {
                 }
             }
             if all_closed {
-                return Ok(Value::Variant("None".into(), vec![]));
+                return Ok(Value::Variant("Closed".into(), vec![]));
             }
             if !self.run_pending_tasks_once()? {
                 return Err(err(
@@ -2630,6 +2629,9 @@ fn register_builtins(env: &Env) {
     env.define("None".into(), Value::Variant("None".into(), Vec::new()));
     env.define("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
     env.define("Continue".into(), Value::VariantConstructor("Continue".into(), 1));
+    env.define("Message".into(), Value::VariantConstructor("Message".into(), 1));
+    env.define("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
+    env.define("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
 
     // All builtins — just register names; dispatch_builtin handles implementation
     let builtin_names = [

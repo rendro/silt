@@ -528,7 +528,7 @@ let handle = task.spawn(fn() {
   let result = do_work()
   channel.send(ch, result)
 })
-let msg = channel.receive(ch)
+let Message(msg) = channel.receive(ch)
 ```
 
 Compare to async/await:

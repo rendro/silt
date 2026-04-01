@@ -426,7 +426,8 @@ fn test_chan_send_receive_buffered() {
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
-  channel.receive(ch)
+  let Message(val) = channel.receive(ch)
+  val
 }
     "#);
     assert_eq!(result, Value::Int(42));
@@ -440,9 +441,9 @@ fn main() {
   channel.send(ch, 1)
   channel.send(ch, 2)
   channel.send(ch, 3)
-  let a = channel.receive(ch)
-  let b = channel.receive(ch)
-  let c = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -461,8 +462,8 @@ fn main() {
   })
 
   task.join(producer)
-  let msg1 = channel.receive(ch)
-  let msg2 = channel.receive(ch)
+  let Message(msg1) = channel.receive(ch)
+  let Message(msg2) = channel.receive(ch)
   "{msg1} {msg2}"
 }
     "#);
@@ -494,8 +495,8 @@ fn main() {
   })
 
   let consumer = task.spawn(fn() {
-    let msg1 = channel.receive(ch)
-    let msg2 = channel.receive(ch)
+    let Message(msg1) = channel.receive(ch)
+    let Message(msg2) = channel.receive(ch)
     println("{msg1} {msg2}")
   })
 
@@ -519,9 +520,9 @@ fn main() {
 
   task.join(producer)
 
-  let a = channel.receive(ch)
-  let b = channel.receive(ch)
-  let c = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -592,7 +593,8 @@ fn main() {
   })
 
   task.join(producer)
-  channel.receive(ch)
+  let Message(val) = channel.receive(ch)
+  val
 }
     "#);
     assert_eq!(result, Value::Int(99));
@@ -620,9 +622,9 @@ fn main() {
   task.join(h2)
   task.join(h3)
 
-  let a = channel.receive(ch)
-  let b = channel.receive(ch)
-  let c = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
   a + b + c
 }
     "#);
@@ -635,7 +637,7 @@ fn test_channel_passing_complex_values() {
 fn main() {
   let ch = channel.new(5)
   channel.send(ch, [1, 2, 3])
-  let list = channel.receive(ch)
+  let Message(list) = channel.receive(ch)
   list
 }
     "#);
@@ -661,7 +663,8 @@ fn main() {
   })
 
   task.join(h)
-  channel.receive(ch)
+  let Message(val) = channel.receive(ch)
+  val
 }
     "#);
     assert_eq!(result, Value::Int(20));
@@ -671,16 +674,16 @@ fn main() {
 
 #[test]
 fn test_channel_close() {
-    // After close, receive on empty channel returns None
+    // After close, receive on empty channel returns Closed
     let result = run(r#"
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
   channel.close(ch)
-  let a = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
   let b = channel.receive(ch)
   match b {
-    None -> a
+    Closed -> a
     _ -> -1
   }
 }
@@ -725,7 +728,7 @@ fn main() {
 }
 
 #[test]
-fn test_try_receive_some() {
+fn test_try_receive_message() {
     let result = run(r#"
 fn main() {
   let ch = channel.new(10)
@@ -733,7 +736,7 @@ fn main() {
   channel.try_receive(ch)
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+    assert_eq!(result, Value::Variant("Message".into(), vec![Value::Int(42)]));
 }
 
 #[test]
@@ -744,7 +747,7 @@ fn main() {
   channel.try_receive(ch)
 }
     "#);
-    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+    assert_eq!(result, Value::Variant("Empty".into(), Vec::new()));
 }
 
 #[test]
@@ -753,7 +756,8 @@ fn test_channel_module_qualified() {
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
-  channel.receive(ch)
+  let Message(val) = channel.receive(ch)
+  val
 }
     "#);
     assert_eq!(result, Value::Int(42));
@@ -766,10 +770,10 @@ fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
   channel.close(ch)
-  let a = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
   let b = channel.receive(ch)
   match b {
-    None -> a
+    Closed -> a
     _ -> -1
   }
 }
@@ -786,7 +790,7 @@ fn main() {
   channel.try_receive(ch)
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(99)]));
+    assert_eq!(result, Value::Variant("Message".into(), vec![Value::Int(99)]));
 }
 
 // ── List pattern matching ───────────────────────────────────────────

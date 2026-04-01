@@ -7,7 +7,7 @@
   WHAT WAS EASY / PLEASANT:
   - Channel creation is minimal and clean: channel.new() and channel.new(10).
   - task.spawn with closure capture of channels is natural and lightweight.
-  - receive() returning None on a closed channel is elegant for termination.
+  - receive() returning Message(value) | Closed makes termination unambiguous.
   - The pipe operator |> combined with each/map/fold makes result aggregation pleasant.
   - Pattern matching on Ok/Err for file I/O errors inside spawned tasks feels right.
   - Records for structured results are straightforward.
@@ -18,9 +18,8 @@
     inline without needing recursive helper functions. No stack-depth concerns.
 
   REMAINING FRICTION:
-  - receive() returns the raw value on success but None on closed. Cannot send None
-    values through a channel and distinguish them from the close signal.
-  - try_receive returning None for both "empty" and "closed" is ambiguous.
+  - None. receive() returns Message(value) on success and Closed when drained.
+    try_receive() returns Message(value), Empty, or Closed — fully unambiguous.
   - The cooperative scheduler means "concurrency" is really interleaved coroutines
     on a single thread. Tasks yield only at channel ops and task.join -- no
     parallelism, no preemption. CPU-bound work in one task blocks all others.
@@ -120,8 +119,8 @@ fn main() {
   let w1 = task.spawn(fn() {
     loop {
       match channel.receive(work_ch) {
-        None -> ()
-        path -> {
+        Closed -> ()
+        Message(path) -> {
           let result = process_file(path)
           channel.send(results_ch, result)
           loop()
@@ -132,8 +131,8 @@ fn main() {
   let w2 = task.spawn(fn() {
     loop {
       match channel.receive(work_ch) {
-        None -> ()
-        path -> {
+        Closed -> ()
+        Message(path) -> {
           let result = process_file(path)
           channel.send(results_ch, result)
           loop()
@@ -154,8 +153,8 @@ fn main() {
     match remaining {
       0 -> acc
       n -> match channel.receive(results_ch) {
-        None -> acc
-        result -> loop(n - 1, list.append(acc, result))
+        Closed -> acc
+        Message(result) -> loop(n - 1, list.append(acc, result))
       }
     }
   }
@@ -192,20 +191,23 @@ fn main() {
   channel.send(poll_ch, "alpha")
   channel.send(poll_ch, "beta")
 
-  -- Non-blocking poll: gets Some("alpha")
+  -- Non-blocking poll: gets Message("alpha")
   match channel.try_receive(poll_ch) {
-    Some(val) -> println("  Polled: {val}")
-    None -> println("  Nothing available")
+    Message(val) -> println("  Polled: {val}")
+    Empty -> println("  Nothing available")
+    Closed -> println("  Channel closed")
   }
-  -- Non-blocking poll: gets Some("beta")
+  -- Non-blocking poll: gets Message("beta")
   match channel.try_receive(poll_ch) {
-    Some(val) -> println("  Polled: {val}")
-    None -> println("  Nothing available")
+    Message(val) -> println("  Polled: {val}")
+    Empty -> println("  Nothing available")
+    Closed -> println("  Channel closed")
   }
-  -- Non-blocking poll: channel empty, gets None
+  -- Non-blocking poll: channel empty, gets Empty
   match channel.try_receive(poll_ch) {
-    Some(val) -> println("  Polled: {val}")
-    None -> println("  Channel empty (expected)")
+    Message(val) -> println("  Polled: {val}")
+    Empty -> println("  Channel empty (expected)")
+    Closed -> println("  Channel closed")
   }
 
   -- =====================================================
@@ -244,8 +246,8 @@ fn main() {
 
   loop {
     match channel.receive(stream_ch) {
-      None -> println("  Channel closed, drain complete")
-      msg -> {
+      Closed -> println("  Channel closed, drain complete")
+      Message(msg) -> {
         println("  Received: {msg}")
         loop()
       }
@@ -267,8 +269,8 @@ fn main() {
 
   task.join(err_worker)
   match channel.receive(err_ch) {
-    None -> println("  Unexpected: channel closed")
-    result -> {
+    Closed -> println("  Unexpected: channel closed")
+    Message(result) -> {
       print_result(result)
     }
   }

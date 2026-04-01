@@ -104,11 +104,12 @@ note on unbuffered channels below for how this works with `channel.new()`.)
 ### Receiving values
 
 ```silt
-let msg = channel.receive(ch)
+let Message(msg) = channel.receive(ch)
 ```
 
-`channel.receive(ch)` takes the next value from the channel. If the channel is
-empty, the receiver blocks until a value arrives.
+`channel.receive(ch)` returns `Message(value)` when a value is available, or
+`Closed` when the channel is closed and drained. If the channel is empty, the
+receiver blocks until a value arrives.
 
 ### Unbuffered channels (rendezvous)
 
@@ -116,10 +117,10 @@ empty, the receiver blocks until a value arrives.
 a *rendezvous point*: the sender and receiver synchronize around a single value.
 
 ```
--- Task A                              -- Task B
-channel.send(ch, "ping")      <--->    let msg = channel.receive(ch)
--- A blocks here until                 -- B calls channel.receive to
--- B calls channel.receive             -- pick up the value
+-- Task A                                    -- Task B
+channel.send(ch, "ping")      <--->    let Message(msg) = channel.receive(ch)
+-- A blocks here until                       -- B calls channel.receive to
+-- B calls channel.receive                   -- pick up the value
 ```
 
 **Implementation note (cooperative model):** In a preemptive runtime, an
@@ -151,8 +152,8 @@ channel.send(ch, 2)   -- succeeds immediately (buffer: [1, 2])
 channel.send(ch, 3)   -- succeeds immediately (buffer: [1, 2, 3])
 -- channel.send(ch, 4) would block here -- buffer is full
 
-let a = channel.receive(ch)  -- a = 1, buffer: [2, 3]
-let b = channel.receive(ch)  -- b = 2, buffer: [3]
+let Message(a) = channel.receive(ch)  -- a = 1, buffer: [2, 3]
+let Message(b) = channel.receive(ch)  -- b = 2, buffer: [3]
 ```
 
 Use buffered channels when the producer and consumer run at different speeds and
@@ -200,7 +201,7 @@ let h = task.spawn(fn() {
 })
 
 task.join(h)
-channel.receive(ch)  -- 20
+let Message(val) = channel.receive(ch)  -- val = 20
 ```
 
 ### Tasks run cooperatively (not in parallel)
@@ -238,8 +239,8 @@ fn main() {
   })
 
   let consumer = task.spawn(fn() {
-    let msg1 = channel.receive(ch)
-    let msg2 = channel.receive(ch)
+    let Message(msg1) = channel.receive(ch)
+    let Message(msg2) = channel.receive(ch)
     println("{msg1} {msg2}")
   })
 
@@ -254,8 +255,8 @@ What happens step by step:
 2. `task.join(producer)` tells the scheduler to run pending tasks until
    `producer` completes.
 3. The producer sends `"hello"` and `"world"` into the channel.
-4. `task.join(consumer)` runs the consumer, which receives both messages and
-   prints them.
+4. `task.join(consumer)` runs the consumer, which receives both messages (as
+   `Message(value)`) and prints them.
 
 -----
 
@@ -316,9 +317,9 @@ fn main() {
   task.join(h2)
   task.join(h3)
 
-  let a = channel.receive(ch)
-  let b = channel.receive(ch)
-  let c = channel.receive(ch)
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
   println("sum = {a + b + c}")  -- sum = 6
 }
 ```
@@ -333,8 +334,8 @@ When a producer is done sending values, it can close the channel with
 `channel.close(ch)`. After closing:
 
 - **Sends** on the closed channel will error.
-- **Receives** return any remaining buffered values. Once the buffer is empty,
-  `channel.receive` returns `None` instead of blocking.
+- **Receives** return any remaining buffered values as `Message(value)`. Once
+  the buffer is empty, `channel.receive` returns `Closed` instead of blocking.
 
 This lets the consumer detect when the producer is finished without needing to
 know how many values to expect.
@@ -351,10 +352,10 @@ fn main() {
   })
 
   let consumer = task.spawn(fn() {
-    let a = channel.receive(ch)   -- 1
-    let b = channel.receive(ch)   -- 2
-    let c = channel.receive(ch)   -- 3
-    let d = channel.receive(ch)   -- None (closed and empty)
+    let Message(a) = channel.receive(ch)   -- 1
+    let Message(b) = channel.receive(ch)   -- 2
+    let Message(c) = channel.receive(ch)   -- 3
+    let d = channel.receive(ch)            -- Closed (closed and empty)
     println("{a} {b} {c} done={d}")
   })
 
@@ -383,18 +384,20 @@ be draining.
 ### Non-blocking receive: `channel.try_receive`
 
 `channel.try_receive(ch)` attempts to receive without blocking. It returns
-`Some(value)` if data is available, or `None` if the channel is empty or closed.
+`Message(value)` if data is available, `Empty` if the channel has no data, or
+`Closed` if the channel is closed and drained.
 
 ```silt
 let ch = channel.new(10)
 channel.send(ch, 42)
 
-channel.try_receive(ch)   -- Some(42)
-channel.try_receive(ch)   -- None (empty)
+channel.try_receive(ch)   -- Message(42)
+channel.try_receive(ch)   -- Empty
 ```
 
 This is useful for polling a channel in a loop or checking for data availability
-without committing to a blocking wait.
+without committing to a blocking wait. Unlike the old `Option`-based API, you can
+distinguish between "no data yet" (`Empty`) and "no data ever" (`Closed`).
 
 ### Combining close with `channel.try_receive`
 
@@ -414,10 +417,10 @@ fn main() {
   task.join(producer)
 
   -- Drain remaining values
-  let v1 = channel.try_receive(ch)   -- Some("a")
-  let v2 = channel.try_receive(ch)   -- Some("b")
-  let v3 = channel.try_receive(ch)   -- Some("c")
-  let v4 = channel.try_receive(ch)   -- None (closed and empty)
+  let Message(v1) = channel.try_receive(ch)   -- "a"
+  let Message(v2) = channel.try_receive(ch)   -- "b"
+  let Message(v3) = channel.try_receive(ch)   -- "c"
+  let v4 = channel.try_receive(ch)            -- Closed
   println("{v1} {v2} {v3} {v4}")
 }
 ```
@@ -620,9 +623,9 @@ fn main() {
   })
 
   let consumer = task.spawn(fn() {
-    let a = channel.receive(ch)
-    let b = channel.receive(ch)
-    let c = channel.receive(ch)
+    let Message(a) = channel.receive(ch)
+    let Message(b) = channel.receive(ch)
+    let Message(c) = channel.receive(ch)
     println("sum = {a + b + c}")
   })
 
@@ -656,17 +659,17 @@ fn main() {
 
   -- Spawn workers that read from jobs and write to results
   let w1 = task.spawn(fn() {
-    let n = channel.receive(jobs)
+    let Message(n) = channel.receive(jobs)
     channel.send(results, n * 2)
   })
 
   let w2 = task.spawn(fn() {
-    let n = channel.receive(jobs)
+    let Message(n) = channel.receive(jobs)
     channel.send(results, n * 2)
   })
 
   let w3 = task.spawn(fn() {
-    let n = channel.receive(jobs)
+    let Message(n) = channel.receive(jobs)
     channel.send(results, n * 2)
   })
 
@@ -675,9 +678,9 @@ fn main() {
   task.join(w3)
 
   -- Collect results
-  let a = channel.receive(results)
-  let b = channel.receive(results)
-  let c = channel.receive(results)
+  let Message(a) = channel.receive(results)
+  let Message(b) = channel.receive(results)
+  let Message(c) = channel.receive(results)
   println("results: {a}, {b}, {c}")
   -- output: results: 20, 40, 60
 }
@@ -711,9 +714,9 @@ fn main() {
 
   -- Stage 2: double each value
   let s2 = task.spawn(fn() {
-    let a = channel.receive(raw)
-    let b = channel.receive(raw)
-    let c = channel.receive(raw)
+    let Message(a) = channel.receive(raw)
+    let Message(b) = channel.receive(raw)
+    let Message(c) = channel.receive(raw)
     channel.send(doubled, a * 2)
     channel.send(doubled, b * 2)
     channel.send(doubled, c * 2)
@@ -721,9 +724,9 @@ fn main() {
 
   -- Stage 3: sum the doubled values
   let s3 = task.spawn(fn() {
-    let a = channel.receive(doubled)
-    let b = channel.receive(doubled)
-    let c = channel.receive(doubled)
+    let Message(a) = channel.receive(doubled)
+    let Message(b) = channel.receive(doubled)
+    let Message(c) = channel.receive(doubled)
     channel.send(results, a + b + c)
   })
 
@@ -731,7 +734,7 @@ fn main() {
   task.join(s2)
   task.join(s3)
 
-  let total = channel.receive(results)
+  let Message(total) = channel.receive(results)
   println("pipeline total = {total}")
   -- output: pipeline total = 12
 }
@@ -808,13 +811,13 @@ runtime. Only the scheduler implementation would change.
 |---|---|---|
 | Create channel | `channel.new()` / `channel.new(n)` | Communication between tasks |
 | Send | `channel.send(ch, val)` | Put a value into a channel |
-| Receive | `channel.receive(ch)` | Take a value from a channel |
+| Receive | `channel.receive(ch)` | Take a value from a channel (`Message(val)` or `Closed`) |
 | Spawn | `task.spawn(fn() { ... })` | Run a function as a concurrent task |
 | Join | `task.join(handle)` | Wait for a task to finish, get its result |
 | Cancel | `task.cancel(handle)` | Stop a task |
 | Close | `channel.close(ch)` | Close a channel (no more sends) |
 | Try send | `channel.try_send(ch, val)` | Non-blocking send (returns Bool) |
-| Try receive | `channel.try_receive(ch)` | Non-blocking receive (returns Option) |
+| Try receive | `channel.try_receive(ch)` | Non-blocking receive (`Message(val)`, `Empty`, or `Closed`) |
 | Select | `channel.select([ch1, ch2])` | Wait on multiple channels (returns `(ch, value)` tuple) |
 
 The mental model: tasks are independent workers. Channels are the pipes between

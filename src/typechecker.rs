@@ -1482,7 +1482,7 @@ impl TypeChecker {
             });
         }
 
-        // channel.receive: (Channel) -> a
+        // channel.receive: (Channel) -> Message(a) | Closed
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
@@ -1511,16 +1511,13 @@ impl TypeChecker {
             });
         }
 
-        // channel.try_receive: (Channel) -> Option(a)
+        // channel.try_receive: (Channel) -> Message(a) | Empty | Closed
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define("channel.try_receive".into(), Scheme {
                 vars: vec![chv, av],
-                ty: Type::Fun(
-                    vec![ch],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
+                ty: Type::Fun(vec![ch], Box::new(a)),
             });
         }
 

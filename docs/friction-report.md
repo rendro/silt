@@ -88,8 +88,8 @@ No `for msg in ch { ... }` construct. The idiomatic pattern is:
 ```silt
 loop {
   match channel.receive(ch) {
-    None -> ()
-    msg -> {
+    Closed -> ()
+    Message(msg) -> {
       println("Received: {msg}")
       loop()
     }
