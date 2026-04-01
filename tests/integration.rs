@@ -2164,3 +2164,50 @@ fn main() {
         panic!("expected fn decl");
     }
 }
+
+#[test]
+fn test_typed_ast_function_return_type() {
+    // check_fn_body now unifies body type with return type.
+    // The function's own body should have a resolved type.
+    let input = r#"
+fn double(x) {
+  x * 2
+}
+
+fn main() {
+  double(21)
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    silt::typechecker::check(&mut program);
+
+    // double's body (x * 2) should resolve to Int
+    if let silt::ast::Decl::Fn(f) = &program.decls[0] {
+        assert!(f.body.ty.is_some(), "double body should be typed");
+        assert_eq!(f.body.ty, Some(silt::types::Type::Int));
+    } else {
+        panic!("expected fn decl");
+    }
+}
+
+#[test]
+fn test_return_type_mismatch_caught() {
+    // The typechecker should catch return type mismatches
+    let input = r#"
+fn add(a: Int, b: Int) -> String {
+  a + b
+}
+
+fn main() {
+  add(1, 2)
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let errors = silt::typechecker::check(&mut program);
+    assert!(
+        errors.iter().any(|e| e.severity == silt::types::Severity::Error),
+        "should catch Int vs String return type mismatch"
+    );
+}

@@ -2048,7 +2048,7 @@ impl TypeChecker {
         let fn_type = self.instantiate(&fn_scheme);
         let fn_type = self.apply(&fn_type);
 
-        let (param_types, _ret_type) = match &fn_type {
+        let (param_types, ret_type) = match &fn_type {
             Type::Fun(params, ret) => (params.clone(), *ret.clone()),
             _ => return,
         };
@@ -2060,11 +2060,9 @@ impl TypeChecker {
             }
         }
 
-        // Infer the body
-        let _body_type = self.infer_expr(&mut f.body, &mut local_env);
-
-        // We could unify body_type with ret_type here for stricter checking,
-        // but for now we keep it lenient to avoid blocking execution.
+        // Infer the body and unify with declared return type
+        let body_type = self.infer_expr(&mut f.body, &mut local_env);
+        self.unify(&body_type, &ret_type, f.body.span);
     }
 
     // ── Pattern type binding ────────────────────────────────────────
