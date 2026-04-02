@@ -2772,3 +2772,58 @@ fn main() {
     "#);
     assert_eq!(result, Value::Bool(true));
 }
+
+#[test]
+fn test_underscore_trailing_closure_param() {
+    // { _ -> expr } as a trailing closure — the core fix
+    let result = run(r#"
+fn main() {
+  [1, 2, 3] |> list.map { _ -> 0 }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![Value::Int(0), Value::Int(0), Value::Int(0)]))
+    );
+}
+
+#[test]
+fn test_underscore_standalone_lambda() {
+    // { _ -> expr } as a standalone lambda expression
+    let result = run(r#"
+fn main() {
+  let f = { _ -> 42 }
+  f("ignored")
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_underscore_second_closure_param() {
+    // { x, _ -> expr } — regression check, already worked
+    let result = run(r#"
+fn main() {
+  [(1, "a"), (2, "b")] |> list.map { (x, _) -> x }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+}
+
+#[test]
+fn test_match_wildcard_arm_still_works() {
+    // match { _ -> expr } — regression check, must still work
+    let result = run(r#"
+fn main() {
+  let x = 99
+  match x {
+    0 -> "zero"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("other".into()));
+}

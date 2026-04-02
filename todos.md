@@ -85,7 +85,7 @@ lines |> list.filter(is_key_value)  -- List(KeyValue), not List(Line)
 
 ---
 
-## 4. `_` as closure parameter — parser ambiguity
+## ~~4. `_` as closure parameter — parser ambiguity~~ DONE
 
 `list.map(xs) { _ -> 42 }` fails because the parser's `is_trailing_closure()` (parser.rs:1131) sees `{ _ ->` and interprets it as a match arm, not a closure parameter.
 

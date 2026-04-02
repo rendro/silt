@@ -1123,12 +1123,15 @@ impl Parser {
         while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
             i += 1;
         }
-        // If the first real token is a literal or wildcard `_`, this is a match
-        // body (patterns like `0 ->`, `true ->`, `_ ->`), not a trailing closure.
+        // If the first real token is a literal, this is a match body
+        // (patterns like `0 ->`, `true ->`), not a trailing closure.
+        // Note: `_` is NOT excluded here because it is a valid closure
+        // parameter name (meaning "ignore this argument"). Match bodies
+        // are consumed directly by parse_match_expr via expect(LBrace),
+        // so they never reach this heuristic.
         if i < self.tokens.len() {
             match &self.tokens[i].0 {
                 Token::Int(_) | Token::Float(_) | Token::Bool(_) => return false,
-                Token::Ident(name) if name == "_" => return false,
                 _ => {}
             }
         }
