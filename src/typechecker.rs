@@ -761,32 +761,81 @@ impl TypeChecker {
         self.variant_to_enum.insert("Ok".into(), "Result".into());
         self.variant_to_enum.insert("Err".into(), "Result".into());
 
-        // Stop(a) / Continue(a) — for list.fold_until
+        // Step enum: Stop(a) / Continue(a) — for list.fold_until
+        self.enums.insert(
+            "Step".into(),
+            EnumInfo {
+                _name: "Step".into(),
+                params: vec!["a".into()],
+                variants: vec![
+                    VariantInfo { name: "Stop".into(), field_types: vec![Type::Var(0)] },
+                    VariantInfo { name: "Continue".into(), field_types: vec![Type::Var(0)] },
+                ],
+            },
+        );
+        self.variant_to_enum.insert("Stop".into(), "Step".into());
+        self.variant_to_enum.insert("Continue".into(), "Step".into());
         {
             let (a, av) = self.fresh_tv();
             env.define("Stop".into(), Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+                ty: Type::Fun(
+                    vec![a.clone()],
+                    Box::new(Type::Generic("Step".into(), vec![a])),
+                ),
             });
         }
         {
             let (a, av) = self.fresh_tv();
             env.define("Continue".into(), Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+                ty: Type::Fun(
+                    vec![a.clone()],
+                    Box::new(Type::Generic("Step".into(), vec![a])),
+                ),
             });
         }
 
-        // Message(a) / Closed / Empty — for channel.receive / channel.try_receive
+        // ChannelResult enum: Message(a) / Closed — for channel.receive
+        self.enums.insert(
+            "ChannelResult".into(),
+            EnumInfo {
+                _name: "ChannelResult".into(),
+                params: vec!["a".into()],
+                variants: vec![
+                    VariantInfo { name: "Message".into(), field_types: vec![Type::Var(0)] },
+                    VariantInfo { name: "Closed".into(), field_types: vec![] },
+                ],
+            },
+        );
+        self.variant_to_enum.insert("Message".into(), "ChannelResult".into());
+        self.variant_to_enum.insert("Closed".into(), "ChannelResult".into());
+        // Also register Empty as a standalone (used in try_receive alongside Message/Closed)
+        self.variant_to_enum.insert("Empty".into(), "ChannelResult".into());
         {
             let (a, av) = self.fresh_tv();
             env.define("Message".into(), Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![a.clone()], Box::new(a)),
+                ty: Type::Fun(
+                    vec![a.clone()],
+                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                ),
             });
         }
-        env.define("Closed".into(), Scheme::mono(self.fresh_var()));
-        env.define("Empty".into(), Scheme::mono(self.fresh_var()));
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Closed".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Generic("ChannelResult".into(), vec![a]),
+            });
+        }
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("Empty".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Generic("ChannelResult".into(), vec![a]),
+            });
+        }
 
         // ── try ────────────────────────────────────────────────────────
 
@@ -1106,14 +1155,15 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            let (step, stepv) = self.fresh_tv();
             env.define("list.fold_until".into(), Scheme {
-                vars: vec![av, bv, stepv],
+                vars: vec![av, bv],
                 ty: Type::Fun(
                     vec![
                         Type::List(Box::new(a.clone())),
                         b.clone(),
-                        Type::Fun(vec![b.clone(), a], Box::new(step)),
+                        Type::Fun(vec![b.clone(), a], Box::new(
+                            Type::Generic("Step".into(), vec![b.clone()])
+                        )),
                     ],
                     Box::new(b),
                 ),
@@ -1972,13 +2022,16 @@ impl TypeChecker {
             });
         }
 
-        // channel.receive: (Channel) -> Message(a) | Closed
+        // channel.receive: (Channel) -> ChannelResult(a)
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define("channel.receive".into(), Scheme {
                 vars: vec![chv, av],
-                ty: Type::Fun(vec![ch], Box::new(a)),
+                ty: Type::Fun(
+                    vec![ch],
+                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                ),
             });
         }
 
@@ -2001,13 +2054,16 @@ impl TypeChecker {
             });
         }
 
-        // channel.try_receive: (Channel) -> Message(a) | Empty | Closed
+        // channel.try_receive: (Channel) -> ChannelResult(a)
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define("channel.try_receive".into(), Scheme {
                 vars: vec![chv, av],
-                ty: Type::Fun(vec![ch], Box::new(a)),
+                ty: Type::Fun(
+                    vec![ch],
+                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                ),
             });
         }
 
