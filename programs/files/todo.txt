@@ -1,5 +1,0 @@
-Buy groceries
-Fix the leaky faucet
-Read chapter five of the Rust book
-Write the concurrent processor example
-Submit the pull request

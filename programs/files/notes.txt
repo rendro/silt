@@ -1,5 +1,0 @@
-Remember to review the channel select documentation
-The pin operator matches against existing variable values
-Cooperative scheduling means tasks yield at channel operations
-Deadlock detection prevents programs from hanging forever
-Fan-out and fan-in patterns distribute work across multiple tasks
