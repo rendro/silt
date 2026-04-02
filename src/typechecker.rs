@@ -139,7 +139,6 @@ pub struct TypeChecker {
     /// Tracks which (trait_name, type_name) pairs have been implemented.
     trait_impl_set: std::collections::HashSet<(std::string::String, std::string::String)>,
     /// Maps function names to their where clauses as (param_index, trait_name).
-    fn_where_clauses: HashMap<std::string::String, Vec<(usize, std::string::String)>>,
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
     /// Tracks the number of bindings in the enclosing `loop` (if any),
@@ -158,7 +157,6 @@ impl TypeChecker {
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
-            fn_where_clauses: HashMap::new(),
             errors: Vec::new(),
             loop_binding_count: None,
         }
@@ -373,16 +371,29 @@ impl TypeChecker {
             .into_iter()
             .filter(|v| !env_fvs.contains(v))
             .collect();
-        Scheme { vars, ty }
+        Scheme { vars, ty, constraints: vec![] }
     }
 
     /// Instantiate a scheme by replacing quantified variables with fresh ones.
     fn instantiate(&mut self, scheme: &Scheme) -> Type {
+        self.instantiate_with_constraints(scheme).0
+    }
+
+    /// Instantiate a scheme and remap its where clause constraints.
+    /// Returns (instantiated_type, remapped_constraints).
+    fn instantiate_with_constraints(&mut self, scheme: &Scheme) -> (Type, Vec<(TyVar, String)>) {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
         }
-        substitute_vars(&scheme.ty, &mapping)
+        let ty = substitute_vars(&scheme.ty, &mapping);
+        let constraints = scheme.constraints.iter().map(|(v, trait_name)| {
+            match mapping.get(v) {
+                Some(Type::Var(new_v)) => (*new_v, trait_name.clone()),
+                _ => (*v, trait_name.clone()),
+            }
+        }).collect();
+        (ty, constraints)
     }
 
     // ── Type name for trait impl matching ────────────────────────────
@@ -654,6 +665,7 @@ impl TypeChecker {
             env.define("print".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
         {
@@ -661,6 +673,7 @@ impl TypeChecker {
             env.define("println".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
 
@@ -670,6 +683,7 @@ impl TypeChecker {
             env.define("panic".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![Type::String], Box::new(a)),
+                constraints: vec![],
             });
         }
 
@@ -685,6 +699,7 @@ impl TypeChecker {
                     vec![a.clone()],
                     Box::new(Type::Generic("Result".into(), vec![a, e])),
                 ),
+                constraints: vec![],
             });
         }
         // Err(e) -> Result(a, e)
@@ -697,6 +712,7 @@ impl TypeChecker {
                     vec![e.clone()],
                     Box::new(Type::Generic("Result".into(), vec![a, e])),
                 ),
+                constraints: vec![],
             });
         }
         // Some(a) -> Option(a)
@@ -708,6 +724,7 @@ impl TypeChecker {
                     vec![a.clone()],
                     Box::new(Type::Generic("Option".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
         // None : Option(a)
@@ -716,6 +733,7 @@ impl TypeChecker {
             env.define("None".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Generic("Option".into(), vec![a]),
+                constraints: vec![],
             });
         }
 
@@ -783,6 +801,7 @@ impl TypeChecker {
                     vec![a.clone()],
                     Box::new(Type::Generic("Step".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
         {
@@ -793,6 +812,7 @@ impl TypeChecker {
                     vec![a.clone()],
                     Box::new(Type::Generic("Step".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -820,6 +840,7 @@ impl TypeChecker {
                     vec![a.clone()],
                     Box::new(Type::Generic("ChannelResult".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
         {
@@ -827,6 +848,7 @@ impl TypeChecker {
             env.define("Closed".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Generic("ChannelResult".into(), vec![a]),
+                constraints: vec![],
             });
         }
         {
@@ -834,6 +856,7 @@ impl TypeChecker {
             env.define("Empty".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Generic("ChannelResult".into(), vec![a]),
+                constraints: vec![],
             });
         }
 
@@ -848,6 +871,7 @@ impl TypeChecker {
                     vec![Type::Fun(vec![], Box::new(a.clone()))],
                     Box::new(Type::Generic("Result".into(), vec![a, Type::String])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -863,6 +887,7 @@ impl TypeChecker {
                     vec![Type::Fun(vec![], Box::new(a))],
                     Box::new(h),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -873,6 +898,7 @@ impl TypeChecker {
             env.define("task.join".into(), Scheme {
                 vars: vec![hv, av],
                 ty: Type::Fun(vec![h], Box::new(a)),
+                constraints: vec![],
             });
         }
 
@@ -882,6 +908,7 @@ impl TypeChecker {
             env.define("task.cancel".into(), Scheme {
                 vars: vec![hv],
                 ty: Type::Fun(vec![h], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
 
@@ -947,6 +974,7 @@ impl TypeChecker {
                     vec![Type::String],
                     Box::new(result_ty),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -959,6 +987,7 @@ impl TypeChecker {
                     vec![a],
                     Box::new(Type::String),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -971,6 +1000,7 @@ impl TypeChecker {
                     vec![a],
                     Box::new(Type::String),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1002,6 +1032,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(b))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1017,6 +1048,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1034,6 +1066,7 @@ impl TypeChecker {
                     ],
                     Box::new(b),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1049,6 +1082,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Unit),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1064,6 +1098,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Option".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1080,6 +1115,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(Type::Tuple(vec![a, b])))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1092,6 +1128,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(Type::List(Box::new(a.clone()))))],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1108,6 +1145,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1124,6 +1162,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(b))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1139,6 +1178,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1154,6 +1194,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1173,6 +1214,7 @@ impl TypeChecker {
                     ],
                     Box::new(b),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1194,6 +1236,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(b))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1206,6 +1249,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), a.clone()],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1218,6 +1262,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), a.clone()],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1233,6 +1278,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1245,6 +1291,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), Type::Int],
                     Box::new(Type::Generic("Option".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1257,6 +1304,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), Type::Int],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1269,6 +1317,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), Type::Int],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1281,6 +1330,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::List(Box::new(Type::Tuple(vec![Type::Int, a])))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1293,6 +1343,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::Generic("Option".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1305,6 +1356,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1317,6 +1369,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::Generic("Option".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1329,6 +1382,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1341,6 +1395,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1353,6 +1408,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone()))],
                     Box::new(Type::List(Box::new(a))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1365,6 +1421,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a.clone())), a],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1377,6 +1434,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(a))],
                     Box::new(Type::Int),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1393,6 +1451,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(k), Box::new(Type::List(Box::new(a))))),
                 ),
+                constraints: vec![],
             });
         }
     }
@@ -1602,6 +1661,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Option".into(), vec![v])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1618,6 +1678,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1633,6 +1694,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1648,6 +1710,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1660,6 +1723,7 @@ impl TypeChecker {
                     vec![Type::Map(Box::new(Type::String), Box::new(v))],
                     Box::new(Type::List(Box::new(Type::String))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1672,6 +1736,7 @@ impl TypeChecker {
                     vec![Type::Map(Box::new(Type::String), Box::new(v.clone()))],
                     Box::new(Type::List(Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1687,6 +1752,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1699,6 +1765,7 @@ impl TypeChecker {
                     vec![Type::Map(Box::new(Type::String), Box::new(v))],
                     Box::new(Type::Int),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1715,6 +1782,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1733,6 +1801,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Map(Box::new(k2), Box::new(v2))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1746,6 +1815,7 @@ impl TypeChecker {
                     vec![Type::Map(Box::new(k.clone()), Box::new(v.clone()))],
                     Box::new(Type::List(Box::new(Type::Tuple(vec![k, v])))),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1759,6 +1829,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(Type::Tuple(vec![k.clone(), v.clone()])))],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
+                constraints: vec![],
             });
         }
     }
@@ -1778,6 +1849,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Result".into(), vec![b, e])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1794,6 +1866,7 @@ impl TypeChecker {
                     ],
                     Box::new(a),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1811,6 +1884,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Result".into(), vec![a, f])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1827,6 +1901,7 @@ impl TypeChecker {
                     ])],
                     Box::new(Type::Generic("Result".into(), vec![a, e])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1840,6 +1915,7 @@ impl TypeChecker {
                     vec![Type::Generic("Result".into(), vec![a, e])],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1853,6 +1929,7 @@ impl TypeChecker {
                     vec![Type::Generic("Result".into(), vec![a, e])],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
     }
@@ -1871,6 +1948,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Option".into(), vec![b])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1886,6 +1964,7 @@ impl TypeChecker {
                     ],
                     Box::new(a),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1902,6 +1981,7 @@ impl TypeChecker {
                     ],
                     Box::new(Type::Generic("Result".into(), vec![a, e])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1914,6 +1994,7 @@ impl TypeChecker {
                     vec![Type::Generic("Option".into(), vec![a])],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -1926,6 +2007,7 @@ impl TypeChecker {
                     vec![Type::Generic("Option".into(), vec![a])],
                     Box::new(Type::Bool),
                 ),
+                constraints: vec![],
             });
         }
     }
@@ -1937,6 +2019,7 @@ impl TypeChecker {
             env.define("io.inspect".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![a], Box::new(Type::String)),
+                constraints: vec![],
             });
         }
 
@@ -1978,6 +2061,7 @@ impl TypeChecker {
             env.define("test.assert_eq".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
 
@@ -1987,6 +2071,7 @@ impl TypeChecker {
             env.define("test.assert_ne".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
     }
@@ -2030,6 +2115,7 @@ impl TypeChecker {
             env.define("channel.new".into(), Scheme {
                 vars: vec![chv],
                 ty: Type::Fun(vec![Type::Int], Box::new(ch)),
+                constraints: vec![],
             });
         }
 
@@ -2040,6 +2126,7 @@ impl TypeChecker {
             env.define("channel.send".into(), Scheme {
                 vars: vec![chv, av],
                 ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
 
@@ -2053,6 +2140,7 @@ impl TypeChecker {
                     vec![ch],
                     Box::new(Type::Generic("ChannelResult".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -2062,6 +2150,7 @@ impl TypeChecker {
             env.define("channel.close".into(), Scheme {
                 vars: vec![chv],
                 ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
+                constraints: vec![],
             });
         }
 
@@ -2072,6 +2161,7 @@ impl TypeChecker {
             env.define("channel.try_send".into(), Scheme {
                 vars: vec![chv, av],
                 ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
+                constraints: vec![],
             });
         }
 
@@ -2085,6 +2175,7 @@ impl TypeChecker {
                     vec![ch],
                     Box::new(Type::Generic("ChannelResult".into(), vec![a])),
                 ),
+                constraints: vec![],
             });
         }
 
@@ -2098,6 +2189,7 @@ impl TypeChecker {
                     vec![Type::List(Box::new(ch.clone()))],
                     Box::new(Type::Tuple(vec![ch, a])),
                 ),
+                constraints: vec![],
             });
         }
     }
@@ -2157,6 +2249,7 @@ impl TypeChecker {
                             Scheme {
                                 vars: var_ids,
                                 ty: result_type,
+                                constraints: vec![],
                             },
                         );
                     } else {
@@ -2166,6 +2259,7 @@ impl TypeChecker {
                             Scheme {
                                 vars: var_ids,
                                 ty: Type::Fun(field_types, Box::new(result_type)),
+                                constraints: vec![],
                             },
                         );
                     }
@@ -2333,28 +2427,34 @@ impl TypeChecker {
             self.fresh_var()
         };
 
-        let fn_type = Type::Fun(param_types, Box::new(ret_type));
-        let scheme = self.generalize(env, &fn_type);
-        env.define(f.name.clone(), scheme);
+        let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
+        let mut scheme = self.generalize(env, &fn_type);
 
-        // Store where clauses mapped to parameter indices
-        if !f.where_clauses.is_empty() {
-            let mut indexed_clauses = Vec::new();
-            for (type_param, trait_name) in &f.where_clauses {
-                // Find the parameter index for this type_param name
+        // Resolve where clauses to (TyVar, trait_name) using param_map.
+        // Primary path: look up type variable names in param_map (e.g., "a" from List(a)).
+        // Fallback: match against parameter names for unannotated params.
+        for (type_param, trait_name) in &f.where_clauses {
+            if let Some(ty) = param_map.get(type_param) {
+                let resolved = self.apply(ty);
+                if let Type::Var(tv) = resolved {
+                    scheme.constraints.push((tv, trait_name.clone()));
+                }
+            } else {
                 for (i, param) in f.params.iter().enumerate() {
                     if let Pattern::Ident(name) = &param.pattern {
                         if name == type_param {
-                            indexed_clauses.push((i, trait_name.clone()));
+                            let resolved = self.apply(&param_types[i]);
+                            if let Type::Var(tv) = resolved {
+                                scheme.constraints.push((tv, trait_name.clone()));
+                            }
                             break;
                         }
                     }
                 }
             }
-            if !indexed_clauses.is_empty() {
-                self.fn_where_clauses.insert(f.name.clone(), indexed_clauses);
-            }
         }
+
+        env.define(f.name.clone(), scheme);
     }
 
     // ── Register trait declarations ─────────────────────────────────
@@ -2941,8 +3041,19 @@ impl TypeChecker {
                         // Capture arg spans before mutable inference
                         let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
 
-                        let callee_ty = self.infer_expr(callee, env);
-                        let callee_ty = self.apply(&callee_ty);
+                        // If callee is a named function, use instantiate_with_constraints
+                        let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name {
+                            if let Some(scheme) = env.lookup(name).cloned() {
+                                let (ty, constraints) = self.instantiate_with_constraints(&scheme);
+                                (self.apply(&ty), constraints)
+                            } else {
+                                let ty = self.infer_expr(callee, env);
+                                (self.apply(&ty), vec![])
+                            }
+                        } else {
+                            let ty = self.infer_expr(callee, env);
+                            (self.apply(&ty), vec![])
+                        };
 
                         // Infer types for the explicit call args
                         let explicit_arg_types: Vec<Type> = call_args
@@ -2972,25 +3083,18 @@ impl TypeChecker {
                             _ => self.fresh_var(),
                         };
 
-                        // Check where clause constraints for piped calls
-                        if let Some(ref fn_name) = callee_fn_name {
-                            if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
-                                for (param_idx, trait_name) in &clauses {
-                                    if let Some(arg_ty) = all_arg_types.get(*param_idx) {
-                                        let resolved = self.apply(arg_ty);
-                                        if let Some(type_name) = self.type_name_for_impl(&resolved) {
-                                            let has_impl = self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone()));
-                                            if !has_impl {
-                                                self.error(
-                                                    format!(
-                                                        "type '{}' does not implement trait '{}'",
-                                                        type_name, trait_name
-                                                    ),
-                                                    span,
-                                                );
-                                            }
-                                        }
-                                    }
+                        // Check where clause constraints using instantiated TyVars
+                        for (tyvar, trait_name) in &where_constraints {
+                            let resolved = self.apply(&Type::Var(*tyvar));
+                            if let Some(type_name) = self.type_name_for_impl(&resolved) {
+                                if !self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone())) {
+                                    self.error(
+                                        format!(
+                                            "type '{}' does not implement trait '{}'",
+                                            type_name, trait_name
+                                        ),
+                                        span,
+                                    );
                                 }
                             }
                         }
@@ -3058,8 +3162,20 @@ impl TypeChecker {
                 let is_method_call = matches!(&callee.kind, ExprKind::FieldAccess(..));
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
-                let callee_ty = self.infer_expr(callee, env);
-                let callee_ty = self.apply(&callee_ty);
+                // If callee is a named function, use instantiate_with_constraints
+                // to get where clause constraints with remapped type variables.
+                let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name {
+                    if let Some(scheme) = env.lookup(name).cloned() {
+                        let (ty, constraints) = self.instantiate_with_constraints(&scheme);
+                        (self.apply(&ty), constraints)
+                    } else {
+                        let ty = self.infer_expr(callee, env);
+                        (self.apply(&ty), vec![])
+                    }
+                } else {
+                    let ty = self.infer_expr(callee, env);
+                    (self.apply(&ty), vec![])
+                };
 
                 let arg_types: Vec<Type> = args
                     .iter_mut()
@@ -3111,27 +3227,18 @@ impl TypeChecker {
                     }
                 };
 
-                // Check where clause constraints
-                if let Some(ref fn_name) = callee_fn_name {
-                    if let Some(clauses) = self.fn_where_clauses.get(fn_name).cloned() {
-                        for (param_idx, trait_name) in &clauses {
-                            if let Some(arg_ty) = arg_types.get(*param_idx) {
-                                let resolved = self.apply(arg_ty);
-                                if let Some(type_name) = self.type_name_for_impl(&resolved) {
-                                    let has_impl = self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone()));
-                                    if !has_impl {
-                                        self.error(
-                                            format!(
-                                                "type '{}' does not implement trait '{}'",
-                                                type_name, trait_name
-                                            ),
-                                            span,
-                                        );
-                                    }
-                                }
-                                // If type_name_for_impl returns None, the type is
-                                // unresolved — skip the check (lenient).
-                            }
+                // Check where clause constraints using instantiated TyVars
+                for (tyvar, trait_name) in &where_constraints {
+                    let resolved = self.apply(&Type::Var(*tyvar));
+                    if let Some(type_name) = self.type_name_for_impl(&resolved) {
+                        if !self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone())) {
+                            self.error(
+                                format!(
+                                    "type '{}' does not implement trait '{}'",
+                                    type_name, trait_name
+                                ),
+                                span,
+                            );
                         }
                     }
                 }

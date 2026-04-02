@@ -118,10 +118,12 @@ impl std::fmt::Display for Type {
 
 /// A type scheme represents a polymorphic type: forall vars . ty
 /// The `vars` are the universally quantified type variables.
+/// The `constraints` are trait bounds on type variables (from `where` clauses).
 #[derive(Debug, Clone)]
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
+    pub constraints: Vec<(TyVar, String)>,
 }
 
 impl Scheme {
@@ -129,6 +131,7 @@ impl Scheme {
         Scheme {
             vars: Vec::new(),
             ty,
+            constraints: Vec::new(),
         }
     }
 }
