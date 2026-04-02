@@ -283,7 +283,7 @@ let total = [10, 20, 30, 40] |> list.fold_until(0) { acc, x ->
     _ -> Continue(acc + x)
   }
 }
--- total == 60
+-- total == 30 (stopped before adding 30, since 30+30=60 > 50)
 ```
 
 ### `list.unfold`

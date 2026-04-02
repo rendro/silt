@@ -314,7 +314,10 @@ Zero-binding loops work for infinite-style iteration:
 loop {
   match io.read_line() {
     Ok("quit") -> println("goodbye")
-    Ok(line) -> { println("echo: {line}"); loop() }
+    Ok(line) -> {
+      println("echo: {line}")
+      loop()
+    }
     _ -> println("goodbye")
   }
 }

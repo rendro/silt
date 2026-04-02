@@ -662,6 +662,7 @@ impl Parser {
 
             // Save position, skip newlines, try infix operators.
             let saved = self.save();
+            let had_newline = self.has_newline_before();
             self.skip_nl();
 
             match self.peek() {
@@ -804,7 +805,10 @@ impl Parser {
                     );
                     continue;
                 }
-                Token::Plus | Token::Minus => {
+                Token::Plus | Token::Minus if !had_newline => {
+                    // + and - are newline-sensitive: they are ambiguous with
+                    // unary +/- at the start of the next statement, so a
+                    // newline before them terminates the current expression.
                     let op = if self.peek() == &Token::Plus {
                         BinOp::Add
                     } else {
@@ -909,7 +913,7 @@ impl Parser {
                 if !self.has_newline_before() && self.at(&Token::LParen) {
                     let args = self.parse_call_args()?;
                     Ok(Expr::new(ExprKind::Call(Box::new(Expr::new(ExprKind::Ident(name), span)), args), span))
-                } else if !self.has_newline_before() && self.at(&Token::LBrace) && !self.is_trailing_closure() {
+                } else if !self.has_newline_before() && self.at(&Token::LBrace) && !self.in_match_scrutinee && !self.is_trailing_closure() {
                     // Record creation: User { name: "Alice", ... }
                     self.advance(); // {
                     let fields = self.parse_record_fields()?;

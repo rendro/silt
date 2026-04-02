@@ -332,7 +332,10 @@ Zero bindings for infinite-style loops:
 loop {
   match channel.receive(ch) {
     Closed -> ()
-    Message(msg) -> { process(msg); loop() }
+    Message(msg) -> {
+      process(msg)
+      loop()
+    }
   }
 }
 ```

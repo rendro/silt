@@ -906,15 +906,21 @@ Silt splits operators into two categories:
 
 **Infix operators** (newline-insensitive -- DO cross newlines):
 - Pipe `|>`
-- Arithmetic `+`, `-`, `*`, `/`, `%`
+- Arithmetic `*`, `/`, `%`
 - Comparison `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Boolean `&&`, `||`
 - Field access `.`
 - Range `..`
 
-The rule: if a newline appears before a postfix operator, that operator is
-not applied to the preceding expression. If a newline appears before an infix
-operator, the parser skips it and continues the expression.
+**Ambiguous operators** (newline-sensitive -- do NOT cross newlines):
+- `+`, `-` — these double as unary operators, so a newline before them
+  terminates the preceding expression. To continue across lines, place the
+  operator at the end of the first line: `10 +\n  20`.
+
+The rule: if a newline appears before a postfix or ambiguous operator, that
+operator is not applied to the preceding expression. If a newline appears
+before a (non-ambiguous) infix operator, the parser skips it and continues
+the expression.
 
 ```
 let a = foo
