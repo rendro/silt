@@ -62,10 +62,10 @@ Silt is remarkably learnable. Agents with zero prior experience consistently pro
 | 3 | No `list.sum` / `list.min` / `list.max` | 2/20 | Must write `list.fold(0) { acc, x -> acc + x }` each time. Common enough to warrant builtins. |
 | 3 | No `list.drop_last` / `list.init` | 1/20 | Stack pop requires `list.take(stack, list.length(stack) - 1)`. |
 | 3 | No set data structure | 2/20 | Visited-cell tracking in algorithms is O(n) with lists. Maps now support any hashable key, so `map.set(visited, (row, col), true)` works. |
-| 3 | No `channel.each` / drain pattern | 1/20 | Draining a channel requires manual `loop + match Message/Closed` recursion. |
+| 3 | ~~No `channel.each` / drain pattern~~ | 1/20 | **Fixed.** `channel.each(ch) { msg -> ... }` added. |
 | 3 | No format strings / printf | 3/20 | Must call `float.to_string(f, 4)` then interpolate the result. No `"{x:.2f}"` syntax. |
 | 3 | `where` clauses silently accept unbound type variables | 1/20 | `where a: Display` on a function with no type annotation introducing `a` is silently ignored. Should warn. |
-| 2 | No `ord` / `chr` / char arithmetic | 1/20 | Caesar cipher requires building explicit alphabet lookup maps instead of arithmetic. |
+| 2 | ~~No `ord` / `chr` / char arithmetic~~ | 1/20 | **Fixed.** `string.char_code` and `string.from_char_code` added. |
 | 2 | No raw string literals | 1/20 | JSON strings with braces and quotes require heavy escaping (`\{`, `\"`). |
 | 2 | No 2D array / matrix type | 1/20 | LCS DP tables require map with stringified coordinate keys. |
 | 2 | No random / PRNG stdlib | 1/20 | Data generation requires ~30 lines of manual LCG implementation. |
@@ -75,7 +75,7 @@ Silt is remarkably learnable. Agents with zero prior experience consistently pro
 | 2 | `json.parse` only handles objects, not arrays | 1/20 | Must wrap JSON arrays in an object to parse into typed records. |
 | 1 | No bare `[x, ..]` rest pattern | 1/20 | Rest element must be bound: `[x, ..rest]` — cannot discard with `..`. |
 | 1 | No float `%` operator | 1/20 | Modulo works for Int but not Float. |
-| 1 | `option.flat_map` documented but not implemented | 1/20 | Docs-implementation mismatch. |
+| 1 | ~~`option.flat_map` documented but not implemented~~ | 1/20 | **Fixed.** `option.flat_map` now implemented. |
 
 ## False Positive Summary
 
@@ -116,27 +116,27 @@ Features consistently praised across programs (no false positives in these asses
 
 ## Missing Standard Library Functions
 
-Confirmed missing after doc review (not false positives):
+Confirmed missing after doc review (not false positives). Items marked **added** have been implemented since the analysis.
 
-| Function | Use Case | Programs |
-|----------|----------|:--------:|
-| `string.is_empty(s)` | Check for empty string without `string.length(s) == 0` | 3 |
-| `string.split_whitespace(s)` | Split on any whitespace, no empty strings | 2 |
-| `string.drop(s, n)` / `string.skip(s, n)` | Substring from offset without calculating end | 2 |
-| `string.from_chars(chars)` | Inverse of `string.chars`; `string.join(chars, "")` works but less discoverable | 1 |
-| `list.sum(list)` | Sum numeric lists without fold boilerplate | 2 |
-| `list.min(list)` / `list.max(list)` | Find min/max without fold boilerplate | 2 |
-| `list.drop_last(list)` / `list.init(list)` | Remove last element (stack pop) | 1 |
-| `channel.each(ch, fn)` | Drain a channel without manual loop+match | 1 |
-| `option.flat_map` | Documented but not implemented — runtime error | 1 |
+| Function | Use Case | Programs | Status |
+|----------|----------|:--------:|--------|
+| `string.is_empty(s)` | Check for empty string without `string.length(s) == 0` | 3 | Not added (use `string.length(s) == 0`) |
+| `string.split_whitespace(s)` | Split on any whitespace, no empty strings | 2 | Not added (use `string.split(" ") \|> list.filter { w -> string.length(w) > 0 }`) |
+| `string.drop(s, n)` / `string.skip(s, n)` | Substring from offset without calculating end | 2 | Not added (use `string.slice(s, n, string.length(s))`) |
+| `string.from_chars(chars)` | Inverse of `string.chars` | 1 | Not added (use `string.join(chars, "")`) |
+| `list.sum(list)` | Sum numeric lists without fold boilerplate | 2 | Not added (use `list.fold(0) { acc, x -> acc + x }`) |
+| `list.min(list)` / `list.max(list)` | Find min/max without fold boilerplate | 2 | Not added (use `list.fold`) |
+| `list.drop_last(list)` / `list.init(list)` | Remove last element (stack pop) | 1 | Not added (use `list.take(xs, list.length(xs) - 1)`) |
+| `channel.each(ch, fn)` | Drain a channel without manual loop+match | 1 | **Added** |
+| `option.flat_map` | Chained optional lookups | 1 | **Added** |
 
 ## Bugs Encountered
 
-| Severity | Bug | Programs |
-|----------|-----|:--------:|
-| Low | `option.flat_map` documented in stdlib-reference.md but not implemented in interpreter | 1 |
+| Severity | Bug | Programs | Status |
+|----------|-----|:--------:|--------|
+| Low | `option.flat_map` documented but not implemented | 1 | **Fixed** |
 
-No interpreter panics, no typechecker crashes, no parser hangs. The `option.flat_map` issue is a docs-implementation mismatch rather than a runtime bug.
+No interpreter panics, no typechecker crashes, no parser hangs. The only bug found was a docs-implementation mismatch (`option.flat_map`), which has since been fixed.
 
 **Post-analysis note:** Two programs (`json_transform.silt`, `budget.silt`) broke after subsequent commits changed the `json.parse` API and parser newline sensitivity rules. These are not bugs in the programs — they reflect language evolution after the programs were written.
 
@@ -146,6 +146,22 @@ No interpreter panics, no typechecker crashes, no parser hangs. The `option.flat
 - `Fn(A) -> B` type annotation syntax — added; works in record fields, let bindings, generics
 - `[x, ..rest]` spread in list construction — added; unbounded spreads in any position
 - Maps now support any hashable key type (Int, tuples, enums, records, etc.) — no longer string-only
+- `list.set(list, index, value)` — added; functional indexed update
+- `string.trim_start` / `string.trim_end` — added
+- `string.char_code` / `string.from_char_code` — added; enables character arithmetic
+- `option.flat_map` — implemented (was documented but missing)
+- `json.parse_map` — added; parse JSON into maps without record types
+- `fs.exists(path)` — added; check file existence
+
+**Intentionally not added** (idiomatic alternatives exist):
+- `string.is_empty` — use `string.length(s) == 0`
+- `string.split_whitespace` — use `string.split(" ") |> list.filter { w -> string.length(w) > 0 }`
+- `string.drop` / `string.skip` — use `string.slice(s, n, string.length(s))`
+- `string.from_chars` — use `string.join(chars, "")`
+- `list.sum` / `list.min` / `list.max` — use `list.fold`
+- `list.drop_last` — use `list.take(xs, list.length(xs) - 1)`
+- `list.repeat` / `list.count` / `list.sort_by_desc` / `list.dedup` — composable from existing primitives
+- `string.concat` / `++` operator — use string interpolation `"{a}{b}"`
 
 ## Language Snapshot
 

@@ -594,6 +594,13 @@ When a blocking operation cannot proceed immediately, the scheduler:
 This loop repeats until the operation succeeds or the scheduler detects a
 deadlock (no tasks made progress).
 
+**Fan-out note:** Because scheduling is cooperative and there is no
+round-robin between yield points, a worker that loops on `channel.receive`
+may consume all messages before other workers get a turn. Fan-out patterns
+are structurally concurrent but execute serially. This will be addressed
+when the interpreter moves to a bytecode VM with instruction-level
+preemption.
+
 ### Deadlock detection
 
 The scheduler detects deadlocks when:

@@ -204,6 +204,10 @@ approach catches more bugs. In practice, pure boolean checks are less common
 than you'd expect -- most "if" in real code is actually a type test or a
 null check, which match handles more naturally.
 
+Guardless match (`match { cond -> expr, _ -> expr }`) mitigates much of the
+verbosity. A dedicated `cond` expression (multi-armed conditional without a
+scrutinee) may be added in a future version if the friction persists.
+
 ### Guards
 
 Guards (`when` in a match arm) handle the cases that pure pattern matching
