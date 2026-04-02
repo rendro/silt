@@ -458,6 +458,16 @@ fn format_stmt(stmt: &Stmt, depth: usize) -> String {
                 format_body(else_body, depth)
             )
         }
+        Stmt::WhenBool {
+            condition,
+            else_body,
+        } => {
+            format!(
+                "{prefix}when {} else {}",
+                format_expr(condition, depth),
+                format_body(else_body, depth)
+            )
+        }
         Stmt::Expr(expr) => {
             format!("{prefix}{}", format_expr(expr, depth))
         }

@@ -1078,9 +1078,31 @@ need to:
 -- Simple propagation: use ?
 let value = parse(input)?
 
--- Custom error: use when-else
+-- Custom error: use when-else (pattern form)
 when Ok(value) = parse(input) else {
   return Err("failed to parse input: expected integer")
+}
+```
+
+`when`-`else` also accepts boolean expressions. If the condition is true, execution
+continues. If false, the else block runs (which must diverge via `return` or `panic`):
+
+```silt
+-- Boolean guard: use when-else (boolean form)
+fn buy(qty, balance, price) {
+  when qty > 0 else { return Err("out of stock") }
+  when balance >= price else { return Err("not enough money") }
+  Ok("purchased")
+}
+```
+
+Both forms can be mixed freely in the same function:
+
+```silt
+fn process(input) {
+  when Ok(value) = parse(input) else { return Err("parse failed") }
+  when value > 0 else { return Err("must be positive") }
+  Ok(value * 2)
 }
 ```
 

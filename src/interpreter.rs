@@ -936,6 +936,28 @@ impl Interpreter {
                 }
                 Ok(Value::Unit)
             }
+            Stmt::WhenBool {
+                condition,
+                else_body,
+            } => {
+                let val = self.eval(condition, env)?;
+                match val {
+                    Value::Bool(true) => {}
+                    Value::Bool(false) => {
+                        match self.eval(else_body, env) {
+                            Err(RuntimeError::Return(v)) => return Err(RuntimeError::Return(v)),
+                            Err(e) => return Err(e),
+                            Ok(_) => {
+                                return Err(err("when-else block must diverge (return or panic)"));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(err("when condition must evaluate to a Bool"));
+                    }
+                }
+                Ok(Value::Unit)
+            }
             Stmt::Expr(expr) => self.eval_inner(expr, env, tail),
         }
     }

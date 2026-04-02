@@ -611,15 +611,33 @@ impl Parser {
 
     fn parse_when_stmt(&mut self) -> Result<Stmt> {
         self.expect(&Token::When)?;
-        let pattern = self.parse_pattern()?;
-        self.expect(&Token::Eq)?;
-        self.skip_nl();
-        let expr = self.parse_expr()?;
+
+        // Try pattern form: when <pattern> = <expr> else { <block> }
+        // If parse_pattern succeeds and is followed by `=`, it's the pattern form.
+        // Otherwise, backtrack and parse as boolean form: when <expr> else { <block> }
+        let saved = self.save();
+        if let Ok(pattern) = self.parse_pattern() {
+            if self.at(&Token::Eq) {
+                self.advance(); // consume `=`
+                self.skip_nl();
+                let expr = self.parse_expr()?;
+                self.expect(&Token::Else)?;
+                let else_body = self.parse_block()?;
+                return Ok(Stmt::When {
+                    pattern,
+                    expr,
+                    else_body,
+                });
+            }
+        }
+
+        // Boolean form: when <expr> else { <block> }
+        self.restore(saved);
+        let condition = self.parse_expr()?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
-        Ok(Stmt::When {
-            pattern,
-            expr,
+        Ok(Stmt::WhenBool {
+            condition,
             else_body,
         })
     }
@@ -2039,6 +2057,35 @@ fn main() {
                     [] -> "empty"
                     _ -> "non-empty"
                 }
+            }
+        "#);
+        assert_eq!(prog.decls.len(), 1);
+    }
+
+    #[test]
+    fn test_when_bool_stmt() {
+        let prog = parse(r#"
+            fn main() {
+                when x > 0 else {
+                    return "negative"
+                }
+                x
+            }
+        "#);
+        assert_eq!(prog.decls.len(), 1);
+    }
+
+    #[test]
+    fn test_when_bool_mixed_with_pattern() {
+        let prog = parse(r#"
+            fn main() {
+                when Ok(value) = parse(input) else {
+                    return Err("failed")
+                }
+                when value > 0 else {
+                    return Err("must be positive")
+                }
+                value
             }
         "#);
         assert_eq!(prog.decls.len(), 1);

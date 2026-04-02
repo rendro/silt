@@ -280,6 +280,24 @@ The flat version reads top-to-bottom, which is how humans think about
 sequential validation. The nested version reads inside-out, which is the
 "staircase of doom" pattern.
 
+#### Boolean form
+
+`when` also accepts boolean expressions directly, without pattern matching:
+
+```
+fn buy(qty, balance, price) {
+  when qty > 0 else { return Err("out of stock") }
+  when balance >= price else { return Err("not enough money") }
+  Ok("purchased")
+}
+```
+
+This eliminates the need for `match expr { true -> ..., _ -> ... }` staircase
+patterns for boolean guards. The boolean form has the same divergence
+requirement: the else block must return or panic. Both forms can be mixed
+freely in the same function, enabling flat validation sequences that combine
+destructuring and boolean conditions.
+
 ### List patterns
 
 Pattern matching extends to lists with three forms: `[]` (empty), `[a, b, c]`

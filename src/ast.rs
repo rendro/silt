@@ -214,6 +214,10 @@ pub enum Stmt {
         expr: Expr,
         else_body: Expr,
     },
+    WhenBool {
+        condition: Expr,
+        else_body: Expr,
+    },
     Expr(Expr),
 }
 

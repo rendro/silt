@@ -3669,6 +3669,16 @@ impl TypeChecker {
                 Type::Unit
             }
 
+            Stmt::WhenBool { condition, else_body } => {
+                let cond_ty = self.infer_expr(condition, env);
+                self.unify(&cond_ty, &Type::Bool, condition.span);
+
+                // Type check the else body
+                let _else_ty = self.infer_expr(else_body, env);
+
+                Type::Unit
+            }
+
             Stmt::Expr(expr) => self.infer_expr(expr, env),
         }
     }
@@ -4330,6 +4340,10 @@ impl TypeChecker {
                             self.resolve_expr_types(expr);
                             self.resolve_expr_types(else_body);
                         }
+                        Stmt::WhenBool { condition, else_body } => {
+                            self.resolve_expr_types(condition);
+                            self.resolve_expr_types(else_body);
+                        }
                         Stmt::Expr(e) => self.resolve_expr_types(e),
                     }
                 }
@@ -4828,6 +4842,46 @@ fn main() {
 fn process(x) {
   when Ok(value) = Ok(x) else {
     return Err("failed")
+  }
+  Ok(value * 2)
+}
+
+fn main() {
+  match process(21) {
+    Ok(n) -> n
+    Err(_) -> 0
+  }
+}
+        "#);
+    }
+
+    // ── Boolean when guard ────────────────────────────────────────────
+
+    #[test]
+    fn test_when_bool_guard() {
+        assert_no_errors(r#"
+fn check(n) {
+  when n > 0 else {
+    return "not positive"
+  }
+  "positive"
+}
+
+fn main() {
+  check(5)
+}
+        "#);
+    }
+
+    #[test]
+    fn test_when_bool_mixed_with_pattern_guard() {
+        assert_no_errors(r#"
+fn process(x) {
+  when Ok(value) = Ok(x) else {
+    return Err("failed")
+  }
+  when value > 0 else {
+    return Err("must be positive")
   }
   Ok(value * 2)
 }

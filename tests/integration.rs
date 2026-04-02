@@ -3304,3 +3304,146 @@ fn main() {
     ");
     assert_eq!(result, Value::String("{\n  \"name\": \"Alice\"\n}".into()));
 }
+
+// ── Boolean when/else ────────────────────────────────────────────────
+
+#[test]
+fn test_when_bool_continues() {
+    let result = run(r#"
+fn check(n) {
+  when n > 0 else { return "not positive" }
+  "positive"
+}
+
+fn main() {
+  check(5)
+}
+    "#);
+    assert_eq!(result, Value::String("positive".into()));
+}
+
+#[test]
+fn test_when_bool_diverges_return() {
+    let result = run(r#"
+fn check(n) {
+  when n > 0 else { return "not positive" }
+  "positive"
+}
+
+fn main() {
+  check(-3)
+}
+    "#);
+    assert_eq!(result, Value::String("not positive".into()));
+}
+
+#[test]
+fn test_when_bool_diverges_panic() {
+    let err = run_err(r#"
+fn check(n) {
+  when n > 0 else { panic("must be positive") }
+  n
+}
+
+fn main() {
+  check(-1)
+}
+    "#);
+    assert!(err.contains("must be positive"));
+}
+
+#[test]
+fn test_when_bool_sequential_guards() {
+    let result = run(r#"
+fn buy(qty, balance, price) {
+  when qty > 0 else { return "out of stock" }
+  when balance >= price else { return "not enough money" }
+  "purchased"
+}
+
+fn main() {
+  buy(3, 100, 50)
+}
+    "#);
+    assert_eq!(result, Value::String("purchased".into()));
+}
+
+#[test]
+fn test_when_bool_sequential_first_fails() {
+    let result = run(r#"
+fn buy(qty, balance, price) {
+  when qty > 0 else { return "out of stock" }
+  when balance >= price else { return "not enough money" }
+  "purchased"
+}
+
+fn main() {
+  buy(0, 100, 50)
+}
+    "#);
+    assert_eq!(result, Value::String("out of stock".into()));
+}
+
+#[test]
+fn test_when_bool_sequential_second_fails() {
+    let result = run(r#"
+fn buy(qty, balance, price) {
+  when qty > 0 else { return "out of stock" }
+  when balance >= price else { return "not enough money" }
+  "purchased"
+}
+
+fn main() {
+  buy(3, 10, 50)
+}
+    "#);
+    assert_eq!(result, Value::String("not enough money".into()));
+}
+
+#[test]
+fn test_when_bool_mixed_with_pattern() {
+    let result = run(r#"
+fn process(input) {
+  when Ok(value) = input else { return "parse failed" }
+  when value > 0 else { return "must be positive" }
+  value * 2
+}
+
+fn main() {
+  process(Ok(5))
+}
+    "#);
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn test_when_bool_mixed_pattern_fails() {
+    let result = run(r#"
+fn process(input) {
+  when Ok(value) = input else { return "parse failed" }
+  when value > 0 else { return "must be positive" }
+  value * 2
+}
+
+fn main() {
+  process(Err("bad"))
+}
+    "#);
+    assert_eq!(result, Value::String("parse failed".into()));
+}
+
+#[test]
+fn test_when_bool_mixed_bool_fails() {
+    let result = run(r#"
+fn process(input) {
+  when Ok(value) = input else { return "parse failed" }
+  when value > 0 else { return "must be positive" }
+  value * 2
+}
+
+fn main() {
+  process(Ok(-3))
+}
+    "#);
+    assert_eq!(result, Value::String("must be positive".into()));
+}

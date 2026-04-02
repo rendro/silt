@@ -289,6 +289,16 @@ parse_int("42")
 |> result.unwrap_or(0)
 ```
 
+`when`-`else` also accepts boolean expressions for flat guard sequences:
+
+```silt
+fn buy(qty, balance, price) {
+  when qty > 0 else { return Err("out of stock") }
+  when balance >= price else { return Err("not enough money") }
+  Ok("purchased")
+}
+```
+
 ### Types
 
 Silt has algebraic data types (tagged unions) and records.
