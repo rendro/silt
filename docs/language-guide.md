@@ -1162,6 +1162,34 @@ Silt provides four built-in traits:
 | `Equal`    | Equality comparison                  |
 | `Hash`     | Hash value for use in maps           |
 
+All four traits are **automatically derived** for every user-defined type (both enum and
+record types). The auto-derived `Display` formats values in constructor syntax:
+
+```silt
+type Color { Red, Green, Blue }
+type Shape { Circle(Int), Rect(Int, Int) }
+
+fn main() {
+  println(Red.display())           -- "Red"
+  println(Circle(5).display())     -- "Circle(5)"
+  println(Rect(3, 4).display())    -- "Rect(3, 4)"
+}
+```
+
+If the auto-derived format is not what you want, write your own `trait Display for T`
+implementation -- it will override the auto-derived version:
+
+```silt
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "a circle of radius {r}"
+      Rect(w, h) -> "a {w}x{h} rectangle"
+    }
+  }
+}
+```
+
 ### Full example
 
 ```silt
@@ -1234,22 +1262,43 @@ If you need a literal `{` in a string, escape it with a backslash:
 let json = "the format is \{\"key\": \"value\"}"
 ```
 
-### Display trait
+### Display trait and custom types
 
-Interpolated values must implement the `Display` trait. Primitive types (`Int`, `Float`,
-`Bool`, `String`) implement it automatically. For custom types, implement `Display`
-yourself:
+String interpolation automatically invokes the `Display` trait for all interpolated values.
+Primitive types (`Int`, `Float`, `Bool`, `String`) and all user-defined types (enums and
+records) implement `Display` automatically -- no manual implementation required:
 
 ```silt
-trait Display for User {
+type Color { Red, Green, Blue }
+type Shape { Circle(Int), Rect(Int, Int) }
+
+fn main() {
+  let c = Red
+  let s = Circle(5)
+  println("color: {c}")    -- "color: Red"
+  println("shape: {s}")    -- "shape: Circle(5)"
+}
+```
+
+The auto-derived Display formats values in constructor syntax. To customize how a type
+appears in interpolation, write your own Display implementation:
+
+```silt
+trait Display for Shape {
   fn display(self) -> String {
-    "User({self.name}, age {self.age})"
+    match self {
+      Circle(r) -> "a circle of radius {r}"
+      Rect(w, h) -> "a {w}x{h} rectangle"
+    }
   }
 }
 
-let alice = User { name: "Alice", age: 30, active: true }
-println("user: {alice.display()}")
+let s = Circle(5)
+println("shape: {s}")    -- "shape: a circle of radius 5"
 ```
+
+You do not need to call `.display()` explicitly inside interpolation -- it is called
+automatically.
 
 ### Triple-quoted strings
 

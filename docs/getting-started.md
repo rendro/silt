@@ -210,7 +210,8 @@ users |> list.filter { user ->
 
 ### String Interpolation
 
-Curly braces inside strings evaluate expressions. The expression must implement the `Display` trait:
+Curly braces inside strings evaluate expressions. All types implement the `Display` trait
+automatically, so any value can be interpolated:
 
 ```silt
 let name = "Alice"
@@ -377,14 +378,24 @@ See `examples/search.silt` for a complete working example.
 
 ### Traits
 
-Traits define interfaces that types can implement. Silt has four built-in traits: `Display`, `Compare`, `Equal`, and `Hash`.
+Traits define interfaces that types can implement. Silt has four built-in traits: `Display`, `Compare`, `Equal`, and `Hash`. All four are **automatically derived** for every user-defined type.
 
 ```silt
 type Shape {
-  Circle(Float),
-  Rect(Float, Float),
+  Circle(Int),
+  Rect(Int, Int),
 }
 
+fn main() {
+  let s = Circle(5)
+  println(s.display())     -- "Circle(5)"   (auto-derived)
+  println("shape: {s}")    -- "shape: Circle(5)"  (interpolation calls Display)
+}
+```
+
+To customize how a type is displayed, write your own implementation -- it overrides the auto-derived version:
+
+```silt
 trait Display for Shape {
   fn display(self) -> String {
     match self {
@@ -395,9 +406,8 @@ trait Display for Shape {
 }
 
 fn main() {
-  let s = Circle(5.0)
-  println(s.display())          -- "Circle(r=5)"
-  println("shape: {s.display()}")  -- string interpolation calls display
+  let s = Circle(5)
+  println("shape: {s}")    -- "shape: Circle(r=5)"
 }
 ```
 

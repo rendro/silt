@@ -2692,3 +2692,102 @@ fn main() {
   math.cos(0.0)              -- 1.0
   math.atan2(1.0, 1.0)       -- 0.7853981633974483 (pi/4)
 }
+
+-----
+
+## Built-in Traits
+
+Silt provides four built-in traits that are **automatically derived** for all types,
+including user-defined enums and records. No manual implementation is required unless
+you want to override the default behavior.
+
+| Trait      | Method                              | Purpose                          |
+|------------|-------------------------------------|----------------------------------|
+| `Display`  | `val.display() -> String`           | Convert to human-readable string |
+| `Equal`    | `val.equal(other) -> Bool`          | Equality comparison              |
+| `Compare`  | `val.compare(other) -> Int`         | Ordering (-1, 0, 1)             |
+| `Hash`     | `val.hash() -> Int`                 | Hash value for map keys          |
+
+### Auto-derived Display
+
+Every user-defined type automatically gets a `Display` implementation that formats
+values in constructor syntax:
+
+```
+val.display() -> String
+```
+
+```silt
+type Color { Red, Green, Blue }
+type Shape { Circle(Int), Rect(Int, Int) }
+type Point { x: Int, y: Int }
+
+fn main() {
+  println(Red.display())           -- "Red"
+  println(Circle(5).display())     -- "Circle(5)"
+  println(Rect(3, 4).display())    -- "Rect(3, 4)"
+
+  let p = Point { x: 1, y: 2 }
+  println(p.display())             -- "Point {x: 1, y: 2}"
+}
+```
+
+Nested values are displayed recursively:
+
+```silt
+println(Some(42).display())        -- "Some(42)"
+println(None.display())            -- "None"
+```
+
+### Overriding auto-derived Display
+
+If the constructor syntax is not suitable, write your own `trait Display for T`
+implementation. It will take precedence over the auto-derived version:
+
+```silt
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "a circle of radius {r}"
+      Rect(w, h) -> "a {w}x{h} rectangle"
+    }
+  }
+}
+
+fn main() {
+  println(Circle(5).display())     -- "a circle of radius 5"
+}
+```
+
+### Display and string interpolation
+
+String interpolation (`"{value}"`) automatically calls the `Display` trait. This means
+both auto-derived and user-written Display implementations are invoked when a value
+appears inside a string:
+
+```silt
+type Color { Red, Green, Blue }
+
+fn main() {
+  let c = Red
+  println("color: {c}")            -- "color: Red"
+}
+```
+
+With a custom Display override:
+
+```silt
+trait Display for Color {
+  fn display(self) -> String {
+    match self {
+      Red -> "red"
+      Green -> "green"
+      Blue -> "blue"
+    }
+  }
+}
+
+fn main() {
+  let c = Red
+  println("color: {c}")            -- "color: red"
+}

@@ -179,9 +179,22 @@ impl Interpreter {
         let global = Env::new();
         register_builtins(&global);
         let method_table = Self::builtin_method_table();
+
+        // Register builtin variant → parent type mappings
+        let mut variant_types = std::collections::HashMap::new();
+        variant_types.insert("Ok".into(), "Result".into());
+        variant_types.insert("Err".into(), "Result".into());
+        variant_types.insert("Some".into(), "Option".into());
+        variant_types.insert("None".into(), "Option".into());
+        variant_types.insert("Stop".into(), "LoopControl".into());
+        variant_types.insert("Continue".into(), "LoopControl".into());
+        variant_types.insert("Message".into(), "ChannelResult".into());
+        variant_types.insert("Closed".into(), "ChannelResult".into());
+        variant_types.insert("Empty".into(), "ChannelResult".into());
+
         Self {
             global,
-            variant_types: std::collections::HashMap::new(),
+            variant_types,
             record_types: std::collections::HashMap::new(),
             scheduler: RefCell::new(Scheduler::new()),
             module_loader: RefCell::new(ModuleLoader::new(project_root)),
@@ -196,7 +209,11 @@ impl Interpreter {
     /// for all primitive and collection types.
     fn builtin_method_table() -> std::collections::HashMap<(String, String), RuntimeMethod> {
         let mut table = std::collections::HashMap::new();
-        let types = ["Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map"];
+        let types = [
+            "Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map",
+            // Builtin ADT types (Option, Result, etc.)
+            "Option", "Result", "LoopControl", "ChannelResult",
+        ];
         let methods = [
             ("display", BuiltinTraitMethod::Display),
             ("equal", BuiltinTraitMethod::Equal),
@@ -337,7 +354,26 @@ impl Interpreter {
                 );
             }
         }
+        // Auto-derive Display/Equal/Compare/Hash for user-defined types
+        self.register_auto_trait_methods(&td.name);
         Ok(())
+    }
+
+    /// Register builtin trait methods (Display, Equal, Compare, Hash) for a type,
+    /// but only if no user-written implementation already exists.
+    fn register_auto_trait_methods(&mut self, type_name: &str) {
+        let methods = [
+            ("display", BuiltinTraitMethod::Display),
+            ("equal", BuiltinTraitMethod::Equal),
+            ("compare", BuiltinTraitMethod::Compare),
+            ("hash", BuiltinTraitMethod::Hash),
+        ];
+        for (method_name, method) in &methods {
+            let key = (type_name.to_string(), method_name.to_string());
+            if !self.method_table.contains_key(&key) {
+                self.method_table.insert(key, RuntimeMethod::Builtin(*method));
+            }
+        }
     }
 
     // ── Import handling ───────────────────────────────────────────────
@@ -568,7 +604,7 @@ impl Interpreter {
                         StringPart::Literal(s) => result.push_str(s),
                         StringPart::Expr(e) => {
                             let val = self.eval(e, env)?;
-                            result.push_str(&val.to_string());
+                            result.push_str(&self.display_value(&val)?);
                         }
                     }
                 }
@@ -983,14 +1019,14 @@ impl Interpreter {
                 "print" => {
                     for (i, arg) in args.iter().enumerate() {
                         if i > 0 { print!(" "); }
-                        print!("{arg}");
+                        print!("{}", self.display_value(arg)?);
                     }
                     Ok(Value::Unit)
                 }
                 "println" => {
                     for (i, arg) in args.iter().enumerate() {
                         if i > 0 { print!(" "); }
-                        print!("{arg}");
+                        print!("{}", self.display_value(arg)?);
                     }
                     println!();
                     Ok(Value::Unit)
@@ -2745,6 +2781,43 @@ impl Interpreter {
                 Ok(Value::Int(hasher.finish() as i64))
             }
             _ => Err(err(format!("unknown trait method: {name}"))),
+        }
+    }
+
+    /// Convert a value to its display string, respecting user-written Display
+    /// trait implementations. Used by string interpolation, print, and println.
+    fn display_value(&self, val: &Value) -> Result<String> {
+        let type_name = self.value_type_name(val);
+        let key = (type_name, "display".to_string());
+        if let Some(method) = self.method_table.get(&key) {
+            match method {
+                RuntimeMethod::Closure(c) => {
+                    // User-written Display: call the closure with self bound
+                    let bound_env = c.env.child();
+                    bound_env.define("self".to_string(), val.clone());
+                    let remaining_params: Vec<Param> =
+                        c.params.iter().skip(1).cloned().collect();
+                    if remaining_params.is_empty() {
+                        // display() takes no args beyond self — call immediately
+                        let result = self.eval(&c.body, &bound_env)?;
+                        match result {
+                            Value::String(s) => Ok(s),
+                            other => Ok(format!("{other}")),
+                        }
+                    } else {
+                        // Should not happen for display(), but fall back
+                        Ok(format!("{val}"))
+                    }
+                }
+                RuntimeMethod::Builtin(BuiltinTraitMethod::Display) => {
+                    // Auto-derived: use Rust Display impl
+                    Ok(format!("{val}"))
+                }
+                _ => Ok(format!("{val}")),
+            }
+        } else {
+            // No display method found — fall back to Rust Display
+            Ok(format!("{val}"))
         }
     }
 
@@ -4531,5 +4604,210 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::Bool(false));
+    }
+
+    // ── Auto-derived Display for ADTs ───────────────────────────────
+
+    #[test]
+    fn test_auto_display_no_arg_variant() {
+        let result = run(r#"
+            type Color { Red, Green, Blue }
+            fn main() {
+                Red.display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Red".into()));
+    }
+
+    #[test]
+    fn test_auto_display_single_arg_variant() {
+        let result = run(r#"
+            type Shape { Circle(Int) }
+            fn main() {
+                Circle(5).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Circle(5)".into()));
+    }
+
+    #[test]
+    fn test_auto_display_multi_arg_variant() {
+        let result = run(r#"
+            type Shape { Rect(Int, Int) }
+            fn main() {
+                Rect(3, 4).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Rect(3, 4)".into()));
+    }
+
+    #[test]
+    fn test_auto_display_nested_variant() {
+        let result = run(r#"
+            type Color { Red }
+            type Styled { Styled(Color) }
+            fn main() {
+                Styled(Red).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Styled(Red)".into()));
+    }
+
+    #[test]
+    fn test_auto_display_option_some() {
+        let result = run(r#"
+            fn main() {
+                Some(42).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Some(42)".into()));
+    }
+
+    #[test]
+    fn test_auto_display_option_none() {
+        let result = run(r#"
+            fn main() {
+                None.display()
+            }
+        "#);
+        assert_eq!(result, Value::String("None".into()));
+    }
+
+    // ── User-written Display overrides auto-derived ─────────────────
+
+    #[test]
+    fn test_user_display_overrides_auto() {
+        let result = run(r#"
+            type Shape { Circle(Int), Rect(Int, Int) }
+            trait Display {
+                fn display(self) -> String
+            }
+            trait Display for Shape {
+                fn display(self) {
+                    match self {
+                        Circle(r) -> "a circle of radius {r}"
+                        Rect(w, h) -> "a {w}x{h} rectangle"
+                    }
+                }
+            }
+            fn main() {
+                Circle(5).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("a circle of radius 5".into()));
+    }
+
+    #[test]
+    fn test_user_display_override_rect() {
+        let result = run(r#"
+            type Shape { Circle(Int), Rect(Int, Int) }
+            trait Display {
+                fn display(self) -> String
+            }
+            trait Display for Shape {
+                fn display(self) {
+                    match self {
+                        Circle(r) -> "a circle of radius {r}"
+                        Rect(w, h) -> "a {w}x{h} rectangle"
+                    }
+                }
+            }
+            fn main() {
+                Rect(3, 4).display()
+            }
+        "#);
+        assert_eq!(result, Value::String("a 3x4 rectangle".into()));
+    }
+
+    // ── String interpolation calls Display ──────────────────────────
+
+    #[test]
+    fn test_interp_auto_display_variant() {
+        let result = run(r#"
+            type Color { Red, Green, Blue }
+            fn main() {
+                let c = Red
+                "color: {c}"
+            }
+        "#);
+        assert_eq!(result, Value::String("color: Red".into()));
+    }
+
+    #[test]
+    fn test_interp_auto_display_with_args() {
+        let result = run(r#"
+            type Shape { Circle(Int) }
+            fn main() {
+                let s = Circle(5)
+                "shape: {s}"
+            }
+        "#);
+        assert_eq!(result, Value::String("shape: Circle(5)".into()));
+    }
+
+    #[test]
+    fn test_interp_user_display() {
+        let result = run(r#"
+            type Shape { Circle(Int), Rect(Int, Int) }
+            trait Display {
+                fn display(self) -> String
+            }
+            trait Display for Shape {
+                fn display(self) {
+                    match self {
+                        Circle(r) -> "circle(r={r})"
+                        Rect(w, h) -> "rect({w}x{h})"
+                    }
+                }
+            }
+            fn main() {
+                let s = Circle(5)
+                "The shape is {s}"
+            }
+        "#);
+        assert_eq!(result, Value::String("The shape is circle(r=5)".into()));
+    }
+
+    #[test]
+    fn test_interp_primitives_still_work() {
+        let result = run(r#"
+            fn main() {
+                let n = 42
+                let f = 3.14
+                let b = true
+                "{n} {f} {b}"
+            }
+        "#);
+        assert_eq!(result, Value::String("42 3.14 true".into()));
+    }
+
+    #[test]
+    fn test_auto_display_record() {
+        let result = run(r#"
+            type Point {
+                x: Int,
+                y: Int,
+            }
+            fn main() {
+                let p = Point { x: 1, y: 2 }
+                p.display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Point {x: 1, y: 2}".into()));
+    }
+
+    #[test]
+    fn test_interp_record_auto_display() {
+        let result = run(r#"
+            type Point {
+                x: Int,
+                y: Int,
+            }
+            fn main() {
+                let p = Point { x: 1, y: 2 }
+                "point: {p}"
+            }
+        "#);
+        assert_eq!(result, Value::String("point: Point {x: 1, y: 2}".into()));
     }
 }
