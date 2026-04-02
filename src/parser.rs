@@ -726,7 +726,17 @@ impl Parser {
                     }
                     self.advance();
                     self.skip_nl();
+                    // Allow trailing closures in the pipe RHS even inside a
+                    // match scrutinee.  The match-body `{` appears *after*
+                    // the entire pipe expression, not inside the RHS, so it
+                    // is safe to re-enable trailing closures here.  Example:
+                    //   match items |> list.any { x -> x > 5 } { true -> … }
+                    //                           ^^^^^^^^^^^^^^^  <- trailing closure
+                    //                                           ^^^^^^^^^^^^^^^^ <- match body
+                    let prev_match = self.in_match_scrutinee;
+                    self.in_match_scrutinee = false;
                     let right = self.parse_expr_bp(r_bp)?;
+                    self.in_match_scrutinee = prev_match;
                     let span = left.span;
                     left = Expr::new(ExprKind::Pipe(Box::new(left), Box::new(right)), span);
                     continue;
@@ -1980,5 +1990,57 @@ fn main() {
             fn main() { add(1, 2) }
         "#);
         assert_eq!(prog.decls.len(), 2);
+    }
+
+    #[test]
+    fn test_match_with_trailing_closure_in_pipe() {
+        // Trailing closures in pipe RHS should work inside match scrutinees.
+        // The `{ x -> x > 5 }` is a trailing closure for `list.any`, while
+        // `{ true -> ... }` is the match body.
+        let prog = parse(r#"
+            fn main() {
+                let items = [1, 2, 3, 6]
+                match items |> list.any { x -> x > 5 } {
+                    true -> "has big"
+                    _ -> "all small"
+                }
+            }
+        "#);
+        assert_eq!(prog.decls.len(), 1);
+        // Verify the match has a scrutinee with a pipe expression
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block body"),
+            };
+            // The match expression is the last statement
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expression statement"),
+            };
+            if let ExprKind::Match { expr: Some(scrutinee), arms } = &match_expr.kind {
+                // Scrutinee should be a Pipe
+                assert!(matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
+                    "expected Pipe scrutinee, got {:?}", scrutinee.kind);
+                // Should have 2 arms
+                assert_eq!(arms.len(), 2);
+            } else {
+                panic!("expected match expression with scrutinee");
+            }
+        }
+    }
+
+    #[test]
+    fn test_match_with_chained_pipes_and_trailing_closures() {
+        // Multiple pipes with trailing closures in a match scrutinee
+        let prog = parse(r#"
+            fn main() {
+                match items |> filter { x -> x > 0 } |> map { x -> x * 2 } {
+                    [] -> "empty"
+                    _ -> "non-empty"
+                }
+            }
+        "#);
+        assert_eq!(prog.decls.len(), 1);
     }
 }

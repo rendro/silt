@@ -700,6 +700,21 @@ commas, and parenthesized patterns. Match arms have patterns (constructors,
 literals) that trailing closures don't, so the heuristic works in practice.
 But it's the trickiest part of the parser. See Section 9 for the full story.
 
+Inside a match scrutinee, trailing closures are suppressed so the `{`
+that opens the match body is not consumed as a closure. However, the
+pipe operator (`|>`) re-enables trailing closures for its right-hand
+side, so pipelines with trailing closures work naturally as scrutinees:
+
+```
+match items |> list.any { x -> x > 5 } {
+    true -> "has big"
+    _ -> "all small"
+}
+```
+
+Here `{ x -> x > 5 }` attaches to `list.any` as a trailing closure,
+and `{ true -> ... }` is correctly parsed as the match body.
+
 ---
 
 ## 7. Record Update Syntax
