@@ -69,6 +69,9 @@ All bindings are immutable. There is no mutable state. You can shadow a binding 
 let x = 42
 let name = "Alice"
 let x = x + 1   -- shadowing, not mutation
+let items = [1, 2, 3]           -- list
+let config = #{ "key": "val" }  -- map
+let tags = #[1, 2, 3]           -- set
 ```
 
 Type annotations are optional -- the compiler infers types for you:

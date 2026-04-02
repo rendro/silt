@@ -535,6 +535,15 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             }
         }
 
+        ExprKind::SetLit(elems) => {
+            if elems.is_empty() {
+                "#[]".to_string()
+            } else {
+                let items: Vec<String> = elems.iter().map(|e| format_expr(e, depth)).collect();
+                format!("#[{}]", items.join(", "))
+            }
+        }
+
         ExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(|e| format_expr(e, depth)).collect();
             format!("({})", items.join(", "))

@@ -1340,6 +1340,262 @@ Iterates over all entries in the map, calling `fn(key, value)` for each. Returns
 
 -----
 
+## `set` Module
+
+Functions for working with sets. Sets provide O(log n) membership testing and store unique values in sorted order. All set operations return new sets (immutable). Literal syntax: `#[1, 2, 3]`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `set.new` | `set.new() -> Set` | Create an empty set |
+| `set.from_list` | `set.from_list(list) -> Set` | Create a set from a list (deduplicates) |
+| `set.to_list` | `set.to_list(s) -> List` | Convert a set to a sorted list |
+| `set.contains` | `set.contains(s, value) -> Bool` | Check if a value is in the set |
+| `set.insert` | `set.insert(s, value) -> Set` | Return a new set with the value added |
+| `set.remove` | `set.remove(s, value) -> Set` | Return a new set with the value removed |
+| `set.length` | `set.length(s) -> Int` | Return the number of elements |
+| `set.union` | `set.union(a, b) -> Set` | Return elements in either set |
+| `set.intersection` | `set.intersection(a, b) -> Set` | Return elements in both sets |
+| `set.difference` | `set.difference(a, b) -> Set` | Return elements in `a` but not in `b` |
+| `set.is_subset` | `set.is_subset(a, b) -> Bool` | Check if `a` is a subset of `b` |
+| `set.map` | `set.map(s, fn) -> Set` | Transform each element |
+| `set.filter` | `set.filter(s, fn) -> Set` | Keep elements where `fn(elem)` is truthy |
+| `set.each` | `set.each(s, fn) -> ()` | Iterate over elements, calling `fn(elem)` |
+| `set.fold` | `set.fold(s, init, fn) -> b` | Reduce elements with `fn(acc, elem)` |
+
+### `set.new`
+
+```
+set.new() -> Set
+```
+
+Creates an empty set.
+
+```silt
+fn main() {
+  let s = set.new()
+  let s2 = set.insert(s, 42)
+  set.contains(s2, 42)   -- true
+}
+```
+
+### `set.from_list`
+
+```
+set.from_list(list) -> Set
+```
+
+Creates a set from a list, removing duplicates.
+
+```silt
+fn main() {
+  let s = set.from_list([3, 1, 2, 1, 3])
+  set.to_list(s)   -- [1, 2, 3]
+}
+```
+
+### `set.to_list`
+
+```
+set.to_list(s) -> List
+```
+
+Converts a set to a sorted list.
+
+```silt
+fn main() {
+  set.to_list(#[3, 1, 2])   -- [1, 2, 3]
+}
+```
+
+### `set.contains`
+
+```
+set.contains(s, value) -> Bool
+```
+
+Returns `true` if the set contains `value`.
+
+```silt
+fn main() {
+  let s = #[1, 2, 3]
+  set.contains(s, 2)   -- true
+  set.contains(s, 4)   -- false
+}
+```
+
+### `set.insert`
+
+```
+set.insert(s, value) -> Set
+```
+
+Returns a new set with `value` added. If the value already exists, the set is unchanged.
+
+```silt
+fn main() {
+  let s = #[1, 2]
+  let s2 = set.insert(s, 3)
+  set.to_list(s2)   -- [1, 2, 3]
+}
+```
+
+### `set.remove`
+
+```
+set.remove(s, value) -> Set
+```
+
+Returns a new set with `value` removed. If the value does not exist, the set is unchanged.
+
+```silt
+fn main() {
+  let s = #[1, 2, 3]
+  let s2 = set.remove(s, 2)
+  set.to_list(s2)   -- [1, 3]
+}
+```
+
+### `set.length`
+
+```
+set.length(s) -> Int
+```
+
+Returns the number of elements in the set.
+
+```silt
+fn main() {
+  set.length(#[1, 2, 3])   -- 3
+}
+```
+
+### `set.union`
+
+```
+set.union(a, b) -> Set
+```
+
+Returns a set containing all elements from both sets.
+
+```silt
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[3, 4, 5]
+  set.to_list(set.union(a, b))   -- [1, 2, 3, 4, 5]
+}
+```
+
+### `set.intersection`
+
+```
+set.intersection(a, b) -> Set
+```
+
+Returns a set containing only elements present in both sets.
+
+```silt
+fn main() {
+  let a = #[1, 2, 3, 4]
+  let b = #[3, 4, 5, 6]
+  set.to_list(set.intersection(a, b))   -- [3, 4]
+}
+```
+
+### `set.difference`
+
+```
+set.difference(a, b) -> Set
+```
+
+Returns a set containing elements in `a` that are not in `b`.
+
+```silt
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[2, 3, 4]
+  set.to_list(set.difference(a, b))   -- [1]
+}
+```
+
+### `set.is_subset`
+
+```
+set.is_subset(a, b) -> Bool
+```
+
+Returns `true` if every element of `a` is also in `b`.
+
+```silt
+fn main() {
+  set.is_subset(#[1, 2], #[1, 2, 3])   -- true
+  set.is_subset(#[1, 4], #[1, 2, 3])   -- false
+}
+```
+
+### `set.map`
+
+```
+set.map(s, fn) -> Set
+```
+
+Returns a new set with `fn` applied to each element.
+
+```silt
+fn main() {
+  let s = #[1, 2, 3]
+  set.to_list(set.map(s) { x -> x * 10 })   -- [10, 20, 30]
+}
+```
+
+### `set.filter`
+
+```
+set.filter(s, fn) -> Set
+```
+
+Returns a new set with only elements where `fn(elem)` returns truthy.
+
+```silt
+fn main() {
+  let s = #[1, 2, 3, 4, 5]
+  set.to_list(set.filter(s) { x -> x > 3 })   -- [4, 5]
+}
+```
+
+### `set.each`
+
+```
+set.each(s, fn) -> ()
+```
+
+Iterates over each element, calling `fn(elem)` for side effects.
+
+```silt
+fn main() {
+  set.each(#[1, 2, 3]) { x -> println(x) }
+  -- 1
+  -- 2
+  -- 3
+}
+```
+
+### `set.fold`
+
+```
+set.fold(s, init, fn) -> b
+```
+
+Reduces the set to a single value by applying `fn(acc, elem)` for each element.
+
+```silt
+fn main() {
+  let s = #[1, 2, 3, 4]
+  set.fold(s, 0) { acc, x -> acc + x }   -- 10
+}
+```
+
+-----
+
 ## `int` Module
 
 Functions for working with integers.

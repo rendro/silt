@@ -1045,6 +1045,21 @@ impl Parser {
                 self.expect(&Token::RBrace)?;
                 Ok(Expr::new(ExprKind::Map(pairs), span))
             }
+            Token::HashBracket => {
+                self.advance();
+                let mut elems = Vec::new();
+                self.skip_nl();
+                while !self.at(&Token::RBracket) {
+                    elems.push(self.parse_expr()?);
+                    self.skip_nl();
+                    if self.at(&Token::Comma) {
+                        self.advance();
+                        self.skip_nl();
+                    }
+                }
+                self.expect(&Token::RBracket)?;
+                Ok(Expr::new(ExprKind::SetLit(elems), span))
+            }
             Token::LBrace => {
                 // Could be a trailing closure or a block.
                 if self.is_trailing_closure() {

@@ -36,6 +36,8 @@ pub enum Type {
     Generic(std::string::String, Vec<Type>),
     /// Map type: key type -> value type.
     Map(Box<Type>, Box<Type>),
+    /// Set type: element type.
+    Set(Box<Type>),
     /// An error type used to allow inference to continue after errors.
     Error,
 }
@@ -109,6 +111,7 @@ impl std::fmt::Display for Type {
                 Ok(())
             }
             Type::Map(k, v) => write!(f, "Map({k}, {v})"),
+            Type::Set(inner) => write!(f, "Set({inner})"),
             Type::Error => write!(f, "<error>"),
         }
     }
@@ -234,6 +237,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             }
             fvs
         }
+        Type::Set(inner) => free_vars_in(inner),
         Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error => {
             Vec::new()
         }
@@ -281,6 +285,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             Box::new(substitute_vars(k, mapping)),
             Box::new(substitute_vars(v, mapping)),
         ),
+        Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
         _ => ty.clone(),
     }
 }

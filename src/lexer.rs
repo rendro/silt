@@ -63,7 +63,8 @@ pub enum Token {
     RBrace,
     LBracket,
     RBracket,
-    HashBrace, // #{
+    HashBrace,   // #{
+    HashBracket, // #[
 
     // Punctuation
     Comma,
@@ -129,6 +130,7 @@ impl fmt::Display for Token {
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
             Token::HashBrace => write!(f, "#{{"),
+            Token::HashBracket => write!(f, "#["),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
@@ -592,6 +594,11 @@ impl Lexer {
                 self.advance_char();
                 self.brace_depth += 1;
                 Ok((Token::HashBrace, start))
+            }
+
+            '#' if self.peek() == Some('[') => {
+                self.advance_char();
+                Ok((Token::HashBracket, start))
             }
 
             '{' => {

@@ -37,6 +37,7 @@ pub enum ExprKind {
     // Collections
     List(Vec<ListElem>),
     Map(Vec<(Expr, Expr)>),
+    SetLit(Vec<Expr>),
     Tuple(Vec<Expr>),
 
     // Variables & access

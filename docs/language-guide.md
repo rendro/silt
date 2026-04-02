@@ -248,7 +248,7 @@ This means you can use any of them anywhere a value is expected.
 
 ## 4. Collections
 
-Silt has three built-in collection types: lists, tuples, and maps.
+Silt has four built-in collection types: lists, tuples, maps, and sets.
 
 ### Lists
 
@@ -363,6 +363,66 @@ For dynamic string-keyed data where values differ, convert to a common type:
 
 ```silt
 let summary = #{ "name": "Engineering", "count": int.to_string(4) }
+```
+
+### Sets
+
+Sets are unordered collections of unique values, written with the `#[ ]` syntax.
+They provide O(log n) membership testing and are useful when you need to track
+unique items or perform set operations.
+
+```silt
+let tags = #[1, 2, 3]
+let empty = #[]
+let words = #["hello", "world", "hello"]   -- duplicates removed: #["hello", "world"]
+```
+
+Sets work with the `set` module:
+
+```silt
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[3, 4, 5]
+
+  set.contains(a, 2)              -- true
+  set.length(a)                   -- 3
+
+  set.to_list(set.union(a, b))         -- [1, 2, 3, 4, 5]
+  set.to_list(set.intersection(a, b))  -- [3]
+  set.to_list(set.difference(a, b))    -- [1, 2]
+}
+```
+
+Like lists and maps, sets are immutable. Operations like `set.insert` and `set.remove`
+return new sets:
+
+```silt
+fn main() {
+  let s = #[1, 2, 3]
+  let s2 = set.insert(s, 4)   -- #[1, 2, 3, 4]
+  let s3 = set.remove(s2, 1)  -- #[2, 3, 4]
+}
+```
+
+Sets support higher-order functions:
+
+```silt
+fn main() {
+  #[1, 2, 3, 4, 5]
+  |> set.filter { x -> x > 2 }
+  |> set.map { x -> x * 10 }
+  |> set.fold(0) { acc, x -> acc + x }
+  -- result: 120
+}
+```
+
+Convert between lists and sets with `set.from_list` and `set.to_list`:
+
+```silt
+fn main() {
+  let unique = set.from_list([3, 1, 2, 1, 3])
+  set.to_list(unique)   -- [1, 2, 3]
+}
 ```
 
 ---
@@ -1437,6 +1497,7 @@ global namespace clean and makes it always clear where a function comes from.
 | `io`      | inspect, read_file, write_file, read_line, args                                |
 | `list`    | map, filter, fold, each, find, zip, flatten, flat_map, sort_by, any, all, ...  |
 | `map`     | get, set, delete, keys, values, merge, length                                  |
+| `set`     | new, from_list, to_list, contains, insert, remove, union, intersection, ...    |
 | `string`  | split, join, trim, contains, replace, length, pad_left, pad_right, ...         |
 | `int`     | parse, abs, min, max, to_float                                                 |
 | `float`   | parse, round, ceil, floor, abs, min, max                                       |

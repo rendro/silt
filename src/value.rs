@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -16,6 +16,7 @@ pub enum Value {
     String(String),
     List(Rc<Vec<Value>>),
     Map(Rc<BTreeMap<Value, Value>>),
+    Set(Rc<BTreeSet<Value>>),
     Tuple(Vec<Value>),
     Record(String, Rc<BTreeMap<String, Value>>),
     Variant(String, Vec<Value>),
@@ -133,6 +134,16 @@ impl fmt::Debug for Value {
             Value::String(s) => write!(f, "\"{s}\""),
             Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
             Value::Map(m) => f.debug_map().entries(m.iter()).finish(),
+            Value::Set(s) => {
+                write!(f, "#[")?;
+                for (i, v) in s.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v:?}")?;
+                }
+                write!(f, "]")
+            }
             Value::Tuple(vs) => {
                 let mut t = f.debug_tuple("");
                 for v in vs {
@@ -199,6 +210,10 @@ impl Value {
                     .collect();
                 format!("#{{{}}}", items.join(", "))
             }
+            Value::Set(s) => {
+                let items: Vec<String> = s.iter().map(|v| v.format_silt()).collect();
+                format!("#[{}]", items.join(", "))
+            }
             Value::Tuple(vs) => {
                 let items: Vec<String> = vs.iter().map(|v| v.format_silt()).collect();
                 format!("({})", items.join(", "))
@@ -261,6 +276,16 @@ impl fmt::Display for Value {
                 }
                 write!(f, "}}")
             }
+            Value::Set(s) => {
+                write!(f, "#[")?;
+                for (i, v) in s.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, "]")
+            }
             Value::Tuple(vs) => {
                 write!(f, "(")?;
                 for (i, v) in vs.iter().enumerate() {
@@ -319,6 +344,7 @@ impl PartialEq for Value {
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
+            (Value::Set(a), Value::Set(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a == b,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
@@ -348,15 +374,16 @@ impl Ord for Value {
                 Value::List(_) => 5,
                 Value::Tuple(_) => 6,
                 Value::Map(_) => 7,
-                Value::Record(..) => 8,
-                Value::Variant(..) => 9,
-                Value::Channel(_) => 10,
-                Value::Handle(_) => 11,
-                Value::Closure(_) => 12,
-                Value::BuiltinFn(_) => 13,
-                Value::VariantConstructor(..) => 14,
-                Value::RecordDescriptor(_) => 15,
-                Value::PrimitiveDescriptor(_) => 16,
+                Value::Set(_) => 8,
+                Value::Record(..) => 9,
+                Value::Variant(..) => 10,
+                Value::Channel(_) => 11,
+                Value::Handle(_) => 12,
+                Value::Closure(_) => 13,
+                Value::BuiltinFn(_) => 14,
+                Value::VariantConstructor(..) => 15,
+                Value::RecordDescriptor(_) => 16,
+                Value::PrimitiveDescriptor(_) => 17,
             }
         };
         let d1 = disc(self);
@@ -378,6 +405,9 @@ impl Ord for Value {
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => {
+                a.iter().cmp(b.iter())
+            }
+            (Value::Set(a), Value::Set(b)) => {
                 a.iter().cmp(b.iter())
             }
             (Value::Record(na, fa), Value::Record(nb, fb)) => {
@@ -419,6 +449,12 @@ impl Hash for Value {
                 m.len().hash(state);
                 for (k, v) in m.iter() {
                     k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Value::Set(s) => {
+                s.len().hash(state);
+                for v in s.iter() {
                     v.hash(state);
                 }
             }

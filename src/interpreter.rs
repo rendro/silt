@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -648,6 +648,14 @@ impl Interpreter {
                 Ok(Value::Map(Rc::new(map)))
             }
 
+            ExprKind::SetLit(elems) => {
+                let mut set = BTreeSet::new();
+                for e in elems {
+                    set.insert(self.eval(e, env)?);
+                }
+                Ok(Value::Set(Rc::new(set)))
+            }
+
             ExprKind::Tuple(elems) => {
                 let vals: Vec<Value> = elems
                     .iter()
@@ -1029,6 +1037,7 @@ impl Interpreter {
                 "int" => self.dispatch_int(func, args),
                 "float" => self.dispatch_float(func, args),
                 "map" => self.dispatch_map(func, args),
+                "set" => self.dispatch_set(func, args),
                 "result" => self.dispatch_result(func, args),
                 "option" => self.dispatch_option(func, args),
                 "io" => self.dispatch_io(func, args),
@@ -1998,6 +2007,184 @@ impl Interpreter {
                 Ok(Value::Unit)
             }
             _ => Err(err(format!("unknown map function: {name}"))),
+        }
+    }
+
+    fn dispatch_set(&self, name: &str, args: &[Value]) -> Result<Value> {
+        match name {
+            "new" => {
+                if !args.is_empty() {
+                    return Err(err("set.new takes 0 arguments"));
+                }
+                Ok(Value::Set(Rc::new(BTreeSet::new())))
+            }
+            "from_list" => {
+                if args.len() != 1 {
+                    return Err(err("set.from_list takes 1 argument (list)"));
+                }
+                let Value::List(xs) = &args[0] else {
+                    return Err(err("set.from_list requires a list"));
+                };
+                let set: BTreeSet<Value> = xs.iter().cloned().collect();
+                Ok(Value::Set(Rc::new(set)))
+            }
+            "to_list" => {
+                if args.len() != 1 {
+                    return Err(err("set.to_list takes 1 argument (set)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.to_list requires a set"));
+                };
+                let list: Vec<Value> = s.iter().cloned().collect();
+                Ok(Value::List(Rc::new(list)))
+            }
+            "contains" => {
+                if args.len() != 2 {
+                    return Err(err("set.contains takes 2 arguments (set, value)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.contains requires a set as first argument"));
+                };
+                Ok(Value::Bool(s.contains(&args[1])))
+            }
+            "insert" => {
+                if args.len() != 2 {
+                    return Err(err("set.insert takes 2 arguments (set, value)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.insert requires a set as first argument"));
+                };
+                let mut rc = s.clone();
+                Rc::make_mut(&mut rc).insert(args[1].clone());
+                Ok(Value::Set(rc))
+            }
+            "remove" => {
+                if args.len() != 2 {
+                    return Err(err("set.remove takes 2 arguments (set, value)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.remove requires a set as first argument"));
+                };
+                let mut rc = s.clone();
+                Rc::make_mut(&mut rc).remove(&args[1]);
+                Ok(Value::Set(rc))
+            }
+            "length" => {
+                if args.len() != 1 {
+                    return Err(err("set.length takes 1 argument (set)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.length requires a set"));
+                };
+                Ok(Value::Int(s.len() as i64))
+            }
+            "union" => {
+                if args.len() != 2 {
+                    return Err(err("set.union takes 2 arguments (set, set)"));
+                }
+                let Value::Set(a) = &args[0] else {
+                    return Err(err("set.union requires sets"));
+                };
+                let Value::Set(b) = &args[1] else {
+                    return Err(err("set.union requires sets"));
+                };
+                let result: BTreeSet<Value> = a.union(b).cloned().collect();
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "intersection" => {
+                if args.len() != 2 {
+                    return Err(err("set.intersection takes 2 arguments (set, set)"));
+                }
+                let Value::Set(a) = &args[0] else {
+                    return Err(err("set.intersection requires sets"));
+                };
+                let Value::Set(b) = &args[1] else {
+                    return Err(err("set.intersection requires sets"));
+                };
+                let result: BTreeSet<Value> = a.intersection(b).cloned().collect();
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "difference" => {
+                if args.len() != 2 {
+                    return Err(err("set.difference takes 2 arguments (set, set)"));
+                }
+                let Value::Set(a) = &args[0] else {
+                    return Err(err("set.difference requires sets"));
+                };
+                let Value::Set(b) = &args[1] else {
+                    return Err(err("set.difference requires sets"));
+                };
+                let result: BTreeSet<Value> = a.difference(b).cloned().collect();
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "is_subset" => {
+                if args.len() != 2 {
+                    return Err(err("set.is_subset takes 2 arguments (set, set)"));
+                }
+                let Value::Set(a) = &args[0] else {
+                    return Err(err("set.is_subset requires sets"));
+                };
+                let Value::Set(b) = &args[1] else {
+                    return Err(err("set.is_subset requires sets"));
+                };
+                Ok(Value::Bool(a.is_subset(b)))
+            }
+            "map" => {
+                if args.len() != 2 {
+                    return Err(err("set.map takes 2 arguments (set, fn)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.map requires a set as first argument"));
+                };
+                let mut result = BTreeSet::new();
+                for v in s.iter() {
+                    let mapped = self.call_value(&args[1], &[v.clone()])?;
+                    result.insert(mapped);
+                }
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "filter" => {
+                if args.len() != 2 {
+                    return Err(err("set.filter takes 2 arguments (set, fn)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.filter requires a set as first argument"));
+                };
+                let mut result = BTreeSet::new();
+                for v in s.iter() {
+                    let keep = self.call_value(&args[1], &[v.clone()])?;
+                    if is_truthy(&keep) {
+                        result.insert(v.clone());
+                    }
+                }
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "each" => {
+                if args.len() != 2 {
+                    return Err(err("set.each takes 2 arguments (set, fn)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.each requires a set as first argument"));
+                };
+                for v in s.iter() {
+                    self.call_value(&args[1], &[v.clone()])?;
+                }
+                Ok(Value::Unit)
+            }
+            "fold" => {
+                if args.len() != 3 {
+                    return Err(err("set.fold takes 3 arguments (set, init, fn)"));
+                }
+                let Value::Set(s) = &args[0] else {
+                    return Err(err("set.fold requires a set as first argument"));
+                };
+                let mut acc = args[1].clone();
+                for v in s.iter() {
+                    acc = self.call_value(&args[2], &[acc, v.clone()])?;
+                }
+                Ok(acc)
+            }
+            _ => Err(err(format!("unknown set function: {name}"))),
         }
     }
 
@@ -4077,6 +4264,21 @@ fn register_builtins(env: &Env) {
         "map.entries",
         "map.from_entries",
         "map.each",
+        "set.new",
+        "set.from_list",
+        "set.to_list",
+        "set.contains",
+        "set.insert",
+        "set.remove",
+        "set.length",
+        "set.union",
+        "set.intersection",
+        "set.difference",
+        "set.is_subset",
+        "set.map",
+        "set.filter",
+        "set.each",
+        "set.fold",
         "io.read_file",
         "io.write_file",
         "io.read_line",

@@ -3662,3 +3662,235 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("ok".into()));
 }
+
+// ── Set literal and set module ──────────────────────────────────────
+
+#[test]
+fn test_set_literal() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3]
+  set.length(s)
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_set_empty() {
+    let result = run(r#"
+fn main() {
+  let s = #[]
+  set.length(s)
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn test_set_deduplication() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 2, 3, 3, 3]
+  set.length(s)
+}
+    "#);
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_set_contains() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3]
+  (set.contains(s, 2), set.contains(s, 4))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_set_insert() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2]
+  let s2 = set.insert(s, 3)
+  (set.length(s2), set.contains(s2, 3))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(3), Value::Bool(true)]));
+}
+
+#[test]
+fn test_set_remove() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3]
+  let s2 = set.remove(s, 2)
+  (set.length(s2), set.contains(s2, 2))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(2), Value::Bool(false)]));
+}
+
+#[test]
+fn test_set_union() {
+    let result = run(r#"
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[3, 4, 5]
+  set.length(set.union(a, b))
+}
+    "#);
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn test_set_intersection() {
+    let result = run(r#"
+fn main() {
+  let a = #[1, 2, 3, 4]
+  let b = #[3, 4, 5, 6]
+  let c = set.intersection(a, b)
+  set.to_list(c)
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(3), Value::Int(4)])));
+}
+
+#[test]
+fn test_set_difference() {
+    let result = run(r#"
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[2, 3, 4]
+  set.to_list(set.difference(a, b))
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1)])));
+}
+
+#[test]
+fn test_set_is_subset() {
+    let result = run(r#"
+fn main() {
+  let a = #[1, 2]
+  let b = #[1, 2, 3]
+  (set.is_subset(a, b), set.is_subset(b, a))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_set_from_list() {
+    let result = run(r#"
+fn main() {
+  let xs = [3, 1, 2, 1, 3]
+  let s = set.from_list(xs)
+  (set.length(s), set.to_list(s))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![
+        Value::Int(3),
+        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+    ]));
+}
+
+#[test]
+fn test_set_to_list() {
+    let result = run(r#"
+fn main() {
+  set.to_list(#[3, 1, 2])
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+}
+
+#[test]
+fn test_set_map() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3]
+  set.to_list(set.map(s) { x -> x * 10 })
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+}
+
+#[test]
+fn test_set_filter() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3, 4, 5]
+  set.to_list(set.filter(s) { x -> x > 3 })
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+}
+
+#[test]
+fn test_set_each() {
+    run_ok(r#"
+fn main() {
+  let s = #[1, 2, 3]
+  set.each(s) { x -> println(x) }
+}
+    "#);
+}
+
+#[test]
+fn test_set_fold() {
+    let result = run(r#"
+fn main() {
+  let s = #[1, 2, 3, 4]
+  set.fold(s, 0) { acc, x -> acc + x }
+}
+    "#);
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn test_set_with_strings() {
+    let result = run(r#"
+fn main() {
+  let s = #["hello", "world", "hello"]
+  (set.length(s), set.contains(s, "hello"))
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(2), Value::Bool(true)]));
+}
+
+#[test]
+fn test_set_with_tuples() {
+    let result = run(r#"
+fn main() {
+  let s = #[(1, 2), (3, 4), (1, 2)]
+  set.length(s)
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_set_new() {
+    let result = run(r#"
+fn main() {
+  let s = set.new()
+  let s2 = set.insert(s, 42)
+  set.contains(s2, 42)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_set_display() {
+    let result = run(r#"
+fn main() {
+  let s = #[3, 1, 2]
+  io.inspect(s)
+}
+    "#);
+    assert_eq!(result, Value::String("#[1, 2, 3]".into()));
+}
