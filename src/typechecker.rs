@@ -1169,6 +1169,25 @@ impl TypeChecker {
             });
         }
 
+        // list.filter_map: (List(a), (a -> Option(b))) -> List(b)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("list.filter_map".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a], Box::new(
+                            Type::Generic("Option".into(), vec![b.clone()])
+                        )),
+                    ],
+                    Box::new(Type::List(Box::new(b))),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // list.any: (List(a), (a -> Bool)) -> Bool
         {
             let (a, av) = self.fresh_tv();

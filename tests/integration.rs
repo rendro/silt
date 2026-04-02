@@ -1295,6 +1295,47 @@ fn main() {
     ])));
 }
 
+// ── list.filter_map ────────────────────────────────────────────────
+
+#[test]
+fn test_list_filter_map() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3, 4, 5] |> list.filter_map { n ->
+    match n % 2 == 0 {
+      true -> Some(n * 10)
+      _ -> None
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::Int(20), Value::Int(40),
+    ])));
+}
+
+#[test]
+fn test_list_filter_map_all_none() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3] |> list.filter_map { _ -> None }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![])));
+}
+
+#[test]
+fn test_list_filter_map_all_some() {
+    let result = run(r#"
+fn main() {
+  [1, 2, 3] |> list.filter_map { n -> Some(n + 100) }
+}
+    "#);
+    assert_eq!(result, Value::List(Rc::new(vec![
+        Value::Int(101), Value::Int(102), Value::Int(103),
+    ])));
+}
+
 // ── list.any / list.all ────────────────────────────────────────────
 
 #[test]

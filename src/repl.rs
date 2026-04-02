@@ -162,7 +162,7 @@ fn builtin_names() -> Vec<String> {
         "list.map", "list.filter", "list.fold", "list.each", "list.find",
         "list.sort", "list.sort_by", "list.reverse", "list.head", "list.tail",
         "list.last", "list.length", "list.contains", "list.append", "list.concat",
-        "list.zip", "list.flatten", "list.flat_map", "list.any", "list.all",
+        "list.zip", "list.flatten", "list.flat_map", "list.filter_map", "list.any", "list.all",
         "list.get", "list.take", "list.drop", "list.enumerate", "list.group_by",
         "list.fold_until", "list.unfold",
         "string.split", "string.trim", "string.join", "string.length",

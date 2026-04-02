@@ -181,6 +181,7 @@ operator (`|>`) and trailing closures.
 | `list.zip` | `list.zip(list_a, list_b) -> List(Tuple)` | Pair up elements from two lists into tuples |
 | `list.flatten` | `list.flatten(list) -> List` | Flatten one level of nested lists |
 | `list.flat_map` | `list.flat_map(list, fn) -> List` | Map then flatten in one step |
+| `list.filter_map` | `list.filter_map(list, fn) -> List` | Apply fn returning Option; keep and unwrap Some values |
 | `list.sort_by` | `list.sort_by(list, key_fn) -> List` | Sort using a key extraction function |
 | `list.any` | `list.any(list, fn) -> Bool` | True if any element satisfies the predicate |
 | `list.all` | `list.all(list, fn) -> Bool` | True if all elements satisfy the predicate |
@@ -368,6 +369,39 @@ fn main() {
   [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
   -- [1, 10, 2, 20, 3, 30]
 }
+```
+
+### `list.filter_map`
+
+```
+list.filter_map(list, fn) -> List
+```
+
+Applies `fn` to each element. `fn` returns an `Option`: `Some(value)` values are
+unwrapped and included in the result, `None` values are discarded. Combines
+`list.map` + `list.filter` + unwrap in a single pass.
+
+```silt
+fn parse_int_maybe(s) {
+  match int.parse(s) {
+    Ok(n) -> Some(n)
+    Err(_) -> None
+  }
+}
+
+fn main() {
+  ["1", "hello", "3", "world"]
+  |> list.filter_map { s -> parse_int_maybe(s) }
+  -- [1, 3]
+}
+```
+
+This is particularly useful when a transformation might fail and you want to
+collect only the successes:
+
+```silt
+lines |> list.filter_map { l -> parse_todo_line(l) }
+-- List(Todo), not List(Option(Todo)) — no unwrap needed
 ```
 
 ### `list.sort_by`

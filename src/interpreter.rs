@@ -1037,6 +1037,12 @@ impl Interpreter {
                 }
                 self.builtin_flat_map(&args[0], &args[1])
             }
+            "filter_map" => {
+                if args.len() != 2 {
+                    return Err(err("list.filter_map takes 2 arguments (list, fn)"));
+                }
+                self.builtin_filter_map(&args[0], &args[1])
+            }
             "any" => {
                 if args.len() != 2 {
                     return Err(err("list.any takes 2 arguments (list, fn)"));
@@ -2565,6 +2571,24 @@ impl Interpreter {
         Ok(Value::List(Rc::new(results)))
     }
 
+    fn builtin_filter_map(&self, list: &Value, func: &Value) -> Result<Value> {
+        let Value::List(xs) = list else {
+            return Err(err("first argument to list.filter_map must be a list"));
+        };
+        let mut results = Vec::new();
+        for item in xs.iter() {
+            let mapped = self.call_value(func, &[item.clone()])?;
+            match &mapped {
+                Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+                    results.push(fields[0].clone());
+                }
+                Value::Variant(name, fields) if name == "None" && fields.is_empty() => {}
+                _ => return Err(err("list.filter_map callback must return Option")),
+            }
+        }
+        Ok(Value::List(Rc::new(results)))
+    }
+
     fn builtin_any(&self, list: &Value, func: &Value) -> Result<Value> {
         let Value::List(xs) = list else {
             return Err(err("first argument to list.any must be a list"));
@@ -3425,6 +3449,7 @@ fn register_builtins(env: &Env) {
         "list.flatten",
         "list.sort_by",
         "list.flat_map",
+        "list.filter_map",
         "list.any",
         "list.all",
         "list.fold_until",
