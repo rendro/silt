@@ -1,12 +1,4 @@
-Design notes for the channel system
-
-Channels in Silt follow the CSP model
-Unbuffered channels block the sender until a receiver is ready
-Buffered channels allow sends up to the capacity
-
-The cooperative scheduler interleaves tasks
-when a send or receive would block
-
-Key insight from testing so far
-Closing a channel causes receive to return None
-which is elegant for signaling completion
+Remember to review the channel documentation.
+The select operation is useful for multiplexing.
+Pin operators match against existing variable values.
+Cooperative scheduling means tasks yield at channel ops.

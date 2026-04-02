@@ -290,7 +290,7 @@ impl TypeChecker {
             (Type::Record(n1, f1), Type::Record(n2, f2)) => {
                 if n1 != n2 {
                     self.error(
-                        format!("record type mismatch: expected {n1}, got {n2}"),
+                        format!("record type mismatch: expected {n2}, got {n1}"),
                         span,
                     );
                 } else {
@@ -311,7 +311,7 @@ impl TypeChecker {
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
                     self.error(
-                        format!("type mismatch: expected {n1}, got {n2}"),
+                        format!("type mismatch: expected {n2}, got {n1}"),
                         span,
                     );
                 } else if a1.len() != a2.len() {
@@ -354,7 +354,7 @@ impl TypeChecker {
 
             _ => {
                 self.error(
-                    format!("type mismatch: expected {t1}, got {t2}"),
+                    format!("type mismatch: expected {t2}, got {t1}"),
                     span,
                 );
             }
@@ -516,7 +516,7 @@ impl TypeChecker {
             }
         }
 
-        // Second pass: register all function signatures and trait impls
+        // Second pass: register all function signatures, trait impls, and top-level lets
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => {
@@ -529,6 +529,25 @@ impl TypeChecker {
                     self.register_trait_impl(ti, &mut env);
                 }
                 _ => {}
+            }
+        }
+
+        // Process top-level let bindings (after functions are registered so
+        // the value expression can call functions, and before function body
+        // checking so functions can reference the constants).
+        for i in 0..program.decls.len() {
+            if let Decl::Let { ref mut value, ref pattern, ref ty, span, .. } = program.decls[i] {
+                let val_ty = self.infer_expr(value, &mut env);
+                if let Some(te) = ty {
+                    let declared = self.resolve_type_expr(te, &mut std::collections::HashMap::new());
+                    self.unify(&val_ty, &declared, span);
+                }
+                let scheme = self.generalize(&env, &val_ty);
+                if let Pattern::Ident(name) = pattern {
+                    env.define(name.clone(), scheme);
+                } else {
+                    self.bind_pattern(pattern, &val_ty, &mut env);
+                }
             }
         }
 
@@ -628,13 +647,22 @@ impl TypeChecker {
     }
 
     fn register_builtins(&mut self, env: &mut TypeEnv) {
-        // ── print / println: (String) -> () ────────────────────────────
-        let str_to_unit = Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Unit),
-        ));
-        env.define("print".into(), str_to_unit.clone());
-        env.define("println".into(), str_to_unit);
+        // ── print / println: (a) -> () ─────────────────────────────────
+        // Accept any type (the runtime uses Display for formatting).
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("print".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+            });
+        }
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("println".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+            });
+        }
 
         // ── panic: String -> a ─────────────────────────────────────────
         {
@@ -1125,6 +1153,18 @@ impl TypeChecker {
             });
         }
 
+        // list.prepend: (List(a), a) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.prepend".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), a.clone()],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
         // list.concat: (List(a), List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
@@ -1240,6 +1280,18 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define("list.sort".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone()))],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+            });
+        }
+
+        // list.unique: (List(a)) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.unique".into(), Scheme {
                 vars: vec![av],
                 ty: Type::Fun(
                     vec![Type::List(Box::new(a.clone()))],
@@ -1991,7 +2043,7 @@ impl TypeChecker {
                     let field_types: Vec<Type> = variant
                         .fields
                         .iter()
-                        .map(|te| self.resolve_type_expr(te, &param_vars))
+                        .map(|te| self.resolve_type_expr(te, &mut param_vars))
                         .collect();
 
                     variant_infos.push(VariantInfo {
@@ -2058,7 +2110,7 @@ impl TypeChecker {
                 let field_types: Vec<(std::string::String, Type)> = fields
                     .iter()
                     .map(|f| {
-                        let ty = self.resolve_type_expr(&f.ty, &param_vars);
+                        let ty = self.resolve_type_expr(&f.ty, &mut param_vars);
                         (f.name.clone(), ty)
                     })
                     .collect();
@@ -2104,7 +2156,7 @@ impl TypeChecker {
     fn resolve_type_expr(
         &mut self,
         te: &TypeExpr,
-        param_vars: &HashMap<std::string::String, Type>,
+        param_vars: &mut HashMap<std::string::String, Type>,
     ) -> Type {
         match te {
             TypeExpr::Named(name) => {
@@ -2126,8 +2178,17 @@ impl TypeChecker {
                         Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
                     }
                     _ => {
-                        // Could be a record or enum type with no params
-                        Type::Generic(name.clone(), vec![])
+                        // Lowercase names in type annotations are type variables
+                        // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
+                        let first_char = name.chars().next().unwrap_or('A');
+                        if first_char.is_lowercase() {
+                            let tv = self.fresh_var();
+                            param_vars.insert(name.clone(), tv.clone());
+                            tv
+                        } else {
+                            // Uppercase: a record or enum type with no params
+                            Type::Generic(name.clone(), vec![])
+                        }
                     }
                 }
             }
@@ -2177,12 +2238,12 @@ impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
     fn register_fn_decl(&mut self, f: &FnDecl, env: &mut TypeEnv) {
-        let param_map = HashMap::new();
+        let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
 
         for param in &f.params {
             let ty = if let Some(te) = &param.ty {
-                self.resolve_type_expr(te, &param_map)
+                self.resolve_type_expr(te, &mut param_map)
             } else {
                 self.fresh_var()
             };
@@ -2190,7 +2251,7 @@ impl TypeChecker {
         }
 
         let ret_type = if let Some(te) = &f.return_type {
-            self.resolve_type_expr(te, &param_map)
+            self.resolve_type_expr(te, &mut param_map)
         } else {
             self.fresh_var()
         };
@@ -2226,18 +2287,18 @@ impl TypeChecker {
             .methods
             .iter()
             .map(|m| {
-                let param_map = HashMap::new();
+                let mut param_map = HashMap::new();
                 let mut param_types = Vec::new();
                 for param in &m.params {
                     let ty = if let Some(te) = &param.ty {
-                        self.resolve_type_expr(te, &param_map)
+                        self.resolve_type_expr(te, &mut param_map)
                     } else {
                         self.fresh_var()
                     };
                     param_types.push(ty);
                 }
                 let ret_type = if let Some(te) = &m.return_type {
-                    self.resolve_type_expr(te, &param_map)
+                    self.resolve_type_expr(te, &mut param_map)
                 } else {
                     self.fresh_var()
                 };
@@ -2282,18 +2343,18 @@ impl TypeChecker {
         self.trait_impl_set.insert(impl_key);
 
         for method in &ti.methods {
-            let param_map = HashMap::new();
+            let mut param_map = HashMap::new();
             let mut param_types = Vec::new();
             for param in &method.params {
                 let ty = if let Some(te) = &param.ty {
-                    self.resolve_type_expr(te, &param_map)
+                    self.resolve_type_expr(te, &mut param_map)
                 } else {
                     self.fresh_var()
                 };
                 param_types.push(ty);
             }
             let ret_type = if let Some(te) = &method.return_type {
-                self.resolve_type_expr(te, &param_map)
+                self.resolve_type_expr(te, &mut param_map)
             } else {
                 self.fresh_var()
             };
@@ -2606,11 +2667,9 @@ impl TypeChecker {
                 // Capture module name before mutable borrow for inference
                 let module_name = if let ExprKind::Ident(n) = &obj.kind { Some(n.clone()) } else { None };
 
-                // Could be record.field, or module.function
-                let obj_ty = self.infer_expr(obj, env);
-                let obj_ty = self.apply(&obj_ty);
-
                 // Check for module-style access first (e.g., string.split)
+                // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
+                // for stdlib module names like list, string, map, io, etc.
                 if let Some(ref module_name) = module_name {
                     let qualified = format!("{module_name}.{field}");
                     if let Some(scheme) = env.lookup(&qualified) {
@@ -2621,6 +2680,10 @@ impl TypeChecker {
                         return resolved;
                     }
                 }
+
+                // Could be record.field — infer the object type
+                let obj_ty = self.infer_expr(obj, env);
+                let obj_ty = self.apply(&obj_ty);
 
                 // Field / method access
                 match &obj_ty {
@@ -2936,9 +2999,13 @@ impl TypeChecker {
                         // Check arity. For method calls (obj.method(...)),
                         // the type signature includes `self` but the call
                         // site does not, so allow a difference of exactly 1.
+                        // Also allow one extra argument for module-qualified
+                        // calls to support overloaded builtins like
+                        // float.to_string(f) and float.to_string(f, decimals).
                         let arity_ok = if is_method_call {
                             arg_types.len() == params.len()
                                 || arg_types.len() + 1 == params.len()
+                                || arg_types.len() == params.len() + 1
                         } else {
                             arg_types.len() == params.len()
                         };
@@ -3001,7 +3068,7 @@ impl TypeChecker {
                     .iter()
                     .map(|p| {
                         let ty = if let Some(te) = &p.ty {
-                            self.resolve_type_expr(te, &HashMap::new())
+                            self.resolve_type_expr(te, &mut HashMap::new())
                         } else {
                             self.fresh_var()
                         };
@@ -3179,7 +3246,7 @@ impl TypeChecker {
                 let val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
-                    let declared = self.resolve_type_expr(te, &HashMap::new());
+                    let declared = self.resolve_type_expr(te, &mut HashMap::new());
                     self.unify(&val_ty, &declared, value_span);
                 }
 
@@ -3417,7 +3484,7 @@ impl TypeChecker {
 
         let scrutinee_ty = self.apply(scrutinee_ty);
 
-        if self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty) {
+        if self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty, 0) {
             let msg = self.missing_description(&patterns, &scrutinee_ty);
             self.error(format!("non-exhaustive match: {msg}"), span);
         }
@@ -3433,14 +3500,22 @@ impl TypeChecker {
 
     /// Check if `query` is useful with respect to existing patterns.
     /// Returns true if there exists a value matching `query` not matched by `matrix`.
-    fn is_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type) -> bool {
+    /// `depth` tracks recursion depth to prevent infinite expansion of recursive types.
+    fn is_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type, depth: usize) -> bool {
+        // Guard against infinite recursion on recursive types (e.g. type Expr { Num(Int), Add(Expr, Expr) }).
+        // Beyond a reasonable depth, conservatively assume exhaustive (not useful).
+        const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
+        if depth > MAX_EXHAUSTIVENESS_DEPTH {
+            return false;
+        }
+
         if matrix.is_empty() {
             return true;
         }
 
         // Expand or-patterns in the query.
         if let Pattern::Or(alts) = query {
-            return alts.iter().any(|alt| self.is_useful(matrix, alt, ty));
+            return alts.iter().any(|alt| self.is_useful(matrix, alt, ty, depth));
         }
 
         // Expand or-patterns in the matrix.
@@ -3448,10 +3523,10 @@ impl TypeChecker {
         let matrix = &expanded[..];
 
         if matches!(query, Pattern::Wildcard | Pattern::Ident(_)) {
-            return self.is_wildcard_useful(matrix, ty);
+            return self.is_wildcard_useful(matrix, ty, depth);
         }
 
-        self.is_constructor_useful(matrix, query, ty)
+        self.is_constructor_useful(matrix, query, ty, depth)
     }
 
     fn expand_or(pat: &Pattern) -> Vec<&Pattern> {
@@ -3463,13 +3538,13 @@ impl TypeChecker {
 
     /// Check if a wildcard is useful: enumerate constructors of the type
     /// and see if they're all covered.
-    fn is_wildcard_useful(&self, matrix: &[&Pattern], ty: &Type) -> bool {
+    fn is_wildcard_useful(&self, matrix: &[&Pattern], ty: &Type, depth: usize) -> bool {
         match ty {
             Type::Bool => {
                 let true_pat = Pattern::Bool(true);
                 let false_pat = Pattern::Bool(false);
-                self.is_useful(matrix, &true_pat, ty)
-                    || self.is_useful(matrix, &false_pat, ty)
+                self.is_useful(matrix, &true_pat, ty, depth + 1)
+                    || self.is_useful(matrix, &false_pat, ty, depth + 1)
             }
             Type::Generic(name, _) => {
                 if let Some(enum_info) = self.enums.get(name).cloned() {
@@ -3478,7 +3553,7 @@ impl TypeChecker {
                             .map(|_| Pattern::Wildcard)
                             .collect();
                         let ctor = Pattern::Constructor(variant.name.clone(), sub_pats.clone());
-                        if self.is_useful(matrix, &ctor, ty) {
+                        if self.is_useful(matrix, &ctor, ty, depth + 1) {
                             return true;
                         }
                     }
@@ -3491,13 +3566,23 @@ impl TypeChecker {
                 // Single constructor: the tuple itself.
                 let sub_pats: Vec<Pattern> = elem_tys.iter().map(|_| Pattern::Wildcard).collect();
                 let tuple_q = Pattern::Tuple(sub_pats);
-                self.is_useful(matrix, &tuple_q, ty)
+                self.is_useful(matrix, &tuple_q, ty, depth + 1)
             }
             // Record types have a single constructor — a wildcard is NOT useful
             // if any row already matches (record pattern, wildcard, or ident).
             Type::Record(..) => {
                 !matrix.iter().any(|p| matches!(p,
                     Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }))
+            }
+            // Lists have two constructors: [] (empty) and [_, ..rest] (non-empty).
+            Type::List(_elem_ty) => {
+                let empty = Pattern::List(vec![], None);
+                let non_empty = Pattern::List(
+                    vec![Pattern::Wildcard],
+                    Some(Box::new(Pattern::Wildcard)),
+                );
+                self.is_useful(matrix, &empty, ty, depth + 1)
+                    || self.is_useful(matrix, &non_empty, ty, depth + 1)
             }
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => {
@@ -3507,7 +3592,7 @@ impl TypeChecker {
     }
 
     /// Check if a specific constructor pattern is useful.
-    fn is_constructor_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type) -> bool {
+    fn is_constructor_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type, depth: usize) -> bool {
         match query {
             Pattern::Bool(b) => {
                 let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
@@ -3528,7 +3613,7 @@ impl TypeChecker {
                         Pattern::Tuple(sub_pats.clone())
                     };
                     let sub_refs: Vec<&Pattern> = specialized.iter().collect();
-                    self.is_useful(&sub_refs, &sub_query, &sub_ty)
+                    self.is_useful(&sub_refs, &sub_query, &sub_ty, depth + 1)
                 }
             }
             Pattern::Tuple(sub_pats) => {
@@ -3552,11 +3637,30 @@ impl TypeChecker {
                         }
                     }).collect();
                     let unwrapped_refs: Vec<&Pattern> = unwrapped.iter().collect();
-                    self.is_useful(&unwrapped_refs, &sub_pats[0], &elem_ty)
+                    self.is_useful(&unwrapped_refs, &sub_pats[0], &elem_ty, depth + 1)
                 } else {
                     // Multi-element tuple: decompose column-by-column on the
                     // specialized matrix.
-                    self.is_tuple_useful_recursive(&spec_refs, sub_pats, ty)
+                    self.is_tuple_useful_recursive(&spec_refs, sub_pats, ty, depth)
+                }
+            }
+            // List patterns: [] is the "empty" constructor, [h, ..t] is the "cons" constructor.
+            Pattern::List(elems, rest) => {
+                let is_empty = elems.is_empty() && rest.is_none();
+                if is_empty {
+                    // Empty list pattern: useful if no empty list or wildcard in matrix
+                    let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
+                        matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                            || matches!(p, Pattern::List(e, r) if e.is_empty() && r.is_none())
+                    }).copied().collect();
+                    specialized.is_empty()
+                } else {
+                    // Non-empty list pattern: useful if no non-empty list or wildcard covers it
+                    let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
+                        matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                            || matches!(p, Pattern::List(e, _) if !e.is_empty())
+                    }).copied().collect();
+                    specialized.is_empty()
                 }
             }
             // Literal patterns — useful iff no wildcard covers them.
@@ -3570,7 +3674,7 @@ impl TypeChecker {
 
     /// Check multi-element tuple usefulness by specializing on the first column.
     /// This implements the proper Maranget column decomposition.
-    fn is_tuple_useful_recursive(&self, matrix: &[&Pattern], sub_pats: &[Pattern], ty: &Type) -> bool {
+    fn is_tuple_useful_recursive(&self, matrix: &[&Pattern], sub_pats: &[Pattern], ty: &Type, depth: usize) -> bool {
         let arity = sub_pats.len();
         if arity == 0 {
             return matrix.is_empty();
@@ -3587,7 +3691,7 @@ impl TypeChecker {
                     _ => None,
                 }
             }).collect();
-            return self.is_useful(&col_pats, &sub_pats[0], &col_ty);
+            return self.is_useful(&col_pats, &sub_pats[0], &col_ty, depth + 1);
         }
 
         // Multi-column: specialize on first column, then recurse on rest.
@@ -3627,7 +3731,7 @@ impl TypeChecker {
                 }
             }
             let rest_refs: Vec<&Pattern> = specialized_rest.iter().collect();
-            if self.is_useful(&rest_refs, &query_rest, &rest_ty) {
+            if self.is_useful(&rest_refs, &query_rest, &rest_ty, depth + 1) {
                 return true;
             }
         }
@@ -3772,7 +3876,7 @@ impl TypeChecker {
                             .map(|_| Pattern::Wildcard)
                             .collect();
                         let ctor = Pattern::Constructor(variant.name.clone(), sub_pats);
-                        if self.is_useful(patterns, &ctor, ty) {
+                        if self.is_useful(patterns, &ctor, ty, 0) {
                             missing.push(variant.name.clone());
                         }
                     }

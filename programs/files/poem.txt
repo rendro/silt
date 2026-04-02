@@ -1,11 +1,3 @@
-Channels and Tasks
-
-Data flows through narrow pipes
-Messages passed from hand to hand
-No shared state to corrupt or break
-Just values sent across the strand
-
-Each task runs its own small world
-Receiving what it needs to know
-Then sending back the answer found
-A clean and simple dataflow
+The fog comes on little cat feet.
+It sits looking over harbor and city
+on silent haunches and then moves on.

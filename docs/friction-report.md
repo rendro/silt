@@ -1,192 +1,153 @@
-# Silt Language -- Final Friction Report
+# Silt Language Friction Report
 
-Compiled from 10 evaluation programs, 9 examples, and full source audit. 2026-03-31.
+Generated: 2026-04-01
+Method: 10 programs implemented from scratch by agents with no prior silt experience.
 
----
+## Executive Summary
 
-## 1. Executive Summary
+**Average rating: 8.1 / 10.** Silt is a highly learnable language. All 10 agents successfully wrote working programs (50-277 lines each, 2,069 lines total) with an average of just 2.1 edit-run cycles. One program worked on the first attempt. The pipe operator, trailing closures, pattern matching, and `loop`-with-state are consistently praised as natural and expressive. The top friction sources are: parser limitations around inline match arms, undocumented `io.args()` behavior, homogeneous map typing, and missing convenience stdlib functions (`list.sum`, `list.min_by`, `string.strip_chars`).
 
-**Final Rating: 8.5 / 10**
+## Per-Program Results
 
-Silt is a small, expression-oriented functional language with 14 keywords, 13 globals, and 103 module-qualified builtins across 13 modules. It compiles to a tree-walking interpreter written in ~13,300 lines of Rust, backed by 323 test functions.
+| # | Program | Rating | Attempts | Highlight | Primary Friction |
+|---|---------|:------:|:--------:|-----------|-----------------|
+| 1 | todo.silt | 8/10 | 2 | Loop-with-state REPL pattern; record update syntax | Guardless match arms can't be comma-separated on one line |
+| 2 | pipeline.silt | 8/10 | 2 | Pipe chains; higher-order function factories | Inline match inside trailing closures causes parse errors |
+| 3 | expr_eval.silt | 9/10 | 1 | Or-patterns; recursive ADT; Display trait | Minor: no list spread operator |
+| 4 | config_parser.silt | 7/10 | 3 | ADT line classification; list.enumerate + fold | Homogeneous maps can't hold mixed-type values; `#{}` inside match arms confuses parser |
+| 5 | csv_analyzer.silt | 8/10 | 2 | list.group_by; sort_by; string.pad_right alignment | No string concatenation operator; no list.sum/min_by/max_by |
+| 6 | kvstore.silt | 9/10 | 1 | Loop-with-state for REPL; json.stringify/parse roundtrip | No case-insensitive match; no string.split_whitespace |
+| 7 | concurrent_processor.silt | 8/10 | 2 | channel.select with ^pin; deterministic scheduling | Typechecker false-positive on non-exhaustive match for Closed/Message |
+| 8 | text_stats.silt | 8/10 | 2 | list.fold + map for word frequencies; string.pad_right | io.args() includes binary/subcommand/script, not just user args |
+| 9 | test_suite.silt | 8/10 | 4 | try() + test.assert_eq for custom test runner | Semicolons don't work (newline-only); list.tail returns List not Option |
+| 10 | link_checker.silt | 8/10 | 2 | regex.captures + list patterns; guardless match | Type inference issue with inline option.unwrap_or in comparisons |
 
-All 10 evaluation programs have been rewritten to use the current stdlib. No legacy helper functions remain. No `match true { ... }` workarounds remain. No `flatten([acc, [item]])` list-building workarounds remain. The programs now use `list.get`, `list.append`, `list.concat`, `list.sort_by`, `list.take`, `list.enumerate`, `list.any`, `list.all`, `string.index_of`, `string.slice`, `string.pad_left`, `string.pad_right`, `float.min`, `float.max`, guardless match, and `try()`.
+**Average: 8.1 / 10, 2.1 attempts**
 
-### What is complete
+## Recurring Friction Patterns
 
-- **Module system.** Clean namespace: 13 globals, everything else module-qualified. `list.map`, `channel.send`, `task.spawn` -- no bare `map` or `spawn` polluting scope.
-- **Pattern matching.** Wildcard, literal (including negative), identifier, tuple, constructor, record, list (with rest), or-pattern, range, and map patterns. Guards on every arm. Guardless match for conditional blocks.
-- **Pipe operator.** First-argument insertion with trailing closure syntax. The defining feature of Silt's ergonomics.
-- **Concurrency primitives.** Buffered channels, cooperative tasks, `channel.select`, try_send/try_receive. Full fan-out/fan-in support.
-- **Error handling.** Result/Option as first-class types, `?` operator for propagation, `when`/`else` for early return, `try()` for panic recovery.
-- **Records.** Named fields, immutable update syntax (`record.{ field: value }`), pattern matching on record shape.
-- **Traits.** Method dispatch on enum and record types. Display trait for custom formatting.
-- **Algebraic data types.** Recursive ADTs, deep pattern matching on nested constructors, variant constructors as first-class functions.
-- **Tooling.** REPL (`silt repl`), formatter (`silt fmt`), test runner (`silt test` with `test_` prefix discovery).
-- **Type checker.** Hindley-Milner inference with all builtins registered -- including `channel.*`, `task.*`, `try`, and `map.length`.
-- **TCO.** Tail-call optimization via trampolining. Safe recursion for REPL loops and channel drains.
-- **Loop expression.** `loop x = init { ... loop(new_x) }` provides stack-safe stateful iteration as an expression, without requiring named helper functions. Eliminates the "recursive loop ceremony" for REPL loops, channel drains, and accumulators.
-- **Fold with early termination.** `list.fold_until` with `Stop`/`Continue` constructors. `list.unfold` for generating lists from a seed.
-- **Number formatting.** `float.to_string(f, decimals)` for fixed decimal places, `int.to_string(n)` and `float.to_int(f)` for explicit conversions.
+Ranked by frequency (number of programs affected):
 
-### What is deliberately omitted
+1. **Match arm parsing issues** (6/10) — Inline match expressions with comma-separated arms don't parse. Match inside trailing closures fails. `#{}` literal inside match arms confuses the parser. Every agent eventually learned to use newline-separated arms or hoist match into `let` bindings.
 
-- No `while`/`for` -- `loop` expression + higher-order functions is the model.
-- No `if`/`else` -- guardless match covers conditional blocks.
-- No mutation -- shadowing, record update, and map operations handle state.
-- No channel iteration syntax -- `loop` with `channel.receive` is the pattern.
+2. **Missing convenience stdlib functions** (4/10) — `list.sum`, `list.min_by`, `list.max_by`, `string.strip_chars`, `string.split_whitespace`, `map.contains_key`, `regex.captures_all`. Agents worked around these with `list.fold`, but the boilerplate was noted.
 
-These are design choices, not gaps.
+3. **No string concatenation operator** (3/10) — No `++` or `+` for strings. Agents used interpolation (`"{a}{b}"`) or `string.join` as workarounds, which works but feels indirect for simple concatenation.
 
----
+4. **Homogeneous map typing** (2/10) — Maps can't hold mixed-type values. Agents building complex accumulators had to use tuples instead of maps, which is less readable.
 
-## 2. Per-Program Ratings
+5. **`io.args()` includes interpreter argv** (2/10) — The docs say "command-line arguments" but the list includes the binary name, subcommand, and script path. User args start at index 3, not 0.
 
-All programs have been rewritten to use the full current stdlib. Ratings reflect the actual current code.
+6. **Typechecker exhaustiveness false positives** (2/10) — `Closed` + `Message(x)` should be exhaustive for `channel.receive`, and `Ok(x)` + `Err(e)` for Result, but the typechecker sometimes requires a `_` wildcard arm.
 
-| # | Program | Rating | Highlight | Remaining friction |
-|---|---------|:------:|-----------|-------------------|
-| 1 | `link_checker.silt` | 9.0 | `regex.find_all` for markdown link extraction; `regex.is_match` for URL validation; pipes + guardless match | `regex.captures` now available; could simplify link splitting |
-| 2 | `csv_analyzer.silt` | 8.5 | Record types for column stats; `float.to_string(f, 2)` for formatting; `float.min`/`float.max`; mixed int/float arithmetic | Fold's 3-arg form in pipes slightly confusing |
-| 3 | `concurrent_processor.silt` | 8.5 | `loop` for channel drain + worker loops; `channel.select` with pin; inline `loop` in `task.spawn` | Cooperative scheduler limits parallelism |
-| 4 | `kvstore.silt` | 8.5 | `loop` for REPL; `json.pretty`/`json.parse` for SAVE/LOAD; generic map keys | None significant |
-| 5 | `expr_eval.silt` | 8.0 | Recursive ADTs; deep pattern matching; or-patterns for RPN; negative literal patterns | None significant |
-| 6 | `todo.silt` | 8.0 | `loop` for REPL; record update syntax; `list.append`; `list.any`; guardless match | None significant |
-| 7 | `text_stats.silt` | 7.5 | `list.sort_by` + `list.take` for top-N; `list.enumerate`; `float.to_string(f, 2)` | Type checker gaps on some builtins |
-| 8 | `config_parser.silt` | 7.0 | Algebraic types for line classification; guardless match; `string.index_of` + `string.slice` | Nested map update ceremony; wide fold tuples |
-| 9 | `pipeline.silt` | 8.0 | Pipe operator showcase; 12 distinct pipeline demos; `list.sort_by`, `list.take`, `list.enumerate` | `fold_until` available but not used here |
-| 10 | `test_suite.silt` | 7.0 | `try()` for catching failures; `--filter` and `skip_test_` in runner | No parameterized tests; no setup/teardown |
+## What Felt Natural
 
-**Average: 8.0 / 10**
+These features were consistently praised across 5+ programs:
 
-The floor has risen: no program scores below 7.0. The highest scores (link_checker 9.0, csv_analyzer/concurrent_processor/kvstore 8.5) reflect programs where silt's strengths -- pipes, pattern matching, `loop`, regex, JSON -- map directly to the problem. The remaining friction is structural (cooperative concurrency, fold ergonomics) rather than missing features.
+- **Pipe operator `|>` with trailing closures** — Universally loved. Every agent used it extensively and found it readable and composable. The `{ x -> expr }` syntax for closures outside parens was called "elegant" multiple times.
 
----
+- **Pattern matching as sole branching** — Once agents internalized that there's no if/else, guardless `match { cond -> ... }` became a natural replacement. Deep matching on nested constructors (ADTs, tuples, lists) was consistently praised.
 
-## 3. Remaining Friction -- Deliberate Design Only
+- **`loop` expression with state** — The `loop store = #{} { ... loop(new_store) }` pattern for REPLs was discovered independently by multiple agents and described as "a natural functional REPL idiom."
 
-Everything below is a conscious design choice, not a bug or missing feature.
+- **Record types and update syntax** — `u.{ age: 31 }` was called "clean" and "ergonomic" by every agent that used records.
 
-### No `while`/`for`
+- **String interpolation** — `"hello {name}"` with embedded expressions was universally praised as convenient and natural.
 
-The `loop` expression handles stateful iteration: `loop x = init { ... loop(new_x) }`.
-Collection traversal uses higher-order functions (`list.map`, `list.filter`, `list.fold`).
-There is no `for x in collection` syntax -- pipes + trailing closures fill that role.
+- **Algebraic data types** — Clean definition syntax, exhaustive pattern matching, or-patterns (`Add(l,r) | Mul(l,r)`) — all worked smoothly.
 
-### No `if`/`else`
+- **Error handling via Result/Option** — The `when`/`else` guard, `?` operator, and `try()` builtin gave agents multiple ergonomic options for error handling.
 
-Guardless match covers this completely. All programs now use it where appropriate.
+## What Felt Forced
 
-### No mutation
+Patterns that consistently required workarounds:
 
-Shadowing (`let db = map.set(db, key, val)`) and record update syntax (`todo.{ done: true }`) handle state transformation. The accumulator-threading pattern in fold and `loop` is the main cost.
+- **Boolean negation in filter contexts** — Without `if/else`, rejecting items requires `match { true -> false, _ -> true }` or extracting into a helper function. A `not()` builtin or clearer `!` operator would help. (Some agents didn't discover that `!` exists.)
 
-### Channel drain uses `loop`
+- **Accumulating heterogeneous state** — Fold accumulators that track multiple types (a map + a string + a list) must use tuples, e.g., `(config_map, current_section, errors)`. This works but is less readable than a record accumulator.
 
-No `for msg in ch { ... }` construct. The idiomatic pattern is:
+- **No string concatenation** — Building strings piecemeal requires interpolation (`"{a}{b}"`) which is fine for simple cases but awkward in loops or when concatenating from a variable.
 
-```silt
-loop {
-  match channel.receive(ch) {
-    Closed -> ()
-    Message(msg) -> {
-      println("Received: {msg}")
-      loop()
-    }
-  }
-}
-```
+- **Match verbosity for simple conditions** — `match { x > 5 -> "big", _ -> "small" }` is more verbose than a ternary or if/else for trivial branches. This was noted but not considered a major issue.
 
----
+## Missing Standard Library Functions
 
-## 4. Language Snapshot
+Consolidated from all agents:
+
+| Function | Requested by | Use case |
+|----------|-------------|----------|
+| `list.sum` | csv_analyzer, text_stats | Sum a list of numbers without manual fold |
+| `list.min_by` / `list.max_by` | csv_analyzer | Find min/max element by key function |
+| `list.count` | link_checker | Count elements matching a predicate |
+| `string.split_whitespace` / `string.words` | kvstore, text_stats | Split on any whitespace, not just a single delimiter |
+| `string.strip_chars` | text_stats | Strip specific characters (like Python's `str.strip(chars)`) |
+| `map.contains_key` | kvstore | Check key existence without Option dance |
+| `regex.captures_all` | link_checker | Get all capture groups, not just first match |
+| `option.unwrap` | various | Unwrap without a default (panic on None) |
+| `channel.each` / `channel.drain` | concurrent_processor | Iterate channel values until closed |
+| Tuple index access (`t.0`) | test_suite | Access tuple elements without destructuring |
+
+## Bugs Encountered
+
+1. **Parser: inline match arms with commas don't parse** — `match expr { arm1, arm2 }` on a single line fails. Must use newline-separated arms. (6 agents hit this)
+
+2. **Parser: match inside trailing closures** — `list.filter { x -> match x { ... } }` can cause parse errors. Workaround: extract match into a `let` binding. (2 agents)
+
+3. **Parser: `#{}` inside match arms** — Empty map literal `#{}` inside a match arm body confuses the parser because `}` is ambiguous (match arm end vs map literal end). (1 agent)
+
+4. **Typechecker: false non-exhaustive match** — Matching on `channel.receive` with `Closed` + `Message(x)` arms is flagged as non-exhaustive, requiring a `_ ->` wildcard. Same for some Result matches. (2 agents)
+
+5. **Type inference: inline `option.unwrap_or` in comparisons** — `option.unwrap_or(x, "") == "valid"` causes the typechecker to infer `Option(?N)` instead of `String`. Binding to a `let` first works around it. (1 agent)
+
+6. **`io.args()` documentation gap** — Returns full argv including binary name, subcommand, and script path. First user argument is at index 3. The docs don't mention this. (2 agents)
+
+## Language Snapshot
 
 ### Keywords (14)
-
-`as`, `else`, `fn`, `import`, `let`, `loop`, `match`, `mod`, `pub`, `return`, `trait`, `type`, `when`, `where`
-
-(`true` and `false` are literal tokens, not keywords.)
-
-### Globals (13)
-
-`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`, `Empty`
-
-### Module builtins (103 across 13 modules)
-
-| Module | Count | Functions |
-|--------|:-----:|-----------|
-| **list** | 26 | map, filter, each, fold, fold_until, unfold, find, zip, flatten, head, tail, last, reverse, sort, sort_by, flat_map, any, all, contains, length, append, concat, get, take, drop, enumerate |
-| **string** | 16 | split, join, trim, contains, replace, length, to_upper, to_lower, starts_with, ends_with, chars, repeat, index_of, slice, pad_left, pad_right |
-| **map** | 7 | get, set, delete, keys, values, length, merge |
-| **float** | 10 | parse, round, ceil, floor, abs, min, max, to_string, to_int |
-| **result** | 6 | unwrap_or, map_ok, map_err, flatten, is_ok, is_err |
-| **io** | 5 | inspect, read_file, write_file, read_line, args |
-| **int** | 6 | parse, abs, min, max, to_float, to_string |
-| **option** | 5 | map, unwrap_or, to_result, is_some, is_none |
-| **channel** | 7 | new, send, receive, close, select, try_send, try_receive |
-| **task** | 3 | spawn, join, cancel |
-| **test** | 3 | assert, assert_eq, assert_ne |
-| **regex** | 7 | is_match, find, find_all, captures, split, replace, replace_all |
-| **json** | 3 | parse, stringify, pretty |
-
-### Pattern types (13)
-
-Wildcard, identifier, integer (including negative), float, boolean, string, tuple, constructor, record (with rest), list (with rest), or-pattern, range, map, pin (`^`).
-
-### Codebase
-
-| Metric | Count |
-|--------|------:|
-| Rust source files | 14 |
-| Rust LoC | ~13,300 |
-| Rust test functions | 323 |
-| Example programs | 9 |
-| Evaluation programs | 10 |
-
-### Tooling
-
-| Command | Purpose |
-|---------|---------|
-| `silt run <file>` | Run a program |
-| `silt repl` | Interactive REPL |
-| `silt fmt <file>` | Format source code |
-| `silt test` | Run all `test_*` functions in `*_test.silt` files |
-| `silt check <file>` | Type-check without running |
-
----
-
-## 5. Code Showcase
-
-Four examples from the actual evaluation programs that demonstrate Silt at its best.
-
-### Pipeline composition -- pipes + higher-order functions
-
-From `pipeline.silt`:
-
-```silt
-fn numbered(lines) {
-  lines |> list.enumerate |> list.map { pair ->
-    let (i, line) = pair
-    let num = string.pad_left("{i + 1}", 3, " ")
-    "{num} | {line}"
-  }
-}
-
-fn sort_by_length(lines) {
-  lines |> list.sort_by { line -> string.length(line) }
-}
-
--- Usage: reads like a Unix pipeline
-lines
-  |> grep("ERROR")
-  |> sort_by_length()
-  |> numbered()
-  |> list.each { line -> println(line) }
+```
+let  fn  type  trait  match  when  return
+pub  mod  import  as  else  where  loop
 ```
 
-### Expression simplifier -- recursive ADTs + deep pattern matching
+### Globals (13)
+```
+print  println  panic  try
+Ok  Err  Some  None
+Stop  Continue  Message  Closed  Empty
+```
 
-From `expr_eval.silt`:
+### Module builtins (110+ across 14 modules)
+
+| Module | Functions | Notable |
+|--------|:---------:|---------|
+| `list` | 28 | map, filter, fold, fold_until, unfold, sort_by, group_by, enumerate |
+| `string` | 16 | split, join, trim, contains, replace, pad_left, pad_right, slice |
+| `map` | 11 | get, set, delete, keys, values, merge, entries, from_entries |
+| `int` | 6 | parse, abs, min, max, to_float, to_string |
+| `float` | 10 | parse, round, ceil, floor, abs, to_string (1-2 args), to_int |
+| `io` | 5 | read_file, write_file, read_line, args, inspect |
+| `result` | 6 | map_ok, map_err, unwrap_or, flatten, is_ok, is_err |
+| `option` | 5 | map, unwrap_or, to_result, is_some, is_none |
+| `channel` | 7 | new, send, receive, close, select, try_send, try_receive |
+| `task` | 3 | spawn, join, cancel |
+| `regex` | 7 | is_match, find, find_all, captures, split, replace, replace_all |
+| `json` | 3 | parse, stringify, pretty |
+| `math` | 13 | sqrt, pow, log, trig functions, pi, e |
+| `test` | 3 | assert, assert_eq, assert_ne |
+
+### Codebase metrics
+
+| Metric | Value |
+|--------|-------|
+| Rust source (src/*.rs) | 15,193 lines |
+| Rust tests | 157 |
+| Silt programs written | 10 files, 2,069 lines |
+| Largest source file | typechecker.rs (5,138 lines) |
+| Interpreter | interpreter.rs (3,822 lines) |
+
+## Code Showcases
+
+### 1. Expression evaluator — recursive ADT with or-patterns and Display trait
 
 ```silt
 type Expr {
@@ -196,106 +157,145 @@ type Expr {
   Neg(Expr)
 }
 
+trait Display for Expr {
+  fn display(self) -> String {
+    match self {
+      Num(n) -> "{n}"
+      Add(l, r) -> "({l.display()} + {r.display()})"
+      Mul(l, r) -> "({l.display()} * {r.display()})"
+      Neg(e) -> "(-{e.display()})"
+    }
+  }
+}
+
 fn simplify(expr) {
   match expr {
-    Add(e, Num(0)) -> simplify(e)
-    Add(Num(0), e) -> simplify(e)
-    Mul(e, Num(1)) -> simplify(e)
-    Mul(Num(1), e) -> simplify(e)
-    Mul(_, Num(0)) -> Num(0)
-    Mul(Num(0), _) -> Num(0)
-    Neg(Neg(inner)) -> simplify(inner)
-    Neg(Num(0)) -> Num(0)
-    Add(left, right) -> Add(simplify(left), simplify(right))
-    Mul(left, right) -> Mul(simplify(left), simplify(right))
-    Neg(inner) -> Neg(simplify(inner))
-    other -> other
-  }
-}
-```
-
-### Guardless match + string.index_of -- clean conditional dispatch
-
-From `config_parser.silt`:
-
-```silt
-fn classify_line(line, line_num) {
-  let trimmed = string.trim(line)
-  match {
-    trimmed == "" -> Blank
-    string.starts_with(trimmed, "#") -> Comment
-    string.starts_with(trimmed, "[") -> parse_section_header(trimmed, line_num)
-    string.contains(trimmed, "=") -> parse_key_value(trimmed, line_num)
-    _ -> ParseError("line {line_num}: unrecognized line '{trimmed}'")
-  }
-}
-
-fn parse_key_value(trimmed, line_num) {
-  match string.index_of(trimmed, "=") {
-    Some(eq_idx) -> {
-      let k = string.trim(string.slice(trimmed, 0, eq_idx))
-      let v = string.slice(trimmed, eq_idx + 1, string.length(trimmed))
-      match k {
-        "" -> ParseError("line {line_num}: empty key in '{trimmed}'")
-        _ -> KeyValue(k, v)
+    Num(n) -> Num(n)
+    Add(l, r) -> {
+      let sl = simplify(l)
+      let sr = simplify(r)
+      match (sl, sr) {
+        (e, Num(0)) -> e
+        (Num(0), e) -> e
+        (Num(a), Num(b)) -> Num(a + b)
+        (a, b) -> Add(a, b)
       }
     }
-    None -> ParseError("line {line_num}: malformed key=value '{trimmed}'")
+    Mul(l, r) -> {
+      let sl = simplify(l)
+      let sr = simplify(r)
+      match (sl, sr) {
+        (_, Num(0)) | (Num(0), _) -> Num(0)
+        (e, Num(1)) | (Num(1), e) -> e
+        (Num(a), Num(b)) -> Num(a * b)
+        (a, b) -> Mul(a, b)
+      }
+    }
+    Neg(e) -> match simplify(e) {
+      Neg(inner) -> inner
+      s -> Neg(s)
+    }
   }
 }
 ```
 
-### Test framework with try() -- catching assertion failures
-
-From `test_suite.silt`:
+### 2. Pipeline — higher-order function factories with pipe chains
 
 ```silt
-fn run_test(suite, name, test_fn) {
-  let outcome = try(test_fn)
-  match outcome {
+fn make_grep(pattern) = fn(lines) { grep(lines, pattern) }
+fn make_reject(pattern) = fn(lines) { reject(lines, pattern) }
+
+fn main() {
+  let lines = read_lines("programs/log.txt")
+
+  -- Chain 10 operations: grep, uppercase, numbered
+  lines
+  |> make_grep("ERROR")
+  |> uppercase
+  |> numbered
+  |> list.each { line -> println(line) }
+
+  -- Unique log levels, sorted
+  lines
+  |> list.map { line ->
+    let parts = line |> string.split(" ")
+    list.get(parts, 3) |> option.unwrap_or("UNKNOWN")
+  }
+  |> list.unique
+  |> list.sort
+  |> list.each { level -> println(level) }
+}
+```
+
+### 3. Concurrent processor — channel.select with ^pin, worker loop
+
+```silt
+fn worker(id, jobs, results) {
+  loop {
+    match channel.receive(jobs) {
+      Closed -> channel.send(results, ("done", id, 0, 0))
+      Message(path) -> {
+        match io.read_file(path) {
+          Ok(content) -> {
+            let (file_path, lines, words) = analyze(path, content)
+            channel.send(results, ("ok", id, lines, words))
+          }
+          Err(e) -> channel.send(results, ("err", id, 0, 0))
+          _ -> ()
+        }
+        loop()
+      }
+      _ -> ()
+    }
+  }
+}
+
+-- channel.select with ^pin to identify which channel fired
+match channel.select([urgent_ch, status_ch]) {
+  (^urgent_ch, msg) -> println("Urgent: {msg}")
+  (^status_ch, msg) -> println("Status: {msg}")
+  _ -> panic("unexpected")
+}
+```
+
+### 4. Test runner — try() wrapping test.assert_eq for pass/fail tracking
+
+```silt
+fn run_test(name, test_fn) {
+  match try(test_fn) {
     Ok(_) -> {
-      let result = TestResult { name: name, passed: true }
-      println(result.display())
-      TestSuite {
-        total: suite.total + 1,
-        passed: suite.passed + 1,
-        failed: suite.failed,
-        results: list.append(suite.results, result),
-      }
+      println("[PASS] {name}")
+      (1, 0)
     }
-    Err(msg) -> {
-      let result = TestResult { name: name, passed: false }
-      println(result.display())
-      println("    Error: {msg}")
-      TestSuite {
-        total: suite.total + 1,
-        passed: suite.passed,
-        failed: suite.failed + 1,
-        results: list.append(suite.results, result),
-      }
+    Err(e) -> {
+      println("[FAIL] {name}: {e}")
+      (0, 1)
     }
   }
 }
-```
 
-### Pin operator + channel.select -- matching which channel fired
-
-From `concurrent_processor.silt`:
-
-```silt
-fn demonstrate_select(ch_high, ch_low) {
-  match channel.select([ch_high, ch_low]) {
-    (^ch_high, msg) -> println("  [high priority] {msg}")
-    (^ch_low, msg) -> println("  [low priority] {msg}")
-    _ -> println("  [no message]")
-  }
+fn main() {
+  let results = [
+    run_test("arithmetic", fn() {
+      test.assert_eq(1 + 1, 2)
+      test.assert_eq(10 % 3, 1)
+    }),
+    run_test("lists", fn() {
+      test.assert_eq([1, 2, 3] |> list.map { x -> x * 2 }, [2, 4, 6])
+      test.assert_eq(list.length([]), 0)
+    }),
+    ...
+  ]
+  let passed = results |> list.fold(0) { acc, r -> let (p, _) = r; acc + p }
+  let failed = results |> list.fold(0) { acc, r -> let (_, f) = r; acc + f }
+  println("{passed}/{passed + failed} passed, {failed} failed")
 }
 ```
 
-The `^` pin operator matches against an existing variable's value instead of
-binding a new one. Without it, you'd need a guard: `(ch, msg) when ch == ch_high`.
-Pin keeps the pattern concise and inline.
+## Verdict
 
----
+Silt delivers on its promise of being a language you can learn in an afternoon. Ten agents — none of which had seen silt before — wrote 2,069 lines of working code across programs spanning REPL apps, data processing pipelines, recursive ADTs, concurrent task systems, and self-testing frameworks. The average program worked in 2.1 attempts, and two programs ran correctly on the first try. That's a strong learnability signal.
 
-*Silt has reached a coherent final state. Fourteen keywords, thirteen globals, one hundred and three module builtins across thirteen modules. All evaluation programs use the full current stdlib with no legacy workarounds. The `loop` expression eliminates the recursive loop ceremony. `list.fold_until` and `list.unfold` cover early-termination and sequence generation. `float.to_string(f, decimals)` handles number formatting. `regex` and `json` modules cover text extraction and data interchange. The remaining friction -- cooperative-only concurrency -- represents deliberate scope boundaries, not missing features.*
+The language's core design decisions pay off. The pipe operator with trailing closures is the standout feature — every agent gravitated toward it naturally, and it makes data transformation code read like a specification of intent rather than a sequence of operations. Pattern matching as the sole branching construct is initially surprising but quickly becomes intuitive, especially with guardless match as an if/else replacement. The `loop` expression with state threading is an elegant functional alternative to mutable iteration, and multiple agents independently discovered the `loop state = init { ... loop(new_state) }` REPL pattern without being told about it.
+
+The friction is real but manageable. The parser has rough edges around inline match expressions (comma-separated arms, match inside closures, `#{}` inside match arms) that tripped up 6 of 10 agents. The stdlib is solid but missing convenience functions that would eliminate common fold boilerplate (`list.sum`, `list.min_by`, `string.split_whitespace`). The `io.args()` documentation gap caused two agents to fail their first run. The typechecker's false non-exhaustive warnings on `channel.receive` patterns are a papercut. None of these are showstoppers — agents worked around every issue within 1-3 additional cycles — but fixing the parser issues and adding the top-requested stdlib functions would meaningfully reduce first-contact friction.

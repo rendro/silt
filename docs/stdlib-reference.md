@@ -189,14 +189,17 @@ operator (`|>`) and trailing closures.
 | `list.last` | `list.last(list) -> Option` | Get the last element |
 | `list.reverse` | `list.reverse(list) -> List` | Reverse the list |
 | `list.sort` | `list.sort(list) -> List` | Sort the list in ascending order |
+| `list.unique` | `list.unique(list) -> List` | Remove duplicate elements, preserving first occurrence |
 | `list.contains` | `list.contains(list, value) -> Bool` | Check if list contains a value |
 | `list.length` | `list.length(list) -> Int` | Return the number of elements |
 | `list.append` | `list.append(list, element) -> List` | Return a new list with the element added at the end |
+| `list.prepend` | `list.prepend(list, element) -> List` | Return a new list with the element added at the front |
 | `list.concat` | `list.concat(list_a, list_b) -> List` | Concatenate two lists |
 | `list.get` | `list.get(list, index) -> Option` | Get element at index (zero-based) |
 | `list.take` | `list.take(list, n) -> List` | Take the first n elements |
 | `list.drop` | `list.drop(list, n) -> List` | Drop the first n elements |
 | `list.enumerate` | `list.enumerate(list) -> List(Tuple(Int, T))` | Pair each element with its index |
+| `list.group_by` | `list.group_by(list, key_fn) -> Map` | Group elements by key function |
 
 ### `list.map`
 
@@ -490,6 +493,21 @@ fn main() {
 }
 ```
 
+### `list.unique`
+
+```
+list.unique(list) -> List
+```
+
+Returns a new list with duplicate elements removed. Preserves the first occurrence of each element.
+
+```silt
+fn main() {
+  list.unique([1, 3, 2, 1, 3, 4])  -- [1, 3, 2, 4]
+  list.unique(["a", "b", "a"])      -- ["a", "b"]
+}
+```
+
 ### `list.contains`
 
 ```
@@ -532,6 +550,24 @@ Returns a new list with `element` added at the end.
 ```silt
 fn main() {
   list.append([1, 2, 3], 4)  -- [1, 2, 3, 4]
+}
+```
+
+### `list.prepend`
+
+```
+list.prepend(list, element) -> List
+```
+
+Returns a new list with `element` added at the front.
+
+```silt
+fn main() {
+  list.prepend([2, 3, 4], 1)  -- [1, 2, 3, 4]
+
+  -- useful for building lists in reverse / stack operations
+  [] |> list.prepend(3) |> list.prepend(2) |> list.prepend(1)
+  -- [1, 2, 3]
 }
 ```
 
@@ -606,6 +642,22 @@ Returns a list of `(index, element)` tuples.
 fn main() {
   list.enumerate(["a", "b", "c"])
   -- [(0, "a"), (1, "b"), (2, "c")]
+}
+```
+
+### `list.group_by`
+
+```
+list.group_by(list, key_fn) -> Map
+```
+
+Groups elements by a key function. Returns a map from keys to lists of elements that produced that key.
+
+```silt
+fn main() {
+  let words = ["hello", "hi", "world", "hey", "wonder"]
+  words |> list.group_by { w -> string.slice(w, 0, 1) }
+  -- #{ "h": ["hello", "hi", "hey"], "w": ["world", "wonder"] }
 }
 ```
 
@@ -899,6 +951,10 @@ Functions for working with maps (hash maps with string keys). All map operations
 | `map.values` | `map.values(m) -> List` | Return all values as a list |
 | `map.merge` | `map.merge(m1, m2) -> Map` | Merge two maps; `m2` values take priority |
 | `map.length` | `map.length(m) -> Int` | Return the number of key-value pairs |
+| `map.filter` | `map.filter(m, fn) -> Map` | Keep entries where `fn(key, value)` returns truthy |
+| `map.map` | `map.map(m, fn) -> Map` | Transform entries; `fn(key, value)` returns `(new_key, new_value)` |
+| `map.entries` | `map.entries(m) -> List(Tuple)` | Convert map to list of `(key, value)` tuples |
+| `map.from_entries` | `map.from_entries(list) -> Map` | Convert list of `(key, value)` tuples to a map |
 
 ### `map.get`
 
@@ -1009,6 +1065,69 @@ Returns the number of key-value pairs in the map.
 fn main() {
   map.length(#{ "a": 1, "b": 2 })  -- 2
   map.length(#{})                    -- 0
+}
+```
+
+### `map.filter`
+
+```
+map.filter(m, fn) -> Map
+```
+
+Returns a new map containing only entries for which `fn(key, value)` returns a truthy value.
+
+```silt
+fn main() {
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+  map.filter(m, fn(k, v) { v > 1 })
+  -- #{ "b": 2, "c": 3 }
+}
+```
+
+### `map.map`
+
+```
+map.map(m, fn) -> Map
+```
+
+Transforms each entry in the map. `fn` receives `(key, value)` and must return a `(new_key, new_value)` tuple.
+
+```silt
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  map.map(m, fn(k, v) { (k, v * 10) })
+  -- #{ "a": 10, "b": 20 }
+}
+```
+
+### `map.entries`
+
+```
+map.entries(m) -> List(Tuple(String, T))
+```
+
+Converts a map to a list of `(key, value)` tuples.
+
+```silt
+fn main() {
+  let m = #{ "x": 1, "y": 2 }
+  map.entries(m)
+  -- [("x", 1), ("y", 2)]
+}
+```
+
+### `map.from_entries`
+
+```
+map.from_entries(list) -> Map
+```
+
+Converts a list of `(key, value)` tuples into a map.
+
+```silt
+fn main() {
+  map.from_entries([("a", 1), ("b", 2)])
+  -- #{ "a": 1, "b": 2 }
 }
 ```
 
@@ -2092,3 +2211,101 @@ fn main() {
   -- }
 }
 ```
+
+-----
+
+## `math` Module
+
+Mathematical functions and constants.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `math.pi` | `Float` | The constant pi (3.14159...) |
+| `math.e` | `Float` | Euler's number (2.71828...) |
+| `math.sqrt` | `math.sqrt(f) -> Float` | Square root |
+| `math.pow` | `math.pow(base, exp) -> Float` | Raise base to a power |
+| `math.log` | `math.log(f) -> Float` | Natural logarithm (base e) |
+| `math.log10` | `math.log10(f) -> Float` | Base-10 logarithm |
+| `math.sin` | `math.sin(f) -> Float` | Sine (radians) |
+| `math.cos` | `math.cos(f) -> Float` | Cosine (radians) |
+| `math.tan` | `math.tan(f) -> Float` | Tangent (radians) |
+| `math.asin` | `math.asin(f) -> Float` | Arcsine |
+| `math.acos` | `math.acos(f) -> Float` | Arccosine |
+| `math.atan` | `math.atan(f) -> Float` | Arctangent |
+| `math.atan2` | `math.atan2(y, x) -> Float` | Two-argument arctangent |
+
+### `math.pi`, `math.e`
+
+```silt
+fn main() {
+  println(math.pi)   -- 3.141592653589793
+  println(math.e)    -- 2.718281828459045
+}
+```
+
+### `math.sqrt`
+
+```
+math.sqrt(f) -> Float
+```
+
+Returns the square root of a float.
+
+```silt
+fn main() {
+  math.sqrt(9.0)    -- 3.0
+  math.sqrt(2.0)    -- 1.4142135623730951
+}
+```
+
+### `math.pow`
+
+```
+math.pow(base, exp) -> Float
+```
+
+Raises `base` to the power `exp`.
+
+```silt
+fn main() {
+  math.pow(2.0, 10.0)   -- 1024.0
+  math.pow(3.0, 0.5)    -- 1.7320508075688772
+}
+```
+
+### `math.log`, `math.log10`
+
+```
+math.log(f) -> Float
+math.log10(f) -> Float
+```
+
+Natural logarithm (base e) and base-10 logarithm.
+
+```silt
+fn main() {
+  math.log(math.e)    -- 1.0
+  math.log10(100.0)   -- 2.0
+}
+```
+
+### Trigonometric functions
+
+```
+math.sin(f) -> Float
+math.cos(f) -> Float
+math.tan(f) -> Float
+math.asin(f) -> Float
+math.acos(f) -> Float
+math.atan(f) -> Float
+math.atan2(y, x) -> Float
+```
+
+Standard trigonometric functions. Arguments are in radians.
+
+```silt
+fn main() {
+  math.sin(0.0)              -- 0.0
+  math.cos(0.0)              -- 1.0
+  math.atan2(1.0, 1.0)       -- 0.7853981633974483 (pi/4)
+}

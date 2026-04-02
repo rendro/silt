@@ -1,28 +1,14 @@
-# Link Checker Test Document
+# Test Document for Link Checker
 
-This is a test document for the Silt link checker.
+Here are some links to check:
 
-## Valid Links
-
-- [Rust homepage](https://www.rust-lang.org)
-- [Silt repo](https://github.com/example/silt)
-- [Local docs](/docs/getting-started.md)
-- [HTTP example](http://example.com)
-
-## Inline links
-
-Check out [Google](https://google.com) and [Silt](https://silt-lang.org) for more info.
-
-## Malformed Links
-
-- [missing protocol](www.example.com)
-- [bad scheme](ftp://files.example.com)
-- [empty url]()
-- [relative path](../some/file.txt)
-- [just a word](broken)
-
-## Edge Cases
-
-- Not a link: just some [bracketed text] without parens
-- Image link: ![alt text](https://example.com/image.png)
-- [valid after bad](https://valid.example.com)
+- [Google](https://www.google.com)
+- [Example Site](http://example.com)
+- [Secure Example](https://example.org/page)
+- [FTP Archive](ftp://files.example.com/archive)
+- [Email Alice](mailto:alice@example.com)
+- [Broken Link](notaurl)
+- [Bad Scheme](javascript:void)
+- [Local File](./local-file.md)
+- [Anchor Link](#section-one)
+- [Another HTTPS](https://docs.rust-lang.org/book/)

@@ -1,134 +1,124 @@
-{-
-  Silt Ergonomics Evaluation: Markdown Link Checker
-  ==================================================
-
-  Rating: 9/10
-
-  WHAT WAS EASY / PLEASANT:
-  - Pipe chains (|> filter, |> map, |> each) are genuinely delightful for list
-    processing. The trailing closure syntax { x -> ... } reads very naturally.
-  - String interpolation with {expr} is clean and effortless.
-  - Pattern matching with match is elegant. Using it for branching felt natural.
-  - The when/else guard for early returns is a nice alternative to nested ifs.
-  - Result/Option as first-class types with ? propagation is solid.
-  - Immutability by default + shadowing is a good design choice.
-  - Guardless match replaces verbose `match true { _ when ... }` patterns.
-  - regex.find_all replaced a fragile split/zip/last approach for link extraction
-    with a single pattern match — extract_link_pairs went from 25 lines to 12.
-  - regex.is_match simplifies URL scheme validation into one readable check.
-
-  REMAINING FRICTION:
-  - regex.captures now exists and could simplify link splitting (currently uses
-    string.index_of/string.slice to split regex.find_all matches).
-  - No early break/continue in |> each or |> fold.
-  - List patterns only support [head, ..tail] (rest at end), not [..init, last].
-  - (The `loop` keyword is available if iterative algorithms are needed.)
+{- Friction Report
+   Attempts: 2
+   Rating: 8/10
+   Highlights: Guardless match is excellent for multi-condition branching (classify_url).
+     Pipe operator with trailing closures reads very naturally for data pipelines.
+     regex.captures + list patterns for destructuring capture groups is elegant.
+     String interpolation makes formatted output trivial.
+     Map literals with #{ } are concise and handy for ad-hoc records.
+   Friction: Piped option.unwrap_or("") cannot be used directly in == comparisons
+     due to a type inference issue — must bind to a let first. This is a minor
+     ergonomic rough edge (the typechecker infers Option(?N) instead of String
+     when the unwrap_or result is used inline in an equality expression).
+   Missing: A regex.captures_all function that returns all captures (not just the first)
+     would eliminate the need to find_all then re-capture on each match. Also, a
+     count_by or group_by on lists returning counts would simplify the summary section.
+   Bugs: Type inference fails when option.unwrap_or result is used directly in ==
+     comparison within a closure (e.g. inside list.filter). Works fine when bound
+     to a let variable first.
 -}
 
--- Extract link text and URL from markdown [text](url) patterns.
--- Uses regex.find_all to locate links, then string ops to split each match.
-fn extract_link_pairs(line) {
-  let matches = regex.find_all("\\[[^\\]]*\\]\\([^)]*\\)", line)
-
-  matches |> list.map { m ->
-    -- m is e.g. "[link text](https://example.com)"
-    -- Text: between first "[" and "]("
-    let text = match string.index_of(m, "](") {
-      Some(idx) -> string.slice(m, 1, idx)
-      None -> ""
-    }
-    -- URL: between "](" and trailing ")"
-    let url = match string.index_of(m, "](") {
-      Some(idx) -> string.trim(string.slice(m, idx + 2, string.length(m) - 1))
-      None -> ""
-    }
-    (text, url)
-  }
-}
-
--- Validate a single URL: must start with http://, https://, or /
-fn validate_url(url) {
+fn classify_url(url) {
   match {
-    string.length(url) == 0 -> Err("empty URL")
-    regex.is_match("^https://", url) -> Ok("https")
-    regex.is_match("^http://", url) -> Ok("http")
-    string.starts_with(url, "/") -> Ok("absolute path")
-    _ -> Err("invalid scheme")
+    string.starts_with(url, "https://") -> "valid"
+    string.starts_with(url, "http://") -> "valid"
+    string.starts_with(url, "ftp://") -> "valid"
+    string.starts_with(url, "mailto:") -> "valid"
+    string.starts_with(url, "#") -> "anchor"
+    string.starts_with(url, "./") -> "relative"
+    string.starts_with(url, "../") -> "relative"
+    _ -> "invalid"
   }
 }
 
--- Format a link result for display
-fn format_result(text, url, validation) {
-  match validation {
-    Ok(scheme) -> "  OK   [{text}]({url}) -- {scheme}"
-    Err(reason) -> "  FAIL [{text}]({url}) -- {reason}"
+fn status_label(status) {
+  match status {
+    "valid" -> "[VALID]"
+    "anchor" -> "[ANCHOR]"
+    "relative" -> "[RELATIVE]"
+    "invalid" -> "[INVALID]"
+    _ -> "[UNKNOWN]"
+  }
+}
+
+fn extract_links(content) {
+  let lines = string.split(content, "\n")
+  lines |> list.flat_map { line ->
+    -- Try to capture a markdown link from this line
+    -- We process each line to find links
+    let full_matches = regex.find_all("\\[([^\\]]+)\\]\\(([^)]+)\\)", line)
+    full_matches |> list.map { m ->
+      -- m is the full match like [text](url)
+      -- Extract the URL part by finding content between ( and )
+      let cap = regex.captures("\\[([^\\]]+)\\]\\(([^)]+)\\)", m)
+      match cap {
+        Some(groups) -> match groups {
+          [_, text, url, ..rest] -> #{ "text": text, "url": url }
+          _ -> #{ "text": "unknown", "url": m }
+        }
+        None -> #{ "text": "unknown", "url": m }
+      }
+    }
   }
 }
 
 fn main() {
-  -- Get file path from CLI args
-  let args = io.args()
-
-  when [_, _, filepath, .._] = args else {
-    println("Usage: silt programs/link_checker.silt <markdown-file>")
-    return Err("missing file argument")
+  let content_result = io.read_file("programs/test.md")
+  when Ok(content) = content_result else {
+    println("Error: could not read programs/test.md")
+    return ()
   }
 
-  println("Checking links in: {filepath}")
-  println(string.repeat("=", 50))
+  let links = extract_links(content)
+  let count = list.length(links)
 
-  -- Read the file
-  when Ok(content) = io.read_file(filepath) else {
-    println("Error: could not read file '{filepath}'")
-    return Err("file read failed")
-  }
-
-  -- Split into lines and extract all link pairs
-  let lines = content |> string.split("\n")
-  let all_links = lines
-    |> list.map { line -> extract_link_pairs(line) }
-    |> list.flatten
-
-  -- Separate valid and invalid
-  let results = all_links |> list.map { pair ->
-    let (text, url) = pair
-    let validation = validate_url(url)
-    (text, url, validation)
-  }
-
-  let valid = results |> list.filter { r ->
-    let (_, _, v) = r
-    result.is_ok(v)
-  }
-
-  let invalid = results |> list.filter { r ->
-    let (_, _, v) = r
-    result.is_err(v)
-  }
-
-  -- Print results
+  println("=== Markdown Link Checker ===")
+  println("Found {count} links in programs/test.md")
   println("")
-  println("Valid links ({list.length(valid)}):")
-  valid |> list.each { r ->
-    let (text, url, validation) = r
-    println(format_result(text, url, validation))
+
+  -- Classify and display each link
+  let results = links |> list.map { link ->
+    let url = map.get(link, "url") |> option.unwrap_or("")
+    let text = map.get(link, "text") |> option.unwrap_or("")
+    let status = classify_url(url)
+    let label = status_label(status)
+    #{ "text": text, "url": url, "status": status, "label": label }
+  }
+
+  results |> list.each { r ->
+    let label = map.get(r, "label") |> option.unwrap_or("")
+    let text = map.get(r, "text") |> option.unwrap_or("")
+    let url = map.get(r, "url") |> option.unwrap_or("")
+    println("  {label} [{text}] -> {url}")
   }
 
   println("")
-  println("Malformed links ({list.length(invalid)}):")
-  invalid |> list.each { r ->
-    let (text, url, validation) = r
-    println(format_result(text, url, validation))
-  }
 
-  -- Summary
-  let total = list.length(all_links)
-  println("")
-  println(string.repeat("=", 50))
-  println("Summary: {list.length(valid)} valid, {list.length(invalid)} malformed, {total} total")
+  -- Summary counts
+  let valid_count = results |> list.filter { r ->
+    let s = map.get(r, "status") |> option.unwrap_or("")
+    s == "valid"
+  } |> list.length()
 
-  match list.length(invalid) {
-    0 -> println("All links OK!")
-    n -> println("{n} link(s) need attention.")
-  }
+  let invalid_count = results |> list.filter { r ->
+    let s = map.get(r, "status") |> option.unwrap_or("")
+    s == "invalid"
+  } |> list.length()
+
+  let anchor_count = results |> list.filter { r ->
+    let s = map.get(r, "status") |> option.unwrap_or("")
+    s == "anchor"
+  } |> list.length()
+
+  let relative_count = results |> list.filter { r ->
+    let s = map.get(r, "status") |> option.unwrap_or("")
+    s == "relative"
+  } |> list.length()
+
+  println("=== Summary ===")
+  println("  Valid:    {valid_count}")
+  println("  Invalid:  {invalid_count}")
+  println("  Anchor:   {anchor_count}")
+  println("  Relative: {relative_count}")
+  println("  Total:    {count}")
 }

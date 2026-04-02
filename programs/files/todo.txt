@@ -1,10 +1,5 @@
-Things to do
-
-Add select statement support
-Implement buffered channels
-Write more examples
-Improve error messages for type mismatches
-Add LSP support for editors
-Consider adding a REPL
-Write documentation for the standard library
-Profile the interpreter for performance bottlenecks
+Buy groceries
+Finish the report
+Call the dentist
+Water the plants
+Read chapter five

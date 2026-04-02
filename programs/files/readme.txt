@@ -1,8 +1,4 @@
-Welcome to Silt
-
-Silt is a minimal statically typed expression based language
-with CSP concurrency and pattern matching as the sole
-branching construct
-
-It compiles to a tree walk interpreter written in Rust
-and supports seventeen keywords in total
+Welcome to the Silt programming language.
+Silt is a functional language with immutable bindings and CSP concurrency.
+It uses channels for communication between tasks.
+Pattern matching replaces traditional if/else branching.

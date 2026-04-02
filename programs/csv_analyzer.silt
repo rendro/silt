@@ -1,367 +1,222 @@
-{-
-  CSV Analyzer -- Silt Language Ergonomics Evaluation
-  ==================================================
-
-  Overall Rating: 8.5/10
-
-  WHAT WAS EASY / PLEASANT:
-  - Pipe chains (|>) are excellent for data transformation pipelines. They read
-    naturally left-to-right and compose well with map/filter/fold.
-  - String interpolation with {expr} is clean and works on any Display type.
-  - Trailing closure syntax { x -> body } is concise and reads well.
-  - Pattern matching with list destructuring [head, ..tail] is powerful.
-  - Record types with named fields make column stats clear and self-documenting.
-  - Record update syntax record.{ field: value } is elegant and concise.
-  - The when/else guard statement is great for early-return error handling.
-  - list.get for indexed access eliminates the biggest workaround from before.
-  - string.pad_left / string.pad_right make table formatting trivial.
-  - float.min / float.max replace manual comparison helpers.
-  - Guardless match replaces verbose `match bool { true -> ... }` patterns.
-
-  REMAINING FRICTION:
-  - fold's 3-argument form in pipes is slightly confusing visually.
-
-  RESOLVED:
-  - Int/Float mixed arithmetic for +, -, /, % now auto-promotes to Float.
+{- Friction Report
+   Attempts: 2
+   Rating: 8/10
+   Highlights: Pipe operator and trailing closures make data processing very clean.
+     list.group_by, list.sort_by, map.from_entries are powerful primitives.
+     String interpolation with {expr} is natural and avoids concatenation.
+     Pattern matching on lists ([h, ..t]) is elegant.
+     The when/else guard for Result unwrapping reads nicely.
+   Friction: No string concatenation operator (++ does not exist) -- must use
+     interpolation or string.join for everything. Match arms use newlines not
+     commas despite the language summary suggesting comma separation works.
+     Tuple destructuring in let bindings (let (a, b) = pair) worked but felt
+     underdocumented. No built-in min/max for lists, had to write fold-based
+     versions.
+   Missing: list.min_by / list.max_by / list.sum would reduce boilerplate.
+     A string concatenation operator would be handy for building strings
+     incrementally. float.min / float.max exist but int equivalents only
+     take two args, not lists.
+   Bugs: Match arm comma separator claimed in language summary does not parse
+     (error: "expected pattern, found ,"). Had to use newline-separated arms
+     or guardless match instead.
 -}
 
--- ── Record type for per-column statistics ──────────────────────────
-
-type ColumnStat {
-  name: String,
-  count: Int,
-  sum: Float,
-  min: Float,
-  max: Float,
+-- Parse a CSV row into a list of trimmed fields
+fn parse_row(line) {
+  line |> string.split(",") |> list.map { field -> string.trim(field) }
 }
 
-fn format_float(f) {
-  float.to_string(f, 2)
-}
-
--- ── Parse CSV content into list of rows (each row = list of strings) ───
-
+-- Parse the entire CSV content into a list of maps (one per row)
 fn parse_csv(content) {
   let lines = content
     |> string.split("\n")
     |> list.filter { line -> string.length(string.trim(line)) > 0 }
 
-  lines |> list.map { line ->
-    line
-    |> string.split(",")
-    |> list.map { cell -> string.trim(cell) }
+  match lines {
+    [] -> []
+    [header_line, ..data_lines] -> {
+      let headers = parse_row(header_line)
+      data_lines |> list.map { line ->
+        let fields = parse_row(line)
+        list.zip(headers, fields) |> map.from_entries()
+      }
+    }
   }
 }
 
--- ── Check if a string parses as a number ───────────────────────────
-
-fn is_numeric(s) {
-  match float.parse(s) {
-    Ok(_) -> true
-    Err(_) -> false
+-- Safely get a string field from a row map
+fn get_field(row, key) {
+  match map.get(row, key) {
+    Some(v) -> v
+    None -> ""
   }
 }
 
--- ── Parse a string to float, defaulting to 0.0 ────────────────────
+-- Parse an int field from a row map
+fn get_int(row, key) {
+  let raw = get_field(row, key)
+  result.unwrap_or(int.parse(raw), 0)
+}
 
-fn parse_number(s) {
-  match float.parse(s) {
-    Ok(n) -> n
-    Err(_) -> 0.0
+-- Compute sum of a list of integers
+fn sum(xs) {
+  xs |> list.fold(0) { acc, x -> acc + x }
+}
+
+-- Compute min of a non-empty list of integers
+fn min_of(xs) {
+  match xs {
+    [first, ..rest] -> rest |> list.fold(first) { acc, x ->
+      match {
+        x < acc -> x
+        _ -> acc
+      }
+    }
+    _ -> 0
   }
 }
 
--- ── Compute stats for a single column of string values ─────────────
+-- Compute max of a non-empty list of integers
+fn max_of(xs) {
+  match xs {
+    [first, ..rest] -> rest |> list.fold(first) { acc, x ->
+      match {
+        x > acc -> x
+        _ -> acc
+      }
+    }
+    _ -> 0
+  }
+}
 
-fn compute_column_stats(col_name, values) {
-  let numeric_strings = values |> list.filter { v -> is_numeric(v) }
-  let nums = numeric_strings |> list.map { v -> parse_number(v) }
-
-  let count = list.length(nums)
-
+-- Compute average as a float
+fn avg_of(xs) {
+  let total = sum(xs)
+  let count = list.length(xs)
   match count {
-    0 -> ColumnStat {
-      name: col_name,
-      count: 0,
-      sum: 0.0,
-      min: 0.0,
-      max: 0.0,
-    }
-    _ -> {
-      let sum = nums |> list.fold(0.0) { acc, x -> acc + x }
-
-      when Some(first) = list.head(nums) else {
-        return ColumnStat {
-          name: col_name,
-          count: 0,
-          sum: 0.0,
-          min: 0.0,
-          max: 0.0,
-        }
-      }
-
-      let min_val = nums |> list.fold(first) { acc, x -> float.min(acc, x) }
-      let max_val = nums |> list.fold(first) { acc, x -> float.max(acc, x) }
-
-      ColumnStat {
-        name: col_name,
-        count: count,
-        sum: sum,
-        min: min_val,
-        max: max_val,
-      }
-    }
-  }
-}
-
--- ── Extract a column by index from all rows ────────────────────────
-
-fn extract_column(rows, col_index) {
-  rows |> list.map { row ->
-    match list.get(row, col_index) {
-      Some(val) -> val
-      None -> ""
-    }
-  }
-}
-
--- ── Compute average from a ColumnStat ──────────────────────────────
-
-fn average(stat) {
-  match stat.count {
     0 -> 0.0
-    _ -> stat.sum / int.to_float(stat.count)
+    _ -> int.to_float(total) / int.to_float(count)
   }
 }
 
--- ── Pretty-print a separator line ──────────────────────────────────
-
-fn print_separator(col_width) {
-  let line = string.repeat("-", col_width)
-  let sep = "+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+-" + line + "-+"
-  println(sep)
+-- Print a horizontal separator
+fn print_separator(widths) {
+  let parts = widths |> list.map { w -> string.repeat("-", w + 2) }
+  let joined = string.join(parts, "+")
+  println("+{joined}+")
 }
 
--- ── Pretty-print the stats table ───────────────────────────────────
-
-fn print_stats_table(stats) {
-  let w = 12
-
-  println("")
-  println("  Column Statistics")
-  println("  =================")
-  println("")
-
-  -- Header
-  print_separator(w)
-  let header = "| "
-    + string.pad_right("Column", w, " ") + " | "
-    + string.pad_right("Count", w, " ") + " | "
-    + string.pad_right("Sum", w, " ") + " | "
-    + string.pad_right("Min", w, " ") + " | "
-    + string.pad_right("Max", w, " ") + " | "
-    + string.pad_right("Average", w, " ") + " |"
-  println(header)
-  print_separator(w)
-
-  -- Data rows
-  stats |> list.each { stat ->
-    let avg = average(stat)
-    let row = "| "
-      + string.pad_right(stat.name, w, " ") + " | "
-      + string.pad_right("{stat.count}", w, " ") + " | "
-      + string.pad_right(format_float(stat.sum), w, " ") + " | "
-      + string.pad_right(format_float(stat.min), w, " ") + " | "
-      + string.pad_right(format_float(stat.max), w, " ") + " | "
-      + string.pad_right(format_float(avg), w, " ") + " |"
-    println(row)
+-- Print a row of cells with padding
+fn print_table_row(cells, widths) {
+  let padded = list.zip(cells, widths) |> list.map { pair ->
+    let (cell, width) = pair
+    let padded_cell = string.pad_right(cell, width, " ")
+    "| {padded_cell} "
   }
-
-  print_separator(w)
+  let row_str = string.join(padded, "")
+  println("{row_str}|")
 }
 
--- ── Print filtered rows as a table ─────────────────────────────────
-
-fn print_filtered_table(header, rows, label) {
-  println("")
-  println("  {label}")
-  println("  {string.repeat("=", string.length(label))}")
-  println("")
-
-  let w = 12
-
-  -- Print header row
-  let header_line = header |> list.map { h -> string.pad_right(h, w, " ") }
-    |> string.join(" | ")
-  println("  | {header_line} |")
-  let sep = header |> list.map { _ -> string.repeat("-", w) }
-    |> string.join("-+-")
-  println("  +-{sep}-+")
-
-  -- Print data rows
-  rows |> list.each { row ->
-    let line = row |> list.map { cell -> string.pad_right(cell, w, " ") }
-      |> string.join(" | ")
-    println("  | {line} |")
-  }
-
-  println("")
-  println("  ({list.length(rows)} rows)")
+-- Print column statistics for a numeric column
+fn print_column_stats(name, values) {
+  let s = sum(values)
+  let mn = min_of(values)
+  let mx = max_of(values)
+  let av = avg_of(values)
+  println("  {name}:")
+  println("    Sum: {s}")
+  println("    Min: {mn}")
+  println("    Max: {mx}")
+  println("    Avg: {float.to_string(av, 2)}")
 }
-
--- ── Determine which column indices are numeric ─────────────────────
-
-fn find_numeric_columns(header, data_rows) {
-  when [first_row, .._] = data_rows else {
-    return []
-  }
-
-  let indices = 0..(list.length(header))
-  indices |> list.filter { i ->
-    let val = match list.get(first_row, i) {
-      Some(v) -> v
-      None -> ""
-    }
-    is_numeric(val)
-  }
-}
-
--- ── Main ───────────────────────────────────────────────────────────
 
 fn main() {
-  -- Read CSV file path from args, or use default
-  let args = io.args()
-  let csv_path = match list.get(args, 3) {
-    Some(path) -> path
-    None -> "programs/data.csv"
-  }
-
-  println("  CSV Analyzer")
-  println("  ============")
-  println("  Reading: {csv_path}")
-
-  -- Read and parse CSV
-  when Ok(content) = io.read_file(csv_path) else {
-    return println("Error: could not read file '{csv_path}'")
+  -- Read CSV file
+  when Ok(content) = io.read_file("programs/data.csv") else {
+    println("Error: could not read programs/data.csv")
+    return ()
   }
 
   let rows = parse_csv(content)
+  let count = list.length(rows)
+  println("=== CSV Analyzer ===")
+  println("Loaded {count} rows\n")
 
-  -- Split header from data using list pattern matching
-  when [header, ..data_rows] = rows else {
-    return println("Error: CSV file is empty")
-  }
+  -- Extract numeric columns
+  let ages = rows |> list.map { r -> get_int(r, "age") }
+  let scores = rows |> list.map { r -> get_int(r, "score") }
 
-  println("  Columns: {string.join(header, ", ")}")
-  println("  Rows: {list.length(data_rows)}")
-
-  -- Find which columns are numeric
-  let numeric_indices = find_numeric_columns(header, data_rows)
-
-  -- Compute stats for each numeric column
-  let stats = numeric_indices |> list.map { i ->
-    let col_name = match list.get(header, i) {
-      Some(name) -> name
-      None -> "unknown"
-    }
-    let values = extract_column(data_rows, i)
-    compute_column_stats(col_name, values)
-  }
-
-  -- Pretty-print statistics table
-  print_stats_table(stats)
-
-  -- ── Filter: rows where score > 85 ─────────────────────────────
-  let score_col = 0..(list.length(header))
-    |> list.find { i ->
-      match list.get(header, i) {
-        Some(name) -> name == "score"
-        None -> false
-      }
-    }
-
-  match score_col {
-    Some(score_idx) -> {
-      let threshold = 85.0
-      let high_scorers = data_rows |> list.filter { row ->
-        match list.get(row, score_idx) {
-          Some(val) -> match float.parse(val) {
-            Ok(score) -> score > threshold
-            Err(_) -> false
-          }
-          None -> false
-        }
-      }
-      print_filtered_table(header, high_scorers, "Filtered: score > 85.0")
-    }
-    None -> println("  (no 'score' column found for filtering)")
-  }
-
-  -- ── Filter: rows where age < 30 ──────────────────────────────
-  let age_col = 0..(list.length(header))
-    |> list.find { i ->
-      match list.get(header, i) {
-        Some(name) -> name == "age"
-        None -> false
-      }
-    }
-
-  match age_col {
-    Some(age_idx) -> {
-      let age_threshold = 30.0
-      let young = data_rows |> list.filter { row ->
-        match list.get(row, age_idx) {
-          Some(val) -> match float.parse(val) {
-            Ok(age) -> age < age_threshold
-            Err(_) -> false
-          }
-          None -> false
-        }
-      }
-      print_filtered_table(header, young, "Filtered: age < 30")
-    }
-    None -> println("  (no 'age' column found for filtering)")
-  }
-
-  -- ── Summary: pipe chain combining multiple operations ─────────
+  -- Print statistics
+  println("--- Column Statistics ---")
+  print_column_stats("Age", ages)
+  print_column_stats("Score", scores)
   println("")
-  println("  Grade Distribution")
-  println("  ==================")
 
-  let grade_col = 0..(list.length(header))
-    |> list.find { i ->
-      match list.get(header, i) {
-        Some(name) -> name == "grade"
-        None -> false
-      }
-    }
-
-  match grade_col {
-    Some(grade_idx) -> {
-      let grades = extract_column(data_rows, grade_idx)
-
-      -- Count each grade using fold with a map
-      let counts = grades |> list.fold(#{ "A": 0, "B": 0, "C": 0, "D": 0, "F": 0 }) { acc, grade ->
-        let current = match map.get(acc, grade) {
-          Some(n) -> n
-          None -> 0
-        }
-        map.set(acc, grade, current + 1)
-      }
-
-      -- Print grade distribution
-      ["A", "B", "C", "D", "F"] |> list.each { grade ->
-        let count = match map.get(counts, grade) {
-          Some(n) -> n
-          None -> 0
-        }
-        let bar = string.repeat("#", count * 3)
-        println("  {grade}: {bar} ({count})")
-      }
-    }
-    None -> println("  (no 'grade' column found)")
+  -- Print full table
+  println("--- All Students ---")
+  let col_widths = [10, 5, 7, 7]
+  let headers = ["Name", "Age", "Score", "Grade"]
+  print_separator(col_widths)
+  print_table_row(headers, col_widths)
+  print_separator(col_widths)
+  rows |> list.each { row ->
+    let cells = [
+      get_field(row, "name"),
+      get_field(row, "age"),
+      get_field(row, "score"),
+      get_field(row, "grade")
+    ]
+    print_table_row(cells, col_widths)
   }
-
+  print_separator(col_widths)
   println("")
-  println("  Done.")
+
+  -- Filter: students with score >= 80
+  let high_scorers = rows |> list.filter { r -> get_int(r, "score") >= 80 }
+  println("--- High Scorers (score >= 80) ---")
+  print_separator(col_widths)
+  print_table_row(headers, col_widths)
+  print_separator(col_widths)
+  high_scorers |> list.each { row ->
+    let cells = [
+      get_field(row, "name"),
+      get_field(row, "age"),
+      get_field(row, "score"),
+      get_field(row, "grade")
+    ]
+    print_table_row(cells, col_widths)
+  }
+  print_separator(col_widths)
+  println("")
+
+  -- Sort by score descending
+  let sorted = rows |> list.sort_by { r -> 0 - get_int(r, "score") }
+  println("--- Students Sorted by Score (descending) ---")
+  print_separator(col_widths)
+  print_table_row(headers, col_widths)
+  print_separator(col_widths)
+  sorted |> list.each { row ->
+    let cells = [
+      get_field(row, "name"),
+      get_field(row, "age"),
+      get_field(row, "score"),
+      get_field(row, "grade")
+    ]
+    print_table_row(cells, col_widths)
+  }
+  print_separator(col_widths)
+  println("")
+
+  -- Grade distribution
+  let grade_groups = rows |> list.group_by { r -> get_field(r, "grade") }
+  println("--- Grade Distribution ---")
+  let grade_entries = map.entries(grade_groups) |> list.sort_by { entry ->
+    let (grade, _) = entry
+    grade
+  }
+  grade_entries |> list.each { entry ->
+    let (grade, students) = entry
+    let names = students |> list.map { s -> get_field(s, "name") }
+    println("  Grade {grade}: {list.length(students)} students ({string.join(names, ", ")})")
+  }
 }

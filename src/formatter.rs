@@ -97,6 +97,7 @@ fn decl_start_line(decl: &Decl) -> Option<usize> {
         Decl::Trait(t) => Some(t.span.line),
         Decl::TraitImpl(t) => Some(t.span.line),
         Decl::Import(_) => None, // no span on ImportTarget
+        Decl::Let { span, .. } => Some(span.line),
     }
 }
 
@@ -246,6 +247,18 @@ fn format_decl(decl: &Decl, depth: usize) -> String {
         Decl::Trait(t) => format_trait(t, depth),
         Decl::TraitImpl(t) => format_trait_impl(t, depth),
         Decl::Import(i) => format_import(i, depth),
+        Decl::Let { pattern, ty, value, is_pub, .. } => {
+            let indent = "  ".repeat(depth);
+            let pub_prefix = if *is_pub { "pub " } else { "" };
+            let pat = format_pattern(pattern);
+            let ty_str = if let Some(t) = ty {
+                format!(": {}", format_type_expr(t))
+            } else {
+                String::new()
+            };
+            let val = format_expr(value, depth);
+            format!("{indent}{pub_prefix}let {pat}{ty_str} = {val}")
+        }
     }
 }
 

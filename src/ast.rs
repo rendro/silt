@@ -279,6 +279,13 @@ pub enum Decl {
     Trait(TraitDecl),
     TraitImpl(TraitImpl),
     Import(ImportTarget),
+    Let {
+        pattern: Pattern,
+        ty: Option<TypeExpr>,
+        value: Expr,
+        is_pub: bool,
+        span: Span,
+    },
 }
 
 // ── Program ──────────────────────────────────────────────────────────

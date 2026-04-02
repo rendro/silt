@@ -35,6 +35,23 @@ Type annotations are optional everywhere — HM inference handles it.
 let x: Int = 42        -- explicit (rarely needed)
 ```
 
+### Top-level bindings
+
+`let` can appear at the top level of a file, outside any function. Top-level
+bindings are evaluated at program start and are visible to all functions in the
+file. Use `pub let` to export from a module.
+
+```
+let default_port = 8080
+let app_name = "myapp"
+
+pub let version = "1.0.0"    -- visible to importers
+
+fn main() {
+  println("Starting {app_name} on port {default_port}")
+}
+```
+
 -----
 
 ## 2. Functions
@@ -481,8 +498,9 @@ This desugars to match + early return of the error variant.
 
 ```
 +  -  *  /  %              -- arithmetic
+-x                         -- unary negation (Int and Float)
 ==  !=  <  >  <=  >=       -- comparison
-&&  ||  !                  -- boolean
+&&  ||  !                  -- boolean (! is prefix not)
 |>                         -- pipe
 ?                          -- error propagation
 ..                         -- range (1..10)
@@ -511,8 +529,8 @@ let m = #{ "key": "value", "count": 42 }
 | Module | Provides |
 |--------|----------|
 | `io` | inspect, read_file, write_file, read_line, args |
-| `list` | map, filter, fold, fold_until, unfold, each, find, zip, flatten, flat_map, any, all, head, tail, last, reverse, sort, sort_by, contains, length, append, concat, get, take, drop, enumerate |
-| `map` | get, set, delete, keys, values, length, merge |
+| `list` | map, filter, fold, fold_until, unfold, each, find, zip, flatten, flat_map, any, all, head, tail, last, reverse, sort, sort_by, unique, group_by, contains, length, append, prepend, concat, get, take, drop, enumerate |
+| `map` | get, set, delete, keys, values, length, merge, filter, map, entries, from_entries |
 | `string` | split, join, trim, contains, replace, length, to_upper, to_lower, starts_with, ends_with, chars, repeat, index_of, slice, pad_left, pad_right |
 | `int` | parse, abs, min, max, to_float, to_string |
 | `float` | parse, round, ceil, floor, abs, min, max, to_string, to_int |
@@ -523,6 +541,7 @@ let m = #{ "key": "value", "count": 42 }
 | `task` | spawn, join, cancel |
 | `regex` | is_match, find, find_all, captures, split, replace, replace_all |
 | `json` | parse, stringify, pretty |
+| `math` | sqrt, pow, log, log10, sin, cos, tan, asin, acos, atan, atan2 + constants pi, e |
 
 ### Not in v1 (future)
 

@@ -1,7 +1,21 @@
-The quick brown fox jumps over the lazy dog. The dog barked at the fox
-but the fox did not care. The brown fox was quick and the lazy dog was slow.
-Every morning the fox would run through the meadow while the dog slept.
-The fox found a berry bush and ate the berries. The dog woke up and chased
-the fox but the fox was too quick. The lazy dog gave up and went back to sleep.
-A bird watched the fox and the dog from a tall tree. The bird sang a song
-about the quick brown fox and the lazy dog. It was a beautiful day in the meadow.
+The quick brown fox jumps over the lazy dog. This classic sentence contains
+every letter of the alphabet, making it a favorite among typists and font
+designers. The fox was not particularly quick, nor was the dog especially lazy,
+but the sentence endures because of its completeness.
+
+Programming languages come in many shapes and sizes. Some emphasize safety and
+correctness, while others prioritize raw performance. Functional languages
+encourage immutable data and pure functions, which can lead to code that is
+easier to reason about. The choice of language often depends on the problem
+domain and the preferences of the development team.
+
+Silt is a language designed for clarity and expressiveness. It uses pattern
+matching instead of traditional if-else branching, which encourages developers
+to think carefully about all possible cases. The pipe operator makes data
+transformations readable and composable. Immutable bindings prevent accidental
+mutation, leading to fewer bugs in practice.
+
+Text analysis is a fundamental task in computing. From simple word counts to
+sophisticated natural language processing, understanding text data drives
+countless applications. Search engines, spam filters, and recommendation
+systems all rely on statistical analysis of text to function effectively.

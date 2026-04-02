@@ -142,7 +142,7 @@ impl Parser {
     fn synchronize(&mut self) {
         loop {
             match self.peek() {
-                Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Eof => break,
+                Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let | Token::Eof => break,
                 _ => { self.advance(); }
             }
         }
@@ -170,8 +170,17 @@ impl Parser {
                         t.span = span;
                         Ok(Decl::Type(t))
                     }
+                    Token::Let => {
+                        let decl = self.parse_let_decl()?;
+                        match decl {
+                            Decl::Let { pattern, ty, value, .. } => {
+                                Ok(Decl::Let { pattern, ty, value, is_pub: true, span })
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
                     _ => Err(ParseError {
-                        message: "expected fn or type after pub".into(),
+                        message: "expected fn, type, or let after pub".into(),
                         span: self.span(),
                     }),
                 }
@@ -180,6 +189,7 @@ impl Parser {
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
+            Token::Let => self.parse_let_decl(),
             _ => Err(ParseError {
                 message: format!("expected declaration, found {}", self.peek()),
                 span: self.span(),
@@ -548,6 +558,22 @@ impl Parser {
         Ok(Stmt::Let { pattern, ty, value })
     }
 
+    fn parse_let_decl(&mut self) -> Result<Decl> {
+        let span = self.span();
+        self.expect(&Token::Let)?;
+        let pattern = self.parse_pattern()?;
+        let ty = if self.peek_skip_nl() == &Token::Colon {
+            self.advance();
+            Some(self.parse_type_expr()?)
+        } else {
+            None
+        };
+        self.expect(&Token::Eq)?;
+        self.skip_nl();
+        let value = self.parse_expr()?;
+        Ok(Decl::Let { pattern, ty, value, is_pub: false, span })
+    }
+
     fn parse_when_stmt(&mut self) -> Result<Stmt> {
         self.expect(&Token::When)?;
         let pattern = self.parse_pattern()?;
@@ -653,9 +679,11 @@ impl Parser {
                     continue;
                 }
 
-                // Pipe operator
+                // Pipe operator — binds tighter than comparison/boolean operators
+                // so `x |> f() == y` parses as `(x |> f()) == y`,
+                // but looser than range so `1..10 |> f()` parses as `(1..10) |> f()`
                 Token::Pipe => {
-                    let (l_bp, r_bp) = (10, 11);
+                    let (l_bp, r_bp) = (55, 56);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -668,9 +696,9 @@ impl Parser {
                     continue;
                 }
 
-                // Range
+                // Range — binds tighter than pipe so `1..10 |> f()` works
                 Token::DotDot => {
-                    let (l_bp, r_bp) = (20, 21);
+                    let (l_bp, r_bp) = (60, 61);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -685,7 +713,7 @@ impl Parser {
 
                 // Binary operators
                 Token::OrOr => {
-                    let (l_bp, r_bp) = (30, 31);
+                    let (l_bp, r_bp) = (20, 21);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -701,7 +729,7 @@ impl Parser {
                     continue;
                 }
                 Token::AndAnd => {
-                    let (l_bp, r_bp) = (40, 41);
+                    let (l_bp, r_bp) = (30, 31);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -722,7 +750,7 @@ impl Parser {
                     } else {
                         BinOp::Neq
                     };
-                    let (l_bp, r_bp) = (50, 51);
+                    let (l_bp, r_bp) = (40, 41);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -745,7 +773,7 @@ impl Parser {
                         Token::GtEq => BinOp::Geq,
                         _ => unreachable!(),
                     };
-                    let (l_bp, r_bp) = (60, 61);
+                    let (l_bp, r_bp) = (50, 51);
                     if l_bp < min_bp {
                         self.restore(saved);
                         break;
@@ -1206,6 +1234,10 @@ impl Parser {
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::Eof) {
             arms.push(self.parse_match_arm(guardless)?);
+            // Allow optional comma between match arms
+            if self.at(&Token::Comma) {
+                self.advance();
+            }
             self.skip_nl();
         }
         self.expect(&Token::RBrace)?;

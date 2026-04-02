@@ -252,6 +252,10 @@ impl Interpreter {
             Decl::Import(target) => {
                 self.process_import(target)?;
             }
+            Decl::Let { pattern, value, .. } => {
+                let val = self.eval(value, &self.global.clone())?;
+                self.bind_pattern(pattern, &val, &self.global)?;
+            }
         }
         Ok(())
     }
@@ -1106,6 +1110,23 @@ impl Interpreter {
                 Rc::make_mut(&mut rc).sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 Ok(Value::List(rc))
             }
+            "unique" => {
+                if args.len() != 1 {
+                    return Err(err("list.unique takes 1 argument"));
+                }
+                let Value::List(xs) = &args[0] else {
+                    return Err(err("list.unique requires a list"));
+                };
+                let mut seen = Vec::new();
+                let mut result = Vec::new();
+                for x in xs.iter() {
+                    if !seen.iter().any(|s| s == x) {
+                        seen.push(x.clone());
+                        result.push(x.clone());
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
             "contains" => {
                 if args.len() != 2 {
                     return Err(err("list.contains takes 2 arguments"));
@@ -1133,6 +1154,17 @@ impl Interpreter {
                 };
                 let mut rc = xs.clone();
                 Rc::make_mut(&mut rc).push(args[1].clone());
+                Ok(Value::List(rc))
+            }
+            "prepend" => {
+                if args.len() != 2 {
+                    return Err(err("list.prepend takes 2 arguments (list, element)"));
+                }
+                let Value::List(xs) = &args[0] else {
+                    return Err(err("first argument must be a list"));
+                };
+                let mut rc = xs.clone();
+                Rc::make_mut(&mut rc).insert(0, args[1].clone());
                 Ok(Value::List(rc))
             }
             "concat" => {
@@ -3150,9 +3182,11 @@ fn register_builtins(env: &Env) {
         "list.last",
         "list.reverse",
         "list.sort",
+        "list.unique",
         "list.contains",
         "list.length",
         "list.append",
+        "list.prepend",
         "list.concat",
         "list.get",
         "list.take",

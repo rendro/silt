@@ -1,98 +1,61 @@
-{-
-  Concurrent File Processor -- Ergonomics Evaluation
-  ==================================================
-
-  CONCURRENCY EXPERIENCE RATING: 8.5/10
-
-  WHAT WAS EASY / PLEASANT:
-  - Channel creation is minimal and clean: channel.new() and channel.new(10).
-  - task.spawn with closure capture of channels is natural and lightweight.
-  - receive() returning Message(value) | Closed makes termination unambiguous.
-  - The pipe operator |> combined with each/map/fold makes result aggregation pleasant.
-  - Pattern matching on Ok/Err for file I/O errors inside spawned tasks feels right.
-  - Records for structured results are straightforward.
-  - channel.select with pin patterns is syntactically clean.
-  - list.append eliminates the flatten workaround for collecting results.
-  - Guardless match makes boolean branching cleaner.
-  - The loop expression handles channel draining, worker loops, and result collection
-    inline without needing recursive helper functions. No stack-depth concerns.
-
-  REMAINING FRICTION:
-  - None. receive() returns Message(value) on success and Closed when drained.
-    try_receive() returns Message(value), Empty, or Closed — fully unambiguous.
-  - The cooperative scheduler means "concurrency" is really interleaved coroutines
-    on a single thread. Tasks yield only at channel ops and task.join -- no
-    parallelism, no preemption. CPU-bound work in one task blocks all others.
-    The CSP API is forward-compatible with a future preemptive runtime.
+{- Friction Report
+   Attempts: 2
+   Rating: 8/10
+   Highlights: channel.select with ^pin is elegant and readable. The loop
+     expression with named accumulators is a natural fit for collecting results.
+     String interpolation makes println convenient. The cooperative scheduler
+     determinism makes debugging easy -- same output every run.
+   Friction: The typechecker rejects match on channel.receive with only Closed
+     and Message(x) arms as non-exhaustive, requiring a _ wildcard even though
+     those two constructors should cover all cases. Had to add _ -> () to the
+     channel.receive match and _ -> ... to the io.read_file match.
+   Missing: A way to iterate over channel values until closed (e.g. a
+     channel.each or for-in-channel construct) would reduce boilerplate in
+     worker loops. Also, with cooperative scheduling, all work tends to go to
+     Worker 1 since it runs first -- a yield/sleep primitive would help
+     distribute work more evenly across workers.
+   Bugs: Non-exhaustive match false positive: Closed + Message(x) should be
+     exhaustive for channel.receive return type but the typechecker disagrees.
 -}
 
--- Record type for file processing results
-type FileResult {
-  path: String,
-  lines: Int,
-  words: Int,
-  ok: Bool,
-  error: String,
+-- Analyze a file's content: count lines and words
+fn analyze(path, content) {
+  let lines = content |> string.split("\n")
+  let line_count = lines |> list.length
+  let word_count = lines
+    |> list.map { line -> line |> string.split(" ") |> list.length }
+    |> list.fold(0) { acc, n -> acc + n }
+  (path, line_count, word_count)
 }
 
--- Count words in a single line
-fn count_words_in_line(line) {
-  line
-  |> string.split(" ")
-  |> list.filter { w -> w != "" }
-  |> list.length()
-}
-
--- Count words in a string: split into lines, count words per line, sum
-fn count_words(text) {
-  text
-  |> string.split("\n")
-  |> list.map { line -> count_words_in_line(line) }
-  |> list.fold(0) { acc, n -> acc + n }
-}
-
--- Count non-empty lines in a string
-fn count_lines(text) {
-  text
-  |> string.split("\n")
-  |> list.filter { line -> line != "" }
-  |> list.length()
-}
-
--- Process a single file: read it and compute stats
-fn process_file(path) {
-  match io.read_file(path) {
-    Ok(content) -> FileResult {
-      path: path,
-      lines: count_lines(content),
-      words: count_words(content),
-      ok: true,
-      error: "",
+-- Worker: receives file paths from jobs channel, reads and analyzes them,
+-- sends results to the results channel. Loops until jobs channel is closed.
+fn worker(id, jobs, results) {
+  loop {
+    match channel.receive(jobs) {
+      Closed -> {
+        channel.send(results, ("done", id, 0, 0))
+      }
+      Message(path) -> {
+        match io.read_file(path) {
+          Ok(content) -> {
+            let (file_path, line_count, word_count) = analyze(path, content)
+            channel.send(results, ("ok", id, line_count, word_count))
+            println("  Worker {id}: processed {path} ({line_count} lines, {word_count} words)")
+          }
+          Err(e) -> {
+            channel.send(results, ("err", id, 0, 0))
+            println("  Worker {id}: error reading {path}: {e}")
+          }
+          _ -> {
+            channel.send(results, ("err", id, 0, 0))
+            println("  Worker {id}: unexpected result for {path}")
+          }
+        }
+        loop()
+      }
+      _ -> ()
     }
-    Err(e) -> FileResult {
-      path: path,
-      lines: 0,
-      words: 0,
-      ok: false,
-      error: e,
-    }
-  }
-}
-
--- Print a single file result
-fn print_result(result) {
-  match result.ok {
-    true -> println("  {result.path}: {result.lines} lines, {result.words} words")
-    false -> println("  {result.path}: ERROR - {result.error}")
-  }
-}
-
--- Demonstrate channel.select with multiple channels
-fn demonstrate_select(ch_high, ch_low) {
-  match channel.select([ch_high, ch_low]) {
-    (^ch_high, msg) -> println("  [high priority] {msg}")
-    (^ch_low, msg) -> println("  [low priority] {msg}")
-    _ -> println("  [no message]")
   }
 }
 
@@ -100,181 +63,107 @@ fn main() {
   println("=== Concurrent File Processor ===")
   println("")
 
-  -- File list to process
+  -- File paths to process
   let files = [
     "programs/files/readme.txt",
     "programs/files/notes.txt",
     "programs/files/todo.txt",
-    "programs/files/poem.txt",
+    "programs/files/poem.txt"
   ]
 
-  let file_count = list.length(files)
+  let num_files = files |> list.length
 
-  -- Create channels: buffered work channel, buffered results channel
-  let work_ch = channel.new(10)
-  let results_ch = channel.new(10)
+  -- Channels for job distribution and result collection
+  let jobs = channel.new(10)
+  let results = channel.new(10)
 
-  -- Spawn 2 workers that pull from the work channel
+  -- Also create priority channels for demonstrating channel.select with pin
+  let urgent_ch = channel.new(5)
+  let status_ch = channel.new(5)
+
+  -- Spawn 2 worker tasks
   println("Spawning 2 workers...")
-  let w1 = task.spawn(fn() {
-    loop {
-      match channel.receive(work_ch) {
-        Closed -> ()
-        Message(path) -> {
-          let result = process_file(path)
-          channel.send(results_ch, result)
-          loop()
+  let w1 = task.spawn(fn() { worker(1, jobs, results) })
+  let w2 = task.spawn(fn() { worker(2, jobs, results) })
+
+  -- Send file paths to the jobs channel
+  println("Dispatching {num_files} files to workers...")
+  println("")
+  files |> list.each { path -> channel.send(jobs, path) }
+
+  -- Close the jobs channel to signal workers to stop
+  channel.close(jobs)
+
+  -- Collect results: expect num_files results + 2 "done" signals from workers
+  let total_expected = num_files + 2
+  let summary = loop i = 0, total_lines = 0, total_words = 0, done_count = 0 {
+    match i >= total_expected {
+      true -> (total_lines, total_words, done_count)
+      _ -> {
+        let Message(result) = channel.receive(results)
+        let (status, worker_id, lines, words) = result
+        match status {
+          "done" -> loop(i + 1, total_lines, total_words, done_count + 1)
+          "ok" -> loop(i + 1, total_lines + lines, total_words + words, done_count)
+          _ -> loop(i + 1, total_lines, total_words, done_count)
         }
-      }
-    }
-  })
-  let w2 = task.spawn(fn() {
-    loop {
-      match channel.receive(work_ch) {
-        Closed -> ()
-        Message(path) -> {
-          let result = process_file(path)
-          channel.send(results_ch, result)
-          loop()
-        }
-      }
-    }
-  })
-
-  -- Distribute work: send all file paths to the work channel
-  println("Distributing {file_count} files to workers...")
-  files |> list.each { path -> channel.send(work_ch, path) }
-
-  -- Close the work channel to signal "no more work"
-  channel.close(work_ch)
-
-  -- Collect all results (we know exactly how many to expect)
-  let results = loop remaining = file_count, acc = [] {
-    match remaining {
-      0 -> acc
-      n -> match channel.receive(results_ch) {
-        Closed -> acc
-        Message(result) -> loop(n - 1, list.append(acc, result))
       }
     }
   }
 
-  -- Wait for workers to finish
+  -- Join workers
   task.join(w1)
   task.join(w2)
 
-  -- Print individual results
-  println("")
-  println("--- Results ---")
-  results |> list.each { r -> print_result(r) }
-
-  -- Compute summary using fold
-  let total_lines = results |> list.fold(0) { acc, r -> acc + r.lines }
-  let total_words = results |> list.fold(0) { acc, r -> acc + r.words }
-  let success_count = results
-    |> list.filter { r -> r.ok }
-    |> list.length()
+  let (total_lines, total_words, workers_done) = summary
 
   println("")
-  println("--- Summary ---")
-  println("  Files processed: {file_count}")
-  println("  Successful: {success_count}")
-  println("  Total lines: {total_lines}")
-  println("  Total words: {total_words}")
+  println("=== Summary ===")
+  println("Files processed: {num_files}")
+  println("Total lines: {total_lines}")
+  println("Total words: {total_words}")
+  println("Workers finished: {workers_done}")
 
-  -- =====================================================
-  -- Part 2: Demonstrate try_receive (non-blocking poll)
-  -- =====================================================
+  -- Demonstrate channel.select with pin operator
   println("")
-  println("=== try_receive demo ===")
-  let poll_ch = channel.new(3)
-  channel.send(poll_ch, "alpha")
-  channel.send(poll_ch, "beta")
+  println("=== Demonstrating channel.select with pin ===")
 
-  -- Non-blocking poll: gets Message("alpha")
-  match channel.try_receive(poll_ch) {
-    Message(val) -> println("  Polled: {val}")
-    Empty -> println("  Nothing available")
-    Closed -> println("  Channel closed")
-  }
-  -- Non-blocking poll: gets Message("beta")
-  match channel.try_receive(poll_ch) {
-    Message(val) -> println("  Polled: {val}")
-    Empty -> println("  Nothing available")
-    Closed -> println("  Channel closed")
-  }
-  -- Non-blocking poll: channel empty, gets Empty
-  match channel.try_receive(poll_ch) {
-    Message(val) -> println("  Polled: {val}")
-    Empty -> println("  Channel empty (expected)")
-    Closed -> println("  Channel closed")
-  }
+  channel.send(urgent_ch, "URGENT: disk space low")
+  channel.send(status_ch, "STATUS: all systems normal")
 
-  -- =====================================================
-  -- Part 3: Demonstrate channel.select with priority channels
-  -- =====================================================
-  println("")
-  println("=== channel.select demo ===")
-  let high_ch = channel.new(5)
-  let low_ch = channel.new(5)
-
-  -- Load up both channels
-  channel.send(high_ch, "urgent task A")
-  channel.send(low_ch, "background task X")
-  channel.send(high_ch, "urgent task B")
-  channel.send(low_ch, "background task Y")
-
-  -- channel.select picks from whichever has data (order-biased toward first arm)
-  demonstrate_select(high_ch, low_ch)
-  demonstrate_select(high_ch, low_ch)
-  demonstrate_select(high_ch, low_ch)
-  demonstrate_select(high_ch, low_ch)
-
-  -- =====================================================
-  -- Part 4: Demonstrate close-signaled channel drain
-  -- =====================================================
-  println("")
-  println("=== close-signaled channel drain ===")
-  let stream_ch = channel.new(5)
-
-  let producer = task.spawn(fn() {
-    channel.send(stream_ch, "message 1")
-    channel.send(stream_ch, "message 2")
-    channel.send(stream_ch, "message 3")
-    channel.close(stream_ch)
-  })
-
-  loop {
-    match channel.receive(stream_ch) {
-      Closed -> println("  Channel closed, drain complete")
-      Message(msg) -> {
-        println("  Received: {msg}")
-        loop()
-      }
+  -- Select from both channels, using pin to identify which fired
+  let msg1 = match channel.select([urgent_ch, status_ch]) {
+    (^urgent_ch, msg) -> {
+      println("Received from urgent channel: {msg}")
+      msg
     }
-  }
-  task.join(producer)
-
-  -- =====================================================
-  -- Part 5: Error handling -- process a nonexistent file
-  -- =====================================================
-  println("")
-  println("=== Error handling demo ===")
-  let err_ch = channel.new(1)
-
-  let err_worker = task.spawn(fn() {
-    let result = process_file("programs/files/nonexistent.txt")
-    channel.send(err_ch, result)
-  })
-
-  task.join(err_worker)
-  match channel.receive(err_ch) {
-    Closed -> println("  Unexpected: channel closed")
-    Message(result) -> {
-      print_result(result)
+    (^status_ch, msg) -> {
+      println("Received from status channel: {msg}")
+      msg
     }
+    _ -> panic("unexpected channel in select")
   }
 
+  let msg2 = match channel.select([urgent_ch, status_ch]) {
+    (^urgent_ch, msg) -> {
+      println("Received from urgent channel: {msg}")
+      msg
+    }
+    (^status_ch, msg) -> {
+      println("Received from status channel: {msg}")
+      msg
+    }
+    _ -> panic("unexpected channel in select")
+  }
+
+  -- Demonstrate channel.close for graceful shutdown
   println("")
-  println("=== Done ===")
+  println("=== Demonstrating channel.close ===")
+  channel.close(urgent_ch)
+  channel.close(status_ch)
+  let closed_result = channel.receive(urgent_ch)
+  println("After close, receive returns: {closed_result}")
+
+  println("")
+  println("Done!")
 }

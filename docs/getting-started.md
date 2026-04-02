@@ -77,6 +77,16 @@ Type annotations are optional -- the compiler infers types for you:
 let x: Int = 42   -- valid, but rarely needed
 ```
 
+Bindings can also appear at the top level of a file, outside any function:
+
+```silt
+let default_port = 8080
+
+fn main() {
+  println("port: {default_port}")
+}
+```
+
 ### Functions
 
 Functions are expressions. The last expression in the body is the return value:
@@ -236,6 +246,112 @@ match parse_int("42") {
 parse_int("42")
 |> result.map_ok { n -> n * 2 }
 |> result.unwrap_or(0)
+```
+
+### Types
+
+Silt has algebraic data types (tagged unions) and records.
+
+**Algebraic types** define a set of variants, each optionally carrying data:
+
+```silt
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+fn area(shape) {
+  match shape {
+    Circle(r) -> 3.14159 * r * r
+    Rect(w, h) -> w * h
+  }
+}
+```
+
+**Records** are types with named fields:
+
+```silt
+type User {
+  name: String,
+  age: Int,
+  active: Bool,
+}
+
+let u = User { name: "Alice", age: 30, active: true }
+println(u.name)                  -- "Alice"
+let u2 = u.{ age: 31 }          -- record update (returns new record)
+```
+
+### Loop Expressions
+
+`loop` provides stack-safe iteration. It binds initial state, evaluates a body, and re-enters via `loop(new_values)`. Any expression that is not `loop(...)` terminates the loop and becomes its value.
+
+```silt
+-- Sum 0..9
+let total = loop i = 0, acc = 0 {
+  match i >= 10 {
+    true -> acc
+    _ -> loop(i + 1, acc + i)
+  }
+}
+println(total)  -- 45
+```
+
+Zero-binding loops work for infinite-style iteration:
+
+```silt
+loop {
+  match io.read_line() {
+    Ok("quit") -> println("goodbye")
+    Ok(line) -> { println("echo: {line}"); loop() }
+    _ -> println("goodbye")
+  }
+}
+```
+
+### Traits
+
+Traits define interfaces that types can implement. Silt has four built-in traits: `Display`, `Compare`, `Equal`, and `Hash`.
+
+```silt
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+    }
+  }
+}
+
+fn main() {
+  let s = Circle(5.0)
+  println(s.display())          -- "Circle(r=5)"
+  println("shape: {s.display()}")  -- string interpolation calls display
+}
+```
+
+Traits can be used as constraints with `where`:
+
+```silt
+fn print_all(items) where a: Display {
+  items |> list.each { item -> println(item.display()) }
+}
+```
+
+### Unary Operators
+
+Silt supports unary negation (`-`) for numbers and logical not (`!`) for booleans:
+
+```silt
+let x = 42
+println(-x)      -- -42
+println(-3.14)   -- -3.14
+println(!true)   -- false
 ```
 
 ## Working with Files

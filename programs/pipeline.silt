@@ -1,305 +1,213 @@
-{-
-  Pipeline -- Unix-pipe-style data transformation
-  ===============================================
-
-  FRICTION RATING: 8/10
-
-  WHAT WORKS WELL:
-  - The pipe operator |> is the star of this program. Chaining filter, map, fold,
-    each into multi-step pipelines reads naturally and is the clear "Silt way."
-  - Trailing closures with { x -> ... } are excellent for inline transforms.
-  - String interpolation "{var}" is clean and avoids concatenation noise.
-  - Custom functions compose perfectly with pipes.
-  - fold is a natural fit for aggregation.
-  - Closures capturing outer variables work seamlessly.
-  - list.take / list.drop replace the zip-filter workaround.
-  - list.sort_by replaces the zip-sort-extract dance.
-  - list.enumerate + string.pad_left make numbered output clean.
-  - list.append replaces the flatten workaround for list building.
-  - Guardless match makes boolean branching concise.
-
-  REMAINING FRICTION:
-  - No way to return early from fold.
-  - Tuple destructuring in closures inside fold is verbose.
+{- Friction Report
+   Attempts: 2
+   Rating: 8/10
+   Highlights:
+     - Pipe operator |> with trailing closures is very natural for this kind of data processing
+     - list.enumerate, list.sort_by, list.fold all worked exactly as expected
+     - Higher-order function factories (closures returning closures) worked seamlessly
+     - String interpolation inside closures is clean and readable
+     - Pattern matching with tuple destructuring (let (i, line) = pair) is convenient
+   Friction:
+     - Inline match expressions inside trailing closures cause parse errors;
+       had to extract the match into a separate let binding to avoid the issue
+       (e.g., `list.filter { line -> match expr { true -> false, _ -> true } }` fails)
+     - No boolean negation operator (not/!) means negating a condition requires
+       a match expression, which is verbose for simple cases like reject
+   Missing:
+     - A `not` or `!` operator for boolean negation would greatly simplify reject/filter logic
+     - A `lines` function (split by newline) as a convenience on strings
+     - list.dedup or list.chunk_by for grouping consecutive equal elements
+   Bugs:
+     - Parser fails on match expressions with multiple arms inside trailing closure braces
+       (single-line `match expr { arm1, arm2 }` style); works when match is in a let binding
 -}
 
--- ============================================================
--- Pipeline helper functions
--- ============================================================
+-- Pipeline text processing: Unix-pipe-style operations on log data
 
--- Filter lines containing a pattern
+-- Read the log file and split into lines
+fn read_lines(path) {
+  match io.read_file(path) {
+    Ok(content) -> content |> string.split("\n") |> list.filter { line -> string.length(line) > 0 }
+    Err(e) -> panic("Could not read file: {e}")
+  }
+}
+
+-- grep: keep lines containing a pattern
 fn grep(lines, pattern) {
   lines |> list.filter { line -> string.contains(line, pattern) }
 }
 
--- Transform all lines to uppercase
+-- reject: remove lines containing a pattern (keep lines NOT containing pattern)
+fn contains_pattern(line, pattern) {
+  string.contains(line, pattern)
+}
+
+fn reject(lines, pattern) {
+  lines |> list.filter { line ->
+    let has = contains_pattern(line, pattern)
+    match has {
+      true -> false
+      _ -> true
+    }
+  }
+}
+
+-- uppercase: convert all lines to uppercase
 fn uppercase(lines) {
   lines |> list.map { line -> string.to_upper(line) }
 }
 
--- Transform all lines to lowercase
+-- lowercase: convert all lines to lowercase
 fn lowercase(lines) {
   lines |> list.map { line -> string.to_lower(line) }
 }
 
--- Prepend line numbers: "  1 | some text"
+-- numbered: add line numbers
 fn numbered(lines) {
   lines |> list.enumerate |> list.map { pair ->
     let (i, line) = pair
-    let num = string.pad_left("{i + 1}", 3, " ")
-    "{num} | {line}"
+    let num = i + 1
+    "{num}: {line}"
   }
 }
 
--- Count words per line, return list of (count, line) tuples
-fn word_count(lines) {
-  lines |> list.map { line ->
-    let words = line
-      |> string.split(" ")
-      |> list.filter { w -> string.length(w) > 0 }
-    let count = list.length(words)
-    (count, line)
-  }
-}
-
--- Sort lines by their length (shortest first)
+-- sort_by_length: sort lines by their length
 fn sort_by_length(lines) {
   lines |> list.sort_by { line -> string.length(line) }
 }
 
--- Take the first n items from a list
-fn take(lines, n) {
-  list.take(lines, n)
+-- word_count: return a single-element list with word count info
+fn word_count(lines) {
+  let total = lines |> list.fold(0) { acc, line ->
+    let words = line |> string.split(" ") |> list.filter { w -> string.length(w) > 0 }
+    acc + list.length(words)
+  }
+  let line_count = list.length(lines)
+  ["Lines: {line_count}, Words: {total}"]
 }
 
--- Remove consecutive duplicate lines
+-- uniq: remove consecutive duplicate lines
 fn uniq(lines) {
-  let result = lines |> list.fold(([], "")) { state, line ->
-    let (acc, prev) = state
-    match line == prev {
-      true -> (acc, prev)
-      false -> (list.append(acc, line), line)
-    }
-  }
-  let (unique_lines, _) = result
-  unique_lines
-}
-
--- Drop lines matching a pattern (inverse of grep)
-fn reject(lines, pattern) {
-  lines |> list.filter { line -> !string.contains(line, pattern) }
-}
-
--- Extract a field by position (split on whitespace, take nth token)
-fn extract_field(lines, field_idx) {
-  lines |> list.map { line ->
-    let parts = line
-      |> string.split(" ")
-      |> list.filter { w -> string.length(w) > 0 }
-    match list.get(parts, field_idx) {
-      Some(val) -> val
-      None -> ""
+  match lines {
+    [] -> []
+    [first, ..rest] -> {
+      let result = rest |> list.fold([first]) { acc, line ->
+        match list.last(acc) {
+          Some(prev) -> match prev == line {
+            true -> acc
+            _ -> list.append(acc, line)
+          }
+          None -> [line]
+        }
+      }
+      result
     }
   }
 }
 
--- Count total items (returns an Int, terminates the pipeline)
-fn count(lines) {
-  list.length(lines)
+-- take_lines: take first n lines
+fn take_lines(lines, n) {
+  lines |> list.take(n)
 }
 
--- Format as a summary string
-fn summarize(lines) {
-  let total = list.length(lines)
-  let total_words = lines
-    |> list.map { line ->
-      line
-      |> string.split(" ")
-      |> list.filter { w -> string.length(w) > 0 }
-      |> list.length()
-    }
-    |> list.fold(0) { acc, n -> acc + n }
-  "total lines: {total}, total words: {total_words}"
+-- drop_lines: drop first n lines
+fn drop_lines(lines, n) {
+  lines |> list.drop(n)
 }
 
--- Higher-order: create a grep function for a specific pattern
+-- reverse_lines: reverse the order
+fn reverse_lines(lines) {
+  lines |> list.reverse
+}
+
+-- Higher-order function factories
 fn make_grep(pattern) {
-  fn(lines) {
-    lines |> list.filter { line -> string.contains(line, pattern) }
-  }
+  fn(lines) { grep(lines, pattern) }
 }
 
--- Higher-order: create a transformer that trims and applies a function
-fn make_transformer(transform_fn) {
-  fn(lines) {
-    lines |> list.map { line ->
-      let trimmed = string.trim(line)
-      transform_fn(trimmed)
-    }
-  }
+fn make_reject(pattern) {
+  fn(lines) { reject(lines, pattern) }
 }
 
--- ============================================================
--- Main -- demonstrate pipeline composition
--- ============================================================
+fn make_take(n) {
+  fn(lines) { take_lines(lines, n) }
+}
+
+fn make_drop(n) {
+  fn(lines) { drop_lines(lines, n) }
+}
+
+-- Helper to print a pipeline result
+fn print_result(label, lines) {
+  println("=== {label} ===")
+  lines |> list.each { line -> println(line) }
+  println("")
+}
 
 fn main() {
-  println("=== Silt Pipeline Demo ===")
-  println("")
+  let lines = read_lines("programs/log.txt")
 
-  -- Read the log file
-  let content = match io.read_file("programs/log.txt") {
-    Ok(text) -> text
-    Err(e) -> {
-      println("Error reading file: {e}")
-      return ""
-    }
-  }
+  -- Pipeline 1: grep for ERROR lines
+  let p1 = lines |> grep("ERROR")
+  print_result("Pipeline 1: ERROR lines", p1)
 
-  -- Split into lines and remove empty trailing line
-  let lines = content
-    |> string.split("\n")
-    |> list.filter { line -> string.length(line) > 0 }
+  -- Pipeline 2: grep INFO then uppercase
+  let p2 = lines |> grep("INFO") |> uppercase
+  print_result("Pipeline 2: INFO lines uppercased", p2)
 
-  println("--- All {list.length(lines)} log lines loaded ---")
-  println("")
+  -- Pipeline 3: reject DEBUG, add line numbers
+  let p3 = lines |> reject("DEBUG") |> numbered
+  print_result("Pipeline 3: Non-DEBUG lines numbered", p3)
 
-  -- ─── Pipeline 1: Find and display errors ──────────────────
-  println("=== Pipeline 1: Error lines (filtered, uppercased, numbered) ===")
-  lines
-    |> grep("ERROR")
-    |> uppercase()
-    |> numbered()
-    |> list.each { line -> println(line) }
+  -- Pipeline 4: sort by length, take shortest 5
+  let p4 = lines |> sort_by_length |> take_lines(5)
+  print_result("Pipeline 4: 5 shortest lines", p4)
 
-  println("")
+  -- Pipeline 5: grep WARN, reverse, numbered
+  let p5 = lines |> grep("WARN") |> reverse_lines |> numbered
+  print_result("Pipeline 5: WARN lines reversed and numbered", p5)
 
-  -- ─── Pipeline 2: Warning summary ──────────────────────────
-  println("=== Pipeline 2: Warnings sorted by length ===")
-  lines
-    |> grep("WARN")
-    |> sort_by_length()
-    |> numbered()
-    |> list.each { line -> println(line) }
+  -- Pipeline 6: word count of ERROR lines
+  let p6 = lines |> grep("ERROR") |> word_count
+  print_result("Pipeline 6: Word count of ERROR lines", p6)
 
-  println("")
+  -- Pipeline 7: higher-order factory — make_grep for "logged in"
+  let find_logins = make_grep("logged in")
+  let p7 = lines |> find_logins |> numbered
+  print_result("Pipeline 7: Login lines via factory (numbered)", p7)
 
-  -- ─── Pipeline 3: Word counts for errors ───────────────────
-  println("=== Pipeline 3: Word count per error line ===")
-  lines
-    |> grep("ERROR")
-    |> word_count()
-    |> list.each { pair ->
-      let (wc, line) = pair
-      println("  [{wc} words] {line}")
-    }
+  -- Pipeline 8: reject INFO and DEBUG, uppercase, numbered
+  let p8 = lines |> reject("INFO") |> reject("DEBUG") |> uppercase |> numbered
+  print_result("Pipeline 8: Non-INFO/DEBUG uppercased and numbered", p8)
 
-  println("")
+  -- Pipeline 9: use make_reject factory, then sort by length, take 3
+  let no_info = make_reject("INFO")
+  let first3 = make_take(3)
+  let p9 = lines |> no_info |> sort_by_length |> first3
+  print_result("Pipeline 9: Non-INFO sorted by length (top 3)", p9)
 
-  -- ─── Pipeline 4: Take first N with dedup ──────────────────
-  println("=== Pipeline 4: First 5 unique INFO lines ===")
-  lines
-    |> grep("INFO")
-    |> uniq()
-    |> take(5)
-    |> numbered()
-    |> list.each { line -> println(line) }
+  -- Pipeline 10: grep for time pattern, drop first 2, take 3, lowercase, numbered
+  let p10 = lines |> grep("08:0") |> drop_lines(2) |> take_lines(3) |> lowercase |> numbered
+  print_result("Pipeline 10: Early morning lines (drop 2, take 3, lowercased, numbered)", p10)
 
-  println("")
-
-  -- ─── Pipeline 5: Extract timestamps from errors ───────────
-  println("=== Pipeline 5: Error timestamps (field extraction) ===")
-  lines
-    |> grep("ERROR")
-    |> extract_field(1)
-    |> list.map { time -> "  at {time}" }
-    |> list.each { line -> println(line) }
-
-  println("")
-
-  -- ─── Pipeline 6: Aggregate statistics ─────────────────────
-  println("=== Pipeline 6: Log statistics ===")
-  let total = lines |> count()
-  let errors = lines |> grep("ERROR") |> count()
-  let warnings = lines |> grep("WARN") |> count()
-  let infos = lines |> grep("INFO") |> count()
-  println("  Total lines:    {total}")
-  println("  INFO lines:     {infos}")
-  println("  WARN lines:     {warnings}")
-  println("  ERROR lines:    {errors}")
-
-  println("")
-
-  -- ─── Pipeline 7: Full summary of errors ───────────────────
-  println("=== Pipeline 7: Error summary ===")
-  let error_summary = lines
-    |> grep("ERROR")
-    |> summarize()
-  println("  {error_summary}")
-
-  println("")
-
-  -- ─── Pipeline 8: Higher-order function factories ──────────
-  println("=== Pipeline 8: Higher-order grep factory ===")
-  let find_errors = make_grep("ERROR")
-  let find_health = make_grep("health check")
-
-  let error_count = lines |> find_errors() |> count()
-  let health_count = lines |> find_health() |> count()
-  println("  Errors found: {error_count}")
-  println("  Health checks found: {health_count}")
-
-  println("")
-
-  -- ─── Pipeline 9: Complex chained pipeline ─────────────────
-  println("=== Pipeline 9: Complex pipeline (reject health checks, take 8, sort by length, lowercase) ===")
-  lines
-    |> reject("health check")
-    |> take(8)
-    |> sort_by_length()
-    |> lowercase()
-    |> numbered()
-    |> list.each { line -> println(line) }
-
-  println("")
-
-  -- ─── Pipeline 10: Fold-based aggregation ──────────────────
-  println("=== Pipeline 10: Longest error message ===")
-  let longest_error = lines
-    |> grep("ERROR")
-    |> list.fold("") { longest, line ->
-      match {
-        string.length(line) > string.length(longest) -> line
-        _ -> longest
+  -- Pipeline 11: unique lines after extracting log levels
+  let p11 = lines
+    |> list.map { line ->
+      let parts = line |> string.split(" ")
+      match list.get(parts, 2) {
+        Some(level) -> level
+        None -> "UNKNOWN"
       }
     }
-  println("  {longest_error}")
+    |> list.sort
+    |> uniq
+  print_result("Pipeline 11: Unique log levels (sorted)", p11)
 
-  println("")
+  -- Pipeline 12: chained factories — reject DEBUG, grep for "User", uppercase
+  let filter_debug = make_reject("DEBUG")
+  let find_users = make_grep("User")
+  let p12 = lines |> filter_debug |> find_users |> uppercase |> numbered
+  print_result("Pipeline 12: User lines (no DEBUG), uppercased and numbered", p12)
 
-  -- ─── Pipeline 11: Using enumerate for indexed iteration ───
-  println("=== Pipeline 11: Errors with their severity index ===")
-  lines
-    |> grep("ERROR")
-    |> list.enumerate
-    |> list.map { pair ->
-      let (idx, line) = pair
-      "  severity #{idx + 1}: {line}"
-    }
-    |> list.reverse()
-    |> list.each { line -> println(line) }
-
-  println("")
-
-  -- ─── Pipeline 12: Reverse and transform ───────────────────
-  println("=== Pipeline 12: Last 3 log entries, reversed ===")
-  lines
-    |> list.reverse()
-    |> take(3)
-    |> uppercase()
-    |> numbered()
-    |> list.each { line -> println(line) }
-
-  println("")
-  println("=== Pipeline Demo Complete ===")
+  println("All pipelines complete.")
 }
