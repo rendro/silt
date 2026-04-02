@@ -964,14 +964,17 @@ impl TypeChecker {
 
         // ── json module ─────────────────────────────────────────────────
 
-        // json.parse: (String) -> Result(a, String)
+        // json.parse: (RecordType, String) -> Result(a, String)
+        // The first arg is a record type descriptor; the return type
+        // is resolved via context (field access, type annotations, etc.).
         {
             let (a, av) = self.fresh_tv();
-            let result_ty = Type::Generic("Result".into(), vec![a, Type::String]);
+            let (b, bv) = self.fresh_tv();
+            let result_ty = Type::Generic("Result".into(), vec![b, Type::String]);
             env.define("json.parse".into(), Scheme {
-                vars: vec![av],
+                vars: vec![av, bv],
                 ty: Type::Fun(
-                    vec![Type::String],
+                    vec![a, Type::String],
                     Box::new(result_ty),
                 ),
                 constraints: vec![],
@@ -2294,6 +2297,15 @@ impl TypeChecker {
                         fields: field_types,
                     },
                 );
+
+                // Register the record type name as a value so it can be
+                // passed to json.parse: `json.parse(Employee, str)`
+                let tv = self.fresh_var();
+                env.define(td.name.clone(), Scheme {
+                    vars: vec![],
+                    ty: tv,
+                    constraints: vec![],
+                });
             }
         }
 

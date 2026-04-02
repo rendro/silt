@@ -2169,49 +2169,102 @@ fn main() {
 
 ## `json` Module
 
-Parse and serialize JSON. Values are mapped bidirectionally between JSON and Silt types.
+Typed JSON parsing and serialization. `json.parse` takes a record type and
+returns a fully typed record. `json.stringify` and `json.pretty` serialize any
+Silt value (records, maps, lists, primitives) to JSON.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `json.parse` | `json.parse(s) -> Result(T, String)` | Parse a JSON string into Silt values |
+| `json.parse` | `json.parse(Type, s) -> Result(T, String)` | Parse a JSON string into a typed record |
 | `json.stringify` | `json.stringify(value) -> String` | Serialize a Silt value to compact JSON |
 | `json.pretty` | `json.pretty(value) -> String` | Serialize a Silt value to pretty-printed JSON |
 
-### Value mapping
+### Field type mapping (json.parse)
 
-| JSON | Silt |
+When parsing JSON into a record, each field is converted based on its declared
+type:
+
+| Record field type | JSON value | Conversion |
+|-------------------|------------|------------|
+| `String` | `"string"` | direct |
+| `Int` | integer number | direct |
+| `Float` | number | direct |
+| `Bool` | `true` / `false` | direct |
+| `List(T)` | `[array]` | recursive per-element |
+| `Option(T)` | value or `null` | `Some(v)` or `None` |
+| `RecordType` | `{object}` | recursive record parse |
+
+Missing `Option` fields default to `None`. Missing non-optional fields produce
+an error.
+
+### Serialization mapping (json.stringify / json.pretty)
+
+| Silt | JSON |
 |------|------|
-| `null` | `None` |
-| `true` / `false` | `Bool` |
-| integer number | `Int` |
-| float number | `Float` |
-| `"string"` | `String` |
-| `[array]` | `List` |
-| `{object}` | `Map(String, T)` |
-
-When serializing back to JSON, Silt `Tuple` values become JSON arrays, and
-`Record` values become JSON objects keyed by field name.
+| `String` | `"string"` |
+| `Int` | integer number |
+| `Float` | float number |
+| `Bool` | `true` / `false` |
+| `List` | `[array]` |
+| `Map` | `{object}` |
+| `Record` | `{object}` (keyed by field name) |
+| `Tuple` | `[array]` |
+| `None` | `null` |
+| `Some(v)` | serialized `v` |
+| `Unit` | `null` |
 
 ### `json.parse`
 
 ```
-json.parse(s) -> Result(T, String)
+json.parse(Type, s) -> Result(T, String)
 ```
 
-Parses a JSON string and returns `Ok(value)` on success or `Err(message)` on
-invalid JSON.
+Parses a JSON string into a typed record. The first argument is a record type
+name; the second is the JSON string. Returns `Ok(record)` on success or
+`Err(message)` on failure. Error messages include the type name and field path.
 
 ```silt
+type User { name: String, age: Int }
+
 fn main() {
-  let data = json.parse("{\"name\": \"Alice\", \"age\": 30}")
-  -- Ok(#{ "name": "Alice", "age": 30 })
-
-  let list = json.parse("[1, 2, 3]")
-  -- Ok([1, 2, 3])
-
-  let bad = json.parse("not json")
-  -- Err("expected value at line 1 column 1")
+  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
+    Ok(user) -> println("{user.name} is {user.age}")
+    Err(e) -> println("error: {e}")
+  }
+  -- Alice is 30
 }
+```
+
+Nested records, lists, and optional fields are handled recursively:
+
+```silt
+type Address { city: String, zip: String }
+type User { name: String, address: Address, skills: List(String), email: Option(String) }
+
+fn main() {
+  let json_str = "\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}, \"skills\": [\"go\", \"rust\"]\}"
+  match json.parse(User, json_str) {
+    Ok(user) -> {
+      println(user.address.city)  -- "NYC"
+      println(user.skills)         -- [go, rust]
+      println(user.email)          -- None (missing Optional field defaults to None)
+    }
+    Err(e) -> println("error: {e}")
+  }
+}
+```
+
+Error messages are descriptive and include the field name:
+
+```silt
+-- Missing required field:
+-- Err("json.parse(User): missing field 'age'")
+
+-- Wrong type:
+-- Err("json.parse(User): field 'name': expected String, got number")
+
+-- Not a JSON object:
+-- Err("json.parse(User): expected JSON object, got array")
 ```
 
 ### `json.stringify`
@@ -2220,18 +2273,27 @@ fn main() {
 json.stringify(value) -> String
 ```
 
-Converts a Silt value to a compact JSON string.
+Converts a Silt value to a compact JSON string. Works with records, maps, lists,
+and primitives.
 
 ```silt
+type User { name: String, age: Int }
+
 fn main() {
-  json.stringify(#{ "name": "Alice", "age": 30 })
-  -- "{\"age\":30,\"name\":\"Alice\"}"
+  -- Records serialize to JSON objects
+  let u = User { name: "Alice", age: 30 }
+  json.stringify(u)
+  -- {"age":30,"name":"Alice"}
+
+  -- Maps, lists, and primitives also work
+  json.stringify(#{ "x": 1, "y": 2 })
+  -- {"x":1,"y":2}
 
   json.stringify([1, 2, 3])
-  -- "[1,2,3]"
+  -- [1,2,3]
 
   json.stringify(None)
-  -- "null"
+  -- null
 }
 ```
 
@@ -2244,9 +2306,11 @@ json.pretty(value) -> String
 Converts a Silt value to a pretty-printed JSON string with indentation.
 
 ```silt
+type User { name: String, scores: List(Int) }
+
 fn main() {
-  let s = json.pretty(#{ "name": "Alice", "scores": [95, 87, 92] })
-  println(s)
+  let u = User { name: "Alice", scores: [95, 87, 92] }
+  println(json.pretty(u))
   -- {
   --   "name": "Alice",
   --   "scores": [

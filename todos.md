@@ -112,7 +112,7 @@ Token::Ident(name) if name == "_" => return false,  // treats { _ -> as match
 
 ---
 
-## 5. Better JSON support
+## ~~5. Better JSON support~~ DONE
 
 ### What already works (but agents didn't discover)
 
@@ -155,7 +155,9 @@ The `json_transform` agent reported that `"unexpected character: '\'"` was misle
 
 ---
 
-## 6. Raw string literals
+## 6. Raw string literals — DEFERRED
+
+Deferred: the primary pain point (JSON embedding) is resolved by typed `json.parse` with records. Raw strings would still help with regex patterns, but only 3/20 programs used regex and none complained about escaping. Revisit if regex-heavy users ask for it.
 
 Embedding JSON or regex in strings currently requires heavy escaping:
 

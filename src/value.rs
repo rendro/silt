@@ -22,6 +22,7 @@ pub enum Value {
     Closure(Rc<Closure>),
     BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
+    RecordDescriptor(String),          // record type name — field info on Interpreter
     Channel(Rc<Channel>),
     Handle(Rc<TaskHandle>),
     Unit,
@@ -165,6 +166,7 @@ impl fmt::Debug for Value {
             Value::Closure(_) => write!(f, "<closure>"),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
+            Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Unit => write!(f, "()"),
@@ -240,6 +242,7 @@ impl fmt::Display for Value {
             Value::Closure(_) => write!(f, "<closure>"),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
+            Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Unit => write!(f, "()"),
@@ -260,6 +263,7 @@ impl PartialEq for Value {
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
+            (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             _ => false,
         }
@@ -293,6 +297,7 @@ impl Ord for Value {
                 Value::Closure(_) => 12,
                 Value::BuiltinFn(_) => 13,
                 Value::VariantConstructor(..) => 14,
+                Value::RecordDescriptor(_) => 15,
             }
         };
         let d1 = disc(self);
@@ -322,6 +327,7 @@ impl Ord for Value {
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
                 na.cmp(nb).then_with(|| fa.cmp(fb))
             }
+            (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
             _ => Ordering::Equal,
         }
@@ -378,6 +384,7 @@ impl Hash for Value {
                 name.hash(state);
                 arity.hash(state);
             }
+            Value::RecordDescriptor(name) => name.hash(state),
         }
     }
 }

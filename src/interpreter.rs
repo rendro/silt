@@ -13,6 +13,48 @@ use crate::module::ModuleLoader;
 use crate::scheduler::{Scheduler, TaskState};
 #[allow(unused_imports)] // Foundation for future typed fast-paths
 use crate::types::Type;
+
+/// Runtime representation of a record field's expected type, used by json.parse
+/// to construct typed records from JSON data.
+#[derive(Debug, Clone)]
+enum FieldType {
+    Int,
+    Float,
+    String,
+    Bool,
+    List(Box<FieldType>),
+    Option(Box<FieldType>),
+    Record(std::string::String),
+}
+
+fn type_expr_to_field_type(te: &TypeExpr) -> FieldType {
+    match te {
+        TypeExpr::Named(n) => match n.as_str() {
+            "Int" => FieldType::Int,
+            "Float" => FieldType::Float,
+            "String" => FieldType::String,
+            "Bool" => FieldType::Bool,
+            _ if n.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+                FieldType::Record(n.clone())
+            }
+            _ => FieldType::String, // type variables, etc.
+        },
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "List" => FieldType::List(Box::new(
+                args.first()
+                    .map(type_expr_to_field_type)
+                    .unwrap_or(FieldType::String),
+            )),
+            "Option" => FieldType::Option(Box::new(
+                args.first()
+                    .map(type_expr_to_field_type)
+                    .unwrap_or(FieldType::String),
+            )),
+            _ => FieldType::String,
+        },
+        _ => FieldType::String,
+    }
+}
 use crate::value::{Channel, Closure, TryReceiveResult, TrySendResult, Value};
 
 // ── Call stack frame ─────────────────────────────────────────────────
@@ -111,6 +153,8 @@ pub struct Interpreter {
     global: Env,
     /// Maps variant constructor names to their parent type name.
     variant_types: std::collections::HashMap<String, String>,
+    /// Maps record type names to their field definitions (name, type).
+    record_types: std::collections::HashMap<String, Vec<(String, FieldType)>>,
     /// Cooperative scheduler for concurrency.
     scheduler: RefCell<Scheduler>,
     /// Module loader for file-based imports.
@@ -138,6 +182,7 @@ impl Interpreter {
         Self {
             global,
             variant_types: std::collections::HashMap::new(),
+            record_types: std::collections::HashMap::new(),
             scheduler: RefCell::new(Scheduler::new()),
             module_loader: RefCell::new(ModuleLoader::new(project_root)),
             step_counter: std::cell::Cell::new(0),
@@ -278,15 +323,18 @@ impl Interpreter {
                 }
             }
             TypeBody::Record(fields) => {
-                // Register a constructor function for the record type
-                let type_name = td.name.clone();
-                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-                let tname = type_name.clone();
-                let fnames = field_names.clone();
-                // The record constructor is invoked via `TypeName { field: value }` syntax,
-                // not as a function. So nothing to register as a callable.
-                // But let's store the field order for validation.
-                let _ = (tname, fnames);
+                let field_info: Vec<(String, FieldType)> = fields
+                    .iter()
+                    .map(|f| (f.name.clone(), type_expr_to_field_type(&f.ty)))
+                    .collect();
+                self.record_types
+                    .insert(td.name.clone(), field_info);
+                // Register the type name as a value so it can be passed
+                // to json.parse: `json.parse(Employee, str)`
+                self.global.define(
+                    td.name.clone(),
+                    Value::RecordDescriptor(td.name.clone()),
+                );
             }
         }
         Ok(())
@@ -2115,15 +2163,36 @@ impl Interpreter {
         match name {
             // ── json module ─────────────────────────────────────────
             "parse" => {
-                if args.len() != 1 {
-                    return Err(err("json.parse takes 1 argument (string)"));
+                if args.len() != 2 {
+                    return Err(err(
+                        "json.parse takes 2 arguments: (Type, String)"
+                    ));
                 }
-                let Value::String(s) = &args[0] else {
-                    return Err(err("json.parse requires a string argument"));
+                let Value::RecordDescriptor(type_name) = &args[0] else {
+                    return Err(err(
+                        "json.parse: first argument must be a record type"
+                    ));
                 };
+                let Value::String(s) = &args[1] else {
+                    return Err(err(
+                        "json.parse: second argument must be a string"
+                    ));
+                };
+                let fields = self
+                    .record_types
+                    .get(type_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        err(format!(
+                            "json.parse: unknown record type '{type_name}'"
+                        ))
+                    })?;
                 match serde_json::from_str::<serde_json::Value>(s) {
-                    Ok(v) => Ok(Value::Variant("Ok".into(), vec![json_to_value(v)])),
-                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                    Ok(json_val) => self.json_to_record(type_name, &fields, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse: {e}"))],
+                    )),
                 }
             }
             "stringify" => {
@@ -2141,6 +2210,177 @@ impl Interpreter {
                 Ok(Value::String(serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())))
             }
             _ => Err(err(format!("unknown json function: {name}"))),
+        }
+    }
+
+    // ── Typed JSON parsing ─────────────────────────────────────────
+
+    fn json_to_record(
+        &self,
+        type_name: &str,
+        fields: &[(String, FieldType)],
+        json: &serde_json::Value,
+    ) -> Result<Value> {
+        let serde_json::Value::Object(obj) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse({type_name}): expected JSON object, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        let mut record_fields = BTreeMap::new();
+        for (field_name, field_type) in fields {
+            match obj.get(field_name) {
+                Some(json_val) => {
+                    match self.json_to_typed_value(json_val, field_type, type_name, field_name) {
+                        Ok(val) => {
+                            record_fields.insert(field_name.clone(), val);
+                        }
+                        Err(e) => {
+                            let msg = e.message().unwrap_or("unknown error").to_string();
+                            return Ok(Value::Variant(
+                                "Err".into(),
+                                vec![Value::String(msg)],
+                            ));
+                        }
+                    }
+                }
+                None => match field_type {
+                    FieldType::Option(_) => {
+                        record_fields.insert(
+                            field_name.clone(),
+                            Value::Variant("None".into(), Vec::new()),
+                        );
+                    }
+                    _ => {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse({type_name}): missing field '{field_name}'"
+                            ))],
+                        ));
+                    }
+                },
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::Record(type_name.to_string(), Rc::new(record_fields))],
+        ))
+    }
+
+    fn json_to_typed_value(
+        &self,
+        json: &serde_json::Value,
+        expected: &FieldType,
+        parent_type: &str,
+        field_name: &str,
+    ) -> Result<Value> {
+        match expected {
+            FieldType::String => match json {
+                serde_json::Value::String(s) => Ok(Value::String(s.clone())),
+                _ => Err(err(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected String, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Int => match json {
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Ok(Value::Int(i))
+                    } else if let Some(f) = n.as_f64() {
+                        Ok(Value::Int(f as i64))
+                    } else {
+                        Err(err(format!(
+                            "json.parse({parent_type}): field '{field_name}': expected Int, got number that doesn't fit"
+                        )))
+                    }
+                }
+                _ => Err(err(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Int, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Float => match json {
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        Ok(Value::Float(f))
+                    } else {
+                        Err(err(format!(
+                            "json.parse({parent_type}): field '{field_name}': expected Float, got non-numeric number"
+                        )))
+                    }
+                }
+                _ => Err(err(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Float, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Bool => match json {
+                serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
+                _ => Err(err(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Bool, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::List(inner) => match json {
+                serde_json::Value::Array(arr) => {
+                    let mut values = Vec::new();
+                    for (i, item) in arr.iter().enumerate() {
+                        let idx_name = format!("{field_name}[{i}]");
+                        match self.json_to_typed_value(item, inner, parent_type, &idx_name) {
+                            Ok(v) => values.push(v),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Ok(Value::List(Rc::new(values)))
+                }
+                _ => Err(err(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected List, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Option(inner) => match json {
+                serde_json::Value::Null => {
+                    Ok(Value::Variant("None".into(), Vec::new()))
+                }
+                _ => {
+                    let val = self.json_to_typed_value(json, inner, parent_type, field_name)?;
+                    Ok(Value::Variant("Some".into(), vec![val]))
+                }
+            },
+            FieldType::Record(rec_name) => {
+                let fields = self
+                    .record_types
+                    .get(rec_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        err(format!(
+                            "json.parse({parent_type}): field '{field_name}': unknown record type '{rec_name}'"
+                        ))
+                    })?;
+                let result = self.json_to_record(rec_name, &fields, json)?;
+                match &result {
+                    Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+                        Ok(inner[0].clone())
+                    }
+                    Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
+                        if let Value::String(msg) = &inner[0] {
+                            Err(err(format!(
+                                "json.parse({parent_type}): field '{field_name}': {msg}"
+                            )))
+                        } else {
+                            Err(err(format!(
+                                "json.parse({parent_type}): field '{field_name}': failed to parse {rec_name}"
+                            )))
+                        }
+                    }
+                    _ => Err(err(format!(
+                        "json.parse({parent_type}): field '{field_name}': unexpected result"
+                    ))),
+                }
+            }
         }
     }
 
@@ -3098,30 +3338,14 @@ fn is_truthy(val: &Value) -> bool {
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
-fn json_to_value(v: serde_json::Value) -> Value {
+fn json_type_name(v: &serde_json::Value) -> &'static str {
     match v {
-        serde_json::Value::Null => Value::Variant("None".into(), Vec::new()),
-        serde_json::Value::Bool(b) => Value::Bool(b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Int(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
-            } else {
-                Value::Float(0.0)
-            }
-        }
-        serde_json::Value::String(s) => Value::String(s),
-        serde_json::Value::Array(arr) => {
-            Value::List(Rc::new(arr.into_iter().map(json_to_value).collect()))
-        }
-        serde_json::Value::Object(obj) => {
-            let map: BTreeMap<Value, Value> = obj
-                .into_iter()
-                .map(|(k, v)| (Value::String(k), json_to_value(v)))
-                .collect();
-            Value::Map(Rc::new(map))
-        }
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 

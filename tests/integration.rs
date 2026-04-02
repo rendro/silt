@@ -2528,36 +2528,152 @@ fn main() {
 // ── JSON module ─────────────────────────────────────────────────────
 
 #[test]
-fn test_json_parse_object() {
+fn test_json_parse_record() {
     let result = run(r#"
+type User { name: String, age: Int }
 fn main() {
-  match json.parse("\{\"name\": \"Alice\", \"age\": 30\}") {
-    Ok(data) -> map.get(data, "name")
-    Err(e) -> None
+  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
+    Ok(user) -> user.name
+    Err(_) -> "fail"
   }
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("Alice".into())]));
+    assert_eq!(result, Value::String("Alice".into()));
 }
 
 #[test]
-fn test_json_parse_array() {
+fn test_json_parse_record_int_field() {
     let result = run(r#"
+type User { name: String, age: Int }
 fn main() {
-  match json.parse("[1, 2, 3]") {
-    Ok(data) -> list.length(data)
+  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
+    Ok(user) -> user.age
     Err(_) -> 0
   }
 }
     "#);
-    assert_eq!(result, Value::Int(3));
+    assert_eq!(result, Value::Int(30));
 }
 
 #[test]
-fn test_json_parse_error() {
+fn test_json_parse_nested_record() {
     let result = run(r#"
+type Address { city: String, zip: String }
+type User { name: String, address: Address }
 fn main() {
-  match json.parse("not json") {
+  match json.parse(User, "\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}") {
+    Ok(user) -> user.address.city
+    Err(_) -> "fail"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("NYC".into()));
+}
+
+#[test]
+fn test_json_parse_list_field() {
+    let result = run(r#"
+type User { name: String, skills: List(String) }
+fn main() {
+  match json.parse(User, "\{\"name\": \"Alice\", \"skills\": [\"go\", \"rust\"]\}") {
+    Ok(user) -> list.length(user.skills)
+    Err(_) -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_json_parse_option_field_present() {
+    let result = run(r#"
+type User { name: String, email: Option(String) }
+fn main() {
+  match json.parse(User, "\{\"name\": \"Alice\", \"email\": \"a@b.com\"\}") {
+    Ok(user) -> user.email
+    Err(_) -> None
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("a@b.com".into())]));
+}
+
+#[test]
+fn test_json_parse_option_field_null() {
+    let result = run(r#"
+type User { name: String, email: Option(String) }
+fn main() {
+  match json.parse(User, "\{\"name\": \"Alice\", \"email\": null\}") {
+    Ok(user) -> user.email
+    Err(_) -> Some("fail")
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), vec![]));
+}
+
+#[test]
+fn test_json_parse_option_field_missing() {
+    let result = run(r#"
+type User { name: String, email: Option(String) }
+fn main() {
+  match json.parse(User, "\{\"name\": \"Alice\"\}") {
+    Ok(user) -> user.email
+    Err(_) -> Some("fail")
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), vec![]));
+}
+
+#[test]
+fn test_json_parse_missing_field_error() {
+    let result = run(r#"
+type User { name: String, age: Int }
+fn main() {
+  match json.parse(User, "\{\"name\": \"Alice\"\}") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("json.parse(User): missing field 'age'".into()));
+}
+
+#[test]
+fn test_json_parse_wrong_type_error() {
+    let result = run(r#"
+type User { name: String, age: Int }
+fn main() {
+  match json.parse(User, "\{\"name\": 42, \"age\": 30\}") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("json.parse(User): field 'name': expected String, got number".into()));
+}
+
+#[test]
+fn test_json_parse_not_object_error() {
+    let result = run(r#"
+type User { name: String }
+fn main() {
+  match json.parse(User, "[1,2,3]") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("json.parse(User): expected JSON object, got array".into()));
+}
+
+#[test]
+fn test_json_parse_invalid_json_error() {
+    let result = run(r#"
+type User { name: String }
+fn main() {
+  match json.parse(User, "not json") {
     Ok(_) -> false
     Err(_) -> true
   }
@@ -2574,7 +2690,6 @@ fn main() {
   json.stringify(data)
 }
     "#);
-    // BTreeMap sorts keys, so output is deterministic
     let s = match result { Value::String(s) => s, _ => panic!("expected string") };
     assert!(s.contains("\"name\""));
     assert!(s.contains("\"Bob\""));
@@ -2582,18 +2697,35 @@ fn main() {
 }
 
 #[test]
-fn test_json_roundtrip() {
+fn test_json_stringify_record() {
     let result = run(r#"
+type User { name: String, age: Int }
 fn main() {
-  let original = #{ "x": 1, "y": 2 }
-  let text = json.stringify(original)
-  match json.parse(text) {
-    Ok(parsed) -> map.get(parsed, "x")
-    Err(_) -> None
+  let u = User { name: "Alice", age: 30 }
+  json.stringify(u)
+}
+    "#);
+    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    assert!(s.contains("\"name\""));
+    assert!(s.contains("\"Alice\""));
+    assert!(s.contains("\"age\""));
+    assert!(s.contains("30"));
+}
+
+#[test]
+fn test_json_roundtrip_record() {
+    let result = run(r#"
+type User { name: String, age: Int }
+fn main() {
+  let u = User { name: "Carol", age: 25 }
+  let text = json.stringify(u)
+  match json.parse(User, text) {
+    Ok(parsed) -> parsed.name
+    Err(_) -> "fail"
   }
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(1)]));
+    assert_eq!(result, Value::String("Carol".into()));
 }
 
 #[test]
@@ -2606,40 +2738,6 @@ fn main() {
     "#);
     let s = match result { Value::String(s) => s, _ => panic!("expected string") };
     assert!(s.contains('\n'), "pretty output should have newlines");
-}
-
-#[test]
-fn test_json_null_handling() {
-    let result = run(r#"
-fn main() {
-  match json.parse("null") {
-    Ok(val) -> match val {
-      None -> "got none"
-      _ -> "other"
-    }
-    Err(_) -> "error"
-  }
-}
-    "#);
-    assert_eq!(result, Value::String("got none".into()));
-}
-
-#[test]
-fn test_json_nested() {
-    let result = run(r#"
-fn main() {
-  match json.parse("\{\"users\": [\{\"name\": \"A\"\}, \{\"name\": \"B\"\}]\}") {
-    Ok(data) -> {
-      match map.get(data, "users") {
-        Some(users) -> list.length(users)
-        None -> 0
-      }
-    }
-    Err(_) -> 0
-  }
-}
-    "#);
-    assert_eq!(result, Value::Int(2));
 }
 
 // ── map.get_in / map.set_in ─────────────────────────────────────────
