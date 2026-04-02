@@ -2370,6 +2370,7 @@ Silt value (records, maps, lists, primitives) to JSON.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `json.parse` | `json.parse(Type, s) -> Result(T, String)` | Parse a JSON string into a typed record |
+| `json.parse_list` | `json.parse_list(Type, s) -> Result(List(T), String)` | Parse a JSON array into a typed list of records |
 | `json.parse_map` | `json.parse_map(ValueType, s) -> Result(Map(String, T), String)` | Parse a JSON object into a map with typed values |
 | `json.stringify` | `json.stringify(value) -> String` | Serialize a Silt value to compact JSON |
 | `json.pretty` | `json.pretty(value) -> String` | Serialize a Silt value to pretty-printed JSON |
@@ -2405,6 +2406,69 @@ json.parse_map(Employee, "{...}")              -- Ok(#{"e1": Employee{...}})
 ```
 
 Keys are always strings (as in JSON). The value type can be any primitive (`Int`, `Float`, `String`, `Bool`) or a record type. Returns `Err(message)` if the JSON is malformed, not an object, or values don't match the expected type.
+
+### `json.parse_list`
+
+```
+json.parse_list(Type, s) -> Result(List(T), String)
+```
+
+Parses a top-level JSON array into a typed list of records. The first argument is
+a record type name; the second is the JSON string. Returns `Ok(list)` on success
+or `Err(message)` on failure. This is the natural way to handle API responses
+that return arrays of objects.
+
+```silt
+type Employee { name: String, department: String, salary: Int }
+
+fn main() {
+  let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
+  match json.parse_list(Employee, json_str) {
+    Ok(employees) -> {
+      list.each(employees, fn(e) {
+        println("{e.name} works in {e.department}")
+      })
+    }
+    Err(e) -> println("error: {e}")
+  }
+  -- Alice works in Eng
+  -- Bob works in Sales
+}
+```
+
+Empty arrays are valid and return `Ok([])`:
+
+```silt
+json.parse_list(Employee, "[]")  -- Ok([])
+```
+
+Nested records within each array element are handled recursively:
+
+```silt
+type Address { city: String, zip: String }
+type Person { name: String, address: Address }
+
+fn main() {
+  let json_str = "[\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}]"
+  match json.parse_list(Person, json_str) {
+    Ok(people) -> match list.get(people, 0) {
+      Some(p) -> println(p.address.city)  -- "NYC"
+      None -> ()
+    }
+    Err(e) -> println("error: {e}")
+  }
+}
+```
+
+Error messages include the element index and field path:
+
+```silt
+-- Not a JSON array:
+-- Err("json.parse_list(Employee): expected JSON array, got object")
+
+-- Invalid field in element:
+-- Err("json.parse_list(Employee): element 0: json.parse(Employee): field 'salary': expected Int, got string")
+```
 
 ### Serialization mapping (json.stringify / json.pretty)
 

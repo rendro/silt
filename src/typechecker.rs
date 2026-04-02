@@ -981,6 +981,24 @@ impl TypeChecker {
             });
         }
 
+        // json.parse_list: (RecordType, String) -> Result(List(T), String)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            let result_ty = Type::Generic("Result".into(), vec![
+                Type::List(Box::new(b)),
+                Type::String,
+            ]);
+            env.define("json.parse_list".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![a, Type::String],
+                    Box::new(result_ty),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // json.parse_map: (ValueType, String) -> Result(Map(String, v), String)
         {
             let (a, av) = self.fresh_tv();

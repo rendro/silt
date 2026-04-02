@@ -2724,6 +2724,100 @@ fn main() {
 }
 
 #[test]
+fn test_json_parse_list_basic() {
+    let result = run(r#"
+type Employee { name: String, department: String, salary: Int }
+fn main() {
+  let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
+  match json.parse_list(Employee, json_str) {
+    Ok(employees) -> list.length(employees)
+    Err(_) -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_json_parse_list_access_fields() {
+    let result = run(r#"
+type Employee { name: String, salary: Int }
+fn main() {
+  let json_str = "[\{\"name\": \"Alice\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"salary\": 95000\}]"
+  match json.parse_list(Employee, json_str) {
+    Ok(employees) -> match list.get(employees, 0) {
+      Some(e) -> e.name
+      None -> "fail"
+    }
+    Err(_) -> "fail"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("Alice".into()));
+}
+
+#[test]
+fn test_json_parse_list_empty() {
+    let result = run(r#"
+type Employee { name: String }
+fn main() {
+  match json.parse_list(Employee, "[]") {
+    Ok(employees) -> list.length(employees)
+    Err(_) -> -1
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn test_json_parse_list_not_array_error() {
+    let result = run(r#"
+type Employee { name: String }
+fn main() {
+  match json.parse_list(Employee, "\{\"name\": \"Alice\"\}") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("json.parse_list(Employee): expected JSON array, got object".into()));
+}
+
+#[test]
+fn test_json_parse_list_invalid_field_error() {
+    let result = run(r#"
+type Employee { name: String, salary: Int }
+fn main() {
+  match json.parse_list(Employee, "[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("json.parse_list(Employee): element 0: json.parse(Employee): field 'salary': expected Int, got string".into()));
+}
+
+#[test]
+fn test_json_parse_list_nested_records() {
+    let result = run(r#"
+type Address { city: String, zip: String }
+type Person { name: String, address: Address }
+fn main() {
+  let json_str = "[\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}, \{\"name\": \"Bob\", \"address\": \{\"city\": \"LA\", \"zip\": \"90001\"\}\}]"
+  match json.parse_list(Person, json_str) {
+    Ok(people) -> match list.get(people, 1) {
+      Some(p) -> p.address.city
+      None -> "fail"
+    }
+    Err(_) -> "fail"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("LA".into()));
+}
+
+#[test]
 fn test_json_stringify() {
     let result = run(r#"
 fn main() {

@@ -2338,6 +2338,39 @@ impl Interpreter {
                     )),
                 }
             }
+            "parse_list" => {
+                if args.len() != 2 {
+                    return Err(err(
+                        "json.parse_list takes 2 arguments: (Type, String)"
+                    ));
+                }
+                let Value::RecordDescriptor(type_name) = &args[0] else {
+                    return Err(err(
+                        "json.parse_list: first argument must be a record type"
+                    ));
+                };
+                let Value::String(s) = &args[1] else {
+                    return Err(err(
+                        "json.parse_list: second argument must be a string"
+                    ));
+                };
+                let fields = self
+                    .record_types
+                    .get(type_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        err(format!(
+                            "json.parse_list: unknown record type '{type_name}'"
+                        ))
+                    })?;
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    Ok(json_val) => self.json_to_record_list(type_name, &fields, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse_list: {e}"))],
+                    )),
+                }
+            }
             _ => Err(err(format!("unknown json function: {name}"))),
         }
     }
@@ -2396,6 +2429,60 @@ impl Interpreter {
         Ok(Value::Variant(
             "Ok".into(),
             vec![Value::Record(type_name.to_string(), Rc::new(record_fields))],
+        ))
+    }
+
+    fn json_to_record_list(
+        &self,
+        type_name: &str,
+        fields: &[(String, FieldType)],
+        json: &serde_json::Value,
+    ) -> Result<Value> {
+        let serde_json::Value::Array(arr) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse_list({type_name}): expected JSON array, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        let mut records = Vec::new();
+        for (i, item) in arr.iter().enumerate() {
+            let result = self.json_to_record(type_name, fields, item)?;
+            match result {
+                Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+                    records.push(inner.into_iter().next().unwrap());
+                }
+                Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
+                    if let Value::String(msg) = &inner[0] {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse_list({type_name}): element {i}: {msg}"
+                            ))],
+                        ));
+                    } else {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse_list({type_name}): element {i}: parse error"
+                            ))],
+                        ));
+                    }
+                }
+                _ => {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_list({type_name}): element {i}: unexpected result"
+                        ))],
+                    ));
+                }
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::List(Rc::new(records))],
         ))
     }
 
@@ -3770,6 +3857,7 @@ fn register_builtins(env: &Env) {
         "regex.captures",
         "regex.captures_all",
         "json.parse",
+        "json.parse_list",
         "json.parse_map",
         "json.stringify",
         "json.pretty",
