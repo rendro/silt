@@ -602,6 +602,10 @@ impl Lexer {
                 }
             }
 
+            ';' => Err(LexError {
+                message: "semicolons are not used in silt — use a newline to separate statements".to_string(),
+                span: start,
+            }),
             _ => Err(LexError {
                 message: format!("unexpected character: '{ch}'"),
                 span: start,

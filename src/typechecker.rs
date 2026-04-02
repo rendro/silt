@@ -929,6 +929,12 @@ impl TypeChecker {
             Box::new(Type::Generic("Option".into(), vec![Type::List(Box::new(Type::String))])),
         )));
 
+        // regex.captures_all: (String, String) -> List(List(String))
+        env.define("regex.captures_all".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::List(Box::new(Type::List(Box::new(Type::String))))),
+        )));
+
         // ── json module ─────────────────────────────────────────────────
 
         // json.parse: (String) -> Result(a, String)
@@ -1626,6 +1632,21 @@ impl TypeChecker {
                         Type::String,
                     ],
                     Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                ),
+            });
+        }
+
+        // map.has_key: (Map(String, v), String) -> Bool
+        {
+            let (v, vv) = self.fresh_tv();
+            env.define("map.has_key".into(), Scheme {
+                vars: vec![vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(Type::String), Box::new(v)),
+                        Type::String,
+                    ],
+                    Box::new(Type::Bool),
                 ),
             });
         }

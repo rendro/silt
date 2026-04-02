@@ -1595,6 +1595,15 @@ impl Interpreter {
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 }
             }
+            "has_key" => {
+                if args.len() != 2 {
+                    return Err(err("map.has_key takes 2 arguments (map, key)"));
+                }
+                let Value::Map(m) = &args[0] else {
+                    return Err(err("map.has_key requires a map as first argument"));
+                };
+                Ok(Value::Bool(m.contains_key(&args[1])))
+            }
             "set" => {
                 if args.len() != 3 {
                     return Err(err("map.set takes 3 arguments"));
@@ -2078,6 +2087,25 @@ impl Interpreter {
                     }
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 }
+            }
+            "captures_all" => {
+                if args.len() != 2 { return Err(err("regex.captures_all takes 2 arguments (pattern, text)")); }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(err("regex.captures_all requires string arguments"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                let all_captures: Vec<Value> = re.captures_iter(text)
+                    .map(|caps| {
+                        let groups: Vec<Value> = caps.iter()
+                            .map(|m| match m {
+                                Some(m) => Value::String(m.as_str().to_string()),
+                                None => Value::String(String::new()),
+                            })
+                            .collect();
+                        Value::List(Rc::new(groups))
+                    })
+                    .collect();
+                Ok(Value::List(Rc::new(all_captures)))
             }
             _ => Err(err(format!("unknown regex function: {name}"))),
         }
@@ -3238,6 +3266,7 @@ fn register_builtins(env: &Env) {
         "map.get",
         "map.set",
         "map.delete",
+        "map.has_key",
         "map.keys",
         "map.values",
         "map.length",
@@ -3260,6 +3289,7 @@ fn register_builtins(env: &Env) {
         "regex.replace",
         "regex.replace_all",
         "regex.captures",
+        "regex.captures_all",
         "json.parse",
         "json.stringify",
         "json.pretty",

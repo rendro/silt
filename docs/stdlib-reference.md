@@ -945,6 +945,7 @@ Functions for working with maps (hash maps with string keys). All map operations
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `map.get` | `map.get(m, key) -> Option` | Look up a key, return `Some(value)` or `None` |
+| `map.has_key` | `map.has_key(m, key) -> Bool` | Check if a key exists in the map |
 | `map.set` | `map.set(m, key, value) -> Map` | Return a new map with the key set |
 | `map.delete` | `map.delete(m, key) -> Map` | Return a new map with the key removed |
 | `map.keys` | `map.keys(m) -> List(String)` | Return all keys as a list |
@@ -969,6 +970,22 @@ fn main() {
   let m = #{ "name": "Alice", "age": "30" }
   map.get(m, "name")    -- Some("Alice")
   map.get(m, "email")   -- None
+}
+```
+
+### `map.has_key`
+
+```
+map.has_key(m, key) -> Bool
+```
+
+Returns `true` if the map contains `key`, `false` otherwise.
+
+```silt
+fn main() {
+  let m = #{ "name": "Alice", "age": "30" }
+  map.has_key(m, "name")    -- true
+  map.has_key(m, "email")   -- false
 }
 ```
 
@@ -1677,12 +1694,23 @@ fn main() {
 io.args() -> List(String)
 ```
 
-Returns the command-line arguments as a list of strings. The first element is typically the program name.
+Returns the full argument vector as a list of strings. This includes the
+interpreter binary, the subcommand, the script path, and any user-provided
+arguments. For `silt run script.silt foo bar`, the list is:
+
+```
+["/path/to/silt", "run", "script.silt", "foo", "bar"]
+```
+
+Index 0 is the silt binary, index 1 is the subcommand (e.g. `"run"`), index 2
+is the script path, and indices 3+ are user-provided arguments. Use
+`list.drop(io.args(), 3)` to get only user arguments.
 
 ```silt
 fn main() {
   let args = io.args()
-  args |> list.each { a -> println(a) }
+  let user_args = args |> list.drop(3)
+  user_args |> list.each { a -> println(a) }
 }
 ```
 
@@ -2001,6 +2029,7 @@ is a keyword.
 | `regex.split` | `regex.split(pattern, text) -> List(String)` | Split text on every match of the pattern |
 | `regex.replace` | `regex.replace(pattern, text, replacement) -> String` | Replace the first match |
 | `regex.captures` | `regex.captures(pattern, text) -> Option(List(String))` | Return capture groups from the first match |
+| `regex.captures_all` | `regex.captures_all(pattern, text) -> List(List(String))` | Return capture groups from all matches |
 | `regex.replace_all` | `regex.replace_all(pattern, text, replacement) -> String` | Replace all matches |
 
 ### `regex.is_match`
@@ -2116,6 +2145,23 @@ fn main() {
 
   regex.captures("(\\d+)-(\\d+)", "no match here")
   -- None
+}
+```
+
+### `regex.captures_all`
+
+```
+regex.captures_all(pattern, text) -> List(List(String))
+```
+
+Returns capture groups from **all** matches as a list of lists. Each inner list
+has index 0 as the full match and indices 1+ as the capture groups. Returns an
+empty list if there are no matches.
+
+```silt
+fn main() {
+  regex.captures_all("(\\w+)@(\\w+)", "alice@x.com and bob@y.org")
+  -- [["alice@x.com", "alice", "x"], ["bob@y.org", "bob", "y"]]
 }
 ```
 

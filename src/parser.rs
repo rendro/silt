@@ -491,6 +491,22 @@ impl Parser {
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
+        // Tuple type: (A, B, ...)
+        if self.at(&Token::LParen) {
+            self.advance();
+            let mut elems = Vec::new();
+            self.skip_nl();
+            while !self.at(&Token::RParen) {
+                elems.push(self.parse_type_expr()?);
+                self.skip_nl();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                    self.skip_nl();
+                }
+            }
+            self.expect(&Token::RParen)?;
+            return Ok(TypeExpr::Tuple(elems));
+        }
         let (name, _) = self.expect_ident()?;
         if self.peek() == &Token::LParen {
             self.advance();
