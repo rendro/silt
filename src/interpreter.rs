@@ -1596,6 +1596,69 @@ impl Interpreter {
                     None => Err(err(format!("string.from_char_code: invalid code point {}", n))),
                 }
             }
+            "is_empty" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_empty takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_empty requires a string"));
+                };
+                Ok(Value::Bool(s.is_empty()))
+            }
+            "is_alpha" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_alpha takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_alpha requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_alphabetic())))
+            }
+            "is_digit" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_digit takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_digit requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_ascii_digit())))
+            }
+            "is_upper" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_upper takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_upper requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_uppercase())))
+            }
+            "is_lower" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_lower takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_lower requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_lowercase())))
+            }
+            "is_alnum" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_alnum takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_alnum requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_alphanumeric())))
+            }
+            "is_whitespace" => {
+                if args.len() != 1 {
+                    return Err(err("string.is_whitespace takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.is_whitespace requires a string"));
+                };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_whitespace())))
+            }
             _ => Err(err(format!("unknown string function: {name}"))),
         }
     }
@@ -1921,6 +1984,18 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::Map(Rc::new(result)))
+            }
+            "each" => {
+                if args.len() != 2 {
+                    return Err(err("map.each takes 2 arguments (map, fn)"));
+                }
+                let Value::Map(m) = &args[0] else {
+                    return Err(err("map.each requires a map as first argument"));
+                };
+                for (k, v) in m.iter() {
+                    self.call_value(&args[1], &[k.clone(), v.clone()])?;
+                }
+                Ok(Value::Unit)
             }
             _ => Err(err(format!("unknown map function: {name}"))),
         }
@@ -3967,6 +4042,13 @@ fn register_builtins(env: &Env) {
         "string.slice",
         "string.pad_left",
         "string.pad_right",
+        "string.is_empty",
+        "string.is_alpha",
+        "string.is_digit",
+        "string.is_upper",
+        "string.is_lower",
+        "string.is_alnum",
+        "string.is_whitespace",
         "int.parse",
         "int.abs",
         "int.min",
@@ -3994,6 +4076,7 @@ fn register_builtins(env: &Env) {
         "map.map",
         "map.entries",
         "map.from_entries",
+        "map.each",
         "io.read_file",
         "io.write_file",
         "io.read_line",
@@ -4890,5 +4973,131 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::String("point: Point {x: 1, y: 2}".into()));
+    }
+
+    #[test]
+    fn test_string_is_empty() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_empty("")
+                let b = string.is_empty("hello")
+                (a, b)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    }
+
+    #[test]
+    fn test_string_is_alpha() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_alpha("a")
+                let b = string.is_alpha("Z")
+                let c = string.is_alpha("5")
+                let d = string.is_alpha("")
+                (a, b, c, d)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(true), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_string_is_digit() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_digit("5")
+                let b = string.is_digit("0")
+                let c = string.is_digit("a")
+                let d = string.is_digit("")
+                (a, b, c, d)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(true), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_string_is_upper() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_upper("A")
+                let b = string.is_upper("a")
+                let c = string.is_upper("5")
+                let d = string.is_upper("")
+                (a, b, c, d)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(false), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_string_is_lower() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_lower("a")
+                let b = string.is_lower("A")
+                let c = string.is_lower("5")
+                let d = string.is_lower("")
+                (a, b, c, d)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(false), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_string_is_alnum() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_alnum("a")
+                let b = string.is_alnum("5")
+                let c = string.is_alnum("!")
+                let d = string.is_alnum("")
+                (a, b, c, d)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(true), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_string_is_whitespace() {
+        let result = run(r#"
+            fn main() {
+                let a = string.is_whitespace(" ")
+                let b = string.is_whitespace("a")
+                let c = string.is_whitespace("")
+                (a, b, c)
+            }
+        "#);
+        assert_eq!(result, Value::Tuple(vec![
+            Value::Bool(true), Value::Bool(false), Value::Bool(false),
+        ]));
+    }
+
+    #[test]
+    fn test_map_each() {
+        // map.each iterates over entries; test that it runs the callback
+        // by building a list of keys via side-effectful channel
+        let result = run(r#"
+            fn main() {
+                let m = #{"a": 1, "b": 2}
+                let ch = channel.new(10)
+                map.each(m) { k, v ->
+                    channel.send(ch, k)
+                }
+                let Message(k1) = channel.receive(ch)
+                let Message(k2) = channel.receive(ch)
+                "{k1},{k2}"
+            }
+        "#);
+        assert_eq!(result, Value::String("a,b".into()));
     }
 }

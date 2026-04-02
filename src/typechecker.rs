@@ -1660,6 +1660,48 @@ impl TypeChecker {
             vec![Type::String, Type::Int, Type::String],
             Box::new(Type::String),
         )));
+
+        // string.is_empty: (String) -> Bool
+        env.define("string.is_empty".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_alpha: (String) -> Bool
+        env.define("string.is_alpha".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_digit: (String) -> Bool
+        env.define("string.is_digit".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_upper: (String) -> Bool
+        env.define("string.is_upper".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_lower: (String) -> Bool
+        env.define("string.is_lower".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_alnum: (String) -> Bool
+        env.define("string.is_alnum".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
+
+        // string.is_whitespace: (String) -> Bool
+        env.define("string.is_whitespace".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
+        )));
     }
 
     fn register_int_builtins(&mut self, env: &mut TypeEnv) {
@@ -1944,6 +1986,23 @@ impl TypeChecker {
                 ty: Type::Fun(
                     vec![Type::List(Box::new(Type::Tuple(vec![k.clone(), v.clone()])))],
                     Box::new(Type::Map(Box::new(k), Box::new(v))),
+                ),
+                constraints: vec![],
+            });
+        }
+
+        // map.each: (Map(k, v), (k, v) -> ()) -> ()
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.each".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::Fun(vec![k, v], Box::new(Type::Unit)),
+                    ],
+                    Box::new(Type::Unit),
                 ),
                 constraints: vec![],
             });

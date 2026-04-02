@@ -3571,3 +3571,94 @@ fn main() {
     // 10*2 + 20*2 + 30*2 = 20 + 40 + 60 = 120
     assert_eq!(result, Value::Int(120));
 }
+
+// ── string.is_empty ────────────────────────────────────────────────
+
+#[test]
+fn test_string_is_empty_true() {
+    let result = run(r#"
+fn main() { string.is_empty("") }
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_string_is_empty_false() {
+    let result = run(r#"
+fn main() { string.is_empty("hi") }
+    "#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+// ── char classification ────────────────────────────────────────────
+
+#[test]
+fn test_string_is_alpha() {
+    let result = run(r#"
+fn main() { (string.is_alpha("a"), string.is_alpha("5"), string.is_alpha("")) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false), Value::Bool(false)]));
+}
+
+#[test]
+fn test_string_is_digit() {
+    let result = run(r#"
+fn main() { (string.is_digit("7"), string.is_digit("x")) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_string_is_upper_lower() {
+    let result = run(r#"
+fn main() { (string.is_upper("A"), string.is_upper("a"), string.is_lower("z"), string.is_lower("Z")) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![
+        Value::Bool(true), Value::Bool(false), Value::Bool(true), Value::Bool(false),
+    ]));
+}
+
+#[test]
+fn test_string_is_alnum() {
+    let result = run(r#"
+fn main() { (string.is_alnum("a"), string.is_alnum("3"), string.is_alnum("!")) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_string_is_whitespace() {
+    let result = run(r#"
+fn main() { (string.is_whitespace(" "), string.is_whitespace("a")) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+// ── map.each ───────────────────────────────────────────────────────
+
+#[test]
+fn test_map_each_iterates() {
+    let result = run(r#"
+fn main() {
+  let m = #{"a": 1, "b": 2}
+  let ch = channel.new(10)
+  map.each(m) { k, v -> channel.send(ch, k) }
+  let Message(k1) = channel.receive(ch)
+  let Message(k2) = channel.receive(ch)
+  "{k1},{k2}"
+}
+    "#);
+    assert_eq!(result, Value::String("a,b".into()));
+}
+
+#[test]
+fn test_map_each_empty() {
+    let result = run(r#"
+fn main() {
+  let m = #{}
+  map.each(m) { k, v -> panic("should not run") }
+  "ok"
+}
+    "#);
+    assert_eq!(result, Value::String("ok".into()));
+}

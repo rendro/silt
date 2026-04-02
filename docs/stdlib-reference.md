@@ -740,6 +740,13 @@ Functions for working with strings.
 | `string.trim_end` | `string.trim_end(s) -> String` | Remove trailing whitespace |
 | `string.char_code` | `string.char_code(s) -> Int` | Unicode code point of the first character |
 | `string.from_char_code` | `string.from_char_code(n) -> String` | Single-character string from a code point |
+| `string.is_empty` | `string.is_empty(s) -> Bool` | True if string has length 0 |
+| `string.is_alpha` | `string.is_alpha(s) -> Bool` | True if first char is alphabetic (Unicode) |
+| `string.is_digit` | `string.is_digit(s) -> Bool` | True if first char is ASCII digit (0-9) |
+| `string.is_upper` | `string.is_upper(s) -> Bool` | True if first char is uppercase |
+| `string.is_lower` | `string.is_lower(s) -> Bool` | True if first char is lowercase |
+| `string.is_alnum` | `string.is_alnum(s) -> Bool` | True if first char is alphanumeric |
+| `string.is_whitespace` | `string.is_whitespace(s) -> Bool` | True if first char is whitespace |
 
 ### `string.split`
 
@@ -1049,6 +1056,57 @@ fn main() {
 }
 ```
 
+### `string.is_empty`
+
+```
+string.is_empty(s) -> Bool
+```
+
+Returns true if the string has length 0.
+
+```silt
+  string.is_empty("")     -- true
+  string.is_empty("hi")   -- false
+```
+
+### Character classification
+
+These functions operate on the first character of a string. They return `false` for empty strings.
+
+```
+string.is_alpha(s) -> Bool        -- Unicode alphabetic
+string.is_digit(s) -> Bool        -- ASCII digit (0-9)
+string.is_upper(s) -> Bool        -- Uppercase letter
+string.is_lower(s) -> Bool        -- Lowercase letter
+string.is_alnum(s) -> Bool        -- Alphanumeric
+string.is_whitespace(s) -> Bool   -- Whitespace (space, tab, newline, etc.)
+```
+
+```silt
+  -- Use with string.chars for character-level processing:
+  let word = "Hello123"
+  let letters = string.chars(word) |> list.filter { c -> string.is_alpha(c) }
+  -- ["H", "e", "l", "l", "o"]
+
+  let digits = string.chars(word) |> list.filter { c -> string.is_digit(c) }
+  -- ["1", "2", "3"]
+
+  -- Caesar cipher character classification:
+  fn shift_char(c, shift) {
+    match {
+      string.is_upper(c) -> {
+        let code = string.char_code(c) - 65
+        string.from_char_code(((code + shift) % 26) + 65)
+      }
+      string.is_lower(c) -> {
+        let code = string.char_code(c) - 97
+        string.from_char_code(((code + shift) % 26) + 97)
+      }
+      _ -> c
+    }
+  }
+```
+
 -----
 
 ## `map` Module
@@ -1069,6 +1127,7 @@ Functions for working with maps. Keys can be any hashable type (Int, Float, Stri
 | `map.map` | `map.map(m, fn) -> Map` | Transform entries; `fn(key, value)` returns `(new_key, new_value)` |
 | `map.entries` | `map.entries(m) -> List(Tuple)` | Convert map to list of `(key, value)` tuples |
 | `map.from_entries` | `map.from_entries(list) -> Map` | Convert list of `(key, value)` tuples to a map |
+| `map.each` | `map.each(map, fn) -> ()` | Iterate over entries, calling fn(key, value) |
 
 ### `map.get`
 
@@ -1259,6 +1318,24 @@ fn main() {
   map.from_entries([("a", 1), ("b", 2)])
   -- #{ "a": 1, "b": 2 }
 }
+```
+
+### `map.each`
+
+```
+map.each(map, fn) -> ()
+```
+
+Iterates over all entries in the map, calling `fn(key, value)` for each. Returns Unit. Entries are visited in key order.
+
+```silt
+  let scores = #{"Alice": 95, "Bob": 87, "Carol": 92}
+  map.each(scores) { name, score ->
+    println("{name}: {score}")
+  }
+  -- Alice: 95
+  -- Bob: 87
+  -- Carol: 92
 ```
 
 -----
