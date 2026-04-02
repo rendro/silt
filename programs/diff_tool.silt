@@ -1,0 +1,207 @@
+{- Friction Report
+   Attempts: 3
+   Rating: 8/10
+   Highlights: loop expression is excellent for LCS backtracking; list.fold with trailing closures is very natural for building tables row by row; pattern matching on tuples for destructuring is clean; guardless match works well as if/else replacement
+   Friction: semicolons cause a parse error with a slightly misleading message ("semicolons are not used in silt") -- easy to fix but the language summary said "Semicolons separate expressions in blocks" which is wrong; underscore (_) is not accepted as a closure parameter name, had to use a named variable instead
+   Missing: no 2D array or matrix type -- had to use list-of-lists which makes indexed access verbose (nested match on list.get); no range-map or tabulate function to build a list from index; no way to ignore closure params with _
+   Bugs: none encountered
+-}
+
+-- Line-by-line file differ using LCS algorithm
+-- Reads two files, computes longest common subsequence,
+-- and produces unified diff output with +/- prefixes
+
+-- Build one row of the LCS length table
+-- prev_row is the row for (i-1), we compute row for i
+fn build_row(a_line, b_lines, prev_row) {
+  let len_b = list.length(b_lines)
+  -- We build the row left to right using fold over 0..len_b
+  -- Each cell: if a_line == b_lines[j], prev_row[j-1]+1, else max(prev_row[j], current_row[j-1])
+  let result = list.fold(0..len_b, [0]) { row, j ->
+    let b_line = match list.get(b_lines, j) {
+      Some(v) -> v
+      None -> ""
+    }
+    let cell = match a_line == b_line {
+      true -> {
+        -- prev_row[j] is the diagonal (i-1, j-1 in 1-indexed = index j in 0-indexed prev_row)
+        let diag = match list.get(prev_row, j) {
+          Some(v) -> v
+          None -> 0
+        }
+        diag + 1
+      }
+      _ -> {
+        -- max of prev_row[j+1] (above) and last element of current row (left)
+        let above = match list.get(prev_row, j + 1) {
+          Some(v) -> v
+          None -> 0
+        }
+        let left = match list.last(row) {
+          Some(v) -> v
+          None -> 0
+        }
+        int.max(above, left)
+      }
+    }
+    list.append(row, cell)
+  }
+  result
+}
+
+-- Build the full LCS table, returning list of rows
+fn build_lcs_table(a_lines, b_lines) {
+  let len_a = list.length(a_lines)
+  let len_b = list.length(b_lines)
+  -- First row is all zeros (len_b + 1 zeros)
+  let first_row = list.map(0..(len_b + 1)) { x -> 0 }
+  -- Build rows for each line in a
+  list.fold(a_lines, [first_row]) { table, a_line ->
+    let prev_row = match list.last(table) {
+      Some(r) -> r
+      None -> first_row
+    }
+    let new_row = build_row(a_line, b_lines, prev_row)
+    list.append(table, new_row)
+  }
+}
+
+-- Backtrack through LCS table to produce diff entries
+-- Returns list of (tag, line) tuples where tag is " ", "-", or "+"
+fn backtrack(table, a_lines, b_lines) {
+  let len_a = list.length(a_lines)
+  let len_b = list.length(b_lines)
+
+  -- Use loop to walk backwards through the table
+  loop i = len_a, j = len_b, result = [] {
+    match {
+      i == 0 && j == 0 -> result
+      i == 0 -> {
+        -- Remaining lines in b are additions
+        let b_line = match list.get(b_lines, j - 1) {
+          Some(v) -> v
+          None -> ""
+        }
+        loop(i, j - 1, list.prepend(result, ("+", b_line)))
+      }
+      j == 0 -> {
+        -- Remaining lines in a are removals
+        let a_line = match list.get(a_lines, i - 1) {
+          Some(v) -> v
+          None -> ""
+        }
+        loop(i - 1, j, list.prepend(result, ("-", a_line)))
+      }
+      _ -> {
+        let a_line = match list.get(a_lines, i - 1) {
+          Some(v) -> v
+          None -> ""
+        }
+        let b_line = match list.get(b_lines, j - 1) {
+          Some(v) -> v
+          None -> ""
+        }
+        match a_line == b_line {
+          true -> loop(i - 1, j - 1, list.prepend(result, (" ", a_line)))
+          _ -> {
+            -- Check which direction to go: up or left
+            let up_val = match list.get(table, i - 1) {
+              Some(row) -> match list.get(row, j) {
+                Some(v) -> v
+                None -> 0
+              }
+              None -> 0
+            }
+            let left_val = match list.get(table, i) {
+              Some(row) -> match list.get(row, j - 1) {
+                Some(v) -> v
+                None -> 0
+              }
+              None -> 0
+            }
+            match up_val >= left_val {
+              true -> loop(i - 1, j, list.prepend(result, ("-", a_line)))
+              _ -> loop(i, j - 1, list.prepend(result, ("+", b_line)))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn main() {
+  println("=== Silt Diff Tool ===")
+  println("")
+
+  -- Read both files
+  let original = match io.read_file("programs/files/original.txt") {
+    Ok(content) -> content
+    Err(e) -> panic("Failed to read original.txt: {e}")
+  }
+  let modified = match io.read_file("programs/files/modified.txt") {
+    Ok(content) -> content
+    Err(e) -> panic("Failed to read modified.txt: {e}")
+  }
+
+  -- Split into lines
+  let a_lines = string.split(original, "\n")
+  let b_lines = string.split(modified, "\n")
+
+  println("--- programs/files/original.txt ({list.length(a_lines)} lines)")
+  println("+++ programs/files/modified.txt ({list.length(b_lines)} lines)")
+  println("")
+
+  -- Build LCS table
+  let table = build_lcs_table(a_lines, b_lines)
+
+  -- Backtrack to get diff entries
+  let diff = backtrack(table, a_lines, b_lines)
+
+  -- Print diff with prefixes and collect statistics
+  let stats = list.fold(diff, (0, 0, 0)) { acc, entry ->
+    let (added, removed, unchanged) = acc
+    let (tag, line) = entry
+    println("{tag}{line}")
+    match tag {
+      " " -> (added, removed, unchanged + 1)
+      "-" -> (added, removed + 1, unchanged)
+      "+" -> (added + 1, removed, unchanged)
+      _ -> acc
+    }
+  }
+
+  let (added, removed, unchanged) = stats
+
+  println("")
+  println("=== Diff Statistics ===")
+  println("Lines added:     {added}")
+  println("Lines removed:   {removed}")
+  println("Lines unchanged: {unchanged}")
+
+  -- Use list.zip, list.enumerate, and list.filter as required
+  println("")
+  println("=== Side-by-Side Comparison (matching lines) ===")
+
+  -- Enumerate both sets of lines
+  let enum_a = list.enumerate(a_lines)
+  let enum_b = list.enumerate(b_lines)
+
+  -- Zip original and modified (up to shorter length)
+  let zipped = list.zip(a_lines, b_lines)
+
+  -- Filter to find lines that are the same
+  let matching = list.filter(zipped) { pair ->
+    let (a, b) = pair
+    a == b
+  }
+
+  -- Show matching lines with their count
+  let match_count = list.length(matching)
+  println("Found {match_count} identical line pairs (by position):")
+  list.enumerate(matching) |> list.each { entry ->
+    let (idx, pair) = entry
+    let (line, _) = pair
+    println("  {idx + 1}. \"{line}\"")
+  }
+}

@@ -1,51 +1,44 @@
 {- Friction Report
-   Attempts: 2
+   Attempts: 3
    Rating: 8/10
    Highlights:
-     - Pipe operator |> with trailing closures is very natural for this kind of data processing
-     - list.enumerate, list.sort_by, list.fold all worked exactly as expected
-     - Higher-order function factories (closures returning closures) worked seamlessly
-     - String interpolation inside closures is clean and readable
-     - Pattern matching with tuple destructuring (let (i, line) = pair) is convenient
+     - Pipe operator |> with trailing closures makes pipelines very readable
+     - Higher-order function factories (make_grep, make_take, etc.) work naturally with closures
+     - list.enumerate + tuple destructuring in let is clean
+     - Pattern matching as the only branching construct feels natural for this kind of code
+     - String interpolation with {expr} is convenient
    Friction:
-     - Inline match expressions inside trailing closures cause parse errors;
-       had to extract the match into a separate let binding to avoid the issue
-       (e.g., `list.filter { line -> match expr { true -> false, _ -> true } }` fails)
-     - No boolean negation operator (not/!) means negating a condition requires
-       a match expression, which is verbose for simple cases like reject
+     - Semicolons: the language summary says "Semicolons separate expressions in blocks"
+       but the parser rejects them with "semicolons are not used in silt". Confusing mismatch
+       between docs and implementation.
+     - Pipe + function call ambiguity: `|> make_take(5)` is interpreted as calling
+       make_take(pipeline_result, 5) rather than make_take(5)(pipeline_result). Must pre-bind
+       factory results to a variable before piping. This is not documented and was surprising.
+     - No negation operator apparent (no `!` or `not`), so rejecting requires
+       match true -> false / _ -> true pattern, which is verbose.
+     - string.split on single space creates empty strings from consecutive spaces, requiring
+       manual filtering. A split-on-whitespace mode (like split with no args) would help.
    Missing:
-     - A `not` or `!` operator for boolean negation would greatly simplify reject/filter logic
-     - A `lines` function (split by newline) as a convenience on strings
-     - list.dedup or list.chunk_by for grouping consecutive equal elements
+     - A `not` or `!` boolean negation operator would simplify filter predicates
+     - A regex-based split for whitespace (or a split_whitespace convenience) would be useful
+     - No take/drop that work directly in pipes with a count argument (must use factories or
+       wrapper functions)
    Bugs:
-     - Parser fails on match expressions with multiple arms inside trailing closure braces
-       (single-line `match expr { arm1, arm2 }` style); works when match is in a let binding
+     - No bugs encountered in the runtime. The semicolon issue is a docs/parser mismatch
+       rather than a runtime bug.
 -}
 
--- Pipeline text processing: Unix-pipe-style operations on log data
-
--- Read the log file and split into lines
-fn read_lines(path) {
-  match io.read_file(path) {
-    Ok(content) -> content |> string.split("\n") |> list.filter { line -> string.length(line) > 0 }
-    Err(e) -> panic("Could not read file: {e}")
-  }
-}
+-- Pipeline transforms: each takes a list of strings and returns a list of strings
 
 -- grep: keep lines containing a pattern
 fn grep(lines, pattern) {
   lines |> list.filter { line -> string.contains(line, pattern) }
 }
 
--- reject: remove lines containing a pattern (keep lines NOT containing pattern)
-fn contains_pattern(line, pattern) {
-  string.contains(line, pattern)
-}
-
+-- reject: remove lines containing a pattern
 fn reject(lines, pattern) {
   lines |> list.filter { line ->
-    let has = contains_pattern(line, pattern)
-    match has {
+    match string.contains(line, pattern) {
       true -> false
       _ -> true
     }
@@ -57,33 +50,27 @@ fn uppercase(lines) {
   lines |> list.map { line -> string.to_upper(line) }
 }
 
--- lowercase: convert all lines to lowercase
-fn lowercase(lines) {
-  lines |> list.map { line -> string.to_lower(line) }
-}
-
--- numbered: add line numbers
+-- numbered: prefix each line with its 1-based line number
 fn numbered(lines) {
   lines |> list.enumerate |> list.map { pair ->
     let (i, line) = pair
-    let num = i + 1
-    "{num}: {line}"
+    "{i + 1}: {line}"
   }
 }
 
--- sort_by_length: sort lines by their length
+-- sort_by_length: sort lines by their string length
 fn sort_by_length(lines) {
   lines |> list.sort_by { line -> string.length(line) }
 }
 
--- word_count: return a single-element list with word count info
+-- word_count: replace each line with "N words: <line>"
 fn word_count(lines) {
-  let total = lines |> list.fold(0) { acc, line ->
-    let words = line |> string.split(" ") |> list.filter { w -> string.length(w) > 0 }
-    acc + list.length(words)
+  lines |> list.map { line ->
+    let words = string.split(string.trim(line), " ")
+      |> list.filter { w -> string.length(w) > 0 }
+    let n = list.length(words)
+    "{n} words: {line}"
   }
-  let line_count = list.length(lines)
-  ["Lines: {line_count}, Words: {total}"]
 }
 
 -- uniq: remove consecutive duplicate lines
@@ -91,13 +78,10 @@ fn uniq(lines) {
   match lines {
     [] -> []
     [first, ..rest] -> {
-      let result = rest |> list.fold([first]) { acc, line ->
+      let result = list.fold(rest, [first]) { acc, line ->
         match list.last(acc) {
-          Some(prev) -> match prev == line {
-            true -> acc
-            _ -> list.append(acc, line)
-          }
-          None -> [line]
+          Some(prev) when prev == line -> acc
+          _ -> list.append(acc, line)
         }
       }
       result
@@ -105,109 +89,136 @@ fn uniq(lines) {
   }
 }
 
--- take_lines: take first n lines
-fn take_lines(lines, n) {
-  lines |> list.take(n)
+-- take_n: take first n lines
+fn take_n(lines, n) {
+  list.take(lines, n)
 }
 
--- drop_lines: drop first n lines
-fn drop_lines(lines, n) {
-  lines |> list.drop(n)
-}
-
--- reverse_lines: reverse the order
-fn reverse_lines(lines) {
-  lines |> list.reverse
+-- drop_n: drop first n lines
+fn drop_n(lines, n) {
+  list.drop(lines, n)
 }
 
 -- Higher-order function factories
+
+-- make_grep: returns a function that filters lines by a pattern
 fn make_grep(pattern) {
   fn(lines) { grep(lines, pattern) }
 }
 
+-- make_reject: returns a function that rejects lines by a pattern
 fn make_reject(pattern) {
   fn(lines) { reject(lines, pattern) }
 }
 
+-- make_prefix: returns a function that prepends a prefix to every line
+fn make_prefix(prefix) {
+  fn(lines) {
+    lines |> list.map { line -> "{prefix}{line}" }
+  }
+}
+
+-- make_suffix: returns a function that appends a suffix to every line
+fn make_suffix(suffix) {
+  fn(lines) {
+    lines |> list.map { line -> "{line}{suffix}" }
+  }
+}
+
+-- make_take: returns a function that takes the first n lines
 fn make_take(n) {
-  fn(lines) { take_lines(lines, n) }
+  fn(lines) { list.take(lines, n) }
 }
 
+-- make_drop: returns a function that drops the first n lines
 fn make_drop(n) {
-  fn(lines) { drop_lines(lines, n) }
+  fn(lines) { list.drop(lines, n) }
 }
 
--- Helper to print a pipeline result
-fn print_result(label, lines) {
-  println("=== {label} ===")
+-- Helper: print a section header and lines
+fn print_section(title, lines) {
+  println("\n=== {title} ===")
   lines |> list.each { line -> println(line) }
-  println("")
 }
 
 fn main() {
-  let lines = read_lines("programs/log.txt")
+  -- Read the log file
+  let content = match io.read_file("programs/log.txt") {
+    Ok(c) -> c
+    Err(e) -> panic("Could not read log file: {e}")
+  }
+  let lines = string.split(content, "\n")
+    |> list.filter { line -> string.length(string.trim(line)) > 0 }
+
+  println("Loaded {list.length(lines)} log lines")
 
   -- Pipeline 1: grep for ERROR lines
   let p1 = lines |> grep("ERROR")
-  print_result("Pipeline 1: ERROR lines", p1)
+  print_section("Pipeline 1: ERROR lines", p1)
 
-  -- Pipeline 2: grep INFO then uppercase
-  let p2 = lines |> grep("INFO") |> uppercase
-  print_result("Pipeline 2: INFO lines uppercased", p2)
+  -- Pipeline 2: grep INFO then number them
+  let p2 = lines |> grep("INFO") |> numbered
+  print_section("Pipeline 2: INFO lines, numbered", p2)
 
-  -- Pipeline 3: reject DEBUG, add line numbers
-  let p3 = lines |> reject("DEBUG") |> numbered
-  print_result("Pipeline 3: Non-DEBUG lines numbered", p3)
+  -- Pipeline 3: grep WARN, uppercase, numbered
+  let p3 = lines |> grep("WARN") |> uppercase |> numbered
+  print_section("Pipeline 3: WARN lines, uppercased, numbered", p3)
 
-  -- Pipeline 4: sort by length, take shortest 5
-  let p4 = lines |> sort_by_length |> take_lines(5)
-  print_result("Pipeline 4: 5 shortest lines", p4)
+  -- Pipeline 4: reject DEBUG, sort by length, take first 5
+  let take5 = make_take(5)
+  let p4 = lines |> reject("DEBUG") |> sort_by_length |> take5
+  print_section("Pipeline 4: non-DEBUG sorted by length (shortest 5)", p4)
 
-  -- Pipeline 5: grep WARN, reverse, numbered
-  let p5 = lines |> grep("WARN") |> reverse_lines |> numbered
-  print_result("Pipeline 5: WARN lines reversed and numbered", p5)
+  -- Pipeline 5: word count for ERROR lines
+  let p5 = lines |> grep("ERROR") |> word_count
+  print_section("Pipeline 5: ERROR lines with word count", p5)
 
-  -- Pipeline 6: word count of ERROR lines
-  let p6 = lines |> grep("ERROR") |> word_count
-  print_result("Pipeline 6: Word count of ERROR lines", p6)
+  -- Pipeline 6: use higher-order factory: make_grep for request lines, numbered
+  let grep_request = make_grep("request")
+  let p6 = lines |> grep_request |> numbered
+  print_section("Pipeline 6: request lines via make_grep, numbered", p6)
 
-  -- Pipeline 7: higher-order factory — make_grep for "logged in"
-  let find_logins = make_grep("logged in")
-  let p7 = lines |> find_logins |> numbered
-  print_result("Pipeline 7: Login lines via factory (numbered)", p7)
+  -- Pipeline 7: reject WARN and ERROR, uppercase, take lines 6-10
+  let safe_lines = make_reject("WARN")
+  let also_no_errors = make_reject("ERROR")
+  let drop5 = make_drop(5)
+  let p7 = lines |> safe_lines |> also_no_errors |> uppercase |> drop5 |> take5
+  print_section("Pipeline 7: safe lines (no WARN/ERROR), uppercased, lines 6-10", p7)
 
-  -- Pipeline 8: reject INFO and DEBUG, uppercase, numbered
-  let p8 = lines |> reject("INFO") |> reject("DEBUG") |> uppercase |> numbered
-  print_result("Pipeline 8: Non-INFO/DEBUG uppercased and numbered", p8)
+  -- Pipeline 8: sort by length, unique via uniq, numbered
+  let p8 = lines |> sort_by_length |> uniq |> numbered
+  print_section("Pipeline 8: sorted by length, deduped, numbered", p8)
 
-  -- Pipeline 9: use make_reject factory, then sort by length, take 3
-  let no_info = make_reject("INFO")
-  let first3 = make_take(3)
-  let p9 = lines |> no_info |> sort_by_length |> first3
-  print_result("Pipeline 9: Non-INFO sorted by length (top 3)", p9)
+  -- Pipeline 9: make_prefix + make_suffix pipeline
+  let add_prefix = make_prefix("[LOG] ")
+  let add_suffix = make_suffix(" <<")
+  let p9 = lines |> grep("cache") |> add_prefix |> add_suffix |> numbered
+  print_section("Pipeline 9: cache lines with prefix/suffix, numbered", p9)
 
-  -- Pipeline 10: grep for time pattern, drop first 2, take 3, lowercase, numbered
-  let p10 = lines |> grep("08:0") |> drop_lines(2) |> take_lines(3) |> lowercase |> numbered
-  print_result("Pipeline 10: Early morning lines (drop 2, take 3, lowercased, numbered)", p10)
+  -- Pipeline 10: complex pipeline - grep INFO, reject email, sort by length, word count, take 3
+  let take3 = make_take(3)
+  let p10 = lines
+    |> grep("INFO")
+    |> reject("email")
+    |> sort_by_length
+    |> word_count
+    |> take3
+  print_section("Pipeline 10: INFO (no email), sorted by length, word count, top 3", p10)
 
-  -- Pipeline 11: unique lines after extracting log levels
+  -- Pipeline 11: extract log levels, unique them, sort
   let p11 = lines
     |> list.map { line ->
-      let parts = line |> string.split(" ")
+      let parts = string.split(line, " ")
+        |> list.filter { s -> string.length(s) > 0 }
       match list.get(parts, 2) {
         Some(level) -> level
-        None -> "UNKNOWN"
+        _ -> "UNKNOWN"
       }
     }
+    |> list.unique
     |> list.sort
-    |> uniq
-  print_result("Pipeline 11: Unique log levels (sorted)", p11)
+    |> numbered
+  print_section("Pipeline 11: unique log levels, sorted", p11)
 
-  -- Pipeline 12: chained factories — reject DEBUG, grep for "User", uppercase
-  let filter_debug = make_reject("DEBUG")
-  let find_users = make_grep("User")
-  let p12 = lines |> filter_debug |> find_users |> uppercase |> numbered
-  print_result("Pipeline 12: User lines (no DEBUG), uppercased and numbered", p12)
-
-  println("All pipelines complete.")
+  println("\nAll pipelines complete.")
 }

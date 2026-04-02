@@ -1,0 +1,172 @@
+{- Friction Report
+   Attempts: 2
+   Rating: 9/10
+   Highlights: The trait system is clean and expressive. Defining custom traits (Area,
+     Perimeter), implementing them for ADTs, and calling methods via dot syntax all
+     worked exactly as expected. The where clause syntax is intuitive. Pipe operator
+     with trailing closures for list.sort_by, list.map, list.each reads very naturally.
+     String interpolation with method calls like "{s.display()}" is a nice touch.
+   Friction: Match arms with multi-statement bodies (using let bindings) require
+     explicit curly braces. My first attempt used a bare "let s = ... \n expr" in a
+     match arm without braces, which failed with "expected expression, found let".
+     This is a reasonable design choice but slightly surprising since single expressions
+     don't need braces.
+   Missing: Nothing missing for this task. The trait system, ADTs, pattern matching,
+     and standard library all came together smoothly.
+   Bugs: None encountered.
+-}
+
+-- Trait Zoo: showcasing silt's trait system with shapes, colors, and styled objects
+
+-- === Type Definitions ===
+
+type Shape {
+  Circle(Float)
+  Rect(Float, Float)
+  Triangle(Float, Float, Float)
+}
+
+type Color {
+  Red
+  Green
+  Blue
+  Custom(Int, Int, Int)
+}
+
+type Styled {
+  Styled(Shape, Color)
+}
+
+-- === Display trait implementations ===
+
+trait Display for Shape {
+  fn display(self) -> String {
+    match self {
+      Circle(r) -> "Circle(r={float.to_string(r, 2)})"
+      Rect(w, h) -> "Rect({float.to_string(w, 2)} x {float.to_string(h, 2)})"
+      Triangle(a, b, c) -> "Triangle({float.to_string(a, 2)}, {float.to_string(b, 2)}, {float.to_string(c, 2)})"
+    }
+  }
+}
+
+trait Display for Color {
+  fn display(self) -> String {
+    match self {
+      Red -> "Red"
+      Green -> "Green"
+      Blue -> "Blue"
+      Custom(r, g, b) -> "Custom(r={r}, g={g}, b={b})"
+    }
+  }
+}
+
+trait Display for Styled {
+  fn display(self) -> String {
+    match self {
+      Styled(shape, color) -> "{shape.display()} in {color.display()}"
+    }
+  }
+}
+
+-- === Custom trait: Area ===
+
+trait Area {
+  fn area(self) -> Float
+}
+
+trait Area for Shape {
+  fn area(self) -> Float {
+    match self {
+      Circle(r) -> math.pi * r * r
+      Rect(w, h) -> w * h
+      Triangle(a, b, c) -> {
+        let s = (a + b + c) / 2.0
+        math.sqrt(s * (s - a) * (s - b) * (s - c))
+      }
+    }
+  }
+}
+
+-- === Custom trait: Perimeter ===
+
+trait Perimeter {
+  fn perimeter(self) -> Float
+}
+
+trait Perimeter for Shape {
+  fn perimeter(self) -> Float {
+    match self {
+      Circle(r) -> 2.0 * math.pi * r
+      Rect(w, h) -> 2.0 * (w + h)
+      Triangle(a, b, c) -> a + b + c
+    }
+  }
+}
+
+-- === Where clause: generic describe function ===
+
+fn describe(item) where item: Display {
+  println("  -> {item.display()}")
+}
+
+-- === Main ===
+
+fn main() {
+  -- Create a list of shapes
+  let shapes = [
+    Circle(5.0),
+    Rect(3.0, 4.0),
+    Triangle(3.0, 4.0, 5.0),
+    Circle(1.0),
+    Rect(10.0, 2.0),
+    Triangle(5.0, 5.0, 5.0)
+  ]
+
+  println("=== All Shapes ===")
+  shapes |> list.each { s ->
+    println("{s.display()}  |  area = {float.to_string(s.area(), 4)}  |  perimeter = {float.to_string(s.perimeter(), 4)}")
+  }
+
+  -- Sort by area
+  println("\n=== Shapes sorted by area ===")
+  let sorted = shapes |> list.sort_by { s -> s.area() }
+  sorted |> list.each { s ->
+    println("  {s.display()} -> area = {float.to_string(s.area(), 4)}")
+  }
+
+  -- Compute totals
+  let total_area = shapes
+    |> list.map { s -> s.area() }
+    |> list.fold(0.0) { acc, a -> acc + a }
+  let total_perimeter = shapes
+    |> list.map { s -> s.perimeter() }
+    |> list.fold(0.0) { acc, p -> acc + p }
+
+  println("\nTotal area:      {float.to_string(total_area, 4)}")
+  println("Total perimeter: {float.to_string(total_perimeter, 4)}")
+
+  -- Colors and styled shapes
+  println("\n=== Styled Shapes ===")
+  let colors = [Red, Green, Blue, Custom(255, 128, 0), Custom(0, 0, 0), Custom(128, 128, 128)]
+  let styled = list.zip(shapes, colors) |> list.map { pair ->
+    match pair {
+      (shape, color) -> Styled(shape, color)
+    }
+  }
+
+  styled |> list.each { st ->
+    describe(st)
+  }
+
+  -- Use where clause with shapes too
+  println("\n=== Describe via where clause ===")
+  shapes |> list.each { s ->
+    describe(s)
+  }
+
+  -- Exercise math.pi and math.sqrt explicitly
+  println("\n=== Math Constants ===")
+  println("pi = {float.to_string(math.pi, 10)}")
+  println("sqrt(2) = {float.to_string(math.sqrt(2.0), 10)}")
+  println("e = {float.to_string(math.e, 10)}")
+}

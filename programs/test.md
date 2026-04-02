@@ -1,14 +1,14 @@
-# Test Document for Link Checker
+# Test Links Document
 
 Here are some links to check:
 
 - [Google](https://www.google.com)
-- [Example Site](http://example.com)
-- [Secure Example](https://example.org/page)
-- [FTP Archive](ftp://files.example.com/archive)
-- [Email Alice](mailto:alice@example.com)
-- [Broken Link](notaurl)
-- [Bad Scheme](javascript:void)
-- [Local File](./local-file.md)
-- [Anchor Link](#section-one)
-- [Another HTTPS](https://docs.rust-lang.org/book/)
+- [Rust Language](https://www.rust-lang.org)
+- [Bad Link](htp://broken-scheme.example)
+- [FTP Archive](ftp://archive.example.org/files)
+- [Email Contact](mailto:user@example.com)
+- [Missing Scheme](www.no-scheme.com)
+- [GitHub](https://github.com)
+- [Fake Protocol](gopher://old.server.net)
+- [HTTPS Example](https://example.com/path?query=1)
+- [Plain Text](just-some-text)

@@ -1,178 +1,198 @@
-{- Friction Report
-   Attempts: 2
-   Rating: 8/10
-   Highlights: Pipe operator and trailing closures make data pipelines very readable.
-     list.fold, list.flat_map, list.sort_by, list.enumerate, list.unique all worked
-     exactly as expected. map module (set/get/entries) was intuitive. string.pad_right
-     made column alignment straightforward. Pattern matching with match/tuples felt natural.
-   Friction: io.args() returns the full argv [binary, "run", script, ...user_args],
-     which is not documented clearly. Had to write a test program to discover that
-     the first user argument is at index 3, not index 0. The docs just say "command-line
-     arguments" which implies user-provided args. This caused the first attempt to fail
-     by trying to io.read_file on the silt binary itself.
-   Missing: A string function to strip specific characters (like Python's str.strip(chars))
-     rather than having to chain multiple replace() calls to remove punctuation.
-     A substring/regex-based trim would help text processing significantly.
-   Bugs: None encountered. The interpreter, typechecker, and all stdlib functions
-     worked correctly.
+{- Text File Statistics
+   Reads a text file and computes various statistics:
+   line count, word count, char count, unique words,
+   average word length, longest/shortest words,
+   and top-N most frequent words.
 -}
 
--- Helper: count occurrences of a word in the frequency map
-fn count_words(words) {
-  words |> list.fold(#{}) { counts, word ->
-    let current = match map.get(counts, word) {
-      Some(n) -> n
-      None -> 0
-    }
-    map.set(counts, word, current + 1)
+fn get_filename() {
+  let user_args = list.drop(io.args(), 3)
+  match user_args {
+    [filename, ..rest] -> filename
+    _ -> "programs/sample_text.txt"
   }
 }
 
--- Helper: find the word with the longest length
-fn find_longest(words) {
-  words |> list.fold("") { longest, word ->
-    match string.length(word) > string.length(longest) {
-      true -> word
-      _ -> longest
-    }
-  }
-}
-
--- Helper: find the word with the shortest length (non-empty)
-fn find_shortest(words) {
-  match words {
-    [] -> ""
-    [first, ..rest] -> rest |> list.fold(first) { shortest, word ->
-      match string.length(word) < string.length(shortest) {
-        true -> word
-        _ -> shortest
+-- Strip basic punctuation from the edges of a word
+fn clean_word(w) {
+  let trimmed = string.trim(w)
+  let chars = string.chars(trimmed)
+  let len = list.length(chars)
+  match {
+    len == 0 -> ""
+    _ -> {
+      let punctuation = [".", ",", "!", "?", "(", ")", "'"]
+      -- Strip leading punctuation
+      let first = match list.head(chars) {
+        Some(c) -> match list.contains(punctuation, c) {
+          true -> string.slice(trimmed, 1, len)
+          _ -> trimmed
+        }
+        _ -> trimmed
+      }
+      let first_len = string.length(first)
+      let first_chars = string.chars(first)
+      -- Strip trailing punctuation
+      match list.last(first_chars) {
+        Some(c) -> match list.contains(punctuation, c) {
+          true -> string.slice(first, 0, first_len - 1)
+          _ -> first
+        }
+        _ -> first
       }
     }
   }
 }
 
--- Helper: get top-N most frequent words from a frequency map
-fn top_n(freq_map, n) {
-  freq_map
-  |> map.entries()
-  |> list.sort_by { entry ->
-    let (_, count) = entry
-    0 - count
+fn count_words_in_map(words) {
+  words |> list.fold(#{}) { acc, w ->
+    let current = match map.get(acc, w) {
+      Some(n) -> n
+      _ -> 0
+    }
+    map.set(acc, w, current + 1)
   }
-  |> list.take(n)
-}
-
--- Helper: clean a word - remove punctuation from edges, lowercase
-fn clean_word(word) {
-  let trimmed = word |> string.trim()
-  let lowered = trimmed |> string.to_lower()
-  -- strip common punctuation from the edges
-  lowered
-  |> string.replace(".", "")
-  |> string.replace(",", "")
-  |> string.replace("!", "")
-  |> string.replace("?", "")
-  |> string.replace(":", "")
-  |> string.replace(";", "")
-  |> string.replace("(", "")
-  |> string.replace(")", "")
-  |> string.replace("\"", "")
 }
 
 fn print_separator() {
   println(string.repeat("-", 50))
 }
 
-fn main() {
-  -- Determine filename from args or use default
-  -- io.args() returns [binary, "run", script, ...extra_args]
-  let args = io.args()
-  let filename = match list.get(args, 3) {
-    Some(f) -> f
-    None -> "programs/sample_text.txt"
-  }
+fn print_row(label, value) {
+  let padded_label = string.pad_right(label, 22, " ")
+  println("  {padded_label} {value}")
+}
 
-  -- Read the file
-  let content = match io.read_file(filename) {
-    Ok(text) -> text
-    Err(e) -> {
-      println("Error reading file: {e}")
-      panic("cannot continue without file")
+fn main() {
+  let filename = get_filename()
+
+  match io.read_file(filename) {
+    Err(e) -> println("Error reading file '{filename}': {e}")
+    Ok(content) -> {
+      -- Basic counts
+      let lines = string.split(content, "\n")
+      let line_count = list.length(lines)
+
+      let char_count = string.length(content)
+
+      -- Get all words (split each line by spaces, flatten)
+      let all_words = lines
+        |> list.flat_map { line ->
+          string.split(line, " ")
+          |> list.map { w -> string.trim(w) }
+          |> list.filter { w -> string.length(w) > 0 }
+        }
+
+      let word_count = list.length(all_words)
+
+      -- Clean words and lowercase for analysis
+      let cleaned_words = all_words
+        |> list.map { w -> clean_word(w) }
+        |> list.map { w -> string.to_lower(w) }
+        |> list.filter { w -> string.length(w) > 0 }
+
+      let unique_words = list.unique(cleaned_words)
+      let unique_count = list.length(unique_words)
+
+      -- Average word length
+      let total_chars = cleaned_words
+        |> list.fold(0) { acc, w -> acc + string.length(w) }
+      let cleaned_count = list.length(cleaned_words)
+      let avg_len = match {
+        cleaned_count > 0 -> int.to_float(total_chars) / int.to_float(cleaned_count)
+        _ -> 0.0
+      }
+
+      -- Longest and shortest words
+      let sorted_by_len = unique_words
+        |> list.sort_by { w -> string.length(w) }
+
+      let longest = sorted_by_len |> list.reverse |> list.take(5)
+      let shortest = sorted_by_len |> list.take(5)
+
+      -- Word frequency (top 10)
+      let freq_map = count_words_in_map(cleaned_words)
+      let top_n = 10
+      let sorted_freq = map.entries(freq_map)
+        |> list.sort_by { entry ->
+          let (_, count) = entry
+          0 - count
+        }
+        |> list.take(top_n)
+
+      -- Print results
+      println("")
+      println("  TEXT FILE STATISTICS")
+      println("  File: {filename}")
+      print_separator()
+
+      println("")
+      println("  BASIC COUNTS")
+      print_separator()
+      print_row("Lines:", int.to_string(line_count))
+      print_row("Words:", int.to_string(word_count))
+      print_row("Characters:", int.to_string(char_count))
+      print_row("Unique words:", int.to_string(unique_count))
+      print_row("Avg word length:", float.to_string(avg_len, 2))
+
+      println("")
+      println("  LONGEST WORDS")
+      print_separator()
+      longest |> list.each { w ->
+        let len = string.length(w)
+        let padded = string.pad_right(w, 22, " ")
+        println("  {padded} ({len} chars)")
+      }
+
+      println("")
+      println("  SHORTEST WORDS")
+      print_separator()
+      shortest |> list.each { w ->
+        let len = string.length(w)
+        let padded = string.pad_right(w, 22, " ")
+        println("  {padded} ({len} chars)")
+      }
+
+      println("")
+      println("  TOP {top_n} MOST FREQUENT WORDS")
+      print_separator()
+      sorted_freq |> list.enumerate |> list.each { item ->
+        let (i, entry) = item
+        let (word, count) = entry
+        let rank = string.pad_right(int.to_string(i + 1), 3, " ")
+        let padded_word = string.pad_right(word, 18, " ")
+        let count_str = int.to_string(count)
+        println("  {rank} {padded_word} {count_str}")
+      }
+
+      println("")
+      print_separator()
+      println("  Analysis complete.")
+      println("")
     }
   }
-
-  -- Basic stats
-  let lines = content |> string.split("\n")
-  let line_count = list.length(lines)
-  let char_count = string.length(content)
-
-  -- Get all words: split each line by spaces, flatten, filter empties, clean
-  let raw_words = lines
-    |> list.flat_map { line -> string.split(line, " ") }
-    |> list.map { w -> string.trim(w) }
-    |> list.filter { w -> string.length(w) > 0 }
-
-  let word_count = list.length(raw_words)
-
-  -- Cleaned words for analysis
-  let words = raw_words
-    |> list.map { w -> clean_word(w) }
-    |> list.filter { w -> string.length(w) > 0 }
-
-  -- Unique words
-  let unique_words = words |> list.unique()
-  let unique_count = list.length(unique_words)
-
-  -- Average word length
-  let total_chars = words |> list.fold(0) { acc, w -> acc + string.length(w) }
-  let avg_len = match list.length(words) > 0 {
-    true -> int.to_float(total_chars) / int.to_float(list.length(words))
-    _ -> 0.0
-  }
-
-  -- Longest and shortest words
-  let longest = find_longest(words)
-  let shortest = find_shortest(words)
-
-  -- Word frequency
-  let freq = count_words(words)
-  let top_words = top_n(freq, 10)
-
-  -- Print results with aligned columns
-  println("")
-  print_separator()
-  println(string.pad_right("  TEXT STATISTICS", 50, " "))
-  print_separator()
-  println("")
-
-  let label_width = 25
-  println("{string.pad_right("  Lines:", label_width, " ")}{line_count}")
-  println("{string.pad_right("  Words:", label_width, " ")}{word_count}")
-  println("{string.pad_right("  Characters:", label_width, " ")}{char_count}")
-  println("{string.pad_right("  Unique words:", label_width, " ")}{unique_count}")
-  println("{string.pad_right("  Avg word length:", label_width, " ")}{float.to_string(avg_len, 2)}")
-  println("{string.pad_right("  Longest word:", label_width, " ")}{longest}")
-  println("{string.pad_right("  Shortest word:", label_width, " ")}{shortest}")
-
-  println("")
-  print_separator()
-  println("  TOP 10 MOST FREQUENT WORDS")
-  print_separator()
-  println("")
-
-  println("  {string.pad_right("Rank", 6, " ")}{string.pad_right("Word", 20, " ")}Count")
-  println("  {string.repeat("-", 36)}")
-
-  top_words |> list.enumerate() |> list.each { entry ->
-    let (i, pair) = entry
-    let (word, count) = pair
-    let rank = int.to_string(i + 1)
-    println("  {string.pad_right(rank, 6, " ")}{string.pad_right(word, 20, " ")}{count}")
-  }
-
-  println("")
-  print_separator()
-  println("  File: {filename}")
-  print_separator()
-  println("")
 }
+
+{- Friction Report
+   Attempts: 2
+   Rating: 9/10
+   Highlights:
+     - Pipe operator and trailing closures make data transformation chains very readable
+     - Pattern matching as the sole branching mechanism is clean and consistent
+     - list.flat_map, list.sort_by, list.enumerate, list.group_by provide excellent composability
+     - map module (get/set/entries/from_entries) works well for building frequency tables
+     - string.pad_left/pad_right make formatted output easy
+     - float.to_string(f, decimals) is a nice touch for formatting
+   Friction:
+     - Language summary says "semicolons separate expressions in blocks" but runtime rejects them
+       with "semicolons are not used in silt". This was the only error I hit.
+     - Rest pattern in match requires a binding name ([x, ..rest]) -- bare [x, ..] is not supported.
+       Not really friction once you know it, but differs from some languages.
+     - No regex or character class support makes punctuation stripping verbose (manual list of chars)
+   Missing:
+     - String.filter or string.replace_all with regex would simplify text cleaning
+     - A char-type or char classification (is_alpha, is_digit, is_punctuation) would help text processing
+     - No modulo/remainder for floats (minor)
+   Bugs:
+     - None encountered
+-}

@@ -1,0 +1,208 @@
+-- Vending Machine State Machine Simulator
+
+type State {
+  Idle
+  Accepting(Int)
+  Dispensing(String, Int)
+  OutOfStock
+}
+
+type Event {
+  InsertCoin(Int)
+  SelectItem(String)
+  Cancel
+  Restock
+}
+
+trait Display for State {
+  fn display(self) -> String {
+    match self {
+      Idle -> "Idle"
+      Accepting(amount) -> "Accepting({amount}c)"
+      Dispensing(item, change) -> "Dispensing({item}, change={change}c)"
+      OutOfStock -> "OutOfStock"
+    }
+  }
+}
+
+trait Display for Event {
+  fn display(self) -> String {
+    match self {
+      InsertCoin(amount) -> "InsertCoin({amount}c)"
+      SelectItem(name) -> "SelectItem({name})"
+      Cancel -> "Cancel"
+      Restock -> "Restock"
+    }
+  }
+}
+
+-- Format a state transition line
+fn format_transition(step, event, old_state, new_state, msg) where old_state: Display, new_state: Display, event: Display {
+  let step_str = string.pad_left(int.to_string(step), 2, " ")
+  println("[{step_str}] {event.display()}")
+  println("     {old_state.display()} -> {new_state.display()}")
+  println("     >> {msg}")
+  println("")
+}
+
+-- Check if the machine has any stock at all
+fn has_stock(inventory) {
+  let qtys = map.values(inventory)
+  qtys |> list.any { entry ->
+    let (qty, _price) = entry
+    qty > 0
+  }
+}
+
+-- Transition function: given state + event + inventory, produce (new_state, message, new_inventory)
+fn transition(state, event, inventory) {
+  match state {
+    Idle -> match event {
+      InsertCoin(amount) -> match has_stock(inventory) {
+        true -> (Accepting(amount), "Inserted {amount}c, ready to select", inventory)
+        _ -> (OutOfStock, "Machine is out of stock", inventory)
+      }
+      SelectItem(_name) -> (Idle, "Insert coins first!", inventory)
+      Cancel -> (Idle, "Nothing to cancel", inventory)
+      Restock -> {
+        let new_inv = restock_inventory(inventory)
+        (Idle, "Machine restocked!", new_inv)
+      }
+    }
+
+    Accepting(balance) -> match event {
+      InsertCoin(amount) -> (Accepting(balance + amount), "Added {amount}c, balance={balance + amount}c", inventory)
+      SelectItem(name) -> {
+        let item_opt = map.get(inventory, name)
+        match item_opt {
+          None -> (Accepting(balance), "Unknown item: {name}", inventory)
+          Some(entry) -> {
+            let (qty, price) = entry
+            match {
+              qty <= 0 -> (Accepting(balance), "{name} is out of stock", inventory)
+              balance < price -> (Accepting(balance), "Not enough! {name} costs {price}c, you have {balance}c", inventory)
+              _ -> {
+                let change = balance - price
+                let new_inv = map.set(inventory, name, (qty - 1, price))
+                (Dispensing(name, change), "Dispensing {name}! Change: {change}c", new_inv)
+              }
+            }
+          }
+        }
+      }
+      Cancel -> (Idle, "Cancelled. Returning {balance}c", inventory)
+      Restock -> (Accepting(balance), "Cannot restock while accepting coins", inventory)
+    }
+
+    Dispensing(item, change) -> match event {
+      InsertCoin(_amount) -> (Idle, "Please wait, dispensing {item}...", inventory)
+      SelectItem(_name) -> (Idle, "Please wait, dispensing {item}...", inventory)
+      Cancel -> (Idle, "{item} dispensed with {change}c change. Ready!", inventory)
+      Restock -> (Idle, "{item} dispensed. Cannot restock now", inventory)
+    }
+
+    OutOfStock -> match event {
+      Restock -> {
+        let new_inv = restock_inventory(inventory)
+        (Idle, "Restocked! Machine is ready", new_inv)
+      }
+      InsertCoin(amount) -> (OutOfStock, "Out of stock! Returning {amount}c", inventory)
+      SelectItem(_name) -> (OutOfStock, "Out of stock! Nothing available", inventory)
+      Cancel -> (OutOfStock, "Nothing to cancel, machine is empty", inventory)
+    }
+  }
+}
+
+-- Restock all items to quantity 3
+fn restock_inventory(inventory) {
+  let entries = map.entries(inventory)
+  entries |> list.map { entry ->
+    let (name, val) = entry
+    let (_qty, price) = val
+    (name, (3, price))
+  } |> map.from_entries
+}
+
+-- Print the current inventory
+fn print_inventory(inventory) {
+  println("  Inventory:")
+  let entries = map.entries(inventory)
+  entries |> list.each { entry ->
+    let (name, val) = entry
+    let (qty, price) = val
+    let name_padded = string.pad_right(name, 12, " ")
+    println("    {name_padded} qty={qty}  price={price}c")
+  }
+}
+
+fn main() {
+  -- Initial inventory: item -> (quantity, price)
+  let initial_inventory = #{
+    "Cola": (3, 100),
+    "Chips": (2, 75),
+    "Water": (1, 50),
+    "Candy": (0, 25)
+  }
+
+  -- Sequence of 16 events
+  let events = [
+    InsertCoin(25),
+    InsertCoin(50),
+    SelectItem("Candy"),
+    Cancel,
+    InsertCoin(100),
+    SelectItem("Cola"),
+    Cancel,
+    InsertCoin(50),
+    SelectItem("Water"),
+    Cancel,
+    InsertCoin(50),
+    SelectItem("Water"),
+    InsertCoin(75),
+    SelectItem("Chips"),
+    SelectItem("Cola"),
+    Restock
+  ]
+
+  println("=== Vending Machine Simulator ===")
+  println("")
+  println("Starting state: Idle")
+  print_inventory(initial_inventory)
+  println("")
+
+  -- Process events using loop
+  let result = loop idx = 0, state = Idle, inv = initial_inventory {
+    match list.get(events, idx) {
+      None -> (state, inv)
+      Some(event) -> {
+        let (new_state, msg, new_inv) = transition(state, event, inv)
+        format_transition(idx + 1, event, state, new_state, msg)
+        loop(idx + 1, new_state, new_inv)
+      }
+    }
+  }
+
+  let (final_state, final_inv) = result
+  println("=== Final State ===")
+  println("State: {final_state.display()}")
+  print_inventory(final_inv)
+  println("")
+  println("=== Simulation Complete ===")
+}
+
+{- Friction Report
+   Attempts: 2
+   Rating: 9/10
+   Highlights: ADTs with nested pattern matching work beautifully. Defining Display traits
+     for custom types and using where clauses feels natural. The loop construct with multiple
+     bindings is an elegant alternative to recursion. Guardless match (match without a scrutinee)
+     is excellent for multi-condition branching. Tuple destructuring in let bindings works well.
+     Map operations (get returning Option, set returning new map) fit the immutable style nicely.
+     String interpolation with {expr} inside strings is very convenient.
+   Friction: First attempt failed because I used semicolons as statement separators (habit from
+     other languages). The error message "semicolons are not used in silt" was clear and helpful.
+     Once I switched to newlines as separators, everything worked immediately.
+   Missing: Nothing significant for this task. Would be nice to have a way to derive Display
+     automatically for ADTs, but the manual trait impl is not burdensome.
+   Bugs: None encountered.
+-}

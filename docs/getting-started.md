@@ -168,6 +168,17 @@ The `|>` operator passes the left-hand side as the first argument to the right-h
 |> list.each { s -> println(s) }
 ```
 
+**Note on pipes with function calls:** `|>` always inserts the left-hand side as the *first* argument. This means `value |> f(arg)` calls `f(value, arg)` — it does not call `f(arg)` and then pass `value` to the result. If you have a function factory that returns a closure, pre-bind it:
+
+```silt
+-- This calls make_grep(lines, "ERROR"), not make_grep("ERROR")(lines):
+-- lines |> make_grep("ERROR")
+
+-- Instead, bind the factory result first:
+let grep_error = make_grep("ERROR")
+lines |> grep_error
+```
+
 ### Trailing Closures
 
 When the last argument to a function is a closure, you can write it outside the parentheses using `{ args -> body }` syntax:

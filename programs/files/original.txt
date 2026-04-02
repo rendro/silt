@@ -1,0 +1,16 @@
+The Silt Programming Language
+=============================
+
+Silt is a statically-typed, expression-based language.
+It uses immutable bindings by default.
+Pattern matching is the only branching construct.
+There are no if/else statements.
+
+Functions are defined with the fn keyword.
+The pipe operator passes values through chains.
+Lists, tuples, and maps are built-in types.
+
+Error handling uses Result and Option types.
+Concurrency is based on CSP with channels.
+The standard library is deliberately small.
+Documentation lives in the docs folder.

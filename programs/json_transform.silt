@@ -1,0 +1,185 @@
+{- JSON Data Pipeline
+   Demonstrates json module + map module + list module integration.
+   Parses employee data, groups by department, computes averages,
+   finds top earners, filters by skill, and flattens skills.
+-}
+
+{- Friction Report
+   Attempts: 3
+   Rating: 7/10
+   Highlights:
+     - Pipe operator |> with trailing closures reads very naturally
+     - list.group_by, list.sort_by, list.unique, list.flatten compose well
+     - json.parse / json.pretty work smoothly for round-tripping data
+     - map.entries / map.from_entries pipeline is clean and intuitive
+     - String interpolation with {expr} inside strings is pleasant
+   Friction:
+     - Language summary says "semicolons separate expressions in blocks" but parser
+       rejects semicolons entirely ("semicolons are not used in silt"). This was the
+       first error and was confusing given the documentation.
+     - Maps are statically typed with homogeneous value types, but json.parse returns
+       dynamically typed maps (objects with mixed Int/String/List fields). This means
+       you cannot construct equivalent structures natively in silt -- you must go
+       through json.parse. Building JSON strings with escaped quotes (\{ and \") is
+       verbose and error-prone.
+     - No way to have a Map(String, Any) or union-typed map values, so the final
+       summary output had to stringify everything to String to fit in a single map,
+       or output separate json.pretty calls per data structure.
+     - The error message "unexpected character: '\'" was misleading -- the actual
+       problem was unescaped { inside the string being treated as interpolation start,
+       not a problem with backslash itself.
+   Missing:
+     - A raw string literal syntax (e.g., r"..." or triple-quoted strings) would make
+       embedding JSON much easier.
+     - Union types or an Any type for map values would let you build heterogeneous
+       structures that match what json.parse returns.
+   Bugs: None encountered -- all issues were documentation/ergonomic friction.
+-}
+
+-- Helper to build a JSON employee object string
+fn emp_json(name, dept, salary, s1, s2, s3) {
+  "\{\"name\":\"" + name + "\",\"department\":\"" + dept + "\",\"salary\":" + int.to_string(salary) + ",\"skills\":[\"" + s1 + "\",\"" + s2 + "\",\"" + s3 + "\"]}"
+}
+
+-- Accessor helpers for dynamic maps from json.parse
+fn get_s(m, key) {
+  option.unwrap_or(map.get(m, key), "")
+}
+
+fn get_i(m, key) {
+  option.unwrap_or(map.get(m, key), 0)
+}
+
+fn get_l(m, key) {
+  option.unwrap_or(map.get(m, key), [])
+}
+
+-- Group employees by department
+fn group_by_department(employees) {
+  employees |> list.group_by { emp -> get_s(emp, "department") }
+}
+
+-- Compute average salary for a list of employees
+fn avg_salary(employees) {
+  let total = employees |> list.fold(0.0) { acc, emp ->
+    acc + int.to_float(get_i(emp, "salary"))
+  }
+  let count = int.to_float(list.length(employees))
+  total / count
+}
+
+-- Find top N earners across all employees
+fn top_earners(employees, n) {
+  employees
+  |> list.sort_by { emp -> 0 - get_i(emp, "salary") }
+  |> list.take(n)
+}
+
+-- Filter employees who have a specific skill
+fn filter_by_skill(employees, skill) {
+  employees |> list.filter { emp ->
+    list.contains(get_l(emp, "skills"), skill)
+  }
+}
+
+-- Flatten all skills into a unique sorted list
+fn all_unique_skills(employees) {
+  employees
+  |> list.map { emp -> get_l(emp, "skills") }
+  |> list.flatten
+  |> list.unique
+  |> list.sort
+}
+
+fn main() {
+  -- Step 1: Build JSON string and parse with json.parse
+  let entries = [
+    emp_json("Alice",   "Engineering", 120000, "rust",      "python",    "sql"),
+    emp_json("Bob",     "Engineering", 110000, "java",      "python",    "docker"),
+    emp_json("Carol",   "Marketing",    95000, "analytics", "python",    "seo"),
+    emp_json("Dave",    "Engineering", 130000, "rust",      "go",        "kubernetes"),
+    emp_json("Eve",     "Marketing",    98000, "design",    "analytics", "sql"),
+    emp_json("Frank",   "Sales",        85000, "crm",       "sql",       "excel"),
+    emp_json("Grace",   "Engineering", 125000, "python",    "ml",        "docker"),
+    emp_json("Hank",    "Sales",        90000, "crm",       "analytics", "excel"),
+    emp_json("Ivy",     "Marketing",   102000, "design",    "seo",       "python"),
+    emp_json("Jack",    "Sales",        88000, "crm",       "sql",       "analytics"),
+    emp_json("Kate",    "Engineering", 140000, "rust",      "python",    "ml"),
+    emp_json("Leo",     "Marketing",    97000, "analytics", "design",    "excel")
+  ]
+  let json_str = "[" + string.join(entries, ",") + "]"
+  let employees = result.unwrap_or(json.parse(json_str), [])
+
+  println("=== JSON Data Pipeline ===")
+  println("Parsed {list.length(employees)} employees from JSON\n")
+
+  -- Step 2: Group by department
+  let grouped = group_by_department(employees)
+  println("--- Departments ---")
+  map.keys(grouped) |> list.sort |> list.each { dept ->
+    let emps = option.unwrap_or(map.get(grouped, dept), [])
+    let names = emps
+      |> list.map { e -> get_s(e, "name") }
+      |> string.join(", ")
+    println("  {dept}: {names}")
+  }
+
+  -- Step 3: Average salary per department using |> with map.entries
+  println("\n--- Average Salary per Department ---")
+  let dept_avgs = grouped
+    |> map.entries
+    |> list.map { entry ->
+      let (dept, emps) = entry
+      (dept, avg_salary(emps))
+    }
+    |> list.sort_by { pair ->
+      let (dept, _) = pair
+      dept
+    }
+
+  dept_avgs |> list.each { pair ->
+    let (dept, avg) = pair
+    println("  {dept}: ${float.to_string(avg, 2)}")
+  }
+
+  -- Step 4: Top 3 earners
+  let top3 = top_earners(employees, 3)
+  println("\n--- Top 3 Earners ---")
+  top3 |> list.each { emp ->
+    println("  {get_s(emp, "name")}: ${get_i(emp, "salary")}")
+  }
+
+  -- Step 5: Filter by skill (python)
+  let python_devs = filter_by_skill(employees, "python")
+  println("\n--- Python Developers ---")
+  python_devs |> list.each { emp ->
+    println("  {get_s(emp, "name")} ({get_s(emp, "department")})")
+  }
+
+  -- Step 6: All unique skills via |> flatten + unique
+  let skills = all_unique_skills(employees)
+  println("\n--- All Unique Skills ({list.length(skills)}) ---")
+  println("  {string.join(skills, ", ")}")
+
+  -- Step 7: Pretty-print various results as JSON
+  let avg_salary_map = dept_avgs
+    |> list.map { pair ->
+      let (dept, avg) = pair
+      (dept, float.to_string(avg, 2))
+    }
+    |> map.from_entries
+
+  println("\n--- Avg Salaries (Pretty JSON) ---")
+  println(json.pretty(avg_salary_map))
+
+  println("\n--- All Skills (Pretty JSON) ---")
+  println(json.pretty(skills))
+
+  let python_names = python_devs |> list.map { e -> get_s(e, "name") }
+  println("\n--- Python Devs (Pretty JSON) ---")
+  println(json.pretty(python_names))
+
+  let top3_names = top3 |> list.map { e -> get_s(e, "name") }
+  println("\n--- Top Earners (Pretty JSON) ---")
+  println(json.pretty(top3_names))
+}

@@ -1,93 +1,89 @@
+{- Key-Value Store with JSON Persistence
+   Interactive REPL for managing key-value pairs with save/load via JSON.
+   Commands: SET <key> <value>, GET <key>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT
+-}
+
 {- Friction Report
    Attempts: 1
    Rating: 9/10
-   Highlights: loop-with-state is a natural fit for a REPL; immutable map operations
-     (map.set/map.delete returning new maps) compose beautifully with the loop pattern.
-     Pattern matching + match on conditions (guardless match) replaces if/else cleanly.
-     json.stringify/json.parse round-trip through maps seamlessly. string.split + list.get
-     + list.drop made command parsing straightforward.
-   Friction: No way to do case-insensitive matching directly in patterns; had to
-     call string.to_upper before matching. Slight verbosity from nested match arms
-     for error handling (no if/else means extra nesting). The prompt "> " prints
-     inline with piped input which is expected but worth noting.
-   Missing: A string.split_whitespace or string.words function that handles multiple
-     spaces would be nice for command parsing. A map.contains_key function would avoid
-     the Some/None dance when you just need a boolean check.
+   Highlights: The map module with immutable-return semantics is clean and intuitive.
+     json.stringify/json.parse round-trip with maps works seamlessly -- maps serialize
+     directly to JSON objects and parse back. The loop-with-state pattern for REPLs is
+     elegant once you see the idiom. Pattern matching on list shapes ([_, key, ..rest])
+     is very natural for parsing command arguments. String interpolation is convenient.
+   Friction: No if/else means every conditional must go through match, which adds some
+     verbosity for simple boolean checks (e.g., map.has_key result). The guardless
+     match { cond -> ... } idiom works but reads a bit oddly at first.
+   Missing: A map.get_or(m, key, default) function would reduce boilerplate for the
+     common "get with fallback" pattern. A string.split_n or string.split_first for
+     splitting into at most N parts would help command parsing (currently multi-word
+     values require [_, key, ..rest] + join).
    Bugs: None encountered.
 -}
 
-fn handle_command(line, store) {
-  let parts = line |> string.trim() |> string.split(" ")
+fn handle_command(input, store) {
+  let trimmed = string.trim(input)
+  let parts = string.split(trimmed, " ")
   let cmd = match list.head(parts) {
     Some(c) -> string.to_upper(c)
     None -> ""
   }
 
-  match cmd {
-    "GET" -> {
-      match list.get(parts, 1) {
-        Some(key) -> {
+  match {
+    cmd == "SET" -> {
+      match parts {
+        [_, key, ..value_parts] -> {
+          let value = string.join(value_parts, " ")
+          let new_store = map.set(store, key, value)
+          println("OK")
+          new_store
+        }
+        _ -> {
+          println("Usage: SET <key> <value>")
+          store
+        }
+      }
+    }
+
+    cmd == "GET" -> {
+      match parts {
+        [_, key] -> {
           match map.get(store, key) {
             Some(val) -> println(val)
-            None -> println("ERROR: key not found: {key}")
+            None -> println("(nil) Key not found: {key}")
           }
           store
         }
-        None -> {
-          println("ERROR: GET requires a key")
+        _ -> {
+          println("Usage: GET <key>")
           store
         }
       }
     }
 
-    "SET" -> {
-      match list.get(parts, 1) {
-        Some(key) -> {
-          -- Join remaining parts as the value (allows spaces in values)
-          let value_parts = parts |> list.drop(2)
-          match list.length(value_parts) > 0 {
+    cmd == "DEL" -> {
+      match parts {
+        [_, key] -> {
+          match map.has_key(store, key) {
             true -> {
-              let value = string.join(value_parts, " ")
-              let new_store = map.set(store, key, value)
-              println("OK")
-              new_store
-            }
-            _ -> {
-              println("ERROR: SET requires a key and value")
-              store
-            }
-          }
-        }
-        None -> {
-          println("ERROR: SET requires a key and value")
-          store
-        }
-      }
-    }
-
-    "DEL" -> {
-      match list.get(parts, 1) {
-        Some(key) -> {
-          match map.get(store, key) {
-            Some(_) -> {
               let new_store = map.delete(store, key)
               println("OK")
               new_store
             }
-            None -> {
-              println("ERROR: key not found: {key}")
+            _ -> {
+              println("(nil) Key not found: {key}")
               store
             }
           }
         }
-        None -> {
-          println("ERROR: DEL requires a key")
+        _ -> {
+          println("Usage: DEL <key>")
           store
         }
       }
     }
 
-    "KEYS" -> {
+    cmd == "KEYS" -> {
       let keys = map.keys(store)
       match list.length(keys) {
         0 -> println("(empty)")
@@ -96,77 +92,85 @@ fn handle_command(line, store) {
       store
     }
 
-    "COUNT" -> {
+    cmd == "COUNT" -> {
       println(map.length(store))
       store
     }
 
-    "SAVE" -> {
-      let data = json.stringify(store)
-      match io.write_file("kvstore.json", data) {
-        Ok(_) -> println("OK - saved to kvstore.json")
-        Err(e) -> println("ERROR: {e}")
+    cmd == "SAVE" -> {
+      let json_str = json.stringify(store)
+      match io.write_file("programs/kvstore.json", json_str) {
+        Ok(_) -> println("Saved {map.length(store)} entries.")
+        Err(e) -> println("Save error: {e}")
       }
       store
     }
 
-    "LOAD" -> {
-      match io.read_file("kvstore.json") {
+    cmd == "LOAD" -> {
+      match io.read_file("programs/kvstore.json") {
         Ok(content) -> {
           match json.parse(content) {
-            Ok(loaded) -> {
-              println("OK - loaded from kvstore.json")
-              loaded
+            Ok(data) -> {
+              println("Loaded {map.length(data)} entries.")
+              data
             }
             Err(e) -> {
-              println("ERROR: invalid JSON: {e}")
+              println("Parse error: {e}")
               store
             }
           }
         }
         Err(_) -> {
-          println("ERROR: file not found: kvstore.json")
+          println("No saved data found.")
           store
         }
       }
     }
 
-    "QUIT" -> {
+    cmd == "QUIT" -> {
       println("Goodbye!")
       store
     }
 
-    "" -> store
+    trimmed == "" -> store
 
     _ -> {
-      println("ERROR: unknown command: {cmd}")
+      println("Unknown command: {trimmed}")
+      println("Commands: SET <key> <value>, GET <key>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT")
       store
     }
   }
 }
 
 fn main() {
-  println("KV Store - commands: GET, SET, DEL, KEYS, COUNT, SAVE, LOAD, QUIT")
+  println("Key-Value Store")
+  println("Commands: SET <key> <value>, GET <key>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT")
+
   loop store = #{} {
     print("> ")
     match io.read_line() {
       Ok(line) -> {
         let trimmed = string.trim(line)
-        let cmd = match list.head(trimmed |> string.split(" ")) {
+        let parts = string.split(trimmed, " ")
+        let cmd = match list.head(parts) {
           Some(c) -> string.to_upper(c)
           None -> ""
         }
-        match cmd {
-          "QUIT" -> {
+        match {
+          cmd == "QUIT" -> {
             println("Goodbye!")
+            store
           }
           _ -> {
-            let new_store = handle_command(trimmed, store)
+            let new_store = handle_command(line, store)
             loop(new_store)
           }
         }
       }
-      _ -> println("Goodbye!")
+      Err(_) -> {
+        println("Goodbye!")
+        store
+      }
     }
   }
 }

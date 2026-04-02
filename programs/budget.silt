@@ -1,0 +1,278 @@
+{- Friction Report
+   Attempts: 2
+   Rating: 9/10
+   Highlights: Expression-based design with pattern matching works very naturally for
+     this kind of report generation. Pipe operator + trailing closures make data
+     transformation chains (filter, group_by, fold, map) extremely readable. Record
+     types are clean and intuitive. String interpolation with {var} is convenient.
+     list.group_by and map module work great together for categorization workflows.
+     float.to_string(f, 2) is perfect for currency formatting. string.pad_left/pad_right
+     make table alignment straightforward.
+   Friction: The language summary says "semicolons separate expressions in blocks" but
+     the runtime rejects semicolons with a clear error message saying they are not used.
+     This caused the first failed attempt. The fix was trivial (remove semicolons, use
+     newlines), but the documentation mismatch is confusing for newcomers.
+   Missing: A way to do simple conditionals without match would be nice for one-liners
+     (though guardless match works well enough). No string formatting/interpolation for
+     floats with precision (must call float.to_string separately).
+   Bugs: None encountered.
+-}
+
+type Transaction {
+  date: String,
+  category: String,
+  amount: Float,
+  description: String,
+}
+
+-- Validate a transaction: negative amounts and missing fields
+fn validate_transaction(t) {
+  match {
+    string.length(t.date) == 0 -> Err("Missing date")
+    string.length(t.category) == 0 -> Err("Missing category")
+    string.length(t.description) == 0 -> Err("Missing description")
+    t.amount == 0.0 -> Err("Amount cannot be zero")
+    _ -> Ok(t)
+  }
+}
+
+-- Format a dollar amount with 2 decimal places
+fn fmt(amount) {
+  let s = float.to_string(float.abs(amount), 2)
+  match amount < 0.0 {
+    true -> "-${s}"
+    _ -> "${s}"
+  }
+}
+
+-- Print a separator line
+fn separator() {
+  println(string.repeat("-", 60))
+}
+
+-- Print a report header
+fn header(title) {
+  println("")
+  separator()
+  println(string.pad_right("  {title}", 60, " "))
+  separator()
+}
+
+fn main() {
+  -- Define 22 sample transactions across 6 categories
+  let transactions = [
+    Transaction { date: "2026-03-01", category: "income",        amount: 4500.00, description: "Salary" },
+    Transaction { date: "2026-03-01", category: "utilities",     amount: -120.50, description: "Electric bill" },
+    Transaction { date: "2026-03-02", category: "food",          amount: -45.30,  description: "Grocery store" },
+    Transaction { date: "2026-03-03", category: "transport",     amount: -35.00,  description: "Gas" },
+    Transaction { date: "2026-03-04", category: "entertainment", amount: -15.99,  description: "Movie ticket" },
+    Transaction { date: "2026-03-05", category: "food",          amount: -62.40,  description: "Restaurant dinner" },
+    Transaction { date: "2026-03-06", category: "utilities",     amount: -85.00,  description: "Internet" },
+    Transaction { date: "2026-03-07", category: "transport",     amount: -50.00,  description: "Metro pass" },
+    Transaction { date: "2026-03-08", category: "food",          amount: -28.75,  description: "Coffee and snacks" },
+    Transaction { date: "2026-03-10", category: "entertainment", amount: -9.99,   description: "Streaming subscription" },
+    Transaction { date: "2026-03-11", category: "food",          amount: -95.20,  description: "Weekly groceries" },
+    Transaction { date: "2026-03-12", category: "transport",     amount: -22.50,  description: "Uber ride" },
+    Transaction { date: "2026-03-13", category: "utilities",     amount: -65.00,  description: "Water bill" },
+    Transaction { date: "2026-03-14", category: "entertainment", amount: -49.99,  description: "Concert ticket" },
+    Transaction { date: "2026-03-15", category: "income",        amount: 500.00,  description: "Freelance work" },
+    Transaction { date: "2026-03-16", category: "food",          amount: -33.80,  description: "Takeout" },
+    Transaction { date: "2026-03-17", category: "savings",       amount: -500.00, description: "Monthly savings" },
+    Transaction { date: "2026-03-18", category: "transport",     amount: -40.00,  description: "Parking fees" },
+    Transaction { date: "2026-03-20", category: "food",          amount: -72.10,  description: "Dinner party supplies" },
+    Transaction { date: "2026-03-22", category: "entertainment", amount: -29.99,  description: "Video game" },
+    Transaction { date: "2026-03-25", category: "utilities",     amount: -45.00,  description: "Phone bill" },
+    Transaction { date: "2026-03-28", category: "food",          amount: -55.60,  description: "Groceries end of month" }
+  ]
+
+  -- Validate all transactions
+  header("TRANSACTION VALIDATION")
+  let invalid = Transaction { date: "", category: "food", amount: 10.0, description: "test" }
+  let zero_amt = Transaction { date: "2026-03-01", category: "food", amount: 0.0, description: "test" }
+
+  let test_cases = [invalid, zero_amt]
+  test_cases |> list.each { t ->
+    match validate_transaction(t) {
+      Ok(_) -> println("  Valid: {t.description}")
+      Err(e) -> println("  Invalid: {e} (description: {t.description})")
+    }
+  }
+
+  -- Show that all main transactions are valid
+  let valid_count = transactions
+    |> list.filter { t -> result.is_ok(validate_transaction(t)) }
+    |> list.length
+  println("  All {valid_count} main transactions validated OK.")
+
+  -- ============================================================
+  -- REPORT 1: Totals by Category
+  -- ============================================================
+  header("SPENDING BY CATEGORY")
+
+  let expenses = transactions |> list.filter { t -> t.amount < 0.0 }
+
+  let by_category = expenses |> list.group_by { t -> t.category }
+
+  let category_totals = by_category
+    |> map.entries
+    |> list.map { entry ->
+      let (cat, txns) = entry
+      let total = txns |> list.fold(0.0) { acc, t -> acc + t.amount }
+      (cat, total)
+    }
+    |> list.sort_by { entry ->
+      let (_, total) = entry
+      total
+    }
+
+  println(
+    string.pad_right("  Category", 22, " ")
+    + string.pad_left("Amount", 14, " ")
+    + string.pad_left("Count", 8, " ")
+  )
+  println("  " + string.repeat("-", 40))
+
+  category_totals |> list.each { entry ->
+    let (cat, total) = entry
+    let txn_list = option.unwrap_or(map.get(by_category, cat), [])
+    let count = list.length(txn_list)
+    println(
+      string.pad_right("  {cat}", 22, " ")
+      + string.pad_left(fmt(total), 14, " ")
+      + string.pad_left(int.to_string(count), 8, " ")
+    )
+  }
+
+  let total_expenses = expenses |> list.fold(0.0) { acc, t -> acc + t.amount }
+  println("  " + string.repeat("-", 40))
+  println(
+    string.pad_right("  TOTAL", 22, " ")
+    + string.pad_left(fmt(total_expenses), 14, " ")
+  )
+
+  -- ============================================================
+  -- REPORT 2: Monthly Summary (Income, Expenses, Net)
+  -- ============================================================
+  header("MONTHLY SUMMARY - MARCH 2026")
+
+  let total_income = transactions
+    |> list.filter { t -> t.amount > 0.0 }
+    |> list.fold(0.0) { acc, t -> acc + t.amount }
+
+  let abs_expenses = float.abs(total_expenses)
+
+  println("  Income:     {fmt(total_income)}")
+  println("  Expenses:   {fmt(abs_expenses)}")
+  println("  " + string.repeat("-", 30))
+  let net = total_income + total_expenses
+  println("  Net:        {fmt(net)}")
+
+  -- ============================================================
+  -- REPORT 3: Running Balance
+  -- ============================================================
+  header("RUNNING BALANCE")
+
+  println(
+    string.pad_right("  Date", 16, " ")
+    + string.pad_right("Description", 24, " ")
+    + string.pad_left("Amount", 12, " ")
+    + string.pad_left("Balance", 12, " ")
+  )
+  println("  " + string.repeat("-", 60))
+
+  -- Use fold to compute running balance and print each row
+  transactions |> list.fold(0.0) { balance, t ->
+    let new_balance = balance + t.amount
+    println(
+      string.pad_right("  {t.date}", 16, " ")
+      + string.pad_right(t.description, 24, " ")
+      + string.pad_left(fmt(t.amount), 12, " ")
+      + string.pad_left(fmt(new_balance), 12, " ")
+    )
+    new_balance
+  }
+
+  -- ============================================================
+  -- REPORT 4: Budget vs Actual Comparison
+  -- ============================================================
+  header("BUDGET VS ACTUAL")
+
+  let budgets = #{
+    "food": 400.0,
+    "transport": 200.0,
+    "entertainment": 100.0,
+    "utilities": 350.0,
+    "savings": 500.0
+  }
+
+  -- Build a map of category -> actual spending (absolute value)
+  let actual_map = category_totals |> list.fold(#{}) { acc, entry ->
+    let (cat, total) = entry
+    map.set(acc, cat, float.abs(total))
+  }
+
+  println(
+    string.pad_right("  Category", 18, " ")
+    + string.pad_left("Budget", 12, " ")
+    + string.pad_left("Actual", 12, " ")
+    + string.pad_left("Remaining", 12, " ")
+    + "  Status"
+  )
+  println("  " + string.repeat("-", 58))
+
+  budgets |> map.entries |> list.each { entry ->
+    let (cat, budget) = entry
+    let actual = option.unwrap_or(map.get(actual_map, cat), 0.0)
+    let remaining = budget - actual
+    let status = match remaining < 0.0 {
+      true -> "OVER BUDGET!"
+      _ -> "OK"
+    }
+    println(
+      string.pad_right("  {cat}", 18, " ")
+      + string.pad_left(fmt(budget), 12, " ")
+      + string.pad_left(fmt(actual), 12, " ")
+      + string.pad_left(fmt(remaining), 12, " ")
+      + "  {status}"
+    )
+  }
+
+  -- ============================================================
+  -- REPORT 5: Spending Forecast
+  -- ============================================================
+  header("SPENDING FORECAST (30-DAY MONTH)")
+
+  -- We have data through day 28, project to 30 days
+  let days_elapsed = 28.0
+  let days_in_month = 30.0
+
+  println(
+    string.pad_right("  Category", 18, " ")
+    + string.pad_left("Spent", 12, " ")
+    + string.pad_left("Projected", 12, " ")
+    + string.pad_left("Budget", 12, " ")
+    + "  Forecast"
+  )
+  println("  " + string.repeat("-", 58))
+
+  budgets |> map.entries |> list.each { entry ->
+    let (cat, budget) = entry
+    let actual = option.unwrap_or(map.get(actual_map, cat), 0.0)
+    let daily_rate = actual / days_elapsed
+    let projected = daily_rate * days_in_month
+    let forecast = match projected > budget {
+      true -> "WILL EXCEED by {fmt(projected - budget)}"
+      _ -> "On track"
+    }
+    println(
+      string.pad_right("  {cat}", 18, " ")
+      + string.pad_left(fmt(actual), 12, " ")
+      + string.pad_left(fmt(projected), 12, " ")
+      + string.pad_left(fmt(budget), 12, " ")
+      + "  {forecast}"
+    )
+  }
+
+  separator()
+  println("  Budget report complete.")
+}

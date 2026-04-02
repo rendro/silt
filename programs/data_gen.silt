@@ -1,0 +1,226 @@
+{- Synthetic Data Generator
+   Uses a linear congruential PRNG to generate student records,
+   then computes statistics and displays a histogram.
+-}
+
+{- Friction Report
+   Attempts: 2
+   Rating: 8/10
+   Highlights: list.unfold is elegant for stateful generation (PRNG threading). Trailing closure
+     syntax makes pipelines very readable. Pattern matching on tuples for destructuring state is
+     natural. list.group_by + map operations compose well for the histogram. The guardless match
+     expression is a clean replacement for if/else chains (bucket function). String interpolation
+     with {expr} is convenient.
+   Friction: The language summary says "Semicolons separate expressions in blocks" but the parser
+     rejects semicolons with "semicolons are not used in silt — use a newline to separate statements".
+     This is a documentation inconsistency that cost one failed attempt. Also, the sort_by closure
+     for sorting map entries required a multi-line block with let binding since destructuring in the
+     closure parameter directly was uncertain.
+   Missing: No if/else expression means simple conditionals require match { cond -> ... _ -> ... }
+     which is a bit verbose. A range function or random stdlib would reduce boilerplate for data
+     generation tasks.
+   Bugs: None encountered in the runtime or type system.
+-}
+
+type Student {
+  name: String,
+  age: Int,
+  score: Int,
+}
+
+-- Linear congruential generator: returns (value, new_seed)
+fn next_random(seed) {
+  let a = 1103515245
+  let c = 12345
+  let m = 2147483648
+  let new_seed = (a * seed + c) % m
+  (new_seed, new_seed)
+}
+
+-- Get a random int in [0, max) from a seed, returns (value, new_seed)
+fn rand_range(seed, max) {
+  let (raw, new_seed) = next_random(seed)
+  let value = int.abs(raw) % max
+  (value, new_seed)
+}
+
+-- Generate a list of n random ints from a seed using list.unfold
+fn random_sequence(seed, n) {
+  list.unfold((0, seed)) { state ->
+    let (i, s) = state
+    match i >= n {
+      true -> None
+      _ -> {
+        let (val, new_s) = next_random(s)
+        Some((val, (i + 1, new_s)))
+      }
+    }
+  }
+}
+
+-- Pick a random element from a list
+fn pick(items, seed) {
+  let len = list.length(items)
+  let (idx, new_seed) = rand_range(seed, len)
+  let item = option.unwrap_or(list.get(items, idx), "Unknown")
+  (item, new_seed)
+}
+
+-- Generate 20 student records
+fn generate_students(seed) {
+  let first_names = ["Alice", "Bob", "Carol", "Dave", "Eve",
+                     "Frank", "Grace", "Hank", "Ivy", "Jack"]
+  let last_names = ["Smith", "Jones", "Brown", "Davis", "Wilson",
+                    "Moore", "Clark", "Lewis", "Hall", "Young"]
+
+  list.unfold((0, seed)) { state ->
+    let (i, s) = state
+    match i >= 20 {
+      true -> None
+      _ -> {
+        let (first, s1) = pick(first_names, s)
+        let (last, s2) = pick(last_names, s1)
+        let name = "{first} {last}"
+        let (age, s3) = rand_range(s2, 10)
+        let age = age + 18
+        let (score, s4) = rand_range(s3, 61)
+        let score = score + 40
+        let student = Student { name: name, age: age, score: score }
+        Some((student, (i + 1, s4)))
+      }
+    }
+  }
+}
+
+-- Compute mean of a list of ints
+fn mean(values) {
+  let n = list.length(values)
+  let sum = list.fold(values, 0) { acc, x -> acc + x }
+  int.to_float(sum) / int.to_float(n)
+}
+
+-- Compute median (sort + middle element)
+fn median(values) {
+  let sorted = list.sort(values)
+  let n = list.length(sorted)
+  let mid = n / 2
+  match n % 2 {
+    0 -> {
+      let a = option.unwrap_or(list.get(sorted, mid - 1), 0)
+      let b = option.unwrap_or(list.get(sorted, mid), 0)
+      int.to_float(a + b) / 2.0
+    }
+    _ -> {
+      let v = option.unwrap_or(list.get(sorted, mid), 0)
+      int.to_float(v)
+    }
+  }
+}
+
+-- Compute standard deviation
+fn std_dev(values) {
+  let avg = mean(values)
+  let n = list.length(values)
+  let sum_sq = list.fold(values, 0.0) { acc, x ->
+    let diff = int.to_float(x) - avg
+    acc + diff * diff
+  }
+  let variance = sum_sq / int.to_float(n)
+  math.sqrt(variance)
+}
+
+-- Bucket a score into a range label
+fn bucket(score) {
+  match {
+    score < 50  -> "40-49"
+    score < 60  -> "50-59"
+    score < 70  -> "60-69"
+    score < 80  -> "70-79"
+    score < 90  -> "80-89"
+    _           -> "90-100"
+  }
+}
+
+-- Display histogram of scores
+fn histogram(students) {
+  let scores = students |> list.map { s -> s.score }
+  let grouped = scores |> list.group_by { s -> bucket(s) }
+
+  let bucket_order = ["40-49", "50-59", "60-69", "70-79", "80-89", "90-100"]
+
+  println("\n  Score Histogram:")
+  println("  ----------------")
+  bucket_order |> list.each { label ->
+    let count = match map.get(grouped, label) {
+      Some(vals) -> list.length(vals)
+      None -> 0
+    }
+    let bar = string.repeat("#", count)
+    let padded_label = string.pad_right(label, 7, " ")
+    println("  {padded_label} | {bar} ({count})")
+  }
+}
+
+fn main() {
+  let seed = 42
+  let students = generate_students(seed)
+
+  -- Display all students using list.enumerate
+  println("=== Generated Students ===")
+  students |> list.enumerate |> list.each { pair ->
+    let (i, s) = pair
+    let num = string.pad_left(int.to_string(i + 1), 2, " ")
+    println("  {num}. {s.name}, age {s.age}, score {s.score}")
+  }
+
+  -- Extract scores
+  let scores = students |> list.map { s -> s.score }
+
+  -- Compute statistics
+  let avg = mean(scores)
+  let med = median(scores)
+  let sd = std_dev(scores)
+
+  println("\n=== Score Statistics ===")
+  println("  Mean:   {float.to_string(avg, 2)}")
+  println("  Median: {float.to_string(med, 2)}")
+  println("  Std Dev: {float.to_string(sd, 2)}")
+
+  -- Sort students by score descending using list.sort_by
+  let ranked = students |> list.sort_by { s -> 0 - s.score }
+  println("\n=== Top 5 Students (by score) ===")
+  ranked
+  |> list.take(5)
+  |> list.enumerate
+  |> list.each { pair ->
+    let (i, s) = pair
+    println("  {i + 1}. {s.name} - score {s.score}")
+  }
+
+  -- Group by age using list.group_by
+  let by_age = students |> list.group_by { s -> int.to_string(s.age) }
+  println("\n=== Students by Age ===")
+  map.entries(by_age)
+  |> list.sort_by { entry ->
+    let (k, _) = entry
+    k
+  }
+  |> list.each { entry ->
+    let (age, group) = entry
+    let names = group |> list.map { s -> s.name } |> string.join(", ")
+    println("  Age {age}: {names}")
+  }
+
+  -- Zip ranks with sorted students
+  let ranks = 1..21
+  let zipped = list.zip(ranks, ranked)
+  println("\n=== Full Rankings ===")
+  zipped |> list.each { pair ->
+    let (rank, s) = pair
+    let r = string.pad_left(int.to_string(rank), 2, " ")
+    println("  #{r} {s.name} (score: {s.score})")
+  }
+
+  -- Histogram
+  histogram(students)
+}

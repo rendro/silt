@@ -1,222 +1,231 @@
 {- Friction Report
    Attempts: 2
-   Rating: 8/10
-   Highlights: Pipe operator and trailing closures make data processing very clean.
-     list.group_by, list.sort_by, map.from_entries are powerful primitives.
-     String interpolation with {expr} is natural and avoids concatenation.
-     Pattern matching on lists ([h, ..t]) is elegant.
-     The when/else guard for Result unwrapping reads nicely.
-   Friction: No string concatenation operator (++ does not exist) -- must use
-     interpolation or string.join for everything. Match arms use newlines not
-     commas despite the language summary suggesting comma separation works.
-     Tuple destructuring in let bindings (let (a, b) = pair) worked but felt
-     underdocumented. No built-in min/max for lists, had to write fold-based
-     versions.
-   Missing: list.min_by / list.max_by / list.sum would reduce boilerplate.
-     A string concatenation operator would be handy for building strings
-     incrementally. float.min / float.max exist but int equivalents only
-     take two args, not lists.
-   Bugs: Match arm comma separator claimed in language summary does not parse
-     (error: "expected pattern, found ,"). Had to use newline-separated arms
-     or guardless match instead.
+   Rating: 9/10
+   Highlights: Pipe operator + trailing closures make data processing very readable.
+     list.sort_by, list.filter, list.group_by, and string.pad_right are great
+     for CSV analysis. String interpolation is clean and natural. The when/else
+     pattern for early return from Result is ergonomic.
+   Friction: Language summary said "semicolons separate expressions in blocks" but
+     the compiler rejects semicolons with a helpful error message. This was the only
+     issue and was trivially fixed by removing semicolons.
+   Missing: No string concatenation operator (++ or +). Must use interpolation like
+     "{a}{b}" which works but feels indirect for simple joins. A to_string trait
+     or automatic coercion for int.to_string in interpolation would be nice (though
+     interpolation already handles this). No negative float literal support — had to
+     write 0.0 - 999999.0 instead of -999999.0 for initial min/max accumulators.
+   Bugs: None encountered.
 -}
 
--- Parse a CSV row into a list of trimmed fields
+-- CSV Statistics Analyzer
+-- Parses a CSV file, computes per-column statistics, filters and sorts rows,
+-- and prints formatted tables with alignment.
+
+-- Parse a single CSV row into a list of trimmed fields
 fn parse_row(line) {
   line |> string.split(",") |> list.map { field -> string.trim(field) }
 }
 
--- Parse the entire CSV content into a list of maps (one per row)
+-- Parse the entire CSV: returns (headers, rows) where rows is a list of field-lists
 fn parse_csv(content) {
   let lines = content
     |> string.split("\n")
     |> list.filter { line -> string.length(string.trim(line)) > 0 }
 
   match lines {
-    [] -> []
+    [] -> ([], [])
     [header_line, ..data_lines] -> {
       let headers = parse_row(header_line)
-      data_lines |> list.map { line ->
-        let fields = parse_row(line)
-        list.zip(headers, fields) |> map.from_entries()
-      }
+      let rows = data_lines |> list.map { line -> parse_row(line) }
+      (headers, rows)
     }
   }
 }
 
--- Safely get a string field from a row map
-fn get_field(row, key) {
-  match map.get(row, key) {
-    Some(v) -> v
-    None -> ""
-  }
+-- Get a field value from a row by column index
+fn get_field(row, idx) {
+  option.unwrap_or(list.get(row, idx), "")
 }
 
--- Parse an int field from a row map
-fn get_int(row, key) {
-  let raw = get_field(row, key)
-  result.unwrap_or(int.parse(raw), 0)
-}
-
--- Compute sum of a list of integers
-fn sum(xs) {
-  xs |> list.fold(0) { acc, x -> acc + x }
-}
-
--- Compute min of a non-empty list of integers
-fn min_of(xs) {
-  match xs {
-    [first, ..rest] -> rest |> list.fold(first) { acc, x ->
-      match {
-        x < acc -> x
-        _ -> acc
-      }
+-- Compute statistics for a list of float values: (count, sum, min, max, avg)
+fn compute_stats(values) {
+  let count = list.length(values)
+  match count == 0 {
+    true -> (0, 0.0, 0.0, 0.0, 0.0)
+    _ -> {
+      let sum = values |> list.fold(0.0) { acc, v -> acc + v }
+      let min_val = values |> list.fold(999999.0) { acc, v -> float.min(acc, v) }
+      let max_val = values |> list.fold(0.0 - 999999.0) { acc, v -> float.max(acc, v) }
+      let avg = sum / int.to_float(count)
+      (count, sum, min_val, max_val, avg)
     }
-    _ -> 0
   }
 }
 
--- Compute max of a non-empty list of integers
-fn max_of(xs) {
-  match xs {
-    [first, ..rest] -> rest |> list.fold(first) { acc, x ->
-      match {
-        x > acc -> x
-        _ -> acc
-      }
-    }
-    _ -> 0
-  }
-}
-
--- Compute average as a float
-fn avg_of(xs) {
-  let total = sum(xs)
-  let count = list.length(xs)
-  match count {
-    0 -> 0.0
-    _ -> int.to_float(total) / int.to_float(count)
-  }
-}
-
--- Print a horizontal separator
+-- Print a horizontal separator line
 fn print_separator(widths) {
   let parts = widths |> list.map { w -> string.repeat("-", w + 2) }
-  let joined = string.join(parts, "+")
-  println("+{joined}+")
+  let line = string.join(parts, "+")
+  println("+{line}+")
 }
 
--- Print a row of cells with padding
+-- Print a row with padded cells
 fn print_table_row(cells, widths) {
-  let padded = list.zip(cells, widths) |> list.map { pair ->
-    let (cell, width) = pair
-    let padded_cell = string.pad_right(cell, width, " ")
-    "| {padded_cell} "
-  }
-  let row_str = string.join(padded, "")
-  println("{row_str}|")
-}
-
--- Print column statistics for a numeric column
-fn print_column_stats(name, values) {
-  let s = sum(values)
-  let mn = min_of(values)
-  let mx = max_of(values)
-  let av = avg_of(values)
-  println("  {name}:")
-  println("    Sum: {s}")
-  println("    Min: {mn}")
-  println("    Max: {mx}")
-  println("    Avg: {float.to_string(av, 2)}")
+  let padded = list.zip(cells, widths)
+    |> list.map { pair ->
+      let (cell, w) = pair
+      let padded_cell = string.pad_right(cell, w, " ")
+      " {padded_cell} "
+    }
+  let row = string.join(padded, "|")
+  println("|{row}|")
 }
 
 fn main() {
-  -- Read CSV file
-  when Ok(content) = io.read_file("programs/data.csv") else {
-    println("Error: could not read programs/data.csv")
+  -- Read and parse CSV
+  let csv_result = io.read_file("programs/data.csv")
+  when Ok(content) = csv_result else {
+    println("Error reading CSV file")
     return ()
   }
 
-  let rows = parse_csv(content)
-  let count = list.length(rows)
-  println("=== CSV Analyzer ===")
-  println("Loaded {count} rows\n")
+  let (headers, rows) = parse_csv(content)
 
-  -- Extract numeric columns
-  let ages = rows |> list.map { r -> get_int(r, "age") }
-  let scores = rows |> list.map { r -> get_int(r, "score") }
-
-  -- Print statistics
-  println("--- Column Statistics ---")
-  print_column_stats("Age", ages)
-  print_column_stats("Score", scores)
+  println("=== CSV Statistics Analyzer ===")
   println("")
 
-  -- Print full table
-  println("--- All Students ---")
+  -- Find column indices
+  let name_idx = 0
+  let age_idx = 1
+  let score_idx = 2
+  let grade_idx = 3
+
+  -- ---- Full Data Table ----
+  println("--- All Student Data ---")
   let col_widths = [10, 5, 7, 7]
-  let headers = ["Name", "Age", "Score", "Grade"]
   print_separator(col_widths)
   print_table_row(headers, col_widths)
   print_separator(col_widths)
   rows |> list.each { row ->
-    let cells = [
-      get_field(row, "name"),
-      get_field(row, "age"),
-      get_field(row, "score"),
-      get_field(row, "grade")
-    ]
-    print_table_row(cells, col_widths)
+    print_table_row(row, col_widths)
   }
   print_separator(col_widths)
   println("")
 
-  -- Filter: students with score >= 80
-  let high_scorers = rows |> list.filter { r -> get_int(r, "score") >= 80 }
-  println("--- High Scorers (score >= 80) ---")
+  -- ---- Numeric Column Statistics ----
+  let ages = rows |> list.map { row ->
+    let age_str = get_field(row, age_idx)
+    result.unwrap_or(float.parse(age_str), 0.0)
+  }
+
+  let scores = rows |> list.map { row ->
+    let score_str = get_field(row, score_idx)
+    result.unwrap_or(float.parse(score_str), 0.0)
+  }
+
+  let (age_count, age_sum, age_min, age_max, age_avg) = compute_stats(ages)
+  let (score_count, score_sum, score_min, score_max, score_avg) = compute_stats(scores)
+
+  println("--- Column Statistics ---")
+  let sw = [10, 12, 12]
+  print_separator(sw)
+  print_table_row(["Statistic", "Age", "Score"], sw)
+  print_separator(sw)
+  print_table_row(["Count", int.to_string(age_count), int.to_string(score_count)], sw)
+  print_table_row(["Sum", float.to_string(age_sum, 1), float.to_string(score_sum, 1)], sw)
+  print_table_row(["Min", float.to_string(age_min, 1), float.to_string(score_min, 1)], sw)
+  print_table_row(["Max", float.to_string(age_max, 1), float.to_string(score_max, 1)], sw)
+  print_table_row(["Average", float.to_string(age_avg, 2), float.to_string(score_avg, 2)], sw)
+  print_separator(sw)
+  println("")
+
+  -- ---- Filter: Honor Roll (score >= 85) ----
+  println("--- Honor Roll (Score >= 85) ---")
+  let honor_students = rows |> list.filter { row ->
+    let score_str = get_field(row, score_idx)
+    let score = result.unwrap_or(float.parse(score_str), 0.0)
+    score >= 85.0
+  }
+
   print_separator(col_widths)
   print_table_row(headers, col_widths)
   print_separator(col_widths)
-  high_scorers |> list.each { row ->
-    let cells = [
-      get_field(row, "name"),
-      get_field(row, "age"),
-      get_field(row, "score"),
-      get_field(row, "grade")
-    ]
-    print_table_row(cells, col_widths)
+  honor_students |> list.each { row ->
+    print_table_row(row, col_widths)
   }
   print_separator(col_widths)
+  let honor_count = list.length(honor_students)
+  println("{honor_count} students on the honor roll")
   println("")
 
-  -- Sort by score descending
-  let sorted = rows |> list.sort_by { r -> 0 - get_int(r, "score") }
-  println("--- Students Sorted by Score (descending) ---")
+  -- ---- Filter: Failing students (grade F) ----
+  println("--- Failing Students (Grade F) ---")
+  let failing = rows |> list.filter { row ->
+    get_field(row, grade_idx) == "F"
+  }
   print_separator(col_widths)
   print_table_row(headers, col_widths)
   print_separator(col_widths)
-  sorted |> list.each { row ->
-    let cells = [
-      get_field(row, "name"),
-      get_field(row, "age"),
-      get_field(row, "score"),
-      get_field(row, "grade")
-    ]
-    print_table_row(cells, col_widths)
+  failing |> list.each { row ->
+    print_table_row(row, col_widths)
+  }
+  print_separator(col_widths)
+  let fail_count = list.length(failing)
+  println("{fail_count} failing students")
+  println("")
+
+  -- ---- Sort by score (descending) ----
+  println("--- Students Sorted by Score (Descending) ---")
+  let sorted_by_score = rows |> list.sort_by { row ->
+    let score_str = get_field(row, score_idx)
+    let score = result.unwrap_or(float.parse(score_str), 0.0)
+    0.0 - score
+  }
+
+  print_separator(col_widths)
+  print_table_row(headers, col_widths)
+  print_separator(col_widths)
+  sorted_by_score |> list.each { row ->
+    print_table_row(row, col_widths)
   }
   print_separator(col_widths)
   println("")
 
-  -- Grade distribution
-  let grade_groups = rows |> list.group_by { r -> get_field(r, "grade") }
+  -- ---- Sort by age (ascending) ----
+  println("--- Students Sorted by Age (Ascending) ---")
+  let sorted_by_age = rows |> list.sort_by { row ->
+    let age_str = get_field(row, age_idx)
+    result.unwrap_or(float.parse(age_str), 0.0)
+  }
+
+  print_separator(col_widths)
+  print_table_row(headers, col_widths)
+  print_separator(col_widths)
+  sorted_by_age |> list.each { row ->
+    print_table_row(row, col_widths)
+  }
+  print_separator(col_widths)
+  println("")
+
+  -- ---- Grade Distribution ----
   println("--- Grade Distribution ---")
-  let grade_entries = map.entries(grade_groups) |> list.sort_by { entry ->
-    let (grade, _) = entry
-    grade
+  let grade_groups = rows |> list.group_by { row -> get_field(row, grade_idx) }
+  let grade_widths = [7, 7, 30]
+  print_separator(grade_widths)
+  print_table_row(["Grade", "Count", "Students"], grade_widths)
+  print_separator(grade_widths)
+  ["A", "B", "C", "D", "F"] |> list.each { grade ->
+    let students = match map.get(grade_groups, grade) {
+      Some(s) -> s
+      None -> []
+    }
+    let count = list.length(students)
+    let names = students
+      |> list.map { row -> get_field(row, name_idx) }
+      |> string.join(", ")
+    print_table_row([grade, int.to_string(count), names], grade_widths)
   }
-  grade_entries |> list.each { entry ->
-    let (grade, students) = entry
-    let names = students |> list.map { s -> get_field(s, "name") }
-    println("  Grade {grade}: {list.length(students)} students ({string.join(names, ", ")})")
-  }
+  print_separator(grade_widths)
+  println("")
+
+  println("Analysis complete.")
 }

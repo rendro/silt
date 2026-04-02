@@ -1,21 +1,21 @@
 {- Friction Report
-   Attempts: 1
+   Attempts: 2
    Rating: 9/10
-   Highlights:
-     - Recursive ADT definition was clean and natural
-     - Or-patterns (Add(l,r) | Mul(l,r)) worked perfectly for tree traversal
-     - Pattern matching on nested constructors felt very ergonomic
-     - Pipe operator made from_rpn's fold-based stack approach readable
-     - String interpolation with method calls ({e.display()}) just worked
-     - list.prepend/concat were sufficient for stack manipulation
-     - The guardless match (match { cond -> ... }) was a nice if/else replacement
-   Friction:
-     - Minor: string concatenation via + exists but list.concat for building token
-       lists felt slightly verbose compared to a spread/append operator
-   Missing:
-     - A built-in way to get max/min of a list (only int.max for pairs)
-     - No format/to_string for arbitrary values (Display trait helps but requires explicit .display() calls)
-   Bugs: None encountered
+   Highlights: Recursive ADTs with pattern matching are excellent. Deep pattern matching
+     on nested constructors like Add(Mul(Num(a), Num(b)), Neg(Num(c))) just works.
+     Or-patterns with shared bindings (Add(l, r) | Mul(l, r) -> ...) are very ergonomic
+     for writing tree-walking functions. Trait Display for ADTs is clean. String
+     interpolation with method calls ({e.display()}) is pleasant. Pipe operator
+     with trailing closures makes list processing readable.
+   Friction: The language summary says "Semicolons separate expressions in blocks"
+     but the actual parser rejects semicolons with a helpful error message suggesting
+     newlines instead. This was the only issue encountered. The error message was
+     clear enough to fix immediately.
+   Missing: No unary negation operator (had to use 0 - x). A negate function or
+     unary minus would be convenient. No built-in way to convert ADT values to
+     strings without implementing Display manually (though the trait system makes
+     this straightforward).
+   Bugs: None encountered.
 -}
 
 -- Recursive ADT for arithmetic expressions
@@ -30,10 +30,10 @@ type Expr {
 trait Display for Expr {
   fn display(self) -> String {
     match self {
-      Num(n) -> "{n}"
-      Add(l, r) -> "({l.display()} + {r.display()})"
-      Mul(l, r) -> "({l.display()} * {r.display()})"
-      Neg(e) -> "(-{e.display()})"
+      Num(n) -> int.to_string(n)
+      Add(left, right) -> "({left.display()} + {right.display()})"
+      Mul(left, right) -> "({left.display()} * {right.display()})"
+      Neg(inner) -> "(-{inner.display()})"
     }
   }
 }
@@ -42,9 +42,9 @@ trait Display for Expr {
 fn eval(expr) {
   match expr {
     Num(n) -> n
-    Add(l, r) -> eval(l) + eval(r)
-    Mul(l, r) -> eval(l) * eval(r)
-    Neg(e) -> -eval(e)
+    Add(left, right) -> eval(left) + eval(right)
+    Mul(left, right) -> eval(left) * eval(right)
+    Neg(inner) -> 0 - eval(inner)
   }
 }
 
@@ -54,128 +54,119 @@ fn simplify(expr) {
     Num(n) -> Num(n)
 
     -- Simplify children first, then apply rules
-    Add(l, r) -> {
-      let sl = simplify(l)
-      let sr = simplify(r)
+    Add(left, right) -> {
+      let sl = simplify(left)
+      let sr = simplify(right)
       match (sl, sr) {
-        -- x + 0 = x
+        -- x + 0 = x, 0 + x = x
         (e, Num(0)) -> e
-        -- 0 + x = x
         (Num(0), e) -> e
         -- constant folding
         (Num(a), Num(b)) -> Num(a + b)
-        -- double negation in addition: (-a) + a = 0
-        (Neg(a), b) when eval(a) == eval(b) -> Num(0)
-        (a, Neg(b)) when eval(a) == eval(b) -> Num(0)
-        -- otherwise
+        -- default
         (a, b) -> Add(a, b)
       }
     }
 
-    Mul(l, r) -> {
-      let sl = simplify(l)
-      let sr = simplify(r)
+    Mul(left, right) -> {
+      let sl = simplify(left)
+      let sr = simplify(right)
       match (sl, sr) {
-        -- x * 0 = 0 | 0 * x = 0
+        -- x * 0 = 0, 0 * x = 0
         (_, Num(0)) | (Num(0), _) -> Num(0)
-        -- x * 1 = x
+        -- x * 1 = x, 1 * x = x
         (e, Num(1)) -> e
-        -- 1 * x = x
         (Num(1), e) -> e
         -- constant folding
         (Num(a), Num(b)) -> Num(a * b)
-        -- otherwise
+        -- default
         (a, b) -> Mul(a, b)
       }
     }
 
-    Neg(e) -> {
-      let se = simplify(e)
-      match se {
-        -- double negation: -(-x) = x
-        Neg(inner) -> inner
+    Neg(inner) -> {
+      let si = simplify(inner)
+      match si {
+        -- double negation: --x = x
+        Neg(e) -> e
         -- negate constant
-        Num(n) -> Num(-n)
-        -- otherwise
-        other -> Neg(other)
+        Num(n) -> Num(0 - n)
+        -- default
+        e -> Neg(e)
       }
     }
   }
 }
 
--- Convert expression to Reverse Polish Notation (list of tokens)
+-- Convert expression to Reverse Polish Notation (list of string tokens)
 fn to_rpn(expr) {
   match expr {
-    Num(n) -> ["{n}"]
-    Add(l, r) -> list.concat(list.concat(to_rpn(l), to_rpn(r)), ["+"])
-    Mul(l, r) -> list.concat(list.concat(to_rpn(l), to_rpn(r)), ["*"])
-    Neg(e) -> list.concat(to_rpn(e), ["neg"])
+    Num(n) -> [int.to_string(n)]
+    Add(left, right) -> list.concat(list.concat(to_rpn(left), to_rpn(right)), ["+"])
+    Mul(left, right) -> list.concat(list.concat(to_rpn(left), to_rpn(right)), ["*"])
+    Neg(inner) -> list.concat(to_rpn(inner), ["neg"])
   }
 }
 
--- Parse an RPN token list back into an Expr
--- Uses a stack-based approach with a loop
+-- Parse an expression from RPN tokens
+-- Uses a stack-based approach: returns Ok(Expr) or Err(String)
 fn from_rpn(tokens) {
-  let stack = tokens |> list.fold([]) { stack, token ->
-    match token {
-      "+" -> {
-        match stack {
-          [b, a, ..rest] -> list.prepend(rest, Add(a, b))
-          _ -> panic("invalid RPN: not enough operands for +")
+  let result = list.fold(tokens, Ok([])) { acc, token ->
+    match acc {
+      Err(e) -> Err(e)
+      Ok(stack) -> match token {
+        "+" -> match stack {
+          [b, a, ..rest] -> Ok(list.prepend(rest, Add(a, b)))
+          _ -> Err("not enough operands for +")
         }
-      }
-      "*" -> {
-        match stack {
-          [b, a, ..rest] -> list.prepend(rest, Mul(a, b))
-          _ -> panic("invalid RPN: not enough operands for *")
+        "*" -> match stack {
+          [b, a, ..rest] -> Ok(list.prepend(rest, Mul(a, b)))
+          _ -> Err("not enough operands for *")
         }
-      }
-      "neg" -> {
-        match stack {
-          [top, ..rest] -> list.prepend(rest, Neg(top))
-          _ -> panic("invalid RPN: not enough operands for neg")
+        "neg" -> match stack {
+          [top, ..rest] -> Ok(list.prepend(rest, Neg(top)))
+          _ -> Err("not enough operands for neg")
         }
-      }
-      numstr -> {
-        match int.parse(numstr) {
-          Ok(n) -> list.prepend(stack, Num(n))
-          Err(e) -> panic("invalid RPN token: {numstr}")
+        _ -> match int.parse(token) {
+          Ok(n) -> Ok(list.prepend(stack, Num(n)))
+          Err(e) -> Err("invalid token: {token}")
         }
       }
     }
   }
-  match stack {
-    [result] -> result
-    _ -> panic("invalid RPN: leftover stack items")
+  match result {
+    Err(e) -> Err(e)
+    Ok([expr]) -> Ok(expr)
+    Ok(_) -> Err("invalid RPN: leftover items on stack")
   }
 }
 
 -- Classify expression complexity
 fn classify(expr) {
-  let depth = tree_depth(expr)
-  let ops = count_ops(expr)
-  match {
-    ops == 0 -> "constant"
-    ops == 1 -> "simple"
-    ops <= 3 -> "moderate"
-    depth <= 3 -> "flat"
-    _ -> "complex"
+  match expr {
+    Num(_) -> "constant"
+    Neg(Num(_)) -> "constant"
+    Add(Num(_), Num(_)) | Mul(Num(_), Num(_)) -> "simple"
+    Add(_, _) | Mul(_, _) -> "compound"
+    Neg(inner) -> classify(inner)
   }
 }
 
-fn tree_depth(expr) {
+-- Count the depth of an expression tree
+fn depth(expr) {
   match expr {
     Num(_) -> 0
-    Add(l, r) | Mul(l, r) -> 1 + int.max(tree_depth(l), tree_depth(r))
-    Neg(e) -> 1 + tree_depth(e)
+    Add(left, right) | Mul(left, right) -> 1 + int.max(depth(left), depth(right))
+    Neg(inner) -> 1 + depth(inner)
   }
 }
 
-fn count_ops(expr) {
+-- Count the number of nodes
+fn node_count(expr) {
   match expr {
-    Num(_) -> 0
-    Add(l, r) | Mul(l, r) -> 1 + count_ops(l) + count_ops(r)
-    Neg(e) -> 1 + count_ops(e)
+    Num(_) -> 1
+    Add(left, right) | Mul(left, right) -> 1 + node_count(left) + node_count(right)
+    Neg(inner) -> 1 + node_count(inner)
   }
 }
 
@@ -183,62 +174,84 @@ fn main() {
   println("=== Expression Evaluator ===")
   println("")
 
-  -- Build: (2 + 3) * (4 + (-1))
-  let expr1 = Mul(Add(Num(2), Num(3)), Add(Num(4), Neg(Num(1))))
-  println("Expression: {expr1.display()}")
-  println("Evaluated:  {eval(expr1)}")
-  println("Complexity: {classify(expr1)}")
-  println("")
+  -- Build some expressions
+  -- (3 + 5) * 2
+  let e1 = Mul(Add(Num(3), Num(5)), Num(2))
+  -- -(4 + 0)
+  let e2 = Neg(Add(Num(4), Num(0)))
+  -- (1 * x) where x = (2 + 3), should simplify
+  let e3 = Mul(Num(1), Add(Num(2), Num(3)))
+  -- double negation: -(-7)
+  let e4 = Neg(Neg(Num(7)))
+  -- 0 * (complex expression)
+  let e5 = Mul(Num(0), Add(Mul(Num(3), Num(4)), Num(5)))
 
-  -- RPN round-trip
-  let rpn = to_rpn(expr1)
-  let rpn_str = string.join(rpn, " ")
-  println("RPN:        {rpn_str}")
-  let rebuilt = from_rpn(rpn)
-  println("From RPN:   {rebuilt.display()}")
-  println("Eval check: {eval(rebuilt)}")
-  println("")
+  let exprs = [e1, e2, e3, e4, e5]
 
-  -- Simplification demos
-  println("=== Simplification ===")
-  println("")
-
-  -- x + 0 = x
-  let e2 = Add(Num(5), Num(0))
-  println("{e2.display()} => {simplify(e2).display()}")
-
-  -- 0 * x = 0
-  let e3 = Mul(Num(0), Add(Num(3), Num(4)))
-  println("{e3.display()} => {simplify(e3).display()}")
-
-  -- 1 * x = x
-  let e4 = Mul(Num(1), Num(42))
-  println("{e4.display()} => {simplify(e4).display()}")
-
-  -- double negation
-  let e5 = Neg(Neg(Num(7)))
-  println("{e5.display()} => {simplify(e5).display()}")
-
-  -- constant folding
-  let e6 = Add(Num(3), Num(4))
-  println("{e6.display()} => {simplify(e6).display()}")
-
-  -- Nested: (1 * (2 + 0)) + (0 * 99)
-  let e7 = Add(Mul(Num(1), Add(Num(2), Num(0))), Mul(Num(0), Num(99)))
-  println("{e7.display()} => {simplify(e7).display()}")
-  println("")
-
-  -- Or-pattern demo via classify
-  println("=== Classification (or-patterns in tree_depth/count_ops) ===")
-  println("")
-  let exprs = [
-    Num(42),
-    Neg(Num(5)),
-    Add(Num(1), Num(2)),
-    Mul(Add(Num(1), Num(2)), Num(3)),
-    expr1
-  ]
+  -- Evaluate and display each expression
+  println("-- Evaluation --")
   exprs |> list.each { e ->
-    println("{e.display()} => complexity: {classify(e)}, depth: {tree_depth(e)}, ops: {count_ops(e)}")
+    println("  {e.display()} = {eval(e)}")
   }
+
+  -- Simplify each expression
+  println("")
+  println("-- Simplification --")
+  exprs |> list.each { e ->
+    let s = simplify(e)
+    println("  {e.display()} => {s.display()} = {eval(s)}")
+  }
+
+  -- Convert to RPN and back
+  println("")
+  println("-- RPN Round-trip --")
+  exprs |> list.each { e ->
+    let rpn = to_rpn(e)
+    let rpn_str = string.join(rpn, " ")
+    let rebuilt = from_rpn(rpn)
+    match rebuilt {
+      Ok(re) -> println("  {e.display()} -> RPN: {rpn_str} -> rebuilt: {re.display()} = {eval(re)}")
+      Err(msg) -> println("  {e.display()} -> RPN: {rpn_str} -> ERROR: {msg}")
+    }
+  }
+
+  -- Classify complexity
+  println("")
+  println("-- Classification --")
+  exprs |> list.each { e ->
+    println("  {e.display()} : {classify(e)}")
+  }
+
+  -- Show depth and node count using or-patterns
+  println("")
+  println("-- Tree Stats --")
+  exprs |> list.each { e ->
+    println("  {e.display()} : depth={depth(e)}, nodes={node_count(e)}")
+  }
+
+  -- Demonstrate deep pattern matching
+  println("")
+  println("-- Deep Pattern Matching --")
+  let deep_expr = Add(Mul(Num(2), Num(3)), Neg(Num(4)))
+  match deep_expr {
+    Add(Mul(Num(a), Num(b)), Neg(Num(c))) ->
+      println("  Matched: ({a} * {b}) + (-{c}) = {a * b - c}")
+    _ -> println("  no match")
+  }
+
+  -- Demonstrate or-patterns
+  println("")
+  println("-- Or-Pattern Matching --")
+  let test_exprs = [Num(5), Add(Num(1), Num(2)), Mul(Num(3), Num(4)), Neg(Num(6))]
+  test_exprs |> list.each { e ->
+    let kind = match e {
+      Add(_, _) | Mul(_, _) -> "binary operation"
+      Neg(_) -> "unary operation"
+      Num(_) -> "literal"
+    }
+    println("  {e.display()} is a {kind}")
+  }
+
+  println("")
+  println("Done!")
 }
