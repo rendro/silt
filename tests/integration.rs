@@ -3143,3 +3143,70 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("Some([1, 2, 3])".into()));
 }
+
+// ── Triple-quoted strings ───────────────────────────────────────────
+
+#[test]
+fn test_triple_quoted_basic() {
+    let result = run(r#"
+fn main() {
+  """hello world"""
+}
+    "#);
+    assert_eq!(result, Value::String("hello world".into()));
+}
+
+#[test]
+fn test_triple_quoted_multiline() {
+    let result = run("
+fn main() {
+  let s = \"\"\"\n    line1\n    line2\n    \"\"\"
+  s
+}
+    ");
+    assert_eq!(result, Value::String("line1\nline2".into()));
+}
+
+#[test]
+fn test_triple_quoted_embedded_quotes() {
+    let result = run(r#"
+fn main() {
+  """she said "hello" to me"""
+}
+    "#);
+    assert_eq!(result, Value::String("she said \"hello\" to me".into()));
+}
+
+#[test]
+fn test_triple_quoted_no_interpolation() {
+    // {name} should be literal text, not interpolated
+    let result = run("
+fn main() {
+  let name = \"Alice\"
+  \"\"\"{name} is here\"\"\"
+}
+    ");
+    assert_eq!(result, Value::String("{name} is here".into()));
+}
+
+#[test]
+fn test_triple_quoted_no_escape_processing() {
+    // \n should be literal backslash-n, not newline
+    let result = run(r#"
+fn main() {
+  """hello\nworld"""
+}
+    "#);
+    assert_eq!(result, Value::String("hello\\nworld".into()));
+}
+
+#[test]
+fn test_triple_quoted_json_use_case() {
+    let result = run("
+fn main() {
+  let json = \"\"\"\n  {\n    \"name\": \"Alice\"\n  }\n  \"\"\"
+  json
+}
+    ");
+    assert_eq!(result, Value::String("{\n  \"name\": \"Alice\"\n}".into()));
+}

@@ -375,6 +375,17 @@ let debug = "result: {inspect(value)}"
 Curly braces inside strings evaluate expressions. Escaping: `\{`.
 Interpolated values must implement `Display`.
 
+### Triple-quoted strings
+
+```
+let json = """
+  {"name": "Alice", "age": 30}
+  """
+```
+
+Triple-quoted strings (`"""..."""`) are raw: no escape processing, no interpolation.
+Leading indentation is stripped based on the closing `"""` position.
+
 -----
 
 ## 9. Concurrency (CSP)
@@ -626,7 +637,7 @@ Run with `silt test` or `silt test math_test.silt`.
 |Errors         |`Result`/`Option` + `?` operator          |
 |Concurrency    |`task.spawn`, typed `channel.new`, `channel.select`, handles|
 |Data structures|Records, tuples, List, Map                |
-|Strings        |Interpolation with `{expr}` via Display   |
+|Strings        |Interpolation with `{expr}` via Display, triple-quoted `"""..."""` for raw strings |
 |Visibility     |Private default, `pub` to export          |
 |Traits         |Lightweight interfaces, no inheritance    |
 |Testing        |Built-in, convention-based                |

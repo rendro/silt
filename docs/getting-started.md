@@ -221,6 +221,24 @@ println("2 + 2 = {2 + 2}")
 
 Use `\{` to include a literal brace.
 
+### Triple-Quoted Strings
+
+For multiline text, embedded quotes, or raw content (JSON, regex, etc.), use triple-quoted
+strings. They do not process escape sequences or interpolation, and they strip leading
+indentation based on the closing `"""` position:
+
+```silt
+let json = """
+  {
+    "name": "Alice",
+    "age": 30
+  }
+  """
+-- Result: '{\n  "name": "Alice",\n  "age": 30\n}'
+
+let pattern = """[\w]+\d{3}"""     -- literal backslashes, braces stay as-is
+```
+
 ### Error Handling
 
 Silt has no exceptions. All errors are represented as values using `Result` and `Option`:

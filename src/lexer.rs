@@ -357,6 +357,94 @@ impl Lexer {
         }
     }
 
+    fn scan_triple_string(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+        // We've already consumed the opening `"""`.
+        // Read raw content until closing `"""`.
+        // No escape processing, no interpolation.
+        let mut raw = String::new();
+
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(LexError {
+                        message: "unterminated triple-quoted string".to_string(),
+                        span: start,
+                    });
+                }
+                Some('"') if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
+                    // Consume closing """
+                    self.advance_char();
+                    self.advance_char();
+                    self.advance_char();
+                    break;
+                }
+                Some(ch) => {
+                    self.advance_char();
+                    raw.push(ch);
+                }
+            }
+        }
+
+        // Apply indentation stripping.
+        let result = Self::strip_triple_string_indentation(&raw);
+        Ok((Token::StringLit(result), start))
+    }
+
+    /// Strip indentation from a triple-quoted string based on the closing `"""`
+    /// position. The algorithm:
+    /// 1. Split the raw content into lines
+    /// 2. The last line (before closing `"""`) determines the indentation prefix
+    /// 3. Strip that prefix from each content line
+    /// 4. Remove the first line if it is blank (after opening `"""`)
+    /// 5. Remove the last line if it is blank (before closing `"""`)
+    fn strip_triple_string_indentation(raw: &str) -> String {
+        let lines: Vec<&str> = raw.split('\n').collect();
+
+        if lines.is_empty() {
+            return String::new();
+        }
+
+        // Determine indentation from the last line (before closing """)
+        let last_line = lines[lines.len() - 1];
+        let indent = if last_line.chars().all(|c| c == ' ' || c == '\t') {
+            last_line.len()
+        } else {
+            0
+        };
+
+        let mut result_lines: Vec<&str> = Vec::new();
+        for line in &lines {
+            if line.len() >= indent {
+                // Check that the prefix is indeed whitespace matching
+                let (prefix, rest) = line.split_at(indent);
+                if prefix.chars().all(|c| c == ' ' || c == '\t') {
+                    result_lines.push(rest);
+                } else {
+                    result_lines.push(line);
+                }
+            } else {
+                // Line is shorter than indent — if it's all whitespace, treat as empty
+                if line.chars().all(|c| c == ' ' || c == '\t') {
+                    result_lines.push("");
+                } else {
+                    result_lines.push(line);
+                }
+            }
+        }
+
+        // Remove first line if blank (right after opening """)
+        if !result_lines.is_empty() && result_lines[0].is_empty() {
+            result_lines.remove(0);
+        }
+
+        // Remove last line if blank (right before closing """)
+        if !result_lines.is_empty() && result_lines[result_lines.len() - 1].is_empty() {
+            result_lines.pop();
+        }
+
+        result_lines.join("\n")
+    }
+
     fn scan_number(&mut self, first: char) -> SpannedToken {
         let start = self.span();
         let mut num = String::new();
@@ -470,8 +558,16 @@ impl Lexer {
         };
 
         match ch {
-            // String
-            '"' => self.scan_string(false),
+            // String (triple-quoted or regular)
+            '"' => {
+                if self.peek() == Some('"') && self.peek_ahead(1) == Some('"') {
+                    self.advance_char(); // consume second "
+                    self.advance_char(); // consume third "
+                    self.scan_triple_string(start)
+                } else {
+                    self.scan_string(false)
+                }
+            }
 
             // Numbers
             '0'..='9' => Ok(self.scan_number(ch)),
@@ -717,5 +813,87 @@ mod tests {
     #[test]
     fn test_where_keyword() {
         assert_eq!(lex("where"), vec![Token::Where]);
+    }
+
+    #[test]
+    fn test_triple_quoted_basic() {
+        assert_eq!(lex(r#""""hello""""#), vec![Token::StringLit("hello".into())]);
+    }
+
+    #[test]
+    fn test_triple_quoted_multiline_with_indent_stripping() {
+        let input = "    let x = \"\"\"\n      hello\n      world\n      \"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::Let,
+            Token::Ident("x".into()),
+            Token::Eq,
+            Token::StringLit("hello\nworld".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_embedded_quotes() {
+        let input = "\"\"\"she said \"hi\" to me\"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::StringLit("she said \"hi\" to me".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_no_interpolation() {
+        let input = "\"\"\"{name} and {age}\"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::StringLit("{name} and {age}".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_no_escape_processing() {
+        let input = r#""""\n\t\\""" "#;
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::StringLit(r"\n\t\\".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_empty() {
+        assert_eq!(lex(r#""""""""#), vec![Token::StringLit("".into())]);
+    }
+
+    #[test]
+    fn test_triple_quoted_json_example() {
+        // Simulates the motivating use case
+        let input = "let json = \"\"\"\n  {\n    \"name\": \"Alice\"\n  }\n  \"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::Let,
+            Token::Ident("json".into()),
+            Token::Eq,
+            Token::StringLit("{\n  \"name\": \"Alice\"\n}".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_preserves_internal_indentation() {
+        // Closing """ has 4 spaces of indent; content lines have 4+ spaces
+        let input = "    \"\"\"\n    line1\n      indented\n    line3\n    \"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::StringLit("line1\n  indented\nline3".into()),
+        ]);
+    }
+
+    #[test]
+    fn test_triple_quoted_single_line_content() {
+        // Opening and content on separate lines but single content line
+        let input = "\"\"\"\nhello\n\"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![
+            Token::StringLit("hello".into()),
+        ]);
     }
 }

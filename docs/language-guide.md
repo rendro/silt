@@ -94,7 +94,7 @@ Silt has five primitive types.
 | `Int`    | 64-bit signed integer                | `42`, `-7`, `0`             |
 | `Float`  | 64-bit floating-point                | `3.14`, `-0.5`, `1.0`      |
 | `Bool`   | Boolean                              | `true`, `false`             |
-| `String` | UTF-8 string with interpolation      | `"hello"`, `"age: {n}"`    |
+| `String` | UTF-8 string with interpolation      | `"hello"`, `"age: {n}"`, `"""raw"""` |
 | `Unit`   | The type with no meaningful value    | (returned by `println` etc.)|
 
 ### Arithmetic operators
@@ -1250,6 +1250,45 @@ trait Display for User {
 let alice = User { name: "Alice", age: 30, active: true }
 println("user: {alice.display()}")
 ```
+
+### Triple-quoted strings
+
+For multiline text or content that contains quotes, backslashes, or braces, use
+triple-quoted strings (`""" ... """`). They have three properties:
+
+1. **No escape processing** -- `\n` is a literal backslash followed by `n`, not a newline
+2. **No interpolation** -- `{expr}` is literal text, not an expression
+3. **Indentation stripping** -- leading whitespace is stripped based on the closing `"""`
+
+```silt
+let json = """
+  {
+    "name": "Alice",
+    "age": 30
+  }
+  """
+-- Result: '{\n  "name": "Alice",\n  "age": 30\n}'
+```
+
+The indentation of the closing `"""` determines how much leading whitespace to strip
+from each line. In the example above, the closing `"""` has 2 spaces of indent, so
+2 spaces are stripped from each content line.
+
+This is especially useful for embedding JSON, regex patterns, or any text that would
+otherwise require heavy escaping:
+
+```silt
+let regex = """[\w]+@[\w]+\.\w{2,}"""  -- no need to escape backslashes or braces
+let html = """
+  <div class="greeting">
+    <p>Hello, world!</p>
+  </div>
+  """
+```
+
+The first line after the opening `"""` is removed if blank, and the last line before
+the closing `"""` is removed if blank. This means the opening `"""` and closing `"""`
+can be on their own lines without adding extra blank lines to the result.
 
 ---
 
