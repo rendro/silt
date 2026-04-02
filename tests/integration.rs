@@ -551,8 +551,8 @@ fn main() {
   channel.send(ch2, "from ch2")
 
   match channel.select([ch1, ch2]) {
-    (^ch1, msg) -> "got from ch1"
-    (^ch2, msg) -> msg
+    (^ch1, Message(msg)) -> "got from ch1"
+    (^ch2, Message(msg)) -> msg
     _ -> "none"
   }
 }
@@ -573,8 +573,8 @@ fn main() {
   task.join(p)
 
   match channel.select([ch1, ch2]) {
-    (^ch1, msg) -> msg
-    (^ch2, msg) -> msg
+    (^ch1, Message(msg)) -> msg
+    (^ch2, Message(msg)) -> msg
     _ -> "none"
   }
 }
@@ -1544,7 +1544,7 @@ fn main() {
   channel.send(ch2, "from ch2")
 
   match channel.select([ch1, ch2]) {
-    (^ch2, msg) -> msg
+    (^ch2, Message(msg)) -> msg
     _ -> "unexpected"
   }
 }
@@ -1565,8 +1565,8 @@ fn main() {
   task.join(p)
 
   match channel.select([ch1, ch2]) {
-    (^ch1, msg) -> msg
-    (^ch2, msg) -> msg
+    (^ch1, Message(msg)) -> msg
+    (^ch2, Message(msg)) -> msg
     _ -> "none"
   }
 }
@@ -1583,7 +1583,7 @@ fn main() {
 
   let result = channel.select([ch])
   match result {
-    (_, val) -> val
+    (_, Message(val)) -> val
     _ -> 0
   }
 }

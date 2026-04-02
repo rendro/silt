@@ -503,7 +503,10 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if elems.is_empty() {
                 "[]".to_string()
             } else {
-                let items: Vec<String> = elems.iter().map(|e| format_expr(e, depth)).collect();
+                let items: Vec<String> = elems.iter().map(|elem| match elem {
+                    ListElem::Single(e) => format_expr(e, depth),
+                    ListElem::Spread(e) => format!("..{}", format_expr(e, depth)),
+                }).collect();
                 format!("[{}]", items.join(", "))
             }
         }
@@ -857,7 +860,7 @@ fn format_type_expr(ty: &TypeExpr) -> String {
         }
         TypeExpr::Function(params, ret) => {
             let param_strs: Vec<String> = params.iter().map(|p| format_type_expr(p)).collect();
-            format!("({}) -> {}", param_strs.join(", "), format_type_expr(ret))
+            format!("Fn({}) -> {}", param_strs.join(", "), format_type_expr(ret))
         }
     }
 }

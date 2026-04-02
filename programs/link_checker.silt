@@ -1,97 +1,107 @@
-{- Markdown Link Checker
-   Reads a markdown file, extracts [text](url) links,
-   validates URL schemes, and reports results.
+{- Friction Report
+   Attempts: 1 (worked on first run)
+   Rating: 9/10 (very natural, expressive, and readable)
+   Highlights:
+     - Guardless match is perfect for multi-branch scheme classification
+     - regex.captures_all made link extraction straightforward
+     - Pipe operator + list.fold for accumulating stats felt idiomatic
+     - when-else for safe list.get access reads clearly
+     - Tuple destructuring in fold accumulator is elegant
+     - String interpolation is seamless
+   Friction:
+     - No if/else means using `match bool { true -> ..., _ -> ... }` for simple
+       conditionals, which is a bit verbose (guardless match helps but still)
+     - return () inside a match arm for early exit feels slightly awkward
+   Missing: (none found after checking docs)
+   Bugs: (none encountered)
 -}
 
-fn classify_url(url) {
+-- Markdown Link Checker
+-- Extracts [text](url) links from a markdown file, validates URL schemes,
+-- and reports valid/broken/unknown links with formatted output.
+
+fn classify_scheme(url) {
   match {
     string.starts_with(url, "https://") -> "valid"
-    string.starts_with(url, "http://")  -> "valid"
-    string.starts_with(url, "ftp://")   -> "valid"
-    string.starts_with(url, "mailto:")  -> "valid"
-    string.contains(url, "://")         -> "unknown"
-    _                                   -> "broken"
+    string.starts_with(url, "http://") -> "valid"
+    string.starts_with(url, "ftp://") -> "valid"
+    string.starts_with(url, "mailto:") -> "valid"
+    string.starts_with(url, "javascript:") -> "broken"
+    string.starts_with(url, "file://") -> "broken"
+    string.starts_with(url, "gopher://") -> "unknown"
+    _ -> "unknown"
   }
 }
 
 fn status_label(status) {
   match status {
-    "valid"   -> "[OK]     "
-    "broken"  -> "[BROKEN] "
-    "unknown" -> "[UNKNOWN]"
-    _         -> "[???]    "
+    "valid" -> "[  VALID  ]"
+    "broken" -> "[ BROKEN  ]"
+    _ -> "[ UNKNOWN ]"
   }
 }
 
 fn main() {
-  let file_result = io.read_file("programs/test.md")
-  when Ok(content) = file_result else {
-    println("Error: could not read programs/test.md")
-    return ()
+  let content = io.read_file("programs/test.md")
+    |> result.unwrap_or("")
+
+  match string.length(content) == 0 {
+    true -> {
+      println("Error: could not read programs/test.md or file is empty")
+      return ()
+    }
+    _ -> ()
   }
 
-  -- Extract all [text](url) links using captures_all
-  let pattern = "\\[([^\\]]+)\\]\\(([^)]+)\\)"
-  let links = regex.captures_all(pattern, content)
-
   println("=== Markdown Link Checker ===")
-  println("Found {list.length(links)} links in programs/test.md")
   println("")
 
-  -- Classify each link
-  let results = links |> list.map { capture ->
-    let text = list.get(capture, 1)
-    let url = list.get(capture, 2)
-    match (text, url) {
-      (Some(t), Some(u)) -> (t, u, classify_url(u))
-      _ -> ("???", "???", "broken")
+  -- Extract all [text](url) links using regex capture groups
+  let link_pattern = "\\[([^\\]]+)\\]\\(([^)]+)\\)"
+  let captures = regex.captures_all(link_pattern, content)
+
+  match list.length(captures) == 0 {
+    true -> {
+      println("No links found in the document.")
+      return ()
+    }
+    _ -> ()
+  }
+
+  println("Found {list.length(captures)} links:")
+  println("")
+
+  -- Process each link and collect stats
+  let stats = captures |> list.fold((0, 0, 0)) { acc, cap ->
+    let (valid, broken, unknown) = acc
+    -- cap[0] is full match, cap[1] is text, cap[2] is url
+    when Some(text) = list.get(cap, 1) else {
+      return acc
+    }
+    when Some(url) = list.get(cap, 2) else {
+      return acc
+    }
+
+    let status = classify_scheme(url)
+    let label = status_label(status)
+
+    println("  {label} {text}")
+    println("           {url}")
+    println("")
+
+    match status {
+      "valid" -> (valid + 1, broken, unknown)
+      "broken" -> (valid, broken + 1, unknown)
+      _ -> (valid, broken, unknown + 1)
     }
   }
 
-  -- Print each result
-  results |> list.each { entry ->
-    let (text, url, status) = entry
-    println("{status_label(status)} {text} -> {url}")
-  }
+  let (valid, broken, unknown) = stats
+  let total = valid + broken + unknown
 
-  println("")
-
-  -- Count by category
-  let valid_count = results |> list.filter { entry ->
-    let (_, _, status) = entry
-    status == "valid"
-  } |> list.length
-
-  let broken_count = results |> list.filter { entry ->
-    let (_, _, status) = entry
-    status == "broken"
-  } |> list.length
-
-  let unknown_count = results |> list.filter { entry ->
-    let (_, _, status) = entry
-    status == "unknown"
-  } |> list.length
-
-  println("=== Summary ===")
-  println("Valid:   {valid_count}")
-  println("Broken:  {broken_count}")
-  println("Unknown: {unknown_count}")
-  println("Total:   {list.length(links)}")
+  println("--- Summary ---")
+  println("Total links: {total}")
+  println("  Valid:   {valid}")
+  println("  Broken:  {broken}")
+  println("  Unknown: {unknown}")
 }
-
-{- Friction Report
-   Attempts: 2
-   Rating: 9/10
-   Highlights: regex.captures_all worked perfectly for extracting markdown links.
-     Guardless match (match { cond -> ... }) is elegant for multi-condition classification.
-     Tuple destructuring in let bindings is clean. Pipe operator with trailing
-     closures makes functional chains very readable. The when/else pattern for
-     Result unwrapping is concise and ergonomic.
-   Friction: The language summary says "semicolons separate expressions in blocks"
-     but the actual parser rejects semicolons with a helpful error message suggesting
-     newlines instead. This caused the first attempt to fail. Once corrected,
-     everything worked on the next try.
-   Missing: Nothing missing for this task. All needed stdlib functions (regex,
-     string, list, io) were available and worked as documented.
-   Bugs: None encountered.
--}

@@ -1,233 +1,234 @@
 {- Friction Report
-   Attempts: 2
-   Rating: 9/10
-   Highlights: regex module is excellent — captures, captures_all, replace_all all work cleanly.
-     Pattern matching as the sole branching mechanism feels natural for a router.
-     Closures stored as handler factories work seamlessly.
-     map.set/map.get/map.entries compose well for parameter extraction.
-     list.fold with map accumulator for building param maps from zip pairs is elegant.
-   Friction: Language summary says "semicolons separate expressions in blocks" but runtime
-     rejects semicolons with "semicolons are not used in silt". This caused attempt 1 to fail.
-     String interpolation uses {var} not #{var} — but #{...} for map literals means you have
-     to be careful with string content that looks like map syntax. Using #{id} in strings
-     actually worked as literal text which was fine for the handler output formatting.
-   Missing: Nothing significant missing for this task.
-   Bugs: None encountered.
+   Attempts: 2 (first failed because I used ++ for string concat instead of +; worked after fixing)
+   Rating: 9/10 (very natural and expressive)
+   Highlights:
+     - Pipe operator and trailing closures make data transformations very readable
+     - Pattern matching with tuples for destructuring is clean and ergonomic
+     - String interpolation with \{ escape for literal braces works well
+     - map.entries + list.fold for building maps from pairs is natural
+     - regex.captures integrates smoothly with the rest of the language
+     - Closures stored in maps work seamlessly as handler dispatchers
+     - list.find returning Option fits perfectly with match for route lookup
+   Friction:
+     - String concatenation with + is undocumented in the language guide/stdlib reference;
+       had to discover it by reading interpreter source code. The docs only show string
+       interpolation but never mention + works for string concat.
+   Missing: (none found after checking docs)
+   Bugs: (none encountered)
 -}
 
--- URL Router / Dispatcher
--- Demonstrates: records, closures, regex, maps, list operations
-
+-- Route record: method, pattern (with :param placeholders), handler name
 type Route {
   method: String,
   pattern: String,
   handler: String,
 }
 
--- Convert a route pattern like /users/:id into a regex pattern
--- e.g., /users/:id => ^/users/([^/]+)$
+-- Convert a route pattern like /users/:id/posts/:post_id
+-- into a regex pattern like ^/users/([^/]+)/posts/([^/]+)$
+-- and also extract the parameter names in order
 fn pattern_to_regex(pattern) {
-  let escaped = regex.replace_all("\\.", pattern, "\\\\.")
-  let with_groups = regex.replace_all(":([a-z_]+)", escaped, "([^/]+)")
-  "^{with_groups}$"
-}
-
--- Extract parameter names from a route pattern
--- e.g., /users/:id/posts/:post_id => ["id", "post_id"]
-fn extract_param_names(pattern) {
-  let captures = regex.captures_all(":([a-z_]+)", pattern)
-  captures |> list.map { cap ->
-    match list.get(cap, 1) {
-      Some(name) -> name
-      None -> ""
-    }
-  }
-}
-
--- Try to match a path against a route pattern and extract parameters
-fn match_single_route(method, path, route) {
-  match method == route.method {
-    true -> {
-      let re = pattern_to_regex(route.pattern)
-      match regex.captures(re, path) {
-        Some(captures) -> {
-          let param_names = extract_param_names(route.pattern)
-          -- captures index 0 is full match, 1+ are groups
-          let param_values = list.drop(captures, 1)
-          let pairs = list.zip(param_names, param_values)
-          let params = pairs |> list.fold(#{}) { acc, pair ->
-            let (name, value) = pair
-            map.set(acc, name, value)
-          }
-          Some((route, params))
-        }
-        None -> None
+  let segments = pattern |> string.split("/")
+  let result = segments |> list.fold(("", [])) { acc, seg ->
+    let (regex_str, param_names) = acc
+    match string.starts_with(seg, ":") {
+      true -> {
+        let name = string.slice(seg, 1, string.length(seg))
+        (regex_str + "/([^/]+)", list.append(param_names, name))
+      }
+      _ -> match seg {
+        "" -> (regex_str, param_names)
+        _ -> (regex_str + "/" + seg, param_names)
       }
     }
-    _ -> None
   }
+  result
 }
 
--- Find matching route from a list of routes
-fn match_route(method, path, routes) {
-  routes |> list.find { route ->
-    let re = pattern_to_regex(route.pattern)
-    match method == route.method {
-      true -> regex.is_match(re, path)
-      _ -> false
+-- Extract path parameters from a URL path using a route pattern
+fn extract_params(pattern, path) {
+  let (regex_str, param_names) = pattern_to_regex(pattern)
+  let full_regex = "^" + regex_str + "$"
+  match regex.captures(full_regex, path) {
+    Some(captures) -> {
+      -- captures[0] is the full match, captures[1..] are the groups
+      let groups = captures |> list.drop(1)
+      let pairs = list.zip(param_names, groups)
+      let params = pairs |> list.fold(#{}) { m, pair ->
+        let (name, value) = pair
+        map.set(m, name, value)
+      }
+      Some(params)
     }
-  }
-}
-
--- Full route matching that returns both route and extracted params
-fn dispatch(method, path, routes) {
-  let found = routes |> list.find { route ->
-    let re = pattern_to_regex(route.pattern)
-    match method == route.method {
-      true -> regex.is_match(re, path)
-      _ -> false
-    }
-  }
-  match found {
-    Some(route) -> match_single_route(method, path, route)
     None -> None
   }
 }
 
--- Handler factories: closures that produce response strings
-fn make_handler(handler_name) {
-  match handler_name {
-    "list_users" -> fn(params) { "200 OK: Listing all users" }
-    "get_user" -> fn(params) {
-      let id = option.unwrap_or(map.get(params, "id"), "?")
-      "200 OK: User profile #{id}"
+-- Match a request method and path against a list of routes
+fn match_route(method, path, routes) {
+  routes |> list.find { route ->
+    match route.method == method {
+      true -> {
+        let (regex_str, _) = pattern_to_regex(route.pattern)
+        let full_regex = "^" + regex_str + "$"
+        regex.is_match(full_regex, path)
+      }
+      _ -> false
     }
-    "create_user" -> fn(params) { "201 Created: New user" }
-    "update_user" -> fn(params) {
-      let id = option.unwrap_or(map.get(params, "id"), "?")
-      "200 OK: Updated user #{id}"
-    }
-    "delete_user" -> fn(params) {
-      let id = option.unwrap_or(map.get(params, "id"), "?")
-      "200 OK: Deleted user #{id}"
-    }
-    "list_posts" -> fn(params) { "200 OK: Listing all posts" }
-    "get_post" -> fn(params) {
-      let id = option.unwrap_or(map.get(params, "id"), "?")
-      "200 OK: Post #{id}"
-    }
-    "get_post_comments" -> fn(params) {
-      let post_id = option.unwrap_or(map.get(params, "post_id"), "?")
-      "200 OK: Comments for post #{post_id}"
-    }
-    "get_comment" -> fn(params) {
-      let post_id = option.unwrap_or(map.get(params, "post_id"), "?")
-      let comment_id = option.unwrap_or(map.get(params, "comment_id"), "?")
-      "200 OK: Comment #{comment_id} on post #{post_id}"
-    }
-    "search" -> fn(params) {
-      let query = option.unwrap_or(map.get(params, "query"), "?")
-      "200 OK: Search results for '{query}'"
-    }
-    _ -> fn(params) { "404 Not Found" }
   }
 }
 
--- Print extracted parameters
-fn print_params(params) {
-  let entries = map.entries(params)
-  match list.length(entries) {
-    0 -> print("  Params: (none)")
-    _ -> {
-      print("  Params: ")
-      entries |> list.each { entry ->
-        let (key, value) = entry
-        print("{key}={value} ")
+-- Handler factories: closures that produce response strings
+fn make_handler(prefix) {
+  fn(params) {
+    let param_str = params
+    |> map.entries
+    |> list.map { entry ->
+      let (k, v) = entry
+      "{k}={v}"
+    }
+    |> string.join(", ")
+    "{prefix}: \{{param_str}\}"
+  }
+}
+
+-- Define handler factories for different resource types
+let user_handler = make_handler("User")
+let post_handler = make_handler("Post")
+let comment_handler = make_handler("Comment")
+let product_handler = make_handler("Product")
+let order_handler = make_handler("Order")
+let api_handler = make_handler("API")
+
+-- Store handlers in a map keyed by handler name
+let handlers = #{
+  "list_users": make_handler("ListUsers"),
+  "get_user": user_handler,
+  "create_user": make_handler("CreateUser"),
+  "get_user_posts": post_handler,
+  "get_post": post_handler,
+  "get_post_comments": comment_handler,
+  "get_comment": comment_handler,
+  "list_products": make_handler("ListProducts"),
+  "get_product": product_handler,
+  "get_product_reviews": make_handler("ProductReviews"),
+  "create_order": order_handler,
+  "get_order": order_handler,
+  "api_version": api_handler,
+}
+
+-- Define the route table
+let routes = [
+  Route { method: "GET", pattern: "/users", handler: "list_users" },
+  Route { method: "GET", pattern: "/users/:id", handler: "get_user" },
+  Route { method: "POST", pattern: "/users", handler: "create_user" },
+  Route { method: "GET", pattern: "/users/:id/posts", handler: "get_user_posts" },
+  Route { method: "GET", pattern: "/posts/:id", handler: "get_post" },
+  Route { method: "GET", pattern: "/posts/:id/comments", handler: "get_post_comments" },
+  Route { method: "GET", pattern: "/posts/:post_id/comments/:comment_id", handler: "get_comment" },
+  Route { method: "GET", pattern: "/products", handler: "list_products" },
+  Route { method: "GET", pattern: "/products/:id", handler: "get_product" },
+  Route { method: "GET", pattern: "/products/:id/reviews", handler: "get_product_reviews" },
+  Route { method: "POST", pattern: "/orders", handler: "create_order" },
+  Route { method: "GET", pattern: "/orders/:id", handler: "get_order" },
+  Route { method: "GET", pattern: "/api/:version/status", handler: "api_version" },
+]
+
+-- Process a request: find matching route, extract params, call handler
+fn process_request(method, path) {
+  println("  {method} {path}")
+  match match_route(method, path, routes) {
+    Some(route) -> {
+      match extract_params(route.pattern, path) {
+        Some(params) -> {
+          -- Look up handler closure from the handlers map
+          match map.get(handlers, route.handler) {
+            Some(handler_fn) -> {
+              let response = handler_fn(params)
+              println("    -> Matched: {route.pattern}")
+              println("    -> Params: {format_params(params)}")
+              println("    -> Handler: {route.handler}")
+              println("    -> Response: {response}")
+            }
+            None -> {
+              println("    -> Matched: {route.pattern} (no handler found)")
+            }
+          }
+        }
+        None -> println("    -> Matched (no params): {route.pattern}")
       }
     }
+    None -> println("    -> 404 Not Found")
   }
   println("")
+}
+
+-- Format a params map for display
+fn format_params(params) {
+  match map.length(params) == 0 {
+    true -> "(none)"
+    _ -> {
+      params
+      |> map.entries
+      |> list.map { entry ->
+        let (k, v) = entry
+        "{k}=\"{v}\""
+      }
+      |> string.join(", ")
+    }
+  }
+}
+
+-- Split a path into segments for display
+fn show_segments(path) {
+  let segments = path
+  |> string.split("/")
+  |> list.filter { s -> string.length(s) > 0 }
+  println("  Path segments: {string.join(segments, " / ")}")
 }
 
 fn main() {
-  -- Define 12 routes
-  let routes = [
-    Route { method: "GET", pattern: "/users", handler: "list_users" },
-    Route { method: "GET", pattern: "/users/:id", handler: "get_user" },
-    Route { method: "POST", pattern: "/users", handler: "create_user" },
-    Route { method: "PUT", pattern: "/users/:id", handler: "update_user" },
-    Route { method: "DELETE", pattern: "/users/:id", handler: "delete_user" },
-    Route { method: "GET", pattern: "/posts", handler: "list_posts" },
-    Route { method: "GET", pattern: "/posts/:id", handler: "get_post" },
-    Route { method: "GET", pattern: "/posts/:post_id/comments", handler: "get_post_comments" },
-    Route { method: "GET", pattern: "/posts/:post_id/comments/:comment_id", handler: "get_comment" },
-    Route { method: "GET", pattern: "/search/:query", handler: "search" },
-    Route { method: "GET", pattern: "/api/v1/users/:id", handler: "get_user" },
-    Route { method: "GET", pattern: "/api/v1/posts/:id", handler: "get_post" },
-  ]
-
-  println("=== URL Router Demo ===")
+  println("=== URL Router / Dispatcher ===")
   println("")
 
-  -- Test requests (14 total, including 2 that should fail)
-  let requests = [
-    ("GET", "/users"),
-    ("GET", "/users/42"),
-    ("POST", "/users"),
-    ("PUT", "/users/7"),
-    ("DELETE", "/users/99"),
-    ("GET", "/posts"),
-    ("GET", "/posts/15"),
-    ("GET", "/posts/15/comments"),
-    ("GET", "/posts/15/comments/3"),
-    ("GET", "/search/silt-language"),
-    ("GET", "/api/v1/users/100"),
-    ("GET", "/api/v1/posts/55"),
-    ("GET", "/unknown/path"),
-    ("PATCH", "/users/1"),
-  ]
-
-  -- Process each request
-  requests |> list.each { req ->
-    let (method, path) = req
-    println("{method} {path}")
-
-    match dispatch(method, path, routes) {
-      Some(result) -> {
-        let (route, params) = result
-        println("  Matched: {route.pattern} -> {route.handler}")
-        print_params(params)
-
-        -- Use handler factory to generate a response
-        let handler = make_handler(route.handler)
-        let response = handler(params)
-        println("  Response: {response}")
-      }
-      None -> println("  No matching route (404)")
-    }
-    println("")
-  }
-
-  -- Demonstrate string.split on a URL path
-  println("=== Path Splitting Demo ===")
-  let sample_path = "/api/v1/users/42/posts"
-  let segments = sample_path |> string.split("/") |> list.filter { s -> string.length(s) > 0 }
-  println("Path: {sample_path}")
-  print("Segments: ")
-  segments |> list.each { s -> print("[{s}] ") }
-  println("")
-  println("")
-
-  -- Demonstrate map.entries and map.set
-  println("=== Parameter Map Demo ===")
-  let params = #{}
-  let params = map.set(params, "id", "42")
-  let params = map.set(params, "format", "json")
-  let params = map.set(params, "page", "1")
-  println("Map entries:")
-  map.entries(params) |> list.each { entry ->
-    let (k, v) = entry
-    println("  {k} => {v}")
+  -- Show routes
+  println("Registered routes:")
+  routes |> list.each { route ->
+    println("  {route.method} {route.pattern} -> {route.handler}")
   }
   println("")
+
+  -- Show path segment analysis for one path
+  println("Path segment analysis:")
+  show_segments("/users/42/posts")
+  show_segments("/posts/7/comments/3")
+  println("")
+
+  -- Test with 12 sample requests
+  println("Processing requests:")
+  println("--------------------")
+
+  process_request("GET", "/users")
+  process_request("GET", "/users/42")
+  process_request("POST", "/users")
+  process_request("GET", "/users/42/posts")
+  process_request("GET", "/posts/7")
+  process_request("GET", "/posts/7/comments")
+  process_request("GET", "/posts/7/comments/3")
+  process_request("GET", "/products")
+  process_request("GET", "/products/99")
+  process_request("GET", "/products/99/reviews")
+  process_request("POST", "/orders")
+  process_request("GET", "/orders/1001")
+  process_request("GET", "/api/v2/status")
+
+  -- Demonstrate a 404
+  process_request("GET", "/nonexistent")
+  process_request("DELETE", "/users/42")
+
+  -- Demonstrate handler factories with closures
+  println("=== Handler Factory Demo ===")
+  let custom_handler = make_handler("CustomResource")
+  let test_params = #{ "id": "123", "name": "test" }
+  println("Custom handler result: {custom_handler(test_params)}")
 }

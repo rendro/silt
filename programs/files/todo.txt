@@ -1,6 +1,5 @@
 Buy groceries
-Walk the dog
-Read a chapter of the new book
 Fix the leaky faucet
-Call the dentist
-Water the plants
+Read chapter five of the Rust book
+Write the concurrent processor example
+Submit the pull request

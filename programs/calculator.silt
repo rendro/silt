@@ -1,198 +1,232 @@
 {- Friction Report
-   Attempts: 1
-   Rating: 9/10
-   Highlights: The loop-with-state pattern is a natural fit for a REPL with mutable-feeling
-     state (stack, history). Passing lambda functions to helper functions for binary/unary
-     ops worked cleanly. Pattern matching on list heads ([a, ..rest], [b, a, ..rest]) is
-     ideal for stack-based operations. float.to_string(f, 4) for formatting is convenient.
-     The math module has all the standard scientific functions.
-   Friction: No if/else means every command dispatch becomes a big guardless match block.
-     For a calculator with many commands this gets verbose. Passing closures as operation
-     functions works but the fn(a, b) { ... } syntax inside every match arm is a bit noisy.
-     The stack is a list with newest on top (prepend), so the display needed list.reverse
-     which is a minor mental overhead.
-   Missing: Nothing significant -- all needed stdlib functions were present. A format-string
-     or printf-style function could reduce the manual float.to_string calls.
-   Bugs: None encountered.
+   Attempts: 1 (worked on first try)
+   Rating: 8/10 (the code felt natural and expressive)
+   Highlights:
+     - Pattern matching as sole branching is elegant for command dispatch
+     - Tuple destructuring for returning multiple values from functions works great
+     - loop with named state variables is perfect for a REPL
+     - Trailing closures with pipe operator make list operations very readable
+     - math module has all the scientific functions needed
+     - float.to_string(f, 4) for decimal formatting is exactly what was needed
+   Friction:
+     - No list.init or list.drop_last to remove the last element; had to use list.take(stack, len - 1) pattern
+     - Cannot match on string literals inside a general match without listing every case; the catch-all for number parsing must be last
+     - All bindings being immutable means returning tuples of (stack, history, continue_flag) from process_input rather than modifying state in place; this is fine but verbose
+   Missing:
+     - list.drop_last or list.init (verified not in stdlib-reference.md)
+   Bugs: None encountered
 -}
 
--- format a float to 4 decimal places
-fn fmt(f) {
+fn format(f) {
   float.to_string(f, 4)
 }
 
--- apply a binary operation to the top two stack elements
-fn apply_binop(stack, history, op_name, op_fn) {
-  match stack {
-    [b, a, ..rest] -> {
-      let result = op_fn(a, b)
-      let entry = "{fmt(a)} {op_name} {fmt(b)} = {fmt(result)}"
-      println("  = {fmt(result)}")
-      (list.prepend(rest, result), list.append(history, entry))
-    }
-    _ -> {
-      println("Error: need at least 2 values on the stack")
-      (stack, history)
-    }
-  }
-}
-
--- apply a unary operation to the top stack element
-fn apply_unary(stack, history, op_name, op_fn) {
-  match stack {
-    [a, ..rest] -> {
-      let result = op_fn(a)
-      let entry = "{op_name}({fmt(a)}) = {fmt(result)}"
-      println("  = {fmt(result)}")
-      (list.prepend(rest, result), list.append(history, entry))
-    }
-    _ -> {
-      println("Error: need at least 1 value on the stack")
-      (stack, history)
-    }
-  }
+fn show_help() {
+  println("Scientific Calculator")
+  println("  Enter a number to push onto the stack")
+  println("  Operations: + - * / sqrt pow sin cos log")
+  println("  Commands: undo, clear, history, stack, help, quit")
 }
 
 fn show_stack(stack) {
-  match stack {
-    [] -> println("  (empty)")
+  match list.length(stack) {
+    0 -> println("  (empty)")
     _ -> {
       stack
-      |> list.reverse
       |> list.enumerate
-      |> list.each { item ->
-        let (i, val) = item
-        println("  [{i}] {fmt(val)}")
+      |> list.each { pair ->
+        let (i, v) = pair
+        println("  [{i}] {format(v)}")
       }
     }
   }
 }
 
 fn show_history(history) {
-  match history {
-    [] -> println("  (no history)")
+  match list.length(history) {
+    0 -> println("  (no history)")
     _ -> {
       history
       |> list.enumerate
-      |> list.each { item ->
-        let (i, entry) = item
-        println("  {int.to_string(i + 1)}. {entry}")
+      |> list.each { pair ->
+        let (i, entry) = pair
+        println("  {i + 1}. {entry}")
+      }
+    }
+  }
+}
+
+fn binary_op(stack, history, op_name, op_fn) {
+  let len = list.length(stack)
+  match len >= 2 {
+    true -> {
+      let b_opt = list.last(stack)
+      let rest1 = list.take(stack, len - 1)
+      let a_opt = list.last(rest1)
+      let rest2 = list.take(rest1, len - 2)
+      match (a_opt, b_opt) {
+        (Some(a), Some(b)) -> {
+          let result = op_fn(a, b)
+          let new_stack = list.append(rest2, result)
+          let entry = "{format(a)} {op_name} {format(b)} = {format(result)}"
+          let new_history = list.append(history, entry)
+          println("= {format(result)}")
+          (new_stack, new_history)
+        }
+        _ -> {
+          println("Error: stack underflow")
+          (stack, history)
+        }
+      }
+    }
+    _ -> {
+      println("Error: need at least 2 values on stack for {op_name}")
+      (stack, history)
+    }
+  }
+}
+
+fn unary_op(stack, history, op_name, op_fn) {
+  let len = list.length(stack)
+  match len >= 1 {
+    true -> {
+      let a_opt = list.last(stack)
+      let rest = list.take(stack, len - 1)
+      match a_opt {
+        Some(a) -> {
+          let result = op_fn(a)
+          let new_stack = list.append(rest, result)
+          let entry = "{op_name}({format(a)}) = {format(result)}"
+          let new_history = list.append(history, entry)
+          println("= {format(result)}")
+          (new_stack, new_history)
+        }
+        _ -> {
+          println("Error: stack underflow")
+          (stack, history)
+        }
+      }
+    }
+    _ -> {
+      println("Error: need at least 1 value on stack for {op_name}")
+      (stack, history)
+    }
+  }
+}
+
+fn process_input(input, stack, history) {
+  let trimmed = string.trim(input)
+  match trimmed {
+    "quit" -> (stack, history, false)
+    "exit" -> (stack, history, false)
+    "help" -> {
+      show_help()
+      (stack, history, true)
+    }
+    "stack" -> {
+      println("Stack:")
+      show_stack(stack)
+      (stack, history, true)
+    }
+    "history" -> {
+      println("History:")
+      show_history(history)
+      (stack, history, true)
+    }
+    "clear" -> {
+      println("Stack cleared.")
+      ([], history, true)
+    }
+    "undo" -> {
+      let len = list.length(stack)
+      match len >= 1 {
+        true -> {
+          let new_stack = list.take(stack, len - 1)
+          println("Undone. Top removed.")
+          (new_stack, history, true)
+        }
+        _ -> {
+          println("Nothing to undo.")
+          (stack, history, true)
+        }
+      }
+    }
+    "+" -> {
+      let (s, h) = binary_op(stack, history, "+", fn(a, b) { a + b })
+      (s, h, true)
+    }
+    "-" -> {
+      let (s, h) = binary_op(stack, history, "-", fn(a, b) { a - b })
+      (s, h, true)
+    }
+    "*" -> {
+      let (s, h) = binary_op(stack, history, "*", fn(a, b) { a * b })
+      (s, h, true)
+    }
+    "/" -> {
+      let (s, h) = binary_op(stack, history, "/", fn(a, b) { a / b })
+      (s, h, true)
+    }
+    "pow" -> {
+      let (s, h) = binary_op(stack, history, "pow", fn(a, b) { math.pow(a, b) })
+      (s, h, true)
+    }
+    "sqrt" -> {
+      let (s, h) = unary_op(stack, history, "sqrt", fn(a) { math.sqrt(a) })
+      (s, h, true)
+    }
+    "sin" -> {
+      let (s, h) = unary_op(stack, history, "sin", fn(a) { math.sin(a) })
+      (s, h, true)
+    }
+    "cos" -> {
+      let (s, h) = unary_op(stack, history, "cos", fn(a) { math.cos(a) })
+      (s, h, true)
+    }
+    "log" -> {
+      let (s, h) = unary_op(stack, history, "log", fn(a) { math.log(a) })
+      (s, h, true)
+    }
+    "pi" -> {
+      let new_stack = list.append(stack, math.pi)
+      println("Pushed pi = {format(math.pi)}")
+      (new_stack, history, true)
+    }
+    "e" -> {
+      let new_stack = list.append(stack, math.e)
+      println("Pushed e = {format(math.e)}")
+      (new_stack, history, true)
+    }
+    _ -> {
+      match float.parse(trimmed) {
+        Ok(f) -> {
+          let new_stack = list.append(stack, f)
+          println("Pushed {format(f)}")
+          (new_stack, history, true)
+        }
+        Err(_) -> {
+          println("Unknown command: {trimmed}")
+          (stack, history, true)
+        }
       }
     }
   }
 }
 
 fn main() {
-  println("Scientific Calculator")
-  println("  Push numbers onto the stack, then apply operations.")
-  println("  Operations: + - * / sqrt pow sin cos log")
-  println("  Commands: stack, history, undo, clear, pi, e, quit")
+  show_help()
   println("")
-
   loop stack = [], history = [] {
-    print("calc> ")
+    print("> ")
     match io.read_line() {
       Ok(line) -> {
-        let input = string.trim(line)
-        let cmd = string.to_lower(input)
-
-        match {
-          cmd == "quit" -> {
-            println("Goodbye!")
-            ()
-          }
-          cmd == "+" -> {
-            let (s, h) = apply_binop(stack, history, "+", fn(a, b) { a + b })
-            loop(s, h)
-          }
-          cmd == "-" -> {
-            let (s, h) = apply_binop(stack, history, "-", fn(a, b) { a - b })
-            loop(s, h)
-          }
-          cmd == "*" -> {
-            let (s, h) = apply_binop(stack, history, "*", fn(a, b) { a * b })
-            loop(s, h)
-          }
-          cmd == "/" -> {
-            let (s, h) = apply_binop(stack, history, "/", fn(a, b) { a / b })
-            loop(s, h)
-          }
-          cmd == "pow" -> {
-            let (s, h) = apply_binop(stack, history, "^", fn(a, b) { math.pow(a, b) })
-            loop(s, h)
-          }
-          cmd == "sqrt" -> {
-            let (s, h) = apply_unary(stack, history, "sqrt", fn(a) { math.sqrt(a) })
-            loop(s, h)
-          }
-          cmd == "sin" -> {
-            let (s, h) = apply_unary(stack, history, "sin", fn(a) { math.sin(a) })
-            loop(s, h)
-          }
-          cmd == "cos" -> {
-            let (s, h) = apply_unary(stack, history, "cos", fn(a) { math.cos(a) })
-            loop(s, h)
-          }
-          cmd == "log" -> {
-            let (s, h) = apply_unary(stack, history, "log", fn(a) { math.log(a) })
-            loop(s, h)
-          }
-          cmd == "stack" -> {
-            println("Stack:")
-            show_stack(stack)
-            loop(stack, history)
-          }
-          cmd == "history" -> {
-            println("History:")
-            show_history(history)
-            loop(stack, history)
-          }
-          cmd == "undo" -> {
-            match stack {
-              [_, ..rest] -> {
-                println("  Undone (popped top value)")
-                loop(rest, history)
-              }
-              [] -> {
-                println("  Nothing to undo")
-                loop(stack, history)
-              }
-            }
-          }
-          cmd == "clear" -> {
-            println("  Stack and history cleared")
-            loop([], [])
-          }
-          cmd == "pi" -> {
-            println("  Pushed {fmt(math.pi)}")
-            loop(list.prepend(stack, math.pi), history)
-          }
-          cmd == "e" -> {
-            println("  Pushed {fmt(math.e)}")
-            loop(list.prepend(stack, math.e), history)
-          }
-          cmd == "" -> {
-            loop(stack, history)
-          }
-          _ -> {
-            -- try to parse as a number
-            match float.parse(input) {
-              Ok(val) -> {
-                println("  Pushed {fmt(val)}")
-                loop(list.prepend(stack, val), history)
-              }
-              Err(_) -> {
-                println("  Unknown command: {input}")
-                loop(stack, history)
-              }
-            }
-          }
+        let (new_stack, new_history, cont) = process_input(line, stack, history)
+        match cont {
+          true -> loop(new_stack, new_history)
+          false -> println("Goodbye!")
         }
       }
-      Err(_) -> {
-        println("Goodbye!")
-        ()
-      }
+      Err(_) -> println("Goodbye!")
     }
   }
 }

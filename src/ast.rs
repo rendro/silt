@@ -35,7 +35,7 @@ pub enum ExprKind {
     StringInterp(Vec<StringPart>),
 
     // Collections
-    List(Vec<Expr>),
+    List(Vec<ListElem>),
     Map(Vec<(Expr, Expr)>),
     Tuple(Vec<Expr>),
 
@@ -146,6 +146,13 @@ pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Box<Expr>>,
     pub body: Expr,
+}
+
+/// An element in a list literal: either a single expression or a spread `..expr`.
+#[derive(Debug, Clone)]
+pub enum ListElem {
+    Single(Expr),
+    Spread(Expr),
 }
 
 // ── Patterns ─────────────────────────────────────────────────────────

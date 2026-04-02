@@ -981,6 +981,24 @@ impl TypeChecker {
             });
         }
 
+        // json.parse_map: (ValueType, String) -> Result(Map(String, v), String)
+        {
+            let (a, av) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            let result_ty = Type::Generic("Result".into(), vec![
+                Type::Map(Box::new(Type::String), Box::new(v)),
+                Type::String,
+            ]);
+            env.define("json.parse_map".into(), Scheme {
+                vars: vec![av, vv],
+                ty: Type::Fun(
+                    vec![a, Type::String],
+                    Box::new(result_ty),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // json.stringify: (a) -> String
         {
             let (a, av) = self.fresh_tv();
@@ -1007,6 +1025,18 @@ impl TypeChecker {
             });
         }
 
+        // ── Primitive type descriptors (for json.parse_map etc.) ──────
+        // These are opaque values at the type level — used as arguments to
+        // functions that dispatch on types at runtime.
+        for name in &["Int", "Float", "String", "Bool"] {
+            let (a, av) = self.fresh_tv();
+            env.define(name.to_string(), Scheme {
+                vars: vec![av],
+                ty: a,
+                constraints: vec![],
+            });
+        }
+
         // ── Per-module registrations ───────────────────────────────────
         self.register_list_builtins(env);
         self.register_string_builtins(env);
@@ -1016,6 +1046,7 @@ impl TypeChecker {
         self.register_result_builtins(env);
         self.register_option_builtins(env);
         self.register_io_builtins(env);
+        self.register_fs_builtins(env);
         self.register_test_builtins(env);
         self.register_math_builtins(env);
         self.register_channel_builtins(env);
@@ -1317,6 +1348,19 @@ impl TypeChecker {
             });
         }
 
+        // list.set: (List(a), Int, a) -> List(a)
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("list.set".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), Type::Int, a.clone()],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // list.take: (List(a), Int) -> List(a)
         {
             let (a, av) = self.fresh_tv();
@@ -1497,6 +1541,30 @@ impl TypeChecker {
             Box::new(Type::String),
         )));
 
+        // string.trim_start: (String) -> String
+        env.define("string.trim_start".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.trim_end: (String) -> String
+        env.define("string.trim_end".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::String),
+        )));
+
+        // string.char_code: (String) -> Int
+        env.define("string.char_code".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Int),
+        )));
+
+        // string.from_char_code: (Int) -> String
+        env.define("string.from_char_code".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::String),
+        )));
+
         // string.contains: (String, String) -> Bool
         env.define("string.contains".into(), Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
@@ -1671,123 +1739,131 @@ impl TypeChecker {
     }
 
     fn register_map_builtins(&mut self, env: &mut TypeEnv) {
-        // map.get: (Map(String, v), String) -> Option(v)
+        // map.get: (Map(k, v), k) -> Option(v)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.get".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
-                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
-                        Type::String,
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        k,
                     ],
                     Box::new(Type::Generic("Option".into(), vec![v])),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.set: (Map(String, v), String, v) -> Map(String, v)
+        // map.set: (Map(k, v), k, v) -> Map(k, v)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.set".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
-                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
-                        Type::String,
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        k.clone(),
                         v.clone(),
                     ],
-                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.delete: (Map(String, v), String) -> Map(String, v)
+        // map.delete: (Map(k, v), k) -> Map(k, v)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.delete".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
-                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
-                        Type::String,
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        k.clone(),
                     ],
-                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.has_key: (Map(String, v), String) -> Bool
+        // map.has_key: (Map(k, v), k) -> Bool  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.has_key".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
-                        Type::Map(Box::new(Type::String), Box::new(v)),
-                        Type::String,
+                        Type::Map(Box::new(k.clone()), Box::new(v)),
+                        k,
                     ],
                     Box::new(Type::Bool),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.keys: (Map(String, v)) -> List(String)
+        // map.keys: (Map(k, v)) -> List(k)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.keys".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
-                    vec![Type::Map(Box::new(Type::String), Box::new(v))],
-                    Box::new(Type::List(Box::new(Type::String))),
+                    vec![Type::Map(Box::new(k.clone()), Box::new(v))],
+                    Box::new(Type::List(Box::new(k))),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.values: (Map(String, v)) -> List(v)
+        // map.values: (Map(k, v)) -> List(v)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.values".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
-                    vec![Type::Map(Box::new(Type::String), Box::new(v.clone()))],
+                    vec![Type::Map(Box::new(k), Box::new(v.clone()))],
                     Box::new(Type::List(Box::new(v))),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.merge: (Map(String, v), Map(String, v)) -> Map(String, v)
+        // map.merge: (Map(k, v), Map(k, v)) -> Map(k, v)  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.merge".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
-                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
-                        Type::Map(Box::new(Type::String), Box::new(v.clone())),
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
                     ],
-                    Box::new(Type::Map(Box::new(Type::String), Box::new(v))),
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
-        // map.length: (Map(String, v)) -> Int
+        // map.length: (Map(k, v)) -> Int  where k: Hash
         {
+            let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define("map.length".into(), Scheme {
-                vars: vec![vv],
+                vars: vec![kv, vv],
                 ty: Type::Fun(
-                    vec![Type::Map(Box::new(Type::String), Box::new(v))],
+                    vec![Type::Map(Box::new(k), Box::new(v))],
                     Box::new(Type::Int),
                 ),
-                constraints: vec![],
+                constraints: vec![(kv, "Hash".into())],
             });
         }
 
@@ -1974,6 +2050,23 @@ impl TypeChecker {
             });
         }
 
+        // option.flat_map: (Option(a), (a -> Option(b))) -> Option(b)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("option.flat_map".into(), Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Option".into(), vec![a.clone()]),
+                        Type::Fun(vec![a], Box::new(Type::Generic("Option".into(), vec![b.clone()]))),
+                    ],
+                    Box::new(Type::Generic("Option".into(), vec![b])),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // option.unwrap_or: (Option(a), a) -> a
         {
             let (a, av) = self.fresh_tv();
@@ -2067,6 +2160,14 @@ impl TypeChecker {
         env.define("io.args".into(), Scheme::mono(Type::Fun(
             vec![],
             Box::new(Type::List(Box::new(Type::String))),
+        )));
+    }
+
+    fn register_fs_builtins(&mut self, env: &mut TypeEnv) {
+        // fs.exists: (String) -> Bool
+        env.define("fs.exists".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Bool),
         )));
     }
 
@@ -2210,6 +2311,21 @@ impl TypeChecker {
                 ty: Type::Fun(
                     vec![Type::List(Box::new(ch.clone()))],
                     Box::new(Type::Tuple(vec![ch, a])),
+                ),
+                constraints: vec![],
+            });
+        }
+
+        // channel.each: (Channel(a), Fn(a) -> b) -> Unit
+        {
+            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            env.define("channel.each".into(), Scheme {
+                vars: vec![chv, av, bv],
+                ty: Type::Fun(
+                    vec![ch, Type::Fun(vec![a], Box::new(b))],
+                    Box::new(Type::Unit),
                 ),
                 constraints: vec![],
             });
@@ -2759,8 +2875,9 @@ impl TypeChecker {
                 self.unify(ty, &Type::Int, Span { line: 0, col: 0, offset: 0 });
             }
             Pattern::Map(entries) => {
+                let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
-                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
+                let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(ty, &map_ty, Span { line: 0, col: 0, offset: 0 });
                 let resolved_val = self.apply(&val_ty);
                 for (_key, pat) in entries {
@@ -2810,15 +2927,21 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::List(Box::new(tv))
                 } else {
-                    let mut iter = elems.iter_mut();
-                    let first_elem = iter.next().unwrap();
-                    let first = self.infer_expr(first_elem, env);
-                    for elem in iter {
-                        let elem_span = elem.span;
-                        let t = self.infer_expr(elem, env);
-                        self.unify(&first, &t, elem_span);
+                    let elem_type = self.fresh_var();
+                    for elem in elems.iter_mut() {
+                        match elem {
+                            ListElem::Single(e) => {
+                                let t = self.infer_expr(e, env);
+                                self.unify(&elem_type, &t, e.span);
+                            }
+                            ListElem::Spread(e) => {
+                                let t = self.infer_expr(e, env);
+                                let expected = Type::List(Box::new(elem_type.clone()));
+                                self.unify(&expected, &t, e.span);
+                            }
+                        }
                     }
-                    Type::List(Box::new(first))
+                    Type::List(Box::new(elem_type))
                 }
             }
 
@@ -3656,8 +3779,9 @@ impl TypeChecker {
                 self.unify(expected, &Type::Int, span);
             }
             Pattern::Map(entries) => {
+                let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
-                let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
+                let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(expected, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);
                 for (_key, pat) in entries {
@@ -4152,7 +4276,12 @@ impl TypeChecker {
                 for a in args { self.resolve_expr_types(a); }
             }
             ExprKind::List(elems) => {
-                for e in elems { self.resolve_expr_types(e); }
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) => self.resolve_expr_types(e),
+                        ListElem::Spread(e) => self.resolve_expr_types(e),
+                    }
+                }
             }
             ExprKind::Tuple(elems) => {
                 for e in elems { self.resolve_expr_types(e); }

@@ -197,6 +197,7 @@ operator (`|>`) and trailing closures.
 | `list.prepend` | `list.prepend(list, element) -> List` | Return a new list with the element added at the front |
 | `list.concat` | `list.concat(list_a, list_b) -> List` | Concatenate two lists |
 | `list.get` | `list.get(list, index) -> Option` | Get element at index (zero-based) |
+| `list.set` | `list.set(list, index, value) -> List` | Return new list with element at index replaced |
 | `list.take` | `list.take(list, n) -> List` | Take the first n elements |
 | `list.drop` | `list.drop(list, n) -> List` | Drop the first n elements |
 | `list.enumerate` | `list.enumerate(list) -> List(Tuple(Int, T))` | Pair each element with its index |
@@ -634,6 +635,20 @@ fn main() {
 }
 ```
 
+### `list.set`
+
+```
+list.set(list, index, value) -> List
+```
+
+Returns a new list with the element at `index` replaced by `value`. The index is zero-based. Panics if the index is out of bounds.
+
+```silt
+fn main() {
+  list.set([10, 20, 30], 1, 99)  -- [10, 99, 30]
+}
+```
+
 ### `list.take`
 
 ```
@@ -719,6 +734,10 @@ Functions for working with strings.
 | `string.slice` | `string.slice(s, start, end) -> String` | Extract a substring by char indices |
 | `string.pad_left` | `string.pad_left(s, width, pad) -> String` | Pad on the left to reach width |
 | `string.pad_right` | `string.pad_right(s, width, pad) -> String` | Pad on the right to reach width |
+| `string.trim_start` | `string.trim_start(s) -> String` | Remove leading whitespace |
+| `string.trim_end` | `string.trim_end(s) -> String` | Remove trailing whitespace |
+| `string.char_code` | `string.char_code(s) -> Int` | Unicode code point of the first character |
+| `string.from_char_code` | `string.from_char_code(n) -> String` | Single-character string from a code point |
 
 ### `string.split`
 
@@ -970,11 +989,69 @@ fn main() {
 }
 ```
 
+### `string.trim_start`
+
+```
+string.trim_start(s) -> String
+```
+
+Removes leading whitespace from a string.
+
+```silt
+fn main() {
+  string.trim_start("  hello  ")  -- "hello  "
+}
+```
+
+### `string.trim_end`
+
+```
+string.trim_end(s) -> String
+```
+
+Removes trailing whitespace from a string.
+
+```silt
+fn main() {
+  string.trim_end("  hello  ")  -- "  hello"
+}
+```
+
+### `string.char_code`
+
+```
+string.char_code(s) -> Int
+```
+
+Returns the Unicode code point of the first character. Panics if the string is empty.
+
+```silt
+fn main() {
+  string.char_code("A")    -- 65
+  string.char_code("hello") -- 104
+}
+```
+
+### `string.from_char_code`
+
+```
+string.from_char_code(n) -> String
+```
+
+Returns a single-character string from a Unicode code point. Panics if the code point is invalid.
+
+```silt
+fn main() {
+  string.from_char_code(65)   -- "A"
+  string.from_char_code(104)  -- "h"
+}
+```
+
 -----
 
 ## `map` Module
 
-Functions for working with maps (hash maps with string keys). All map operations return new maps (immutable).
+Functions for working with maps. Keys can be any hashable type (Int, Float, String, Bool, tuples, enums, records — any type that implements the `Hash` trait). All map operations return new maps (immutable).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -1561,6 +1638,7 @@ Functions for working with `Option` values (`Some(value)` or `None`).
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `option.map` | `option.map(opt, fn) -> Option` | Transform the Some value, pass None through |
+| `option.flat_map` | `option.flat_map(opt, fn) -> Option` | Apply fn returning Option, flatten the result |
 | `option.unwrap_or` | `option.unwrap_or(opt, default) -> T` | Extract the inner value, or return default |
 | `option.to_result` | `option.to_result(opt, err) -> Result` | Convert Option to Result with an error value |
 | `option.is_some` | `option.is_some(opt) -> Bool` | Check if the option is Some |
@@ -1578,6 +1656,29 @@ If the value is `Some(v)`, applies `fn` to `v` and wraps the result in `Some`. I
 fn main() {
   option.map(Some(21), fn(x) { x * 2 })   -- Some(42)
   option.map(None, fn(x) { x * 2 })       -- None
+}
+```
+
+### `option.flat_map`
+
+```
+option.flat_map(opt, fn) -> Option
+```
+
+If the value is `Some(v)`, applies `fn` to `v` (which must return an `Option`). If `None`, returns `None`. This is like `option.map` but avoids nested `Some(Some(...))` when the function itself returns an `Option`.
+
+```silt
+fn safe_div(a, b) {
+  match b == 0 {
+    true -> None
+    _ -> Some(a / b)
+  }
+}
+
+fn main() {
+  option.flat_map(Some(10), fn(x) { safe_div(x, 2) })  -- Some(5)
+  option.flat_map(Some(10), fn(x) { safe_div(x, 0) })  -- None
+  option.flat_map(None, fn(x) { safe_div(x, 2) })      -- None
 }
 ```
 
@@ -1750,6 +1851,31 @@ fn main() {
 
 -----
 
+## `fs` Module
+
+File system utility functions.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fs.exists` | `fs.exists(path) -> Bool` | Check if a file or directory exists |
+
+### `fs.exists`
+
+```
+fs.exists(path) -> Bool
+```
+
+Returns `true` if the file or directory at `path` exists, `false` otherwise.
+
+```silt
+fn main() {
+  fs.exists("data.txt")    -- true or false
+  fs.exists("/tmp")         -- true (on most systems)
+}
+```
+
+-----
+
 ## `test` Module
 
 Assertion functions for testing.
@@ -1819,7 +1945,8 @@ can manage blocking).
 | `channel.send` | `channel.send(ch, value) -> Unit` | Send a value into a channel |
 | `channel.receive` | `channel.receive(ch) -> Message(T) \| Closed` | Receive a value from a channel |
 | `channel.close` | `channel.close(ch) -> Unit` | Close a channel; no more sends allowed |
-| `channel.select` | `channel.select(channels) -> (Channel, T)` | Wait on multiple channels; returns `(channel, value)` |
+| `channel.select` | `channel.select(channels) -> (Channel, Message(T) \| Closed)` | Wait on multiple channels; returns `(channel, Message(value))` or `(channel, Closed)` |
+| `channel.each` | `channel.each(ch, fn) -> Unit` | Call fn for each message until channel closes |
 | `channel.try_send` | `channel.try_send(ch, value) -> Bool` | Non-blocking send; true if sent |
 | `channel.try_receive` | `channel.try_receive(ch) -> Message(T) \| Empty \| Closed` | Non-blocking receive |
 
@@ -2019,13 +2146,14 @@ fn main() {
 ### `channel.select`
 
 ```
-channel.select(channels) -> (Channel, T)
+channel.select(channels) -> (Channel, Message(T) | Closed)
 ```
 
-Waits on multiple channels simultaneously and returns a `(channel, value)` tuple
-for whichever channel has data first. The channels are polled in order. If no
-channel is ready, the scheduler cooperatively runs pending tasks and retries.
-Errors with a deadlock message if no progress can be made.
+Waits on multiple channels simultaneously. Returns a `(channel, Message(value))`
+tuple for whichever channel has data first, or `(channel, Closed)` when all
+channels are closed and drained. The channels are polled in order. If no channel
+is ready, the scheduler cooperatively runs pending tasks and retries. Errors with
+a deadlock message if no progress can be made.
 
 Use the `^` pin operator in pattern matching to identify which channel produced
 the value. The `^` prefix matches against the current value of an existing
@@ -2039,11 +2167,37 @@ fn main() {
   channel.send(ch2, "from ch2")
 
   match channel.select([ch1, ch2]) {
-    (^ch1, msg) -> println("got from ch1: {msg}")
-    (^ch2, msg) -> println("got from ch2: {msg}")
+    (^ch1, Message(msg)) -> println("got from ch1: {msg}")
+    (^ch2, Message(msg)) -> println("got from ch2: {msg}")
+    (_, Closed) -> println("all channels closed")
     _ -> panic("unexpected")
   }
   -- "got from ch2: from ch2"
+}
+```
+
+### `channel.each`
+
+```
+channel.each(ch, fn) -> Unit
+```
+
+Receives messages from a channel in a loop, calling `fn` for each message, until
+the channel is closed and drained. Returns `Unit` when the channel closes. This
+is the channel equivalent of `list.each` — use it when you want to process all
+messages without manually matching `Message`/`Closed`.
+
+```silt
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, "hello")
+  channel.send(ch, "world")
+  channel.close(ch)
+
+  channel.each(ch) { msg ->
+    println("got: {msg}")
+  }
+  -- prints "got: hello" then "got: world", then returns
 }
 ```
 
@@ -2210,6 +2364,7 @@ Silt value (records, maps, lists, primitives) to JSON.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `json.parse` | `json.parse(Type, s) -> Result(T, String)` | Parse a JSON string into a typed record |
+| `json.parse_map` | `json.parse_map(ValueType, s) -> Result(Map(String, T), String)` | Parse a JSON object into a map with typed values |
 | `json.stringify` | `json.stringify(value) -> String` | Serialize a Silt value to compact JSON |
 | `json.pretty` | `json.pretty(value) -> String` | Serialize a Silt value to pretty-printed JSON |
 
@@ -2230,6 +2385,20 @@ type:
 
 Missing `Option` fields default to `None`. Missing non-optional fields produce
 an error.
+
+### `json.parse_map`
+
+Parse a JSON object into a `Map(String, T)` where `T` is specified by the first argument:
+
+```silt
+json.parse_map(String, "{\"a\": \"hello\"}") -- Ok(#{"a": "hello"})
+json.parse_map(Int, "{\"x\": 1, \"y\": 2}")  -- Ok(#{"x": 1, "y": 2})
+json.parse_map(Float, "{\"pi\": 3.14}")       -- Ok(#{"pi": 3.14})
+json.parse_map(Bool, "{\"on\": true}")         -- Ok(#{"on": true})
+json.parse_map(Employee, "{...}")              -- Ok(#{"e1": Employee{...}})
+```
+
+Keys are always strings (as in JSON). The value type can be any primitive (`Int`, `Float`, `String`, `Bool`) or a record type. Returns `Err(message)` if the JSON is malformed, not an object, or values don't match the expected type.
 
 ### Serialization mapping (json.stringify / json.pretty)
 

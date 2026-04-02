@@ -578,10 +578,21 @@ impl Interpreter {
             ExprKind::Ident(name) => env.get(name).ok_or_else(|| err_at(format!("undefined: {name}"), expr.span)),
 
             ExprKind::List(elems) => {
-                let vals: Vec<Value> = elems
-                    .iter()
-                    .map(|e| self.eval(e, env))
-                    .collect::<Result<_>>()?;
+                let mut vals: Vec<Value> = Vec::new();
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) => vals.push(self.eval(e, env)?),
+                        ListElem::Spread(e) => {
+                            match self.eval(e, env)? {
+                                Value::List(items) => vals.extend(items.iter().cloned()),
+                                other => return Err(err_at(
+                                    format!("spread (..) requires a list, got {other}"),
+                                    e.span,
+                                )),
+                            }
+                        }
+                    }
+                }
                 Ok(Value::List(Rc::new(vals)))
             }
 
@@ -696,6 +707,7 @@ impl Interpreter {
                         "channel.try_send" => return self.builtin_try_send(args, env),
                         "channel.try_receive" => return self.builtin_try_receive(args, env),
                         "channel.select" => return self.builtin_select(args, env),
+                        "channel.each" => return self.builtin_channel_each(args, env),
                         "task.spawn" => return self.builtin_spawn(args, env),
                         "task.join" => return self.builtin_join(args, env),
                         "task.cancel" => return self.builtin_cancel(args, env),
@@ -956,6 +968,7 @@ impl Interpreter {
                 "result" => self.dispatch_result(func, args),
                 "option" => self.dispatch_option(func, args),
                 "io" => self.dispatch_io(func, args),
+                "fs" => self.dispatch_fs(func, args),
                 "test" => self.dispatch_test(func, args),
                 "regex" => self.dispatch_regex(func, args),
                 "json" => self.dispatch_json(func, args),
@@ -1284,6 +1297,18 @@ impl Interpreter {
                     .collect();
                 Ok(Value::Map(Rc::new(result)))
             }
+            "set" => {
+                if args.len() != 3 { return Err(err("list.set takes 3 arguments (list, index, value)")); }
+                let Value::List(xs) = &args[0] else { return Err(err("first argument must be a list")); };
+                let Value::Int(n) = &args[1] else { return Err(err("second argument must be an int")); };
+                let idx = *n as usize;
+                if idx >= xs.len() {
+                    return Err(err(format!("list.set: index {} out of bounds for list of length {}", idx, xs.len())));
+                }
+                let mut new_list = (**xs).clone();
+                new_list[idx] = args[2].clone();
+                Ok(Value::List(Rc::new(new_list)))
+            }
             _ => Err(err(format!("unknown list function: {name}"))),
         }
     }
@@ -1463,6 +1488,48 @@ impl Interpreter {
                 } else {
                     let padding: String = (0..width - s.len()).map(|_| pad_char).collect();
                     Ok(Value::String(format!("{s}{padding}")))
+                }
+            }
+            "trim_start" => {
+                if args.len() != 1 {
+                    return Err(err("string.trim_start takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.trim_start requires a string"));
+                };
+                Ok(Value::String(s.trim_start().to_string()))
+            }
+            "trim_end" => {
+                if args.len() != 1 {
+                    return Err(err("string.trim_end takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.trim_end requires a string"));
+                };
+                Ok(Value::String(s.trim_end().to_string()))
+            }
+            "char_code" => {
+                if args.len() != 1 {
+                    return Err(err("string.char_code takes 1 argument"));
+                }
+                let Value::String(s) = &args[0] else {
+                    return Err(err("string.char_code requires a string"));
+                };
+                match s.chars().next() {
+                    Some(c) => Ok(Value::Int(c as i64)),
+                    None => Err(err("string.char_code: empty string has no character")),
+                }
+            }
+            "from_char_code" => {
+                if args.len() != 1 {
+                    return Err(err("string.from_char_code takes 1 argument"));
+                }
+                let Value::Int(n) = &args[0] else {
+                    return Err(err("string.from_char_code requires an int"));
+                };
+                match char::from_u32(*n as u32) {
+                    Some(c) => Ok(Value::String(c.to_string())),
+                    None => Err(err(format!("string.from_char_code: invalid code point {}", n))),
                 }
             }
             _ => Err(err(format!("unknown string function: {name}"))),
@@ -1946,6 +2013,20 @@ impl Interpreter {
                     _ => Err(err("option.is_none requires an Option value")),
                 }
             }
+            "flat_map" => {
+                if args.len() != 2 {
+                    return Err(err("option.flat_map takes 2 arguments"));
+                }
+                match &args[0] {
+                    Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+                        self.call_value(&args[1], &[fields[0].clone()])
+                    }
+                    Value::Variant(name, _) if name == "None" => {
+                        Ok(Value::Variant("None".into(), Vec::new()))
+                    }
+                    _ => Err(err("option.flat_map requires an Option value")),
+                }
+            }
             _ => Err(err(format!("unknown option function: {name}"))),
         }
     }
@@ -1998,6 +2079,22 @@ impl Interpreter {
                 Ok(Value::List(Rc::new(args_list)))
             }
             _ => Err(err(format!("unknown io function: {name}"))),
+        }
+    }
+
+    fn dispatch_fs(&self, name: &str, args: &[Value]) -> Result<Value> {
+        match name {
+            // ── fs module ───────────────────────────────────────────
+            "exists" => {
+                if args.len() != 1 {
+                    return Err(err("fs.exists takes 1 argument"));
+                }
+                let Value::String(path) = &args[0] else {
+                    return Err(err("fs.exists requires a string path"));
+                };
+                Ok(Value::Bool(std::path::Path::new(path).exists()))
+            }
+            _ => Err(err(format!("unknown fs function: {name}"))),
         }
     }
 
@@ -2215,6 +2312,32 @@ impl Interpreter {
                 let j = value_to_json(&args[0]);
                 Ok(Value::String(serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())))
             }
+            "parse_map" => {
+                if args.len() != 2 {
+                    return Err(err(
+                        "json.parse_map takes 2 arguments: (ValueType, String)"
+                    ));
+                }
+                let value_type = match &args[0] {
+                    Value::PrimitiveDescriptor(name) => name.clone(),
+                    Value::RecordDescriptor(name) => name.clone(),
+                    _ => return Err(err(
+                        "json.parse_map: first argument must be a type (Int, Float, String, Bool, or a record type)"
+                    )),
+                };
+                let Value::String(s) = &args[1] else {
+                    return Err(err(
+                        "json.parse_map: second argument must be a string"
+                    ));
+                };
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    Ok(json_val) => self.json_to_map(&value_type, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse_map: {e}"))],
+                    )),
+                }
+            }
             _ => Err(err(format!("unknown json function: {name}"))),
         }
     }
@@ -2273,6 +2396,61 @@ impl Interpreter {
         Ok(Value::Variant(
             "Ok".into(),
             vec![Value::Record(type_name.to_string(), Rc::new(record_fields))],
+        ))
+    }
+
+    fn json_to_map(
+        &self,
+        value_type: &str,
+        json: &serde_json::Value,
+    ) -> Result<Value> {
+        let serde_json::Value::Object(obj) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse_map: expected JSON object, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        // Convert value_type string to FieldType for reuse with json_to_typed_value
+        let field_type = match value_type {
+            "String" => FieldType::String,
+            "Int" => FieldType::Int,
+            "Float" => FieldType::Float,
+            "Bool" => FieldType::Bool,
+            record_name => {
+                // Check if it's a known record type
+                if !self.record_types.contains_key(record_name) {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_map: unknown value type '{record_name}'"
+                        ))],
+                    ));
+                }
+                FieldType::Record(record_name.to_string())
+            }
+        };
+        let mut map = BTreeMap::new();
+        for (key, json_val) in obj {
+            match self.json_to_typed_value(json_val, &field_type, "Map", key) {
+                Ok(val) => {
+                    map.insert(Value::String(key.clone()), val);
+                }
+                Err(e) => {
+                    let msg = e.message().unwrap_or("unknown error").to_string();
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_map: key '{key}': {msg}"
+                        ))],
+                    ));
+                }
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::Map(Rc::new(map))],
         ))
     }
 
@@ -2821,15 +2999,19 @@ impl Interpreter {
         let max_retries = 10000;
         for _ in 0..max_retries {
             let mut all_closed = true;
+            let mut first_closed_ch = None;
             for ch in &channel_refs {
                 match ch.try_receive() {
                     TryReceiveResult::Value(val) => {
                         return Ok(Value::Tuple(vec![
                             Value::Channel(ch.clone()),
-                            val,
+                            Value::Variant("Message".into(), vec![val]),
                         ]));
                     }
                     TryReceiveResult::Closed => {
+                        if first_closed_ch.is_none() {
+                            first_closed_ch = Some(ch.clone());
+                        }
                         continue;
                     }
                     TryReceiveResult::Empty => {
@@ -2838,7 +3020,11 @@ impl Interpreter {
                 }
             }
             if all_closed {
-                return Ok(Value::Variant("Closed".into(), vec![]));
+                let ch = first_closed_ch.unwrap_or_else(|| channel_refs[0].clone());
+                return Ok(Value::Tuple(vec![
+                    Value::Channel(ch),
+                    Value::Variant("Closed".into(), vec![]),
+                ]));
             }
             if !self.run_pending_tasks_once()? {
                 return Err(err(
@@ -2847,6 +3033,37 @@ impl Interpreter {
             }
         }
         Err(err("channel.select: exceeded maximum retries"))
+    }
+
+    fn builtin_channel_each(&self, args: &[Expr], env: &Env) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(err("channel.each takes 2 arguments (channel, function)"));
+        }
+        let ch_val = self.eval(&args[0], env)?;
+        let Value::Channel(ch) = ch_val else {
+            return Err(err("first argument to channel.each must be a channel"));
+        };
+        let callback = self.eval(&args[1], env)?;
+
+        let max_total = 100000;
+        for _ in 0..max_total {
+            match ch.try_receive() {
+                TryReceiveResult::Value(val) => {
+                    self.call_value(&callback, &[val])?;
+                }
+                TryReceiveResult::Closed => {
+                    return Ok(Value::Unit);
+                }
+                TryReceiveResult::Empty => {
+                    if !self.run_pending_tasks_once()? {
+                        return Err(err(
+                            "channel.each: deadlock detected - channel is empty and no task can fill it",
+                        ));
+                    }
+                }
+            }
+        }
+        Err(err("channel.each: exceeded maximum iterations"))
     }
 
     fn builtin_spawn(&self, args: &[Expr], env: &Env) -> Result<Value> {
@@ -3434,6 +3651,12 @@ fn register_builtins(env: &Env) {
     env.define("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
     env.define("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
 
+    // Primitive type descriptors — for json.parse_map(Int, str) etc.
+    env.define("Int".into(), Value::PrimitiveDescriptor("Int".into()));
+    env.define("Float".into(), Value::PrimitiveDescriptor("Float".into()));
+    env.define("String".into(), Value::PrimitiveDescriptor("String".into()));
+    env.define("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
+
     // All builtins — just register names; dispatch_builtin handles implementation
     let builtin_names = [
         "print",
@@ -3466,6 +3689,7 @@ fn register_builtins(env: &Env) {
         "list.prepend",
         "list.concat",
         "list.get",
+        "list.set",
         "list.take",
         "list.drop",
         "list.enumerate",
@@ -3481,8 +3705,13 @@ fn register_builtins(env: &Env) {
         "option.to_result",
         "option.is_some",
         "option.is_none",
+        "option.flat_map",
         "string.split",
         "string.trim",
+        "string.trim_start",
+        "string.trim_end",
+        "string.char_code",
+        "string.from_char_code",
         "string.contains",
         "string.replace",
         "string.join",
@@ -3528,6 +3757,7 @@ fn register_builtins(env: &Env) {
         "io.write_file",
         "io.read_line",
         "io.args",
+        "fs.exists",
         "test.assert",
         "test.assert_eq",
         "test.assert_ne",
@@ -3540,6 +3770,7 @@ fn register_builtins(env: &Env) {
         "regex.captures",
         "regex.captures_all",
         "json.parse",
+        "json.parse_map",
         "json.stringify",
         "json.pretty",
         "math.sqrt",
@@ -4097,5 +4328,120 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::String("ababab".into()));
+    }
+
+    #[test]
+    fn test_list_set() {
+        let result = run(r#"
+            fn main() {
+                list.set([10, 20, 30], 1, 99)
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![
+            Value::Int(10), Value::Int(99), Value::Int(30),
+        ])));
+    }
+
+    #[test]
+    fn test_list_set_out_of_bounds() {
+        let tokens = crate::lexer::Lexer::new(r#"
+            fn main() {
+                list.set([1, 2], 5, 99)
+            }
+        "#).tokenize().unwrap();
+        let program = crate::parser::Parser::new(tokens).parse_program().unwrap();
+        let mut interp = Interpreter::new();
+        let result = interp.run(&program);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_trim_start() {
+        let result = run(r#"
+            fn main() {
+                string.trim_start("  hello  ")
+            }
+        "#);
+        assert_eq!(result, Value::String("hello  ".into()));
+    }
+
+    #[test]
+    fn test_string_trim_end() {
+        let result = run(r#"
+            fn main() {
+                string.trim_end("  hello  ")
+            }
+        "#);
+        assert_eq!(result, Value::String("  hello".into()));
+    }
+
+    #[test]
+    fn test_string_char_code() {
+        let result = run(r#"
+            fn main() {
+                string.char_code("A")
+            }
+        "#);
+        assert_eq!(result, Value::Int(65));
+    }
+
+    #[test]
+    fn test_string_from_char_code() {
+        let result = run(r#"
+            fn main() {
+                string.from_char_code(65)
+            }
+        "#);
+        assert_eq!(result, Value::String("A".into()));
+    }
+
+    #[test]
+    fn test_option_flat_map_some() {
+        let result = run(r#"
+            fn main() {
+                option.flat_map(Some(10), fn(x) { Some(x * 2) })
+            }
+        "#);
+        assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(20)]));
+    }
+
+    #[test]
+    fn test_option_flat_map_none() {
+        let result = run(r#"
+            fn main() {
+                option.flat_map(None, fn(x) { Some(x * 2) })
+            }
+        "#);
+        assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+    }
+
+    #[test]
+    fn test_option_flat_map_returns_none() {
+        let result = run(r#"
+            fn main() {
+                option.flat_map(Some(10), fn(_) { None })
+            }
+        "#);
+        assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+    }
+
+    #[test]
+    fn test_fs_exists() {
+        let result = run(r#"
+            fn main() {
+                fs.exists("Cargo.toml")
+            }
+        "#);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_fs_exists_nonexistent() {
+        let result = run(r#"
+            fn main() {
+                fs.exists("nonexistent_file_xyz_123.txt")
+            }
+        "#);
+        assert_eq!(result, Value::Bool(false));
     }
 }

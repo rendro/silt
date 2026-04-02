@@ -61,6 +61,23 @@ can figure out types for you. But you can annotate when you want to be explicit.
 let x: Int = 42
 let name: String = "Alice"
 let ratio: Float = 3.14
+let transform: Fn(Int) -> Int = fn(x) { x * 2 }
+```
+
+You can annotate function types with `Fn(params) -> Return`:
+
+```silt
+let apply: Fn(Int, Int) -> Int = fn(a, b) { a + b }
+let callbacks: List(Fn(String) -> String) = [string.to_upper, string.to_lower]
+```
+
+Function type annotations work in record fields too:
+
+```silt
+type Handler {
+  name: String,
+  run: Fn(String) -> String,
+}
 ```
 
 Annotations are most useful in function signatures and public APIs, where they serve as
@@ -257,6 +274,23 @@ fn main() {
 
 Since Silt is immutable, list operations always produce new lists. The original is never
 modified.
+
+#### Spread in list literals
+
+Use `..` to spread one list into another. This works in any position and you can
+use multiple spreads:
+
+```silt
+let tail = [2, 3, 4]
+let full = [1, ..tail]             -- [1, 2, 3, 4]
+
+let head = [1, 2]
+let extended = [..head, 3, 4]      -- [1, 2, 3, 4]
+
+let a = [1, 2]
+let b = [4, 5]
+let merged = [..a, 3, ..b]         -- [1, 2, 3, 4, 5]
+```
 
 ### Tuples
 

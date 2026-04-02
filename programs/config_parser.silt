@@ -1,236 +1,200 @@
 {- Friction Report
-   Attempts: 2
-   Rating: 9/10
-   Highlights: ADTs for line classification worked perfectly. Pattern matching
-     with guardless match for multi-branch classification is very clean. Pipe
-     operator with trailing closures makes list processing expressive. Nested
-     maps via map.set/map.get compose well. list.enumerate + list.map is a
-     natural pattern for tracking line numbers. string.slice + string.index_of
-     give precise substring control.
-   Friction: First attempt failed because I used semicolons as statement
-     separators (habit from other languages). The error message was clear and
-     pointed to the exact location, so the fix was trivial.
-   Missing: Nothing significant for this task. A string.trim_start or
-     string.split_once function would be nice but string.index_of + string.slice
-     worked fine.
-   Bugs: None encountered.
+   Attempts: 1 (worked on the first run)
+   Rating: 9/10 (very natural, expressive code)
+   Highlights:
+     - ADTs with match worked perfectly for line classification
+     - Guardless match made the parse_line dispatch clean and readable
+     - list.enumerate + list.fold with tuple accumulator was ergonomic
+     - Nested map structure (map of maps) worked seamlessly with map.set/map.get
+     - when-else for file read error handling is concise
+     - string.starts_with, string.ends_with, string.index_of, string.slice all present and correct
+     - Pipe operator + trailing closures made the validation code pleasant
+   Friction:
+     - Tuple destructuring in fold accumulator requires (section, config, errors) = acc on a separate line;
+       cannot destructure directly in the closure parameters for a 3-tuple fold accumulator
+       (the trailing closure syntax { (a, b, c), item -> ... } would be ideal but unclear if supported)
+     - Comparing string.length(s) == 0 for empty string checks feels verbose; a string.is_empty
+       would be more idiomatic, though this is minor
+   Missing:
+     - string.is_empty (verified not in docs/stdlib-reference.md)
+   Bugs: None encountered
 -}
 
--- INI-style config parser
--- Parses app.conf into a nested map structure (section -> key -> value)
--- Validates required keys and reports errors with line numbers
-
+-- ADT for classifying each line of the config file
 type Line {
   Blank,
   Comment(String),
   Section(String),
   KeyValue(String, String),
-  ParseError(String),
+  ParseError(Int, String),
 }
 
--- Classify a single line of the config file
-fn classify_line(raw_line) {
-  let line = string.trim(raw_line)
-
+-- Parse a single raw line into a Line variant
+fn parse_line(line_num, raw) {
+  let trimmed = string.trim(raw)
   match {
-    string.length(line) == 0 -> Blank
-
-    string.starts_with(line, ";") ->
-      Comment(string.trim(string.slice(line, 1, string.length(line))))
-
-    string.starts_with(line, "#") ->
-      Comment(string.trim(string.slice(line, 1, string.length(line))))
-
-    string.starts_with(line, "[") -> {
-      match string.ends_with(line, "]") {
-        true -> {
-          let name = string.slice(line, 1, string.length(line) - 1)
-            |> string.trim
-          match string.length(name) > 0 {
-            true -> Section(name)
-            _ -> ParseError("empty section name")
-          }
-        }
-        _ -> ParseError("unclosed section bracket")
-      }
-    }
-
-    string.contains(line, "=") -> {
-      match string.index_of(line, "=") {
-        Some(idx) -> {
-          let key = string.slice(line, 0, idx) |> string.trim
-          let value = string.slice(line, idx + 1, string.length(line)) |> string.trim
-          match string.length(key) > 0 {
-            true -> KeyValue(key, value)
-            _ -> ParseError("empty key before '='")
-          }
-        }
-        None -> ParseError("unexpected error parsing key=value")
-      }
-    }
-
-    _ -> ParseError("unrecognized line format")
+    string.length(trimmed) == 0 -> Blank
+    string.starts_with(trimmed, "#") -> Comment(trimmed)
+    string.starts_with(trimmed, ";") -> Comment(trimmed)
+    string.starts_with(trimmed, "[") -> parse_section(line_num, trimmed)
+    string.contains(trimmed, "=") -> parse_key_value(line_num, trimmed)
+    _ -> ParseError(line_num, "unrecognized line: {trimmed}")
   }
 }
 
--- Parse all lines into classified entries with line numbers
-fn parse_lines(content) {
-  content
-  |> string.split("\n")
-  |> list.enumerate
-  |> list.map { entry ->
-    let (idx, raw_line) = entry
+-- Parse a [section] header
+fn parse_section(line_num, trimmed) {
+  match string.ends_with(trimmed, "]") {
+    true -> {
+      let inner = string.slice(trimmed, 1, string.length(trimmed) - 1)
+      let name = string.trim(inner)
+      match string.length(name) == 0 {
+        true -> ParseError(line_num, "empty section name")
+        _ -> Section(name)
+      }
+    }
+    _ -> ParseError(line_num, "malformed section header: {trimmed}")
+  }
+}
+
+-- Parse a key = value pair
+fn parse_key_value(line_num, trimmed) {
+  match string.index_of(trimmed, "=") {
+    Some(idx) -> {
+      let key = string.trim(string.slice(trimmed, 0, idx))
+      let value = string.trim(string.slice(trimmed, idx + 1, string.length(trimmed)))
+      match string.length(key) == 0 {
+        true -> ParseError(line_num, "empty key in key-value pair")
+        _ -> KeyValue(key, value)
+      }
+    }
+    None -> ParseError(line_num, "expected '=' in key-value pair: {trimmed}")
+  }
+}
+
+-- Parse the full config text into a nested map: section -> key -> value
+-- Also returns a list of errors
+fn parse_config(text) {
+  let lines = string.split(text, "\n")
+  let indexed = list.enumerate(lines)
+
+  -- Fold over lines, accumulating (current_section, config_map, errors)
+  let result = indexed |> list.fold(("", #{}, [])) { acc, item ->
+    let (section, config, errors) = acc
+    let (idx, raw) = item
     let line_num = idx + 1
-    (line_num, classify_line(raw_line))
-  }
-}
-
--- Build nested map: section -> key -> value
--- Also collect errors with line numbers
-fn build_config(classified_lines) {
-  classified_lines |> list.fold((#{}, [], ""), fn(acc, entry) {
-    let (config, errors, current_section) = acc
-    let (line_num, classification) = entry
-
-    match classification {
-      Blank -> (config, errors, current_section)
-
-      Comment(_) -> (config, errors, current_section)
-
+    let parsed = parse_line(line_num, raw)
+    match parsed {
+      Blank -> (section, config, errors)
+      Comment(_) -> (section, config, errors)
       Section(name) -> {
-        -- Initialize section in config if not present
+        -- Ensure section exists in the config map
         let new_config = match map.has_key(config, name) {
           true -> config
           _ -> map.set(config, name, #{})
         }
-        (new_config, errors, name)
+        (name, new_config, errors)
       }
-
       KeyValue(key, value) -> {
-        match string.length(current_section) == 0 {
-          true -> {
-            let err = "Line {line_num}: key '{key}' outside of any section"
-            (config, list.append(errors, err), current_section)
-          }
+        match string.length(section) == 0 {
+          true -> (section, config, list.append(errors, "Line {line_num}: key-value pair outside of section: {key}={value}"))
           _ -> {
-            let section_map = match map.get(config, current_section) {
+            let section_map = match map.get(config, section) {
               Some(m) -> m
               None -> #{}
             }
-            let updated_section = map.set(section_map, key, value)
-            let new_config = map.set(config, current_section, updated_section)
-            (new_config, errors, current_section)
+            let new_section_map = map.set(section_map, key, value)
+            let new_config = map.set(config, section, new_section_map)
+            (section, new_config, errors)
           }
         }
       }
-
-      ParseError(msg) -> {
-        let err = "Line {line_num}: {msg}"
-        (config, list.append(errors, err), current_section)
-      }
-    }
-  })
-}
-
--- Validate that required keys exist in a section
--- Returns a list of error messages
-fn validate_required(config, section, required_keys) {
-  required_keys |> list.filter { key ->
-    match map.get(config, section) {
-      Some(section_map) -> {
-        match map.has_key(section_map, key) {
-          true -> false
-          _ -> true
-        }
-      }
-      None -> true
+      ParseError(ln, msg) -> (section, config, list.append(errors, "Line {ln}: {msg}"))
     }
   }
-  |> list.map { key -> "Missing required key '{key}' in [{section}]" }
+
+  let (_, config, errors) = result
+  (config, errors)
+}
+
+-- Validate that required keys exist in the config
+fn validate_required(config, requirements) {
+  requirements |> list.fold([]) { errors, req ->
+    let (section, key) = req
+    match map.get(config, section) {
+      None -> list.append(errors, "Missing required section [{section}]")
+      Some(section_map) -> {
+        match map.has_key(section_map, key) {
+          true -> errors
+          _ -> list.append(errors, "Missing required key '{key}' in [{section}]")
+        }
+      }
+    }
+  }
 }
 
 -- Pretty-print the config map
 fn print_config(config) {
-  config |> map.entries |> list.each { entry ->
-    let (section, section_map) = entry
+  let sections = map.keys(config)
+  sections |> list.each { section ->
     println("[{section}]")
-    section_map |> map.entries |> list.each { kv ->
-      let (key, value) = kv
-      println("  {key} = {value}")
+    match map.get(config, section) {
+      Some(section_map) -> {
+        let keys = map.keys(section_map)
+        keys |> list.each { key ->
+          let value = match map.get(section_map, key) {
+            Some(v) -> v
+            None -> ""
+          }
+          println("  {key} = {value}")
+        }
+      }
+      None -> println("  (empty)")
     }
     println("")
   }
 }
 
 fn main() {
-  println("=== INI Config Parser ===")
-  println("")
-
   -- Read the config file
-  let content = match io.read_file("programs/app.conf") {
-    Ok(c) -> c
-    Err(e) -> {
-      println("Error reading config file: {e}")
-      panic("cannot continue without config file")
-    }
+  when Ok(text) = io.read_file("programs/app.conf") else {
+    return println("Error: could not read programs/app.conf")
   }
 
-  -- Parse and classify lines
-  let classified = parse_lines(content)
+  println("=== Parsing config file ===\n")
 
-  -- Show line classification
-  println("--- Line Classification ---")
-  classified |> list.each { entry ->
-    let (line_num, classification) = entry
-    let desc = match classification {
-      Blank -> "BLANK"
-      Comment(text) -> "COMMENT: {text}"
-      Section(name) -> "SECTION: [{name}]"
-      KeyValue(k, v) -> "KV: {k} = {v}"
-      ParseError(msg) -> "ERROR: {msg}"
-    }
-    println("  {line_num}: {desc}")
-  }
-  println("")
+  let (config, parse_errors) = parse_config(text)
 
-  -- Build config structure
-  let (config, parse_errors, _) = build_config(classified)
-
-  -- Report any parse errors
+  -- Report parse errors
   match list.length(parse_errors) > 0 {
     true -> {
-      println("--- Parse Errors ---")
+      println("Parse errors:")
       parse_errors |> list.each { e -> println("  {e}") }
       println("")
     }
-    _ -> println("No parse errors found.")
+    _ -> println("No parse errors.\n")
   }
 
-  -- Print parsed configuration
-  println("--- Parsed Configuration ---")
+  -- Print the parsed config
+  println("=== Parsed Configuration ===\n")
   print_config(config)
 
   -- Validate required keys
-  println("--- Validation ---")
-  let validation_errors = list.concat(
-    list.concat(
-      validate_required(config, "server", ["host", "port"]),
-      validate_required(config, "database", ["driver", "host", "port", "name"])
-    ),
-    list.concat(
-      validate_required(config, "logging", ["level", "file"]),
-      validate_required(config, "email", ["from", "provider"])
-    )
-  )
+  let required = [
+    ("server", "host"),
+    ("server", "port"),
+    ("database", "host"),
+    ("database", "name"),
+    ("security", "secret_key"),
+  ]
 
+  println("=== Validation ===\n")
+  let validation_errors = validate_required(config, required)
   match list.length(validation_errors) > 0 {
     true -> {
-      println("Validation errors found:")
-      validation_errors |> list.each { e -> println("  - {e}") }
+      println("Validation errors:")
+      validation_errors |> list.each { e -> println("  {e}") }
     }
     _ -> println("All required keys present.")
   }
-
-  println("")
-  println("=== Done ===")
 }

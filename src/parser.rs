@@ -491,6 +491,25 @@ impl Parser {
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
+        // Function type: Fn(A, B) -> C
+        if matches!(self.peek(), Token::Ident(s) if s == "Fn") {
+            self.advance();
+            self.expect(&Token::LParen)?;
+            let mut params = Vec::new();
+            self.skip_nl();
+            while !self.at(&Token::RParen) {
+                params.push(self.parse_type_expr()?);
+                self.skip_nl();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                    self.skip_nl();
+                }
+            }
+            self.expect(&Token::RParen)?;
+            self.expect(&Token::Arrow)?;
+            let ret = self.parse_type_expr()?;
+            return Ok(TypeExpr::Function(params, Box::new(ret)));
+        }
         // Tuple type: (A, B, ...)
         if self.at(&Token::LParen) {
             self.advance();
@@ -964,7 +983,12 @@ impl Parser {
                 let mut elems = Vec::new();
                 self.skip_nl();
                 while !self.at(&Token::RBracket) {
-                    elems.push(self.parse_expr()?);
+                    if self.at(&Token::DotDot) {
+                        self.advance();
+                        elems.push(ListElem::Spread(self.parse_expr()?));
+                    } else {
+                        elems.push(ListElem::Single(self.parse_expr()?));
+                    }
                     self.skip_nl();
                     if self.at(&Token::Comma) {
                         self.advance();

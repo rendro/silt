@@ -1,65 +1,71 @@
 {- Friction Report
-   Attempts: 2
-   Rating: 9/10
-   Highlights: The trait system is clean and expressive. Defining custom traits (Area,
-     Perimeter), implementing them for ADTs, and calling methods via dot syntax all
-     worked exactly as expected. The where clause syntax is intuitive. Pipe operator
-     with trailing closures for list.sort_by, list.map, list.each reads very naturally.
-     String interpolation with method calls like "{s.display()}" is a nice touch.
-   Friction: Match arms with multi-statement bodies (using let bindings) require
-     explicit curly braces. My first attempt used a bare "let s = ... \n expr" in a
-     match arm without braces, which failed with "expected expression, found let".
-     This is a reasonable design choice but slightly surprising since single expressions
-     don't need braces.
-   Missing: Nothing missing for this task. The trait system, ADTs, pattern matching,
-     and standard library all came together smoothly.
-   Bugs: None encountered.
+   Attempts: 1 (worked on first run)
+   Rating: 9/10 (the trait system feels natural and expressive)
+   Highlights:
+     - Custom trait declaration + implementation is clean and intuitive
+     - where clauses work naturally with lowercase type parameters
+     - list.sort_by, list.map, list.fold pipeline is very readable
+     - math.pi, math.sqrt, float.to_string(f, decimals) all work perfectly
+     - String interpolation with method calls like {s.display()} is seamless
+     - Heron's formula with math.sqrt composed naturally
+   Friction:
+     - The trait declaration syntax requires a body block even for abstract method
+       signatures (e.g. `trait Area { fn area(self) -> Float }` needs the closing
+       brace but no body for the method). This is actually fine, just slightly
+       different from Rust where you'd omit the body entirely.
+     - The where clause uses the parameter name (e.g. `where item: Display`)
+       rather than a type variable letter, which is a bit different from the
+       docs example (`where a: Display`), but both work.
+   Missing: (none found - all needed features exist)
+   Bugs: (none encountered)
 -}
 
--- Trait Zoo: showcasing silt's trait system with shapes, colors, and styled objects
+-- Trait Zoo: showcasing the trait system in silt
 
--- === Type Definitions ===
-
+-- ADT 1: Shape with three variants
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
-  Triangle(Float, Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
+  Triangle(Float, Float, Float),
 }
 
+-- ADT 2: Color
 type Color {
-  Red
-  Green
-  Blue
-  Custom(Int, Int, Int)
+  Red,
+  Green,
+  Blue,
+  Custom(Int, Int, Int),
 }
 
+-- ADT 3: Styled shape with a color
 type Styled {
-  Styled(Shape, Color)
+  Styled(Shape, Color),
 }
 
--- === Display trait implementations ===
-
+-- Display trait for Shape
 trait Display for Shape {
   fn display(self) -> String {
     match self {
-      Circle(r) -> "Circle(r={float.to_string(r, 2)})"
-      Rect(w, h) -> "Rect({float.to_string(w, 2)} x {float.to_string(h, 2)})"
-      Triangle(a, b, c) -> "Triangle({float.to_string(a, 2)}, {float.to_string(b, 2)}, {float.to_string(c, 2)})"
+      Circle(r) -> "Circle(r={r})"
+      Rect(w, h) -> "Rect({w}x{h})"
+      Triangle(a, b, c) -> "Triangle({a}, {b}, {c})"
     }
   }
 }
 
+-- Display trait for Color
 trait Display for Color {
   fn display(self) -> String {
     match self {
       Red -> "Red"
       Green -> "Green"
       Blue -> "Blue"
-      Custom(r, g, b) -> "Custom(r={r}, g={g}, b={b})"
+      Custom(r, g, b) -> "RGB({r}, {g}, {b})"
     }
   }
 }
 
+-- Display trait for Styled
 trait Display for Styled {
   fn display(self) -> String {
     match self {
@@ -68,8 +74,7 @@ trait Display for Styled {
   }
 }
 
--- === Custom trait: Area ===
-
+-- Custom trait: Area
 trait Area {
   fn area(self) -> Float
 }
@@ -80,6 +85,7 @@ trait Area for Shape {
       Circle(r) -> math.pi * r * r
       Rect(w, h) -> w * h
       Triangle(a, b, c) -> {
+        -- Heron's formula
         let s = (a + b + c) / 2.0
         math.sqrt(s * (s - a) * (s - b) * (s - c))
       }
@@ -87,8 +93,7 @@ trait Area for Shape {
   }
 }
 
--- === Custom trait: Perimeter ===
-
+-- Custom trait: Perimeter
 trait Perimeter {
   fn perimeter(self) -> Float
 }
@@ -103,70 +108,82 @@ trait Perimeter for Shape {
   }
 }
 
--- === Where clause: generic describe function ===
-
+-- Generic function using where clause
 fn describe(item) where item: Display {
-  println("  -> {item.display()}")
+  item.display()
 }
 
--- === Main ===
+-- Format a float to 2 decimal places for display
+fn fmt2(f) {
+  float.to_string(f, 2)
+}
 
 fn main() {
-  -- Create a list of shapes
+  -- Create shapes
   let shapes = [
     Circle(5.0),
-    Rect(3.0, 4.0),
+    Rect(4.0, 6.0),
     Triangle(3.0, 4.0, 5.0),
-    Circle(1.0),
+    Circle(1.5),
     Rect(10.0, 2.0),
-    Triangle(5.0, 5.0, 5.0)
+    Triangle(5.0, 5.0, 5.0),
   ]
 
-  println("=== All Shapes ===")
+  println("=== Trait Zoo ===")
+  println("")
+
+  -- Display all shapes with areas and perimeters
+  println("-- All Shapes --")
   shapes |> list.each { s ->
-    println("{s.display()}  |  area = {float.to_string(s.area(), 4)}  |  perimeter = {float.to_string(s.perimeter(), 4)}")
+    let a = fmt2(s.area())
+    let p = fmt2(s.perimeter())
+    println("  {describe(s)}: area={a}, perimeter={p}")
   }
 
-  -- Sort by area
-  println("\n=== Shapes sorted by area ===")
+  println("")
+
+  -- Sort shapes by area
+  println("-- Sorted by Area (ascending) --")
   let sorted = shapes |> list.sort_by { s -> s.area() }
   sorted |> list.each { s ->
-    println("  {s.display()} -> area = {float.to_string(s.area(), 4)}")
+    println("  {describe(s)}: area={fmt2(s.area())}")
   }
 
-  -- Compute totals
+  println("")
+
+  -- Total area and perimeter
   let total_area = shapes
     |> list.map { s -> s.area() }
     |> list.fold(0.0) { acc, a -> acc + a }
   let total_perimeter = shapes
     |> list.map { s -> s.perimeter() }
     |> list.fold(0.0) { acc, p -> acc + p }
+  println("Total area: {fmt2(total_area)}")
+  println("Total perimeter: {fmt2(total_perimeter)}")
 
-  println("\nTotal area:      {float.to_string(total_area, 4)}")
-  println("Total perimeter: {float.to_string(total_perimeter, 4)}")
+  println("")
 
-  -- Colors and styled shapes
-  println("\n=== Styled Shapes ===")
-  let colors = [Red, Green, Blue, Custom(255, 128, 0), Custom(0, 0, 0), Custom(128, 128, 128)]
-  let styled = list.zip(shapes, colors) |> list.map { pair ->
-    match pair {
-      (shape, color) -> Styled(shape, color)
-    }
-  }
+  -- Colors
+  println("-- Colors --")
+  let colors = [Red, Green, Blue, Custom(255, 128, 0)]
+  colors |> list.each { c -> println("  {describe(c)}") }
 
-  styled |> list.each { st ->
-    describe(st)
-  }
+  println("")
 
-  -- Use where clause with shapes too
-  println("\n=== Describe via where clause ===")
-  shapes |> list.each { s ->
-    describe(s)
-  }
+  -- Styled shapes
+  println("-- Styled Shapes --")
+  let styled_shapes = [
+    Styled(Circle(3.0), Red),
+    Styled(Rect(4.0, 5.0), Blue),
+    Styled(Triangle(3.0, 4.0, 5.0), Custom(128, 0, 255)),
+  ]
+  styled_shapes |> list.each { s -> println("  {describe(s)}") }
 
-  -- Exercise math.pi and math.sqrt explicitly
-  println("\n=== Math Constants ===")
-  println("pi = {float.to_string(math.pi, 10)}")
-  println("sqrt(2) = {float.to_string(math.sqrt(2.0), 10)}")
-  println("e = {float.to_string(math.e, 10)}")
+  println("")
+
+  -- Exercise math.pi and math.sqrt specifically
+  println("-- Math Constants --")
+  println("  pi = {float.to_string(math.pi, 10)}")
+  println("  sqrt(2) = {float.to_string(math.sqrt(2.0), 10)}")
+  println("  Area of unit circle = {fmt2(math.pi * 1.0 * 1.0)}")
 }

@@ -1,345 +1,400 @@
--- Self-testing test framework
--- Implements its own test runner using try() to catch assertion failures
+{- Friction Report
+   Attempts: 2 (first attempt failed due to ++ operator and nested named fn)
+   Rating: 9/10 (very natural, expressive, consistent)
+   Highlights:
+     - try() makes building a test runner trivial; wrapping any test fn catches panics cleanly
+     - Trailing closure syntax with pipes reads beautifully for list/map/result/option chains
+     - Pattern matching as sole branching is surprisingly ergonomic; guardless match is handy
+     - test.assert_eq works with all value types (lists, Options, Results, records)
+     - String interpolation eliminates need for concatenation in nearly all cases
+   Friction:
+     - No string concatenation operator (++ or +); must use interpolation or workarounds
+     - Named fn declarations cannot be nested inside other functions; must use let with anonymous fn
+     - These are minor: interpolation covers the string case well, and let-binding closures is fine
+   Missing:
+     - No string concatenation operator (verified: not in stdlib-reference or language-guide)
+   Bugs: none encountered
+-}
 
--- Run a single test: call the function wrapped in try(), return (name, passed)
+-- Test framework state: (passed, failed, total)
+-- We use a list to collect results, then summarize
+
+type TestResult {
+  Pass(String),
+  Fail(String, String),
+}
+
+-- Run a single test: call fn, catch panics via try()
 fn run_test(name, test_fn) {
   let result = try(test_fn)
   match result {
-    Ok(_) -> (name, true, "")
-    Err(msg) -> (name, false, msg)
+    Ok(_) -> Pass(name)
+    Err(msg) -> Fail(name, msg)
   }
 }
 
--- ============================================================
--- Test functions
--- ============================================================
+-- Print a single test result
+fn print_result(r) {
+  match r {
+    Pass(name) -> println("  [PASS] {name}")
+    Fail(name, msg) -> println("  [FAIL] {name}: {msg}")
+  }
+}
 
-fn test_arithmetic() {
+-- Summarize results
+fn summarize(results) {
+  let total = list.length(results)
+  let passed = results |> list.filter { r ->
+    match r { Pass(_) -> true, _ -> false }
+  } |> list.length
+  let failed = total - passed
+  let sep = string.repeat("=", 50)
+  println("\n{sep}")
+  println("Results: {passed} passed, {failed} failed, {total} total")
+  match failed == 0 {
+    true -> println("All tests passed!")
+    _ -> println("Some tests FAILED.")
+  }
+}
+
+-- ===== Test Functions =====
+
+-- Arithmetic tests
+fn test_basic_arithmetic() {
   test.assert_eq(2 + 3, 5)
   test.assert_eq(10 - 4, 6)
   test.assert_eq(3 * 7, 21)
-  test.assert_eq(10 / 2, 5)
-  test.assert_eq(10 % 3, 1)
-  test.assert(2 + 2 == 4)
-  test.assert_ne(2 + 2, 5)
+  test.assert_eq(15 / 3, 5)
+  test.assert_eq(17 % 5, 2)
+  test.assert_eq(-5 + 10, 5)
 }
 
 fn test_float_arithmetic() {
   test.assert_eq(1.5 + 2.5, 4.0)
+  test.assert_eq(3.0 * 2.0, 6.0)
   test.assert_eq(float.round(3.7), 4)
-  test.assert_eq(float.ceil(3.2), 4)
   test.assert_eq(float.floor(3.9), 3)
-  test.assert_eq(float.abs(-5.0), 5.0)
+  test.assert_eq(float.ceil(3.1), 4)
+  test.assert_eq(int.to_float(42), 42.0)
 }
 
-fn test_strings() {
+fn test_int_operations() {
+  test.assert_eq(int.abs(-7), 7)
+  test.assert_eq(int.min(3, 9), 3)
+  test.assert_eq(int.max(3, 9), 9)
+  test.assert_eq(int.parse("42"), Ok(42))
+  test.assert(result.is_err(int.parse("abc")))
+  test.assert_eq(int.to_string(99), "99")
+}
+
+-- String tests
+fn test_string_basics() {
   test.assert_eq(string.length("hello"), 5)
   test.assert_eq(string.to_upper("hello"), "HELLO")
   test.assert_eq(string.to_lower("WORLD"), "world")
-  test.assert(string.contains("hello world", "world"))
-  test.assert_eq(string.replace("foo bar foo", "foo", "baz"), "baz bar baz")
   test.assert_eq(string.trim("  hi  "), "hi")
+  test.assert_eq(string.repeat("ab", 3), "ababab")
+}
+
+fn test_string_operations() {
+  test.assert(string.contains("hello world", "world"))
+  test.assert(!string.contains("hello world", "xyz"))
   test.assert(string.starts_with("hello", "hel"))
   test.assert(string.ends_with("hello", "llo"))
+  test.assert_eq(string.replace("foo bar foo", "foo", "baz"), "baz bar baz")
+  test.assert_eq(string.index_of("hello", "ll"), Some(2))
+  test.assert_eq(string.index_of("hello", "xyz"), None)
 }
 
 fn test_string_split_join() {
-  let parts = string.split("a,b,c", ",")
-  test.assert_eq(parts, ["a", "b", "c"])
-  let joined = string.join(["x", "y", "z"], "-")
-  test.assert_eq(joined, "x-y-z")
+  test.assert_eq("a,b,c" |> string.split(","), ["a", "b", "c"])
+  test.assert_eq(string.join(["x", "y", "z"], "-"), "x-y-z")
+  test.assert_eq(string.slice("hello world", 0, 5), "hello")
+  test.assert_eq(string.chars("abc"), ["a", "b", "c"])
 }
 
 fn test_string_interpolation() {
-  let name = "world"
-  test.assert_eq("hello {name}", "hello world")
-  let x = 42
-  test.assert_eq("value is {x}", "value is 42")
+  let name = "silt"
+  let n = 42
+  test.assert_eq("hello {name}", "hello silt")
+  test.assert_eq("n={n}", "n=42")
+  test.assert_eq("{2 + 3}", "5")
 }
 
-fn test_lists() {
-  let xs = [1, 2, 3, 4, 5]
-  test.assert_eq(list.length(xs), 5)
-  test.assert_eq(list.head(xs), Some(1))
-  test.assert_eq(list.last(xs), Some(5))
-  test.assert_eq(list.tail(xs), [2, 3, 4, 5])
-  test.assert_eq(list.reverse(xs), [5, 4, 3, 2, 1])
-  test.assert(list.contains(xs, 3))
-  test.assert_eq(list.append(xs, 6), [1, 2, 3, 4, 5, 6])
-  test.assert_eq(list.prepend(xs, 0), [0, 1, 2, 3, 4, 5])
-  test.assert_eq(list.take(xs, 3), [1, 2, 3])
-  test.assert_eq(list.drop(xs, 3), [4, 5])
-  test.assert_eq(list.get(xs, 0), Some(1))
-  test.assert_eq(list.get(xs, 10), None)
+-- List tests
+fn test_list_basics() {
+  test.assert_eq(list.length([1, 2, 3]), 3)
+  test.assert_eq(list.length([]), 0)
+  test.assert_eq(list.head([10, 20, 30]), Some(10))
+  test.assert_eq(list.head([]), None)
+  test.assert_eq(list.last([10, 20, 30]), Some(30))
+  test.assert_eq(list.tail([1, 2, 3]), [2, 3])
 }
 
-fn test_list_higher_order() {
-  let xs = [1, 2, 3, 4, 5]
-  let doubled = xs |> list.map { x -> x * 2 }
-  test.assert_eq(doubled, [2, 4, 6, 8, 10])
-
-  let evens = xs |> list.filter { x -> x % 2 == 0 }
-  test.assert_eq(evens, [2, 4])
-
-  let sum = xs |> list.fold(0) { acc, x -> acc + x }
-  test.assert_eq(sum, 15)
-
-  test.assert(xs |> list.any { x -> x > 4 })
-  test.assert(xs |> list.all { x -> x > 0 })
-
-  let found = xs |> list.find { x -> x == 3 }
-  test.assert_eq(found, Some(3))
-}
-
-fn test_list_sort_unique() {
+fn test_list_transform() {
+  test.assert_eq([1, 2, 3] |> list.map { x -> x * 2 }, [2, 4, 6])
+  test.assert_eq([1, 2, 3, 4] |> list.filter { x -> x > 2 }, [3, 4])
+  test.assert_eq([1, 2, 3] |> list.fold(0) { acc, x -> acc + x }, 6)
+  test.assert_eq(list.reverse([1, 2, 3]), [3, 2, 1])
   test.assert_eq(list.sort([3, 1, 2]), [1, 2, 3])
-  test.assert_eq(list.unique([1, 2, 2, 3, 3, 3]), [1, 2, 3])
-  let sorted = list.sort_by(["banana", "apple", "cherry"]) { s -> string.length(s) }
-  test.assert_eq(list.length(sorted), 3)
 }
 
-fn test_list_concat_flatten() {
+fn test_list_operations() {
+  test.assert_eq(list.append([1, 2], 3), [1, 2, 3])
+  test.assert_eq(list.prepend([2, 3], 1), [1, 2, 3])
   test.assert_eq(list.concat([1, 2], [3, 4]), [1, 2, 3, 4])
-  test.assert_eq(list.flatten([[1, 2], [3, 4]]), [1, 2, 3, 4])
+  test.assert_eq(list.get([10, 20, 30], 1), Some(20))
+  test.assert_eq(list.get([10, 20, 30], 5), None)
+  test.assert_eq(list.take([1, 2, 3, 4], 2), [1, 2])
+  test.assert_eq(list.drop([1, 2, 3, 4], 2), [3, 4])
+  test.assert(list.contains([1, 2, 3], 2))
+  test.assert(!list.contains([1, 2, 3], 99))
 }
 
-fn test_list_zip_enumerate() {
-  let zipped = list.zip([1, 2, 3], ["a", "b", "c"])
-  test.assert_eq(list.length(zipped), 3)
-  let enumerated = list.enumerate(["x", "y"])
-  test.assert_eq(list.length(enumerated), 2)
+fn test_list_advanced() {
+  test.assert_eq(list.unique([1, 2, 1, 3, 2]), [1, 2, 3])
+  test.assert(list.any([1, 2, 3]) { x -> x > 2 })
+  test.assert(list.all([2, 4, 6]) { x -> x % 2 == 0 })
+  test.assert_eq(list.flatten([[1, 2], [3], [4, 5]]), [1, 2, 3, 4, 5])
+  test.assert_eq([1, 2, 3] |> list.flat_map { x -> [x, x * 10] }, [1, 10, 2, 20, 3, 30])
+  test.assert_eq(list.find([1, 2, 3, 4]) { x -> x > 2 }, Some(3))
+  test.assert_eq(list.find([1, 2]) { x -> x > 10 }, None)
 }
 
-fn test_maps() {
-  let m = #{ "name": "Alice", "city": "NYC" }
-  test.assert_eq(map.get(m, "name"), Some("Alice"))
-  test.assert_eq(map.get(m, "missing"), None)
-  test.assert(map.has_key(m, "name"))
-  test.assert_eq(map.length(m), 2)
-
-  let m2 = map.set(m, "age", "30")
-  test.assert_eq(map.length(m2), 3)
-  test.assert_eq(map.get(m2, "age"), Some("30"))
-
-  let m3 = map.delete(m2, "city")
-  test.assert_eq(map.has_key(m3, "city"), false)
-
-  let keys = map.keys(m)
-  test.assert_eq(list.length(keys), 2)
+-- Map tests
+fn test_map_basics() {
+  let m = #{ "a": 1, "b": 2, "c": 3 }
+  test.assert_eq(map.get(m, "a"), Some(1))
+  test.assert_eq(map.get(m, "z"), None)
+  test.assert(map.has_key(m, "b"))
+  test.assert(!map.has_key(m, "z"))
+  test.assert_eq(map.length(m), 3)
 }
 
-fn test_map_merge() {
+fn test_map_operations() {
+  let m = #{ "x": 10 }
+  let m2 = map.set(m, "y", 20)
+  test.assert_eq(map.get(m2, "y"), Some(20))
+  test.assert_eq(map.length(m2), 2)
+
+  let m3 = map.delete(m2, "x")
+  test.assert_eq(map.get(m3, "x"), None)
+  test.assert_eq(map.length(m3), 1)
+}
+
+fn test_map_merge_entries() {
   let a = #{ "x": 1, "y": 2 }
-  let b = #{ "y": 3, "z": 4 }
+  let b = #{ "y": 99, "z": 3 }
   let merged = map.merge(a, b)
-  test.assert_eq(map.get(merged, "x"), Some(1))
-  test.assert_eq(map.get(merged, "y"), Some(3))
-  test.assert_eq(map.get(merged, "z"), Some(4))
+  test.assert_eq(map.get(merged, "y"), Some(99))
+  test.assert_eq(map.get(merged, "z"), Some(3))
+
+  let entries = map.entries(#{ "a": 1, "b": 2 })
+  test.assert_eq(list.length(entries), 2)
+
+  let from = map.from_entries([("p", 10), ("q", 20)])
+  test.assert_eq(map.get(from, "p"), Some(10))
 }
 
+-- Option/Result tests
 fn test_option() {
   test.assert(option.is_some(Some(42)))
   test.assert(option.is_none(None))
-  test.assert_eq(option.unwrap_or(Some(10), 0), 10)
+  test.assert_eq(option.unwrap_or(Some(5), 0), 5)
   test.assert_eq(option.unwrap_or(None, 0), 0)
-
-  let mapped = option.map(Some(5)) { x -> x * 2 }
-  test.assert_eq(mapped, Some(10))
-  let mapped_none = option.map(None) { x -> x * 2 }
-  test.assert_eq(mapped_none, None)
-}
-
-fn test_option_to_result() {
-  let r = option.to_result(Some(42), "missing")
-  test.assert_eq(r, Ok(42))
-  let r2 = option.to_result(None, "missing")
-  test.assert_eq(r2, Err("missing"))
+  test.assert_eq(option.map(Some(3)) { x -> x * 2 }, Some(6))
+  test.assert_eq(option.map(None) { x -> x * 2 }, None)
+  test.assert_eq(option.to_result(Some(1), "err"), Ok(1))
+  test.assert_eq(option.to_result(None, "err"), Err("err"))
 }
 
 fn test_result() {
   test.assert(result.is_ok(Ok(1)))
-  test.assert(result.is_err(Err("bad")))
+  test.assert(result.is_err(Err("x")))
   test.assert_eq(result.unwrap_or(Ok(42), 0), 42)
-  test.assert_eq(result.unwrap_or(Err("bad"), 0), 0)
-
-  let mapped = result.map_ok(Ok(5)) { x -> x * 2 }
-  test.assert_eq(mapped, Ok(10))
-
-  let mapped_err = result.map_err(Err("bad")) { e -> "error: {e}" }
-  test.assert_eq(mapped_err, Err("error: bad"))
+  test.assert_eq(result.unwrap_or(Err("x"), 0), 0)
+  test.assert_eq(result.map_ok(Ok(3)) { x -> x + 1 }, Ok(4))
+  test.assert_eq(result.map_ok(Err("x")) { x -> x + 1 }, Err("x"))
+  test.assert_eq(result.flatten(Ok(Ok(5))), Ok(5))
+  test.assert_eq(result.flatten(Ok(Err("e"))), Err("e"))
 }
 
-fn test_result_flatten() {
-  let nested = Ok(Ok(42))
-  test.assert_eq(result.flatten(nested), Ok(42))
+fn test_try_catch() {
+  let ok_result = try(fn() { 42 })
+  test.assert_eq(ok_result, Ok(42))
+
+  let err_result = try(fn() { panic("boom") })
+  test.assert(result.is_err(err_result))
 }
 
-type Point { x: Int, y: Int }
+-- Record tests
+type Point {
+  x: Int,
+  y: Int,
+}
 
 fn test_records() {
-  let p = Point { x: 10, y: 20 }
-  test.assert_eq(p.x, 10)
-  test.assert_eq(p.y, 20)
+  let p = Point { x: 3, y: 4 }
+  test.assert_eq(p.x, 3)
+  test.assert_eq(p.y, 4)
 
   -- Record update
-  let p2 = p.{ x: 30 }
-  test.assert_eq(p2.x, 30)
-  test.assert_eq(p2.y, 20)
+  let p2 = p.{ x: 10 }
+  test.assert_eq(p2.x, 10)
+  test.assert_eq(p2.y, 4)
 }
 
-type Shape {
-  Circle(Float),
-  Rect(Float, Float),
+-- Pattern matching tests
+type Color {
+  Red,
+  Green,
+  Blue,
+  Custom(Int, Int, Int),
 }
 
-fn test_patterns() {
-  let s = Circle(5.0)
-  let area = match s {
-    Circle(r) -> 3.14159 * r * r
-    Rect(w, h) -> w * h
+fn color_name(c) {
+  match c {
+    Red -> "red"
+    Green -> "green"
+    Blue -> "blue"
+    Custom(r, g, b) -> "rgb({r},{g},{b})"
   }
-  test.assert(area > 78.0)
-  test.assert(area < 79.0)
+}
 
-  -- List pattern matching
+fn test_pattern_matching() {
+  test.assert_eq(color_name(Red), "red")
+  test.assert_eq(color_name(Green), "green")
+  test.assert_eq(color_name(Custom(255, 0, 128)), "rgb(255,0,128)")
+
+  -- Tuple pattern matching
+  let (a, b) = (10, 20)
+  test.assert_eq(a, 10)
+  test.assert_eq(b, 20)
+
+  -- List patterns
   match [1, 2, 3] {
-    [a, b, c] -> {
-      test.assert_eq(a, 1)
-      test.assert_eq(b, 2)
-      test.assert_eq(c, 3)
+    [h, ..t] -> {
+      test.assert_eq(h, 1)
+      test.assert_eq(t, [2, 3])
     }
     _ -> panic("should not reach here")
   }
 
-  -- Head/tail pattern
-  match [10, 20, 30] {
-    [head, ..tail] -> {
-      test.assert_eq(head, 10)
-      test.assert_eq(tail, [20, 30])
-    }
-    _ -> panic("should not reach here")
+  -- Guard expressions
+  let val = 15
+  let label = match val {
+    x when x < 0 -> "negative"
+    x when x == 0 -> "zero"
+    x when x < 10 -> "small"
+    _ -> "big"
   }
+  test.assert_eq(label, "big")
 }
 
+fn test_pin_operator() {
+  let expected = 42
+  let matched = match 42 {
+    ^expected -> true
+    _ -> false
+  }
+  test.assert(matched)
+}
+
+-- Pipe tests
 fn test_pipes() {
+  -- Basic pipe
   let result = [1, 2, 3, 4, 5]
-    |> list.filter { x -> x % 2 != 0 }
+    |> list.filter { x -> x > 2 }
     |> list.map { x -> x * 10 }
     |> list.fold(0) { acc, x -> acc + x }
-  test.assert_eq(result, 90)
+  test.assert_eq(result, 120)
+
+  -- String pipes
+  let processed = "  Hello, World!  "
+    |> string.trim
+    |> string.to_lower
+    |> string.replace(",", "")
+  test.assert_eq(processed, "hello world!")
 }
 
+-- Closure tests
 fn test_closures() {
-  -- Closure capturing a variable
+  -- Closure captures variable from enclosing scope
   let multiplier = 3
   let mul = fn(x) { x * multiplier }
   test.assert_eq(mul(5), 15)
 
-  -- Higher-order function returning a closure
-  let adder = fn(n) { fn(x) { x + n } }
-  let add5 = adder(5)
+  -- Closure as value
+  let ops = [fn(x) { x + 1 }, fn(x) { x * 2 }, fn(x) { x - 3 }]
+  let start = 10
+  let result = ops |> list.fold(start) { acc, f -> f(acc) }
+  -- (10 + 1) = 11, (11 * 2) = 22, (22 - 3) = 19
+  test.assert_eq(result, 19)
+}
+
+fn test_higher_order_functions() {
+  -- Closure that returns a closure
+  let make_adder = fn(n) {
+    fn(x) { x + n }
+  }
+  let add5 = make_adder(5)
   test.assert_eq(add5(10), 15)
-}
+  test.assert_eq(add5(0), 5)
 
-fn test_try_catches_panic() {
-  let r = try(fn() { panic("intentional failure") })
-  test.assert(result.is_err(r))
-
-  let r2 = try(fn() { 42 })
-  test.assert_eq(r2, Ok(42))
-}
-
-fn test_int_module() {
-  test.assert_eq(int.abs(-5), 5)
-  test.assert_eq(int.min(3, 7), 3)
-  test.assert_eq(int.max(3, 7), 7)
-  test.assert_eq(int.parse("42"), Ok(42))
-  test.assert(result.is_err(int.parse("nope")))
-}
-
-fn test_fold_until() {
-  -- Sum until we exceed 10
-  let result = [1, 2, 3, 4, 5, 6, 7] |> list.fold_until(0) { acc, x ->
-    let next = acc + x
-    match { next > 10 -> Stop(acc), _ -> Continue(next) }
-  }
-  test.assert_eq(result, 10)
-}
-
--- ============================================================
--- Test runner
--- ============================================================
-
-fn main() {
-  let tests = [
-    ("arithmetic", fn() { test_arithmetic() }),
-    ("float_arithmetic", fn() { test_float_arithmetic() }),
-    ("strings", fn() { test_strings() }),
-    ("string_split_join", fn() { test_string_split_join() }),
-    ("string_interpolation", fn() { test_string_interpolation() }),
-    ("lists", fn() { test_lists() }),
-    ("list_higher_order", fn() { test_list_higher_order() }),
-    ("list_sort_unique", fn() { test_list_sort_unique() }),
-    ("list_concat_flatten", fn() { test_list_concat_flatten() }),
-    ("list_zip_enumerate", fn() { test_list_zip_enumerate() }),
-    ("maps", fn() { test_maps() }),
-    ("map_merge", fn() { test_map_merge() }),
-    ("option", fn() { test_option() }),
-    ("option_to_result", fn() { test_option_to_result() }),
-    ("result", fn() { test_result() }),
-    ("result_flatten", fn() { test_result_flatten() }),
-    ("records", fn() { test_records() }),
-    ("patterns", fn() { test_patterns() }),
-    ("pipes", fn() { test_pipes() }),
-    ("closures", fn() { test_closures() }),
-    ("try_catches_panic", fn() { test_try_catches_panic() }),
-    ("int_module", fn() { test_int_module() }),
-    ("fold_until", fn() { test_fold_until() }),
-  ]
-
-  println("Running {list.length(tests)} tests...\n")
-
-  let results = tests |> list.map { entry ->
-    let (name, test_fn) = entry
-    run_test(name, test_fn)
-  }
-
-  -- Print results
-  results |> list.each { entry ->
-    let (name, passed, msg) = entry
-    match passed {
-      true  -> println("  [PASS] test_{name}")
-      false -> println("  [FAIL] test_{name}: {msg}")
+  -- fold_until with Stop/Continue
+  let sum = [10, 20, 30, 40] |> list.fold_until(0) { acc, x ->
+    match acc + x > 50 {
+      true -> Stop(acc)
+      _ -> Continue(acc + x)
     }
   }
-
-  -- Count passes and failures
-  let passed = results |> list.filter { entry ->
-    let (_, p, _) = entry
-    p
-  } |> list.length
-
-  let failed = list.length(results) - passed
-  let total = list.length(results)
-
-  println("\n========================================")
-  println("Results: {passed}/{total} passed, {failed} failed")
-  match { failed == 0 -> println("All tests passed!"), _ -> println("Some tests FAILED.") }
+  test.assert_eq(sum, 30)
 }
 
-{- Friction Report
-   Attempts: 3
-   Rating: 9/10
-   Highlights: Expression-based design with pipes and trailing closures is very clean.
-     Pattern matching as the sole branching mechanism works well. The test module
-     (test.assert, test.assert_eq, test.assert_ne) combined with try() makes building
-     a custom test runner straightforward. Standard library is well-organized and
-     consistent. String interpolation is convenient and just works.
-   Friction: The language summary says "semicolons separate expressions in blocks" but
-     the actual parser rejects semicolons with a helpful error message saying to use
-     newlines instead. This caused the first failure. Minor: the summary lists
-     float.round/ceil/floor without noting they return Int not Float -- had to discover
-     via type error.
-   Missing: Nothing missing for this task. The stdlib coverage is comprehensive.
-   Bugs: None encountered.
--}
+-- Guardless match test
+fn test_guardless_match() {
+  let n = 42
+  let category = match {
+    n < 0 -> "negative"
+    n == 0 -> "zero"
+    n < 100 -> "small positive"
+    _ -> "large positive"
+  }
+  test.assert_eq(category, "small positive")
+}
+
+-- ===== Main: Run all tests =====
+fn main() {
+  println("Running test suite...")
+  println(string.repeat("=", 50))
+
+  let results = [
+    run_test("basic_arithmetic", fn() { test_basic_arithmetic() }),
+    run_test("float_arithmetic", fn() { test_float_arithmetic() }),
+    run_test("int_operations", fn() { test_int_operations() }),
+    run_test("string_basics", fn() { test_string_basics() }),
+    run_test("string_operations", fn() { test_string_operations() }),
+    run_test("string_split_join", fn() { test_string_split_join() }),
+    run_test("string_interpolation", fn() { test_string_interpolation() }),
+    run_test("list_basics", fn() { test_list_basics() }),
+    run_test("list_transform", fn() { test_list_transform() }),
+    run_test("list_operations", fn() { test_list_operations() }),
+    run_test("list_advanced", fn() { test_list_advanced() }),
+    run_test("map_basics", fn() { test_map_basics() }),
+    run_test("map_operations", fn() { test_map_operations() }),
+    run_test("map_merge_entries", fn() { test_map_merge_entries() }),
+    run_test("option", fn() { test_option() }),
+    run_test("result", fn() { test_result() }),
+    run_test("try_catch", fn() { test_try_catch() }),
+    run_test("records", fn() { test_records() }),
+    run_test("pattern_matching", fn() { test_pattern_matching() }),
+    run_test("pin_operator", fn() { test_pin_operator() }),
+    run_test("pipes", fn() { test_pipes() }),
+    run_test("closures", fn() { test_closures() }),
+    run_test("higher_order_functions", fn() { test_higher_order_functions() }),
+    run_test("guardless_match", fn() { test_guardless_match() }),
+  ]
+
+  results |> list.each { r -> print_result(r) }
+  summarize(results)
+}

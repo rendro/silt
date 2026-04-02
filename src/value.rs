@@ -23,6 +23,7 @@ pub enum Value {
     BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
     RecordDescriptor(String),          // record type name — field info on Interpreter
+    PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Rc<Channel>),
     Handle(Rc<TaskHandle>),
     Unit,
@@ -167,6 +168,7 @@ impl fmt::Debug for Value {
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
             Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Unit => write!(f, "()"),
@@ -243,6 +245,7 @@ impl fmt::Display for Value {
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
             Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Unit => write!(f, "()"),
@@ -264,6 +267,7 @@ impl PartialEq for Value {
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a == b,
+            (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             _ => false,
         }
@@ -298,6 +302,7 @@ impl Ord for Value {
                 Value::BuiltinFn(_) => 13,
                 Value::VariantConstructor(..) => 14,
                 Value::RecordDescriptor(_) => 15,
+                Value::PrimitiveDescriptor(_) => 16,
             }
         };
         let d1 = disc(self);
@@ -328,6 +333,7 @@ impl Ord for Value {
                 na.cmp(nb).then_with(|| fa.cmp(fb))
             }
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
+            (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
             _ => Ordering::Equal,
         }
@@ -385,6 +391,7 @@ impl Hash for Value {
                 arity.hash(state);
             }
             Value::RecordDescriptor(name) => name.hash(state),
+            Value::PrimitiveDescriptor(name) => name.hash(state),
         }
     }
 }

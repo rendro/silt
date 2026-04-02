@@ -1,96 +1,130 @@
-{- Maze Solver using BFS
-   Finds shortest path from S to E in a 10x10 grid.
-   Uses list.fold_until for the BFS loop, tuples for positions.
--}
-
 {- Friction Report
-   Attempts: 2
-   Rating: 8/10
-   Highlights: Tuples as positions work great with list.contains for structural equality.
-     list.fold_until with Stop/Continue is a clean way to express BFS as a fold over an
-     iteration counter list. Trailing closure syntax reads nicely for pipelines.
-     list.flat_map, list.filter, list.map, list.enumerate all compose well together.
-     String interpolation with tuples like "{start}" just works.
-   Friction: No if/else means every simple boolean check becomes a match block, adding
-     verbosity especially in nested conditionals (e.g., checking wall + visited + bounds).
-     Using list.fold_until for BFS requires creating an artificial iteration list (0..200)
-     since fold_until needs a list to iterate over -- this is unnatural for a while-loop
-     pattern. The loop expression would be more natural but the assignment required fold_until.
-     Designing the maze required manual verification since there is no maze generator.
-   Missing: A while/until loop primitive that does not require a pre-built list would be
-     more natural for BFS. A set data structure would make visited-tracking O(1) instead
-     of O(n) with list.contains.
-   Bugs: None encountered. First attempt failed because the hardcoded maze was not
-     solvable (start was boxed in), not a language bug.
+   Attempts: 2 (first had a type error with mixed-type tuples in fold_until Stop/Continue)
+   Rating: 7/10 (expressive for functional style, but BFS with mutable-queue semantics takes extra effort)
+   Highlights:
+     - list.fold_until with Stop/Continue is a clean way to express early-exit iteration
+     - string.chars + list.get makes grid access straightforward
+     - Records (Pos) work well for structured coordinates
+     - list.enumerate + list.map for grid transformation is very readable
+     - Trailing closure syntax makes pipelines pleasant to read
+     - list.filter_map is great for combining search + transform
+   Friction:
+     - BFS needs a queue that grows/shrinks dynamically; fold_until iterates over a fixed list,
+       so you must create a dummy iteration list (0..200) as a loop driver. A plain `loop` would
+       be more natural here, but fold_until was required by the assignment.
+     - No record equality: cannot use list.contains with records directly, must use list.any
+       with field-by-field comparison for visited-set checks
+     - Tuple destructuring in fold_until state requires all Stop/Continue branches to return
+       the exact same type shape, which caused the initial type error when mixing string tags
+     - No if/else means even simple boolean branches require match true/_ patterns
+     - Parent tracking for path reconstruction requires tuples of 4 ints since there's no
+       built-in Map with record keys; a map.set with Pos keys would be cleaner
+   Missing:
+     - list.contains does not work with records (no structural equality for user-defined types
+       without explicit Equal trait) -- verified in docs, Equal trait exists but auto-derive or
+       default structural equality for records would help
+   Bugs: None encountered
 -}
 
--- Get the character at (row, col) in the maze
-fn get_cell(maze, row, col) {
-  match list.get(maze, row) {
-    None -> "#"
-    Some(row_str) -> {
-      let chars = string.chars(row_str)
-      match list.get(chars, col) {
-        None -> "#"
-        Some(ch) -> ch
-      }
-    }
-  }
+type Pos {
+  row: Int,
+  col: Int,
 }
 
 -- Find the position of a character in the maze
 fn find_char(maze, target) {
   let rows = list.length(maze)
-  let cols = match list.head(maze) {
-    Some(r) -> string.length(r)
-    None -> 0
+  let result = 0..rows
+  |> list.filter_map { r ->
+    match list.get(maze, r) {
+      Some(s) -> {
+        let chars = string.chars(s)
+        let cols = list.length(chars)
+        let matches = 0..cols |> list.filter_map { c ->
+          match list.get(chars, c) {
+            Some(ch) -> match ch == target {
+              true -> Some(Pos { row: r, col: c })
+              _ -> None
+            }
+            None -> None
+          }
+        }
+        list.head(matches)
+      }
+      None -> None
+    }
   }
-  let all_positions = list.flat_map(0..rows) { r ->
-    list.map(0..cols) { c -> (r, c) }
-  }
-  list.find(all_positions) { pos ->
-    let (r, c) = pos
-    get_cell(maze, r, c) == target
+  |> list.head
+  match result {
+    Some(pos) -> pos
+    None -> panic("Character not found in maze: {target}")
   }
 }
 
--- Get valid neighbors (up, down, left, right) that are not walls
-fn get_neighbors(maze, pos, visited) {
-  let (row, col) = pos
+-- Get the character at a position in the maze
+fn get_cell(maze, pos) {
+  match list.get(maze, pos.row) {
+    Some(row_str) -> {
+      let chars = string.chars(row_str)
+      match list.get(chars, pos.col) {
+        Some(ch) -> ch
+        None -> "#"
+      }
+    }
+    None -> "#"
+  }
+}
+
+-- Characters that are walkable (not walls)
+let walkable = [".", "S", "E"]
+
+-- Get valid neighbors (up, down, left, right)
+fn neighbors(maze, pos) {
+  let rows = list.length(maze)
+  let cols = match list.get(maze, 0) {
+    Some(s) -> string.length(s)
+    None -> 0
+  }
   let candidates = [
-    (row - 1, col),
-    (row + 1, col),
-    (row, col - 1),
-    (row, col + 1)
+    Pos { row: pos.row - 1, col: pos.col },
+    Pos { row: pos.row + 1, col: pos.col },
+    Pos { row: pos.row, col: pos.col - 1 },
+    Pos { row: pos.row, col: pos.col + 1 },
   ]
-  candidates |> list.filter { nb ->
-    let (r, c) = nb
-    let cell = get_cell(maze, r, c)
-    let is_wall = cell == "#"
-    let is_visited = list.contains(visited, nb)
-    match {
-      is_wall -> false
-      is_visited -> false
-      _ -> true
+  candidates |> list.filter { p ->
+    match p.row >= 0 && p.row < rows && p.col >= 0 && p.col < cols {
+      true -> {
+        let cell = get_cell(maze, p)
+        list.contains(walkable, cell)
+      }
+      _ -> false
     }
   }
 }
 
--- Reconstruct path from came_from list, tracing back from end to start
-fn reconstruct_path(came_from, start, current) {
-  loop path = [current], pos = current {
-    match pos == start {
+-- Check if a position is in the visited list
+fn is_visited(visited, pos) {
+  visited |> list.any { v -> v.row == pos.row && v.col == pos.col }
+}
+
+-- Reconstruct path from parent map
+-- parent_list is a list of (child_row, child_col, parent_row, parent_col) tuples
+fn reconstruct_path(parent_list, start, end_pos) {
+  -- Walk backwards from end to start
+  loop current = end_pos, path = [end_pos] {
+    match current.row == start.row && current.col == start.col {
       true -> path
       _ -> {
-        -- Find the parent of pos in came_from
-        let parent = list.find(came_from) { entry ->
-          let (child, _parent) = entry
-          child == pos
+        -- Find parent of current
+        let parent = parent_list |> list.find { entry ->
+          let (cr, cc, _, _) = entry
+          cr == current.row && cc == current.col
         }
         match parent {
           Some(entry) -> {
-            let (_child, prev) = entry
-            loop(list.prepend(path, prev), prev)
+            let (_, _, pr, pc) = entry
+            let parent_pos = Pos { row: pr, col: pc }
+            loop(parent_pos, list.prepend(path, parent_pos))
           }
           None -> path
         }
@@ -99,126 +133,114 @@ fn reconstruct_path(came_from, start, current) {
   }
 }
 
--- BFS using list.fold_until
--- State: (queue, visited, came_from, found)
--- Each iteration processes one node from the queue
+-- BFS to find shortest path
 fn bfs(maze, start, goal) {
+  -- Queue is a list of positions to visit
+  -- visited is a list of positions already visited
+  -- parents is a list of (child_row, child_col, parent_row, parent_col) tuples
+  -- State: (found, queue, visited, parents)
+  let initial_state = (
+    false,
+    [start],
+    [start],
+    []
+  )
+
+  -- Use list.fold_until on a dummy iteration list as our BFS loop driver
   let max_iterations = 0..200
 
-  let init_state = ([start], [start], [], false)
+  let result = max_iterations |> list.fold_until(initial_state) { state, _ ->
+    let (_, queue, visited, parents) = state
+    match queue {
+      [] -> Stop((false, [], visited, parents))
+      [current, ..rest_queue] -> {
+        match current.row == goal.row && current.col == goal.col {
+          true -> Stop((true, [], visited, parents))
+          _ -> {
+            -- Get valid unvisited neighbors
+            let nbrs = neighbors(maze, current)
+            let new_nbrs = nbrs |> list.filter { n -> !is_visited(visited, n) }
 
-  let result = list.fold_until(max_iterations, init_state) { state, _i ->
-    let (queue, visited, came_from, found) = state
-    match {
-      found -> Stop(state)
-      _ -> {
-        match list.head(queue) {
-          None -> Stop((queue, visited, came_from, false))
-          Some(current) -> {
-            let rest_queue = list.tail(queue)
-            match current == goal {
-              true -> Stop((rest_queue, visited, came_from, true))
-              _ -> {
-                let neighbors = get_neighbors(maze, current, visited)
-                let new_visited = list.fold(neighbors, visited) { v, nb ->
-                  list.append(v, nb)
-                }
-                let new_came_from = list.fold(neighbors, came_from) { cf, nb ->
-                  list.append(cf, (nb, current))
-                }
-                let new_queue = list.concat(rest_queue, neighbors)
-                Continue((new_queue, new_visited, new_came_from, false))
-              }
+            -- Add neighbors to visited and queue
+            let new_visited = new_nbrs |> list.fold(visited) { v, n ->
+              list.append(v, n)
             }
+            let new_queue = new_nbrs |> list.fold(rest_queue) { q, n ->
+              list.append(q, n)
+            }
+            -- Record parents
+            let new_parents = new_nbrs |> list.fold(parents) { p, n ->
+              list.append(p, (n.row, n.col, current.row, current.col))
+            }
+            Continue((false, new_queue, new_visited, new_parents))
           }
         }
       }
     }
   }
 
-  let (_queue, _visited, came_from, found) = result
+  let (found, _, _, parents) = result
   match found {
-    true -> Some(reconstruct_path(came_from, start, goal))
+    true -> Some(reconstruct_path(parents, start, goal))
     _ -> None
   }
 }
 
--- Render the maze with the solution path marked with *
-fn render_maze(maze, path) {
-  let rows = list.length(maze)
-  list.each(0..rows) { r ->
-    let row_str = match list.get(maze, r) {
-      Some(s) -> s
-      None -> ""
-    }
+-- Print the maze with the solution path marked
+fn print_maze_with_path(maze, path) {
+  maze |> list.enumerate |> list.each { row_entry ->
+    let (r, row_str) = row_entry
     let chars = string.chars(row_str)
-    let rendered = list.map(list.enumerate(chars)) { pair ->
-      let (c, ch) = pair
-      let pos = (r, c)
-      match {
-        list.contains(path, pos) -> {
-          match {
-            ch == "S" -> "S"
-            ch == "E" -> "E"
-            _ -> "*"
-          }
+    let new_chars = chars |> list.enumerate |> list.map { col_entry ->
+      let (c, ch) = col_entry
+      let on_path = path |> list.any { p -> p.row == r && p.col == c }
+      match on_path {
+        true -> match ch {
+          "S" -> "S"
+          "E" -> "E"
+          _ -> "*"
         }
         _ -> ch
       }
     }
-    println(string.join(rendered, ""))
+    println(string.join(new_chars, ""))
   }
 }
 
 fn main() {
   -- Define a 10x10 maze
-  -- S = start, E = end, # = wall, . = open
+  -- # = wall, . = open, S = start, E = end
   let maze = [
-    "S..#......",
-    ".#.#.####.",
-    "...#......",
-    "##.###.##.",
-    "..........",
-    ".####.###.",
-    ".#....#...",
-    ".#.##.#.##",
-    "...#....#.",
-    "##.#..#..E"
+    "##########",
+    "#S.#.....#",
+    "#.##.###.#",
+    "#....#.#.#",
+    "#.##.#.#.#",
+    "#.#..#...#",
+    "#.#.##.#.#",
+    "#...#..#.#",
+    "#.#...##E#",
+    "##########"
   ]
 
   println("=== Maze ===")
-  list.each(maze) { row -> println(row) }
+  maze |> list.each { row -> println(row) }
 
-  let start = match find_char(maze, "S") {
-    Some(pos) -> pos
-    None -> {
-      panic("No start found")
-      (0, 0)
-    }
-  }
+  let start = find_char(maze, "S")
+  let goal = find_char(maze, "E")
 
-  let goal = match find_char(maze, "E") {
-    Some(pos) -> pos
-    None -> {
-      panic("No end found")
-      (0, 0)
-    }
-  }
+  println("\nStart: ({start.row}, {start.col})")
+  println("End: ({goal.row}, {goal.col})")
 
-  println("")
-  println("Start: {start}")
-  println("Goal: {goal}")
+  println("\nSearching for path...")
+  let path_result = bfs(maze, start, goal)
 
-  match bfs(maze, start, goal) {
+  match path_result {
     Some(path) -> {
-      println("")
-      println("=== Solution (path marked with *) ===")
-      render_maze(maze, path)
-      println("")
-      println("Path length: {list.length(path)} steps")
+      println("Path found! Length: {list.length(path)}")
+      println("\n=== Solution ===")
+      print_maze_with_path(maze, path)
     }
-    None -> {
-      println("No path found!")
-    }
+    None -> println("No path found!")
   }
 }

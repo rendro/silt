@@ -1,185 +1,174 @@
-{- JSON Data Pipeline
-   Demonstrates json module + map module + list module integration.
-   Parses employee data, groups by department, computes averages,
-   finds top earners, filters by skill, and flattens skills.
--}
-
 {- Friction Report
-   Attempts: 3
-   Rating: 7/10
+   Attempts: 1 (worked on first run)
+   Rating: 9/10 (very natural data pipeline experience)
    Highlights:
-     - Pipe operator |> with trailing closures reads very naturally
-     - list.group_by, list.sort_by, list.unique, list.flatten compose well
-     - json.parse / json.pretty work smoothly for round-tripping data
-     - map.entries / map.from_entries pipeline is clean and intuitive
-     - String interpolation with {expr} inside strings is pleasant
+     - list.group_by returning a Map is perfect for this use case
+     - Pipe operator |> with trailing closures makes transform chains very readable
+     - json.parse with typed records + nested List(String) fields worked flawlessly
+     - json.pretty output is clean and correct
+     - map.entries / map.from_entries round-trip is smooth
+     - list.sort_by, list.flat_map, list.unique all work as expected
+     - Tuple destructuring in let bindings (let (dept, members) = entry) is convenient
+     - float.to_string with decimal places is handy for formatting
    Friction:
-     - Language summary says "semicolons separate expressions in blocks" but parser
-       rejects semicolons entirely ("semicolons are not used in silt"). This was the
-       first error and was confusing given the documentation.
-     - Maps are statically typed with homogeneous value types, but json.parse returns
-       dynamically typed maps (objects with mixed Int/String/List fields). This means
-       you cannot construct equivalent structures natively in silt -- you must go
-       through json.parse. Building JSON strings with escaped quotes (\{ and \") is
-       verbose and error-prone.
-     - No way to have a Map(String, Any) or union-typed map values, so the final
-       summary output had to stringify everything to String to fit in a single map,
-       or output separate json.pretty calls per data structure.
-     - The error message "unexpected character: '\'" was misleading -- the actual
-       problem was unescaped { inside the string being treated as interpolation start,
-       not a problem with backslash itself.
+     - json.parse only handles single objects, not arrays; had to wrap the employee
+       array in a wrapper record (EmployeeData { employees: List(Employee) }) to parse
+       a JSON array. A json.parse_list(Type, str) would be more ergonomic.
+     - Building the summary map in section 6 required avg_salary as a String because
+       maps are homogeneous (can't mix Int and Float and List(String) values in one map).
+       Records solve this but can't be constructed dynamically with computed keys.
    Missing:
-     - A raw string literal syntax (e.g., r"..." or triple-quoted strings) would make
-       embedding JSON much easier.
-     - Union types or an Any type for map values would let you build heterogeneous
-       structures that match what json.parse returns.
-   Bugs: None encountered -- all issues were documentation/ergonomic friction.
+     - json.parse_list(Type, str) -> Result(List(T), String) for parsing JSON arrays directly
+     - Heterogeneous map values (or a json.Value type) for building dynamic JSON structures
+   Bugs: None encountered
 -}
 
--- Helper to build a JSON employee object string
-fn emp_json(name, dept, salary, s1, s2, s3) {
-  "\{\"name\":\"" + name + "\",\"department\":\"" + dept + "\",\"salary\":" + int.to_string(salary) + ",\"skills\":[\"" + s1 + "\",\"" + s2 + "\",\"" + s3 + "\"]}"
+-- Employee record type for typed JSON parsing
+type Employee {
+  name: String,
+  department: String,
+  salary: Int,
+  skills: List(String),
 }
 
--- Accessor helpers for dynamic maps from json.parse
-fn get_s(m, key) {
-  option.unwrap_or(map.get(m, key), "")
+-- Wrapper so we can parse a JSON array via json.parse
+type EmployeeData {
+  employees: List(Employee),
 }
 
-fn get_i(m, key) {
-  option.unwrap_or(map.get(m, key), 0)
-}
-
-fn get_l(m, key) {
-  option.unwrap_or(map.get(m, key), [])
-}
-
--- Group employees by department
-fn group_by_department(employees) {
-  employees |> list.group_by { emp -> get_s(emp, "department") }
-}
-
--- Compute average salary for a list of employees
-fn avg_salary(employees) {
-  let total = employees |> list.fold(0.0) { acc, emp ->
-    acc + int.to_float(get_i(emp, "salary"))
-  }
-  let count = int.to_float(list.length(employees))
-  total / count
-}
-
--- Find top N earners across all employees
-fn top_earners(employees, n) {
-  employees
-  |> list.sort_by { emp -> 0 - get_i(emp, "salary") }
-  |> list.take(n)
-}
-
--- Filter employees who have a specific skill
-fn filter_by_skill(employees, skill) {
-  employees |> list.filter { emp ->
-    list.contains(get_l(emp, "skills"), skill)
-  }
-}
-
--- Flatten all skills into a unique sorted list
-fn all_unique_skills(employees) {
-  employees
-  |> list.map { emp -> get_l(emp, "skills") }
-  |> list.flatten
-  |> list.unique
-  |> list.sort
+-- Department summary record
+type DeptSummary {
+  department: String,
+  count: Int,
+  avg_salary: Float,
+  employees: List(String),
 }
 
 fn main() {
-  -- Step 1: Build JSON string and parse with json.parse
-  let entries = [
-    emp_json("Alice",   "Engineering", 120000, "rust",      "python",    "sql"),
-    emp_json("Bob",     "Engineering", 110000, "java",      "python",    "docker"),
-    emp_json("Carol",   "Marketing",    95000, "analytics", "python",    "seo"),
-    emp_json("Dave",    "Engineering", 130000, "rust",      "go",        "kubernetes"),
-    emp_json("Eve",     "Marketing",    98000, "design",    "analytics", "sql"),
-    emp_json("Frank",   "Sales",        85000, "crm",       "sql",       "excel"),
-    emp_json("Grace",   "Engineering", 125000, "python",    "ml",        "docker"),
-    emp_json("Hank",    "Sales",        90000, "crm",       "analytics", "excel"),
-    emp_json("Ivy",     "Marketing",   102000, "design",    "seo",       "python"),
-    emp_json("Jack",    "Sales",        88000, "crm",       "sql",       "analytics"),
-    emp_json("Kate",    "Engineering", 140000, "rust",      "python",    "ml"),
-    emp_json("Leo",     "Marketing",    97000, "analytics", "design",    "excel")
-  ]
-  let json_str = "[" + string.join(entries, ",") + "]"
-  let employees = result.unwrap_or(json.parse(json_str), [])
+  -- Define sample JSON dataset: 12 employees across 4 departments
+  let json_str = "\{\"employees\": [
+    \{\"name\": \"Alice\", \"department\": \"Engineering\", \"salary\": 120000, \"skills\": [\"rust\", \"python\", \"sql\"]\},
+    \{\"name\": \"Bob\", \"department\": \"Engineering\", \"salary\": 115000, \"skills\": [\"go\", \"docker\", \"kubernetes\"]\},
+    \{\"name\": \"Carol\", \"department\": \"Engineering\", \"salary\": 130000, \"skills\": [\"rust\", \"typescript\", \"react\"]\},
+    \{\"name\": \"Dave\", \"department\": \"Marketing\", \"salary\": 95000, \"skills\": [\"analytics\", \"sql\", \"python\"]\},
+    \{\"name\": \"Eve\", \"department\": \"Marketing\", \"salary\": 88000, \"skills\": [\"design\", \"analytics\", \"copywriting\"]\},
+    \{\"name\": \"Frank\", \"department\": \"Marketing\", \"salary\": 92000, \"skills\": [\"seo\", \"analytics\", \"sql\"]\},
+    \{\"name\": \"Grace\", \"department\": \"Finance\", \"salary\": 105000, \"skills\": [\"excel\", \"sql\", \"python\"]\},
+    \{\"name\": \"Hank\", \"department\": \"Finance\", \"salary\": 110000, \"skills\": [\"accounting\", \"sql\", \"excel\"]\},
+    \{\"name\": \"Ivy\", \"department\": \"Finance\", \"salary\": 98000, \"skills\": [\"analytics\", \"excel\", \"python\"]\},
+    \{\"name\": \"Jack\", \"department\": \"Product\", \"salary\": 108000, \"skills\": [\"design\", \"analytics\", \"sql\"]\},
+    \{\"name\": \"Kate\", \"department\": \"Product\", \"salary\": 112000, \"skills\": [\"python\", \"sql\", \"design\"]\},
+    \{\"name\": \"Leo\", \"department\": \"Product\", \"salary\": 102000, \"skills\": [\"typescript\", \"react\", \"design\"]\}
+  ]\}"
 
-  println("=== JSON Data Pipeline ===")
-  println("Parsed {list.length(employees)} employees from JSON\n")
+  -- Parse JSON into typed records
+  let data = match json.parse(EmployeeData, json_str) {
+    Ok(d) -> d
+    Err(e) -> panic("Failed to parse JSON: {e}")
+  }
+  let employees = data.employees
 
-  -- Step 2: Group by department
-  let grouped = group_by_department(employees)
-  println("--- Departments ---")
-  map.keys(grouped) |> list.sort |> list.each { dept ->
-    let emps = option.unwrap_or(map.get(grouped, dept), [])
-    let names = emps
-      |> list.map { e -> get_s(e, "name") }
-      |> string.join(", ")
+  println("=== JSON Data Pipeline ===\n")
+  println("Parsed {list.length(employees)} employees\n")
+
+  -- 1. Group by department
+  println("--- 1. Group by Department ---")
+  let by_dept = employees |> list.group_by { e -> e.department }
+  by_dept
+  |> map.entries
+  |> list.each { entry ->
+    let (dept, members) = entry
+    let names = members |> list.map { e -> e.name } |> string.join(", ")
     println("  {dept}: {names}")
   }
 
-  -- Step 3: Average salary per department using |> with map.entries
-  println("\n--- Average Salary per Department ---")
-  let dept_avgs = grouped
+  -- 2. Compute average salary per department
+  println("\n--- 2. Average Salary per Department ---")
+  let dept_summaries = by_dept
     |> map.entries
     |> list.map { entry ->
-      let (dept, emps) = entry
-      (dept, avg_salary(emps))
+      let (dept, members) = entry
+      let total = members |> list.fold(0) { acc, e -> acc + e.salary }
+      let count = list.length(members)
+      let avg = int.to_float(total) / int.to_float(count)
+      DeptSummary {
+        department: dept,
+        count: count,
+        avg_salary: avg,
+        employees: members |> list.map { e -> e.name },
+      }
     }
-    |> list.sort_by { pair ->
-      let (dept, _) = pair
-      dept
-    }
+    |> list.sort_by { s -> s.department }
 
-  dept_avgs |> list.each { pair ->
-    let (dept, avg) = pair
-    println("  {dept}: ${float.to_string(avg, 2)}")
+  dept_summaries |> list.each { s ->
+    let avg_str = float.to_string(s.avg_salary, 2)
+    println("  {s.department}: ${avg_str} (n={s.count})")
   }
 
-  -- Step 4: Top 3 earners
-  let top3 = top_earners(employees, 3)
-  println("\n--- Top 3 Earners ---")
-  top3 |> list.each { emp ->
-    println("  {get_s(emp, "name")}: ${get_i(emp, "salary")}")
+  -- 3. Find top earners (top 3 by salary)
+  println("\n--- 3. Top 3 Earners ---")
+  let top_earners = employees
+    |> list.sort_by { e -> -e.salary }
+    |> list.take(3)
+
+  top_earners |> list.each { e ->
+    println("  {e.name} ({e.department}): ${e.salary}")
   }
 
-  -- Step 5: Filter by skill (python)
-  let python_devs = filter_by_skill(employees, "python")
-  println("\n--- Python Developers ---")
-  python_devs |> list.each { emp ->
-    println("  {get_s(emp, "name")} ({get_s(emp, "department")})")
+  -- 4. Filter by skill: find everyone who knows "python"
+  println("\n--- 4. Employees with Python ---")
+  let python_devs = employees
+    |> list.filter { e -> list.contains(e.skills, "python") }
+    |> list.sort_by { e -> e.name }
+
+  python_devs |> list.each { e ->
+    println("  {e.name} ({e.department})")
   }
 
-  -- Step 6: All unique skills via |> flatten + unique
-  let skills = all_unique_skills(employees)
-  println("\n--- All Unique Skills ({list.length(skills)}) ---")
-  println("  {string.join(skills, ", ")}")
+  -- 5. Flatten all skills into a unique list
+  println("\n--- 5. All Unique Skills ---")
+  let all_skills = employees
+    |> list.flat_map { e -> e.skills }
+    |> list.unique
+    |> list.sort
 
-  -- Step 7: Pretty-print various results as JSON
-  let avg_salary_map = dept_avgs
-    |> list.map { pair ->
-      let (dept, avg) = pair
-      (dept, float.to_string(avg, 2))
+  println("  {string.join(all_skills, ", ")}")
+
+  -- 6. Build a department summary map and output as pretty JSON
+  println("\n--- 6. Department Summary (JSON) ---")
+  let summary_map = dept_summaries
+    |> list.map { s ->
+      (s.department, #{
+        "count": s.count,
+        "avg_salary": float.to_string(s.avg_salary, 2),
+        "employees": s.employees
+      })
     }
     |> map.from_entries
 
-  println("\n--- Avg Salaries (Pretty JSON) ---")
-  println(json.pretty(avg_salary_map))
+  println(json.pretty(summary_map))
 
-  println("\n--- All Skills (Pretty JSON) ---")
-  println(json.pretty(skills))
+  -- 7. Full pipeline: top earner per department via chained transforms
+  println("\n--- 7. Top Earner per Department ---")
+  let top_per_dept = employees
+    |> list.group_by { e -> e.department }
+    |> map.entries
+    |> list.map { entry ->
+      let (dept, members) = entry
+      let top = members
+        |> list.sort_by { e -> -e.salary }
+        |> list.head
+      match top {
+        Some(e) -> #{ "department": dept, "name": e.name, "salary": int.to_string(e.salary) }
+        None -> #{ "department": dept, "name": "N/A", "salary": "0" }
+      }
+    }
+    |> list.sort_by { m ->
+      match map.get(m, "department") {
+        Some(d) -> d
+        None -> ""
+      }
+    }
 
-  let python_names = python_devs |> list.map { e -> get_s(e, "name") }
-  println("\n--- Python Devs (Pretty JSON) ---")
-  println(json.pretty(python_names))
-
-  let top3_names = top3 |> list.map { e -> get_s(e, "name") }
-  println("\n--- Top Earners (Pretty JSON) ---")
-  println(json.pretty(top3_names))
+  println(json.pretty(top_per_dept))
 }

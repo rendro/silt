@@ -427,11 +427,12 @@ fn main() {
 
 -----
 
-## 6. Select
+## 6. Select and Each
 
 `channel.select` lets a task wait on multiple channels at once and proceed with
 whichever channel has data available first. It takes a list of channels and
-returns a `(channel, value)` tuple identifying which channel produced the value.
+returns a `(channel, Message(value))` tuple identifying which channel produced
+the value, or `(channel, Closed)` when all channels are closed and drained.
 
 Use the `^` pin operator to match against channel identities in the result:
 
@@ -439,8 +440,9 @@ Use the `^` pin operator to match against channel identities in the result:
 
 ```silt
 match channel.select([ch1, ch2]) {
-  (^ch1, msg) -> handle_first(msg)
-  (^ch2, msg) -> handle_second(msg)
+  (^ch1, Message(msg)) -> handle_first(msg)
+  (^ch2, Message(msg)) -> handle_second(msg)
+  (_, Closed) -> println("all channels closed")
   _ -> panic("unexpected")
 }
 ```
@@ -452,7 +454,8 @@ in any pattern position, not just with `channel.select`.
 
 `channel.select` polls the given channels in order and returns the first one
 that has data. If no channel is ready, the scheduler runs pending tasks
-and tries again.
+and tries again. When all channels are closed and empty, it returns
+`(channel, Closed)` instead of deadlocking.
 
 ### Example: multiplexing two producers
 
@@ -474,8 +477,9 @@ fn main() {
   task.join(p2)
 
   let result = match channel.select([ch1, ch2]) {
-    (^ch1, msg) -> msg
-    (^ch2, msg) -> msg
+    (^ch1, Message(msg)) -> msg
+    (^ch2, Message(msg)) -> msg
+    (_, Closed) -> "all closed"
     _ -> panic("unexpected")
   }
 
@@ -492,11 +496,34 @@ channels into a single stream.
 fn fan_in(ch1, ch2, output) {
   -- Read one value from whichever source is ready first
   let msg = match channel.select([ch1, ch2]) {
-    (_, msg) -> msg
+    (_, Message(msg)) -> msg
+    (_, Closed) -> return ()
   }
   channel.send(output, msg)
 }
 ```
+
+### `channel.each`
+
+For the common case of draining a single channel until it closes, use
+`channel.each`. It calls a function for each received message and returns
+`Unit` when the channel closes:
+
+```silt
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, "hello")
+  channel.send(ch, "world")
+  channel.close(ch)
+
+  channel.each(ch) { msg ->
+    println("got: {msg}")
+  }
+  println("done")
+}
+```
+
+This is the channel equivalent of `list.each`.
 
 ### Deadlock detection
 

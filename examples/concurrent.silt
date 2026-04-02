@@ -44,10 +44,11 @@ fn main() {
   channel.send(normal, "background task done")
   channel.send(urgent, "alert!")
 
-  -- channel.select returns (channel, value); ^pin identifies which channel
+  -- channel.select returns (channel, Message(value) | Closed); ^pin identifies which channel
   match channel.select([urgent, normal]) {
-    (^urgent, msg) -> println("Urgent: {msg}")
-    (^normal, msg) -> println("Normal: {msg}")
+    (^urgent, Message(msg)) -> println("Urgent: {msg}")
+    (^normal, Message(msg)) -> println("Normal: {msg}")
+    (_, Closed) -> println("Channel closed")
     _ -> println("No message")
   }
 }

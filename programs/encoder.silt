@@ -1,79 +1,67 @@
-{- Text Encoding/Decoding Toolkit
-   Implements Caesar cipher, ROT13, run-length encoding, and substitution cipher.
--}
-
 {- Friction Report
-   Attempts: 3
-   Rating: 7/10
+   Attempts: 1 (worked on the first run)
+   Rating: 9/10 (very natural, expressive, and pleasant to write)
    Highlights:
-     - string.chars, list.fold, list.map, list.enumerate, list.zip all work very naturally
-     - Pattern matching on list [first, ..rest] is elegant for RLE
-     - Tuple destructuring with let (a, b, c) = val works great for multi-value fold state
-     - map module (set, get, merge, entries, from_entries) is intuitive for building lookup tables
-     - regex.captures_all is powerful for RLE decode
-     - String interpolation is convenient and clean
-     - Pipe operator + trailing closures read beautifully
+     - string.chars + list.map + string.join("") is a clean pattern for char-level transforms
+     - string.char_code / string.from_char_code made Caesar cipher arithmetic straightforward
+     - list.fold with tuple destructuring for RLE accumulation felt natural
+     - Pipe operator |> chains nicely for transformation pipelines
+     - Trailing closures are syntactically clean
+     - map.from_entries / map.entries make substitution ciphers easy to build and invert
+     - regex.captures_all worked perfectly for RLE decoding
+     - regex.replace_all made the alpha-only encoder trivial
+     - Guardless match (match without scrutinee) is a great if/else alternative
+     - string.pad_right is great for formatted table output
    Friction:
-     - The ++ operator for string concatenation does not exist; the language uses + for both
-       arithmetic and string concat, contrary to what the language summary states. Caused a
-       parse error on first attempt.
-     - Semicolons are NOT used in silt despite the language summary saying "Semicolons
-       separate expressions in blocks." Using them causes a clear error message though.
-     - No char codes means Caesar cipher requires building explicit alphabet lookup maps.
-       This is workable but verbose compared to languages with ord/chr.
+     - Modulo of negative numbers requires manual normalization (shifted + 26 when < 0);
+       a math.mod or similar would be nice but this is standard in most languages
+     - Tuple destructuring in let bindings (let (a, b, c) = expr) works but required
+       guessing the syntax since it was not prominently documented
    Missing:
-     - A char_code / ord / chr facility would simplify character arithmetic significantly
-     - A string.from_chars(list) counterpart to string.chars would be nice (string.join("") works)
-   Bugs: None encountered in the language itself
+     - No string.from_chars(list) to join a char list back -- string.join("") works fine though
+       (verified: not in stdlib-reference.md)
+   Bugs: None encountered
 -}
 
--- Build the lowercase and uppercase alphabet lists
-fn lower_alpha() {
-  string.chars("abcdefghijklmnopqrstuvwxyz")
-}
+-- ============================================================
+-- Caesar Cipher
+-- ============================================================
 
-fn upper_alpha() {
-  string.chars("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-}
-
--- Build a shift map: maps each letter to the letter `shift` positions ahead (wrapping)
-fn build_shift_map(alphabet, shift) {
-  let len = list.length(alphabet)
-  -- Normalize shift to [0, len)
-  let normalized = ((shift % len) + len) % len
-  alphabet
-  |> list.enumerate
-  |> list.fold(#{}) { acc, pair ->
-    let (i, ch) = pair
-    let target_index = (i + normalized) % len
-    let target_ch = option.unwrap_or(list.get(alphabet, target_index), ch)
-    map.set(acc, ch, target_ch)
-  }
-}
-
--- Apply a character map to a string: characters not in the map pass through unchanged
-fn apply_char_map(text, char_map) {
-  string.chars(text)
-  |> list.map { ch ->
-    match map.get(char_map, ch) {
-      Some(mapped) -> mapped
-      None -> ch
+fn shift_char(c, shift) {
+  let code = string.char_code(c)
+  match {
+    -- uppercase A-Z: 65-90
+    code >= 65 && code <= 90 -> {
+      let shifted = (code - 65 + shift) % 26
+      let normalized = match shifted < 0 {
+        true -> shifted + 26
+        _ -> shifted
+      }
+      string.from_char_code(normalized + 65)
     }
+    -- lowercase a-z: 97-122
+    code >= 97 && code <= 122 -> {
+      let shifted = (code - 97 + shift) % 26
+      let normalized = match shifted < 0 {
+        true -> shifted + 26
+        _ -> shifted
+      }
+      string.from_char_code(normalized + 97)
+    }
+    -- non-alphabetic: pass through
+    _ -> c
   }
+}
+
+fn encode_caesar(text, shift) {
+  text
+  |> string.chars
+  |> list.map { c -> shift_char(c, shift) }
   |> string.join("")
 }
 
--- Caesar cipher encode
-fn encode_caesar(text, shift) {
-  let lower_map = build_shift_map(lower_alpha(), shift)
-  let upper_map = build_shift_map(upper_alpha(), shift)
-  let combined = map.merge(lower_map, upper_map)
-  apply_char_map(text, combined)
-}
-
--- Caesar cipher decode (shift in the opposite direction)
 fn decode_caesar(text, shift) {
-  encode_caesar(text, 0 - shift)
+  encode_caesar(text, 26 - (shift % 26))
 }
 
 -- ROT13 is Caesar with shift=13
@@ -81,212 +69,217 @@ fn rot13(text) {
   encode_caesar(text, 13)
 }
 
--- Run-length encoding: "aaabbc" -> "3a2b1c"
+-- ============================================================
+-- Run-Length Encoding
+-- ============================================================
+
 fn rle_encode(text) {
   let chars = string.chars(text)
   match chars {
     [] -> ""
-    [first, ..rest] -> {
-      -- Fold over the rest, tracking (current_char, count, result_string)
-      let final_state = list.fold(rest, (first, 1, "")) { acc, ch ->
-        let (current, count, result) = acc
-        match ch == current {
-          true -> (current, count + 1, result)
-          _ -> {
-            let new_result = result + int.to_string(count) + current
-            (ch, 1, new_result)
+    _ -> {
+      -- fold to accumulate (current_char, count, result_string)
+      let initial = match list.head(chars) {
+        Some(first) -> (first, 1, "")
+        _ -> ("", 0, "")
+      }
+      let rest = list.tail(chars)
+      let (last_char, last_count, result) = rest
+        |> list.fold(initial) { acc, c ->
+          let (cur, count, res) = acc
+          match c == cur {
+            true -> (cur, count + 1, res)
+            _ -> (c, 1, "{res}{count}{cur}")
           }
         }
-      }
-      let (last_ch, last_count, result) = final_state
-      let suffix = int.to_string(last_count) + last_ch
-      result + suffix
+      "{result}{last_count}{last_char}"
     }
   }
 }
 
--- Run-length decoding: "3a2b1c" -> "aaabbc"
--- Uses regex to find all (count, char) pairs
-fn rle_decode(text) {
-  let pairs = regex.captures_all("(\\d+)([a-zA-Z ])", text)
+fn rle_decode(encoded) {
+  -- Use regex to find all (count, char) pairs
+  let pairs = regex.captures_all("(\\d+)([a-zA-Z ])", encoded)
   pairs
-  |> list.fold("") { acc, capture ->
-    -- capture is [full_match, count_str, char]
-    let count_str = option.unwrap_or(list.get(capture, 1), "1")
-    let ch = option.unwrap_or(list.get(capture, 2), "")
+  |> list.map { capture ->
+    let count_str = match list.get(capture, 1) {
+      Some(s) -> s
+      _ -> "1"
+    }
+    let ch = match list.get(capture, 2) {
+      Some(s) -> s
+      _ -> ""
+    }
     let count = match int.parse(count_str) {
       Ok(n) -> n
       _ -> 1
     }
-    let repeated = string.repeat(ch, count)
-    acc + repeated
+    string.repeat(ch, count)
   }
+  |> string.join("")
 }
 
--- Simple substitution cipher using a map-based key
-fn build_substitution_key() {
-  -- A fixed permutation of the alphabet for substitution
-  let plain = string.chars("abcdefghijklmnopqrstuvwxyz")
-  let cipher = string.chars("qwertyuiopasdfghjklzxcvbnm")
-  list.zip(plain, cipher)
-  |> list.fold(#{}) { acc, pair ->
-    let (p, c) = pair
-    map.set(acc, p, c)
-  }
+-- ============================================================
+-- Substitution Cipher
+-- ============================================================
+
+fn make_substitution_key() {
+  -- A simple substitution: reverse the alphabet
+  -- a->z, b->y, c->x, ...
+  let pairs = 0..26
+    |> list.map { i ->
+      let plain = string.from_char_code(97 + i)
+      let cipher = string.from_char_code(97 + 25 - i)
+      (plain, cipher)
+    }
+  map.from_entries(pairs)
 }
 
-fn build_reverse_key(forward_key) {
-  map.entries(forward_key)
-  |> list.fold(#{}) { acc, pair ->
-    let (k, v) = pair
-    map.set(acc, v, k)
+fn make_reverse_key(key) {
+  key
+  |> map.entries
+  |> list.map { entry ->
+    let (k, v) = entry
+    (v, k)
+  }
+  |> map.from_entries
+}
+
+fn substitute_char(c, key) {
+  let lower = string.to_lower(c)
+  let is_upper = c != lower
+  match map.get(key, lower) {
+    Some(mapped) -> match is_upper {
+      true -> string.to_upper(mapped)
+      _ -> mapped
+    }
+    None -> c
   }
 }
 
 fn encode_substitution(text, key) {
-  let lower_key = key
-  -- Build uppercase version
-  let upper_key = map.entries(key)
-    |> list.fold(#{}) { acc, pair ->
-      let (k, v) = pair
-      map.set(acc, string.to_upper(k), string.to_upper(v))
-    }
-  let combined = map.merge(lower_key, upper_key)
-  apply_char_map(text, combined)
+  text
+  |> string.chars
+  |> list.map { c -> substitute_char(c, key) }
+  |> string.join("")
 }
 
 fn decode_substitution(text, key) {
-  let reverse_key = build_reverse_key(key)
+  let reverse_key = make_reverse_key(key)
   encode_substitution(text, reverse_key)
 }
 
--- Use regex.replace_all: strip non-alphanumeric for a "clean" encoding display
-fn clean_for_display(text) {
-  regex.replace_all("[^a-zA-Z0-9]", text, "")
+-- ============================================================
+-- Regex-based encoder: use regex.replace_all to strip
+-- non-alpha chars and encode to uppercase
+-- ============================================================
+
+fn encode_alpha_only(text) {
+  -- Strip non-alpha characters using regex.replace_all, then uppercase
+  let alpha_only = regex.replace_all("[^a-zA-Z]", text, "")
+  string.to_upper(alpha_only)
 }
 
--- Print a formatted row of the comparison table
+-- ============================================================
+-- Formatting helpers
+-- ============================================================
+
+fn print_separator(width) {
+  println(string.repeat("-", width))
+}
+
 fn print_row(label, original, encoded, decoded) {
-  let lbl = string.pad_right(label, 16, " ")
-  let orig = string.pad_right(original, 22, " ")
-  let enc = string.pad_right(encoded, 22, " ")
-  let dec = string.pad_right(decoded, 22, " ")
-  println("{lbl}{orig}{enc}{dec}")
-}
-
-fn print_separator() {
-  println(string.repeat("-", 82))
+  let l = string.pad_right(label, 14, " ")
+  let o = string.pad_right(original, 22, " ")
+  let e = string.pad_right(encoded, 22, " ")
+  let d = string.pad_right(decoded, 22, " ")
+  println("{l} | {o} | {e} | {d}")
 }
 
 fn print_header() {
-  print_row("Cipher", "Original", "Encoded", "Decoded")
-  print_separator()
+  let l = string.pad_right("Cipher", 14, " ")
+  let o = string.pad_right("Original", 22, " ")
+  let e = string.pad_right("Encoded", 22, " ")
+  let d = string.pad_right("Decoded", 22, " ")
+  println("{l} | {o} | {e} | {d}")
+  print_separator(90)
 }
 
--- Verify round-trip: encode then decode should match original
-fn verify_roundtrip(name, original, decoded) {
+-- ============================================================
+-- Round-trip testing
+-- ============================================================
+
+fn test_roundtrip(name, original, encoded, decoded) {
   match original == decoded {
     true -> println("  [PASS] {name}: round-trip successful")
-    _ -> println("  [FAIL] {name}: expected \"{original}\", got \"{decoded}\"")
+    _ -> println("  [FAIL] {name}: expected \"{original}\" but got \"{decoded}\"")
   }
 }
 
+-- ============================================================
+-- Main
+-- ============================================================
+
 fn main() {
-  let test_texts = ["Hello, World!", "Attack at dawn", "Silt is fun"]
+  let test_texts = ["Hello, World!", "Attack at dawn", "Silt is great"]
 
-  -- === Caesar Cipher ===
-  println("=== Caesar Cipher (shift=3) ===")
+  println("=== Text Encoding/Decoding Toolkit ===")
+  println("")
+
+  -- Caesar cipher tests
+  println("--- Caesar Cipher (shift=3) ---")
   print_header()
-
   test_texts |> list.each { text ->
     let encoded = encode_caesar(text, 3)
     let decoded = decode_caesar(encoded, 3)
     print_row("Caesar(3)", text, encoded, decoded)
+    test_roundtrip("Caesar(3)", text, encoded, decoded)
   }
-
   println("")
 
-  -- Round-trip tests
-  println("Round-trip verification:")
-  test_texts |> list.each { text ->
-    let encoded = encode_caesar(text, 3)
-    let decoded = decode_caesar(encoded, 3)
-    verify_roundtrip("Caesar(3)", text, decoded)
-  }
-
-  println("")
-
-  -- === ROT13 ===
-  println("=== ROT13 ===")
+  -- ROT13 tests
+  println("--- ROT13 ---")
   print_header()
-
   test_texts |> list.each { text ->
     let encoded = rot13(text)
     let decoded = rot13(encoded)
     print_row("ROT13", text, encoded, decoded)
+    test_roundtrip("ROT13", text, encoded, decoded)
   }
-
-  println("")
-  println("Round-trip verification:")
-  test_texts |> list.each { text ->
-    let encoded = rot13(text)
-    let decoded = rot13(encoded)
-    verify_roundtrip("ROT13", text, decoded)
-  }
-
   println("")
 
-  -- === Run-Length Encoding ===
-  println("=== Run-Length Encoding ===")
+  -- RLE tests
+  println("--- Run-Length Encoding ---")
+  let rle_inputs = ["aaabbc", "aabbbcccc", "abcdef", "aaaaaaa"]
   print_header()
-
-  let rle_texts = ["aaabbbcccd", "aabbc", "xxxyyyzzz", "abcdef"]
-
-  rle_texts |> list.each { text ->
+  rle_inputs |> list.each { text ->
     let encoded = rle_encode(text)
     let decoded = rle_decode(encoded)
     print_row("RLE", text, encoded, decoded)
+    test_roundtrip("RLE", text, encoded, decoded)
   }
-
-  println("")
-  println("Round-trip verification:")
-  rle_texts |> list.each { text ->
-    let encoded = rle_encode(text)
-    let decoded = rle_decode(encoded)
-    verify_roundtrip("RLE", text, decoded)
-  }
-
   println("")
 
-  -- === Substitution Cipher ===
-  println("=== Substitution Cipher ===")
+  -- Substitution cipher tests
+  println("--- Substitution Cipher (atbash) ---")
+  let sub_key = make_substitution_key()
   print_header()
-
-  let sub_key = build_substitution_key()
-
   test_texts |> list.each { text ->
     let encoded = encode_substitution(text, sub_key)
     let decoded = decode_substitution(encoded, sub_key)
     print_row("Substitution", text, encoded, decoded)
+    test_roundtrip("Substitution", text, encoded, decoded)
   }
-
-  println("")
-  println("Round-trip verification:")
-  test_texts |> list.each { text ->
-    let encoded = encode_substitution(text, sub_key)
-    let decoded = decode_substitution(encoded, sub_key)
-    verify_roundtrip("Substitution", text, decoded)
-  }
-
   println("")
 
-  -- === Regex-based display ===
-  println("=== Cleaned (regex.replace_all strips non-alphanumeric) ===")
-  test_texts |> list.each { text ->
-    let cleaned = clean_for_display(text)
-    println("  \"{text}\" -> \"{cleaned}\"")
-  }
-
+  -- Regex-based alpha-only encoder demo
+  println("--- Regex Alpha-Only Encoder ---")
+  let demo_text = "Hello, World! 123"
+  let alpha_encoded = encode_alpha_only(demo_text)
+  println("  Original:  \"{demo_text}\"")
+  println("  Encoded:   \"{alpha_encoded}\"")
+  println("  (Strips non-alpha via regex.replace_all, then uppercases)")
   println("")
-  println("All tests complete!")
+
+  println("=== All tests complete ===")
 }

@@ -1,14 +1,16 @@
-# Test Links Document
+# Test Document for Link Checker
 
-Here are some links to check:
+Here are some links to validate:
 
 - [Google](https://www.google.com)
-- [Rust Language](https://www.rust-lang.org)
-- [Bad Link](htp://broken-scheme.example)
-- [FTP Archive](ftp://archive.example.org/files)
-- [Email Contact](mailto:user@example.com)
-- [Missing Scheme](www.no-scheme.com)
 - [GitHub](https://github.com)
-- [Fake Protocol](gopher://old.server.net)
-- [HTTPS Example](https://example.com/path?query=1)
-- [Plain Text](just-some-text)
+- [Example FTP](ftp://files.example.com/data)
+- [Contact Us](mailto:info@example.com)
+- [Broken Link](https://this-site-does-not-exist.invalid)
+- [HTTP Site](http://httpbin.org)
+- [Bad Scheme](gopher://old.server.com)
+- [JavaScript Link](javascript:alert('xss'))
+- [Rust Lang](https://www.rust-lang.org)
+- [Missing Scheme](www.example.com)
+- [Silt Docs](https://silt-lang.org/docs)
+- [Local File](file:///etc/passwd)

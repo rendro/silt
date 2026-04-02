@@ -1,9 +1,4 @@
-Welcome to the Silt Programming Language.
-
-Silt is a statically typed expression based language
-with immutable bindings and CSP concurrency.
-
-Getting started is easy.
-Just write a main function and run it.
-
-Enjoy exploring the language features.
+Welcome to the Silt Programming Language
+Silt is a minimal statically-typed expression-based language
+It features CSP-style concurrency with typed channels
+All bindings are immutable and pattern matching is the only branching construct
