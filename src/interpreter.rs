@@ -2038,7 +2038,7 @@ impl Interpreter {
                 if args.len() != 1 {
                     return Err(err("io.inspect takes 1 argument"));
                 }
-                Ok(Value::String(format!("{:?}", args[0])))
+                Ok(Value::String(args[0].format_silt()))
             }
             "read_file" => {
                 if args.len() != 1 {

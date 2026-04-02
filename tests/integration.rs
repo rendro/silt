@@ -2966,3 +2966,180 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("other".into()));
 }
+
+// ── io.inspect silt-syntax formatting ───────────────────────────────
+
+#[test]
+fn test_inspect_int() {
+    let result = run(r#"
+fn main() {
+  io.inspect(42)
+}
+    "#);
+    assert_eq!(result, Value::String("42".into()));
+}
+
+#[test]
+fn test_inspect_float() {
+    let result = run(r#"
+fn main() {
+  io.inspect(3.14)
+}
+    "#);
+    assert_eq!(result, Value::String("3.14".into()));
+}
+
+#[test]
+fn test_inspect_bool() {
+    let result = run(r#"
+fn main() {
+  io.inspect(true)
+}
+    "#);
+    assert_eq!(result, Value::String("true".into()));
+}
+
+#[test]
+fn test_inspect_string() {
+    let result = run(r#"
+fn main() {
+  io.inspect("hello")
+}
+    "#);
+    // strings should be quoted in inspect output
+    assert_eq!(result, Value::String("\"hello\"".into()));
+}
+
+#[test]
+fn test_inspect_list() {
+    let result = run(r#"
+fn main() {
+  io.inspect([1, 2, 3])
+}
+    "#);
+    assert_eq!(result, Value::String("[1, 2, 3]".into()));
+}
+
+#[test]
+fn test_inspect_nested_list() {
+    let result = run(r#"
+fn main() {
+  io.inspect([[1, 2], [3, 4]])
+}
+    "#);
+    assert_eq!(result, Value::String("[[1, 2], [3, 4]]".into()));
+}
+
+#[test]
+fn test_inspect_list_of_strings() {
+    let result = run(r#"
+fn main() {
+  io.inspect(["a", "b", "c"])
+}
+    "#);
+    assert_eq!(result, Value::String("[\"a\", \"b\", \"c\"]".into()));
+}
+
+#[test]
+fn test_inspect_map() {
+    let result = run(r#"
+fn main() {
+  io.inspect(#{"a": 1})
+}
+    "#);
+    assert_eq!(result, Value::String("#{\"a\": 1}".into()));
+}
+
+#[test]
+fn test_inspect_variant_some() {
+    let result = run(r#"
+fn main() {
+  io.inspect(Some(42))
+}
+    "#);
+    assert_eq!(result, Value::String("Some(42)".into()));
+}
+
+#[test]
+fn test_inspect_variant_none() {
+    let result = run(r#"
+fn main() {
+  io.inspect(None)
+}
+    "#);
+    assert_eq!(result, Value::String("None".into()));
+}
+
+#[test]
+fn test_inspect_variant_ok() {
+    let result = run(r#"
+fn main() {
+  io.inspect(Ok("hi"))
+}
+    "#);
+    assert_eq!(result, Value::String("Ok(\"hi\")".into()));
+}
+
+#[test]
+fn test_inspect_variant_err() {
+    let result = run(r#"
+fn main() {
+  io.inspect(Err("oops"))
+}
+    "#);
+    assert_eq!(result, Value::String("Err(\"oops\")".into()));
+}
+
+#[test]
+fn test_inspect_tuple() {
+    let result = run(r#"
+fn main() {
+  io.inspect((1, "two"))
+}
+    "#);
+    assert_eq!(result, Value::String("(1, \"two\")".into()));
+}
+
+#[test]
+fn test_inspect_record() {
+    let result = run(r#"
+type User { name: String, age: Int }
+
+fn main() {
+  io.inspect(User { name: "Alice", age: 30 })
+}
+    "#);
+    // BTreeMap orders fields alphabetically
+    assert_eq!(result, Value::String("User {age: 30, name: \"Alice\"}".into()));
+}
+
+#[test]
+fn test_inspect_unit() {
+    let result = run(r#"
+fn main() {
+  io.inspect(())
+}
+    "#);
+    assert_eq!(result, Value::String("()".into()));
+}
+
+#[test]
+fn test_inspect_closure() {
+    let result = run(r#"
+fn main() {
+  let f = { x -> x + 1 }
+  io.inspect(f)
+}
+    "#);
+    assert_eq!(result, Value::String("<fn>".into()));
+}
+
+#[test]
+fn test_inspect_nested_structure() {
+    let result = run(r#"
+fn main() {
+  io.inspect(Some([1, 2, 3]))
+}
+    "#);
+    assert_eq!(result, Value::String("Some([1, 2, 3])".into()));
+}

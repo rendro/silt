@@ -1750,7 +1750,7 @@ Functions for file I/O, standard input, debug inspection, and command-line argum
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `io.inspect` | `io.inspect(value) -> String` | Return the debug representation of a value |
+| `io.inspect` | `io.inspect(value) -> String` | Return the silt-syntax representation of a value |
 | `io.read_file` | `io.read_file(path) -> Result(String, String)` | Read an entire file as a string |
 | `io.write_file` | `io.write_file(path, content) -> Result(Unit, String)` | Write a string to a file |
 | `io.read_line` | `io.read_line() -> Result(String, String)` | Read one line from stdin |
@@ -1762,13 +1762,17 @@ Functions for file I/O, standard input, debug inspection, and command-line argum
 io.inspect(value) -> String
 ```
 
-Returns the debug representation of any value as a String. Useful for debugging complex data structures.
+Returns the silt-syntax representation of any value as a String. Useful for debugging complex data structures. Strings are quoted to distinguish them from bare text, collections use silt literal syntax, and functions display as `<fn>`.
 
 ```silt
 fn main() {
-  let xs = [1, 2, 3]
-  println(io.inspect(xs))
-  -- output: List([Int(1), Int(2), Int(3)])
+  println(io.inspect(42))          -- output: 42
+  println(io.inspect("hello"))     -- output: "hello"
+  println(io.inspect([1, 2, 3]))   -- output: [1, 2, 3]
+  println(io.inspect(#{"a": 1}))   -- output: #{"a": 1}
+  println(io.inspect(Some(42)))    -- output: Some(42)
+  println(io.inspect(None))        -- output: None
+  println(io.inspect((1, "two")))  -- output: (1, "two")
 }
 ```
 

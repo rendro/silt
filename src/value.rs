@@ -176,6 +176,60 @@ impl fmt::Debug for Value {
     }
 }
 
+impl Value {
+    /// Format a value in silt syntax, suitable for `io.inspect`.
+    ///
+    /// Unlike `Display` (which prints bare strings for user output) or `Debug`
+    /// (which leaks Rust internals), this produces the silt-source representation:
+    /// strings are quoted, collections use silt syntax, etc.
+    pub fn format_silt(&self) -> String {
+        match self {
+            Value::Int(n) => format!("{n}"),
+            Value::Float(n) => format!("{n}"),
+            Value::Bool(b) => format!("{b}"),
+            Value::String(s) => format!("\"{s}\""),
+            Value::List(xs) => {
+                let items: Vec<String> = xs.iter().map(|v| v.format_silt()).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Map(m) => {
+                let items: Vec<String> = m
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.format_silt(), v.format_silt()))
+                    .collect();
+                format!("#{{{}}}", items.join(", "))
+            }
+            Value::Tuple(vs) => {
+                let items: Vec<String> = vs.iter().map(|v| v.format_silt()).collect();
+                format!("({})", items.join(", "))
+            }
+            Value::Record(name, fields) => {
+                let items: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", v.format_silt()))
+                    .collect();
+                format!("{name} {{{}}}", items.join(", "))
+            }
+            Value::Variant(name, fields) => {
+                if fields.is_empty() {
+                    name.clone()
+                } else {
+                    let items: Vec<String> = fields.iter().map(|v| v.format_silt()).collect();
+                    format!("{name}({})", items.join(", "))
+                }
+            }
+            Value::Closure(_) => "<fn>".to_string(),
+            Value::BuiltinFn(_) => "<fn>".to_string(),
+            Value::VariantConstructor(name, _) => format!("<constructor:{name}>"),
+            Value::RecordDescriptor(name) => format!("<type:{name}>"),
+            Value::PrimitiveDescriptor(name) => format!("<type:{name}>"),
+            Value::Channel(ch) => format!("<channel:{}>", ch.id),
+            Value::Handle(h) => format!("<handle:{}>", h.id),
+            Value::Unit => "()".to_string(),
+        }
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
