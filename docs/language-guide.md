@@ -326,11 +326,13 @@ fn main() {
 
 ### Maps
 
-Maps are unordered key-value collections, written with the `#{ }` syntax:
+Maps are unordered key-value collections, written with the `#{ }` syntax.
+Keys can be any hashable type — strings, ints, bools, tuples, enums, or records:
 
 ```silt
 let config = #{ "host": "localhost", "port": "8080" }
 let counts = #{ "apples": 3, "bananas": 5 }
+let grid = #{ (0, 0): "start", (1, 2): "end" }
 ```
 
 Maps are useful for dynamic lookups and configuration data.

@@ -16,7 +16,7 @@ Silt is remarkably learnable. Agents with zero prior experience consistently pro
 2. String interpolation doesn't auto-call user-defined `Display` trait (must call `.display()` explicitly)
 3. No `string.is_empty`, `string.split_whitespace`, `string.drop`/`string.skip` convenience functions
 4. No `list.sum`, `list.min`, `list.max` convenience functions
-5. No set data structure; maps are string-key-only
+5. No set data structure (maps now support any hashable key)
 6. `where` clause type variables silently ignored when not introduced via type annotations
 
 **Zero bugs found** in the interpreter, parser, or typechecker across 20 programs and ~4,800 lines of code.
@@ -61,7 +61,7 @@ Silt is remarkably learnable. Agents with zero prior experience consistently pro
 | 3 | No `string.drop` / `string.skip` | 2/20 | Extracting substrings from an offset requires `string.slice(s, n, string.length(s))`. |
 | 3 | No `list.sum` / `list.min` / `list.max` | 2/20 | Must write `list.fold(0) { acc, x -> acc + x }` each time. Common enough to warrant builtins. |
 | 3 | No `list.drop_last` / `list.init` | 1/20 | Stack pop requires `list.take(stack, list.length(stack) - 1)`. |
-| 3 | No set data structure | 2/20 | Visited-cell tracking in algorithms is O(n) with lists. Maps are string-key-only. |
+| 3 | No set data structure | 2/20 | Visited-cell tracking in algorithms is O(n) with lists. Maps now support any hashable key, so `map.set(visited, (row, col), true)` works. |
 | 3 | No `channel.each` / drain pattern | 1/20 | Draining a channel requires manual `loop + match Message/Closed` recursion. |
 | 3 | No format strings / printf | 3/20 | Must call `float.to_string(f, 4)` then interpolate the result. No `"{x:.2f}"` syntax. |
 | 3 | `where` clauses silently accept unbound type variables | 1/20 | `where a: Display` on a function with no type annotation introducing `a` is silently ignored. Should warn. |
@@ -139,6 +139,13 @@ Confirmed missing after doc review (not false positives):
 No interpreter panics, no typechecker crashes, no parser hangs. The `option.flat_map` issue is a docs-implementation mismatch rather than a runtime bug.
 
 **Post-analysis note:** Two programs (`json_transform.silt`, `budget.silt`) broke after subsequent commits changed the `json.parse` API and parser newline sensitivity rules. These are not bugs in the programs — they reflect language evolution after the programs were written.
+
+**Friction items addressed post-analysis:**
+- `channel.each(ch, fn)` — added; drains a channel until closed
+- `channel.select` — now returns `(Channel, Message(val) | Closed)` instead of deadlocking on closed channels
+- `Fn(A) -> B` type annotation syntax — added; works in record fields, let bindings, generics
+- `[x, ..rest]` spread in list construction — added; unbounded spreads in any position
+- Maps now support any hashable key type (Int, tuples, enums, records, etc.) — no longer string-only
 
 ## Language Snapshot
 

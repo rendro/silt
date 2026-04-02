@@ -1117,10 +1117,9 @@ workloads it is a hard limitation. Real OS threads are a v2 consideration,
 but would require switching from `Rc` to `Arc` and `RefCell` to `Mutex`
 throughout the runtime.
 
-**String-keyed maps only.** The runtime `Map` type uses `BTreeMap<String,
-Value>`. Map keys must be strings at runtime, even though the type system
-allows `Map(k, v)` with any key type. This is a simplification that should
-be addressed.
+**Hashable map keys.** Maps support any hashable key type (Int, Float, String,
+Bool, tuples, enums, records). The `#{ key: value }` literal syntax works with
+any key type, not just strings.
 
 **Type checker coverage is still growing.** The type checker catches type
 mismatches, non-exhaustive matches, and trait contract violations, and it
