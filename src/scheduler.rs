@@ -67,7 +67,10 @@ impl Scheduler {
         Value::Handle(handle)
     }
 
-    /// Take all ready tasks out for execution.
+    /// Take all ready tasks out for execution, in FIFO order.
+    /// Combined with the scheduler's round-robin yield behavior (yielded
+    /// tasks are re-enqueued at the end), this naturally rotates which
+    /// task runs first across scheduling rounds.
     pub fn take_ready_tasks(&mut self) -> Vec<Task> {
         let mut ready = Vec::new();
         let mut remaining = Vec::new();

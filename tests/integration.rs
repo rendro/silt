@@ -3447,3 +3447,127 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("must be positive".into()));
 }
+
+// ── Round-robin fan-out ────────────────────────────────────────────
+
+#[test]
+fn test_fanout_round_robin_channel_each() {
+    // Verify that when multiple workers use channel.each on the same
+    // channel, messages are distributed in round-robin order rather
+    // than all going to the first worker.
+    let result = run(r#"
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+
+  channel.send(jobs, 1)
+  channel.send(jobs, 2)
+  channel.send(jobs, 3)
+  channel.send(jobs, 4)
+  channel.send(jobs, 5)
+  channel.send(jobs, 6)
+  channel.close(jobs)
+
+  let w1 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 100 + n)
+    }
+  })
+
+  let w2 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 200 + n)
+    }
+  })
+
+  let w3 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, 300 + n)
+    }
+  })
+
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+
+  -- Collect all results into a list
+  let Message(a) = channel.receive(results)
+  let Message(b) = channel.receive(results)
+  let Message(c) = channel.receive(results)
+  let Message(d) = channel.receive(results)
+  let Message(e) = channel.receive(results)
+  let Message(f) = channel.receive(results)
+
+  [a, b, c, d, e, f]
+}
+    "#);
+
+    // Extract the result list
+    let values = match result {
+        Value::List(ref items) => items.iter().map(|v| match v {
+            Value::Int(n) => *n,
+            _ => panic!("expected int in result list"),
+        }).collect::<Vec<_>>(),
+        _ => panic!("expected list result"),
+    };
+
+    // Count messages per worker (100-series = w1, 200-series = w2, 300-series = w3)
+    let w1_count = values.iter().filter(|&&v| v > 100 && v < 200).count();
+    let w2_count = values.iter().filter(|&&v| v > 200 && v < 300).count();
+    let w3_count = values.iter().filter(|&&v| v > 300 && v < 400).count();
+
+    // All three workers must have received at least one message
+    assert!(w1_count > 0, "worker 1 should receive messages, got {values:?}");
+    assert!(w2_count > 0, "worker 2 should receive messages, got {values:?}");
+    assert!(w3_count > 0, "worker 3 should receive messages, got {values:?}");
+
+    // Perfect round-robin: each worker gets exactly 2 of the 6 messages
+    assert_eq!(w1_count, 2, "worker 1 should get 2 messages, got {values:?}");
+    assert_eq!(w2_count, 2, "worker 2 should get 2 messages, got {values:?}");
+    assert_eq!(w3_count, 2, "worker 3 should get 2 messages, got {values:?}");
+
+    // Total should be 6
+    assert_eq!(values.len(), 6);
+}
+
+#[test]
+fn test_fanout_single_receive_per_worker() {
+    // When each worker does a single receive, all workers should get
+    // a message (not just the first worker).
+    let result = run(r#"
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+
+  channel.send(jobs, 10)
+  channel.send(jobs, 20)
+  channel.send(jobs, 30)
+
+  let w1 = task.spawn(fn() {
+    let Message(n) = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
+
+  let w2 = task.spawn(fn() {
+    let Message(n) = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
+
+  let w3 = task.spawn(fn() {
+    let Message(n) = channel.receive(jobs)
+    channel.send(results, n * 2)
+  })
+
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+
+  let Message(a) = channel.receive(results)
+  let Message(b) = channel.receive(results)
+  let Message(c) = channel.receive(results)
+  a + b + c
+}
+    "#);
+    // 10*2 + 20*2 + 30*2 = 20 + 40 + 60 = 120
+    assert_eq!(result, Value::Int(120));
+}

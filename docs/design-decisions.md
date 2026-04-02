@@ -588,7 +588,9 @@ This was chosen for implementation simplicity and determinism:
    and `RefCell` (not `Mutex`). This eliminates all thread-safety overhead.
 
 2. **Deterministic scheduling.** Tasks are run in FIFO order from the ready
-   queue. The same program with the same inputs produces the same interleaving.
+   queue with round-robin fan-out: `channel.each` yields after each received
+   message so that other tasks waiting on the same channel get a fair turn.
+   The same program with the same inputs produces the same interleaving.
    This makes debugging and testing much easier.
 
 3. **No thread-safety concerns for values.** Because only one task runs at a
@@ -615,9 +617,10 @@ pub fn take_ready_tasks(&mut self) -> Vec<Task> {
 }
 ```
 
-When a task blocks on a channel, it transitions to `BlockedSend` or
-`BlockedReceive`. The `try_unblock` method checks if blocked tasks can be
-woken up (e.g., the channel now has data or capacity).
+When a task blocks on a channel, the interpreter retries in a loop,
+running pending tasks between attempts. `channel.each` yields after
+each received message (via the `Yield` mechanism) so the scheduler can
+rotate which task receives next, enabling round-robin fan-out.
 
 ### Trade-offs
 

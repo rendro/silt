@@ -72,6 +72,10 @@ pub enum RuntimeError {
     Return(Value),
     TailCall(Rc<Closure>, Vec<Value>),
     LoopRecur(Vec<Value>),
+    /// Cooperative yield: the task wants to give other tasks a turn.
+    /// Carries an expression and environment that the scheduler should
+    /// re-evaluate when the task resumes.
+    Yield(Expr, Env),
 }
 
 impl RuntimeError {
@@ -103,6 +107,7 @@ impl std::fmt::Debug for RuntimeError {
             RuntimeError::LoopRecur(args) => {
                 f.debug_tuple("LoopRecur").field(args).finish()
             }
+            RuntimeError::Yield(_, _) => f.debug_tuple("Yield").finish(),
         }
     }
 }
@@ -115,6 +120,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::Return(_) => write!(f, "unexpected return outside function"),
             RuntimeError::TailCall(_, _) => write!(f, "unhandled tail call"),
             RuntimeError::LoopRecur(_) => write!(f, "loop() used outside of loop body"),
+            RuntimeError::Yield(_, _) => write!(f, "cooperative yield"),
         }
     }
 }
@@ -743,7 +749,7 @@ impl Interpreter {
                         "channel.try_send" => return self.builtin_try_send(args, env),
                         "channel.try_receive" => return self.builtin_try_receive(args, env),
                         "channel.select" => return self.builtin_select(args, env),
-                        "channel.each" => return self.builtin_channel_each(args, env),
+                        "channel.each" => return self.builtin_channel_each(args, env, &expr),
                         "task.spawn" => return self.builtin_spawn(args, env),
                         "task.join" => return self.builtin_join(args, env),
                         "task.cancel" => return self.builtin_cancel(args, env),
@@ -3090,6 +3096,11 @@ impl Interpreter {
         let Value::Channel(ch) = ch_val else {
             return Err(err("first argument to receive must be a channel"));
         };
+        // Yield to the scheduler before attempting to receive so that
+        // other tasks get a fair chance at messages (round-robin fan-out).
+        // This is a no-op when no other tasks are pending.
+        let _ = self.run_pending_tasks_once();
+
         // In cooperative mode, try to receive. If empty, run pending tasks.
         let max_retries = 10000;
         for _ in 0..max_retries {
@@ -3217,7 +3228,7 @@ impl Interpreter {
         Err(err("channel.select: exceeded maximum retries"))
     }
 
-    fn builtin_channel_each(&self, args: &[Expr], env: &Env) -> Result<Value> {
+    fn builtin_channel_each(&self, args: &[Expr], env: &Env, call_expr: &Expr) -> Result<Value> {
         if args.len() != 2 {
             return Err(err("channel.each takes 2 arguments (channel, function)"));
         }
@@ -3232,6 +3243,13 @@ impl Interpreter {
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     self.call_value(&callback, &[val])?;
+                    // After processing one message, yield to the scheduler
+                    // so other tasks get a fair turn (round-robin fan-out).
+                    // The Yield carries the same channel.each expression so
+                    // the task can be re-enqueued and resume iteration.
+                    if self.scheduler.borrow().has_pending_tasks() {
+                        return Err(RuntimeError::Yield(call_expr.clone(), env.clone()));
+                    }
                 }
                 TryReceiveResult::Closed => {
                     return Ok(Value::Unit);
@@ -3330,10 +3348,20 @@ impl Interpreter {
                 "Err".into(),
                 vec![Value::String("loop() used outside of loop body".into())],
             )),
+            Err(e @ RuntimeError::Yield(_, _)) => Err(e),
         }
     }
 
     /// Run one round of pending tasks. Returns true if any progress was made.
+    ///
+    /// Runs all currently-ready tasks, one at a time. Before running each
+    /// task, remaining not-yet-run tasks are returned to the scheduler so
+    /// that nested scheduling calls (from `channel.receive`, `channel.each`,
+    /// etc.) can discover and interleave with them. Combined with
+    /// round-robin ordering in `take_ready_tasks`, this enables fair
+    /// fan-out: when multiple workers loop on `channel.receive`, each
+    /// worker yields to the scheduler between iterations, giving other
+    /// workers a chance to receive messages.
     fn run_pending_tasks_once(&self) -> Result<bool> {
         let mut tasks = self.scheduler.borrow_mut().take_ready_tasks();
         if tasks.is_empty() {
@@ -3341,40 +3369,71 @@ impl Interpreter {
         }
 
         let mut made_progress = false;
-        let mut completed_indices = Vec::new();
 
-        for (i, task) in tasks.iter_mut().enumerate() {
+        while !tasks.is_empty() {
+            let mut task = tasks.remove(0);
+
             if task.state != TaskState::Ready {
                 continue;
             }
+
+            // Return remaining not-yet-run tasks to the scheduler so
+            // nested channel operations can discover and run them.
+            if !tasks.is_empty() {
+                let rest = std::mem::take(&mut tasks);
+                self.scheduler.borrow_mut().return_tasks(rest);
+            }
+
             // Evaluate the task body
-            let result = match self.eval(&task.body, &task.env) {
-                Ok(val) => Ok(val),
-                Err(RuntimeError::Return(val)) => Ok(val),
+            match self.eval(&task.body, &task.env) {
+                Ok(val) => {
+                    *task.handle.result.borrow_mut() = Some(Ok(val));
+                    task.state = TaskState::Completed;
+                }
+                Err(RuntimeError::Return(val)) => {
+                    *task.handle.result.borrow_mut() = Some(Ok(val));
+                    task.state = TaskState::Completed;
+                }
                 Err(RuntimeError::TailCall(c, args)) => {
-                    match self.call_closure(&c, &args) {
+                    let result = match self.call_closure(&c, &args) {
                         Ok(val) => Ok(val),
                         Err(RuntimeError::Error(msg, _)) => Err(msg),
                         Err(RuntimeError::Return(val)) => Ok(val),
                         Err(RuntimeError::TailCall(_, _)) => Err("unhandled tail call in task".into()),
                         Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
-                    }
+                        Err(RuntimeError::Yield(_, _)) => Err("unexpected yield in tail call".into()),
+                    };
+                    *task.handle.result.borrow_mut() = Some(result);
+                    task.state = TaskState::Completed;
                 }
-                Err(RuntimeError::Error(msg, _)) => Err(msg),
-                Err(RuntimeError::LoopRecur(_)) => Err("loop() used outside of loop body".into()),
+                Err(RuntimeError::Yield(new_body, new_env)) => {
+                    // Task yielded -- re-enqueue with updated body/env
+                    // so it resumes after other tasks get a turn.
+                    task.body = new_body;
+                    task.env = new_env;
+                    task.state = TaskState::Ready;
+                    self.scheduler.borrow_mut().return_tasks(vec![task]);
+                    // Don't set task to Completed -- skip the completion
+                    // logic below by continuing to the next iteration.
+                    made_progress = true;
+                    tasks = self.scheduler.borrow_mut().take_ready_tasks();
+                    continue;
+                }
+                Err(RuntimeError::Error(msg, _)) => {
+                    *task.handle.result.borrow_mut() = Some(Err(msg));
+                    task.state = TaskState::Completed;
+                }
+                Err(RuntimeError::LoopRecur(_)) => {
+                    *task.handle.result.borrow_mut() = Some(Err("loop() used outside of loop body".into()));
+                    task.state = TaskState::Completed;
+                }
             };
-            *task.handle.result.borrow_mut() = Some(result);
-            task.state = TaskState::Completed;
-            completed_indices.push(i);
             made_progress = true;
-        }
 
-        // Return non-completed tasks
-        let remaining: Vec<_> = tasks
-            .into_iter()
-            .filter(|t| t.state != TaskState::Completed && t.state != TaskState::Cancelled)
-            .collect();
-        self.scheduler.borrow_mut().return_tasks(remaining);
+            // Re-take remaining ready tasks for the next iteration
+            // (they may have been returned above or newly readied).
+            tasks = self.scheduler.borrow_mut().take_ready_tasks();
+        }
 
         Ok(made_progress)
     }

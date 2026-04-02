@@ -594,12 +594,12 @@ When a blocking operation cannot proceed immediately, the scheduler:
 This loop repeats until the operation succeeds or the scheduler detects a
 deadlock (no tasks made progress).
 
-**Fan-out note:** Because scheduling is cooperative and there is no
-round-robin between yield points, a worker that loops on `channel.receive`
-may consume all messages before other workers get a turn. Fan-out patterns
-are structurally concurrent but execute serially. This will be addressed
-when the interpreter moves to a bytecode VM with instruction-level
-preemption.
+**Round-robin fan-out:** When multiple tasks are blocked waiting to receive
+from the same channel, the scheduler wakes them in round-robin order.
+`channel.each` yields after each received message so that other tasks get a
+fair turn. For example, if three workers loop on `channel.each(jobs)` and
+six messages are sent, each worker receives exactly two messages (worker 1
+gets messages 1 and 4, worker 2 gets 2 and 5, worker 3 gets 3 and 6).
 
 ### Deadlock detection
 
@@ -721,8 +721,9 @@ fn main() {
 ```
 
 Each worker picks up one job from the `jobs` channel, processes it, and sends
-the result to the `results` channel. The work is distributed automatically --
-whichever worker calls `channel.receive(jobs)` first gets the next job.
+the result to the `results` channel. The work is distributed in round-robin
+order -- the scheduler rotates which worker receives next, so all workers
+get a fair share of messages.
 
 ### Pipeline (chain of channels)
 
