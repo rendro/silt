@@ -124,6 +124,29 @@ fn fizzbuzz(n) {
 }
 ```
 
+**Match without a scrutinee (boolean branching):** Since Silt has no `if`/`else`, the way to branch on boolean conditions is `match` with no scrutinee. Each arm is a boolean expression; the first one that evaluates to `true` wins:
+
+```silt
+-- Other languages: if age >= 18 { "adult" } else { "minor" }
+-- Silt:
+match {
+  age >= 18 -> "adult"
+  _ -> "minor"
+}
+```
+
+This is the primary way to do boolean branching in Silt. Use it anywhere you'd reach for `if`/`else`:
+
+```silt
+fn classify(n) {
+  match {
+    n == 0 -> "zero"
+    n > 0  -> "positive"
+    _      -> "negative"
+  }
+}
+```
+
 Guards let you add conditions to match arms:
 
 ```silt
@@ -132,18 +155,6 @@ fn classify(n) {
     0 -> "zero"
     x when x > 0 -> "positive"
     _ -> "negative"
-  }
-}
-```
-
-Guardless match lets you branch on boolean conditions without a scrutinee:
-
-```silt
-fn classify(n) {
-  match {
-    n == 0 -> "zero"
-    n > 0  -> "positive"
-    _      -> "negative"
   }
 }
 ```
@@ -322,6 +333,29 @@ loop {
   }
 }
 ```
+
+**`loop` for search algorithms:** For search patterns (BFS, DFS, etc.) where the result type differs from the iteration state, use `loop` instead of `fold_until`. Unlike `fold_until` (where `Stop` and `Continue` must carry the same type), `loop` can return any expression to terminate:
+
+```silt
+-- Find a target in an adjacency list using BFS
+fn bfs(graph, start, goal) {
+  loop queue = [start], visited = [start] {
+    match queue {
+      [] -> None                      -- not found (Option)
+      [node, ..rest] -> match node == goal {
+        true -> Some(node)            -- found! (different type than state)
+        _ -> {
+          let neighbors = map.get(graph, node) |> option.unwrap_or([])
+          let new = neighbors |> list.filter { n -> !list.contains(visited, n) }
+          loop(list.concat(rest, new), list.concat(visited, new))
+        }
+      }
+    }
+  }
+}
+```
+
+See `examples/search.silt` for a complete working example.
 
 ### Traits
 

@@ -344,6 +344,27 @@ fn main() {
 }
 ```
 
+#### Maps are homogeneous
+
+All values in a map must be the same type. This is enforced by the type system:
+
+```silt
+let m = #{ "name": "Alice", "age": 30 }  -- ERROR: mixed String and Int values
+```
+
+For heterogeneous data, use records instead -- each field has its own type:
+
+```silt
+type Person { name: String, age: Int }
+let person = Person { name: "Alice", age: 30 }   -- OK
+```
+
+For dynamic string-keyed data where values differ, convert to a common type:
+
+```silt
+let summary = #{ "name": "Engineering", "count": int.to_string(4) }
+```
+
 ---
 
 ## 5. Algebraic Types

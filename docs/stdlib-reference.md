@@ -287,6 +287,8 @@ let total = [10, 20, 30, 40] |> list.fold_until(0) { acc, x ->
 -- total == 30 (stopped before adding 30, since 30+30=60 > 50)
 ```
 
+**Note:** `Stop` and `Continue` must carry the same type. For search patterns where "found" has a different shape than "keep looking" (e.g., returning `Some(path)` vs. continuing with a queue), use `loop` instead -- it can return any expression to terminate.
+
 ### `list.unfold`
 
 ```
