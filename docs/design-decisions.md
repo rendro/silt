@@ -136,8 +136,8 @@ Silt has no:
 - **Null.** The absence of a value is `None`, a variant of `Option(a)`.
   You cannot forget to check for it because the type system requires it.
 - **Implicit conversions.** `1 + 1.0` is a type error. You must convert
-  explicitly. (There are a few exceptions for `Int * Float` mixed
-  multiplication, which was a pragmatic concession.)
+  explicitly with `int.to_float()` or `float.to_int()`. No exceptions --
+  all arithmetic operators require matching types on both sides.
 - **Implicit returns from error paths.** The `?` operator is explicit syntax.
   `when-else` requires an explicit diverging `else` block.
 
