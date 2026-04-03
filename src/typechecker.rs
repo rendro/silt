@@ -1767,16 +1767,16 @@ impl TypeChecker {
             Box::new(Type::Int),
         )));
 
-        // float.ceil: (Float) -> Int
+        // float.ceil: (Float) -> Float
         env.define("float.ceil".into(), Scheme::mono(Type::Fun(
             vec![Type::Float],
-            Box::new(Type::Int),
+            Box::new(Type::Float),
         )));
 
-        // float.floor: (Float) -> Int
+        // float.floor: (Float) -> Float
         env.define("float.floor".into(), Scheme::mono(Type::Fun(
             vec![Type::Float],
-            Box::new(Type::Int),
+            Box::new(Type::Float),
         )));
 
         // float.abs: (Float) -> Float

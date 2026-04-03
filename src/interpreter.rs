@@ -894,7 +894,19 @@ impl Interpreter {
                             return Err(RuntimeError::Return(val));
                         }
                         Err(RuntimeError::TailCall(c, a)) => {
-                            return self.call_closure(&c, &a);
+                            match self.call_closure(&c, &a) {
+                                Err(RuntimeError::LoopRecur(new_vals)) => {
+                                    if new_vals.len() != bindings.len() {
+                                        return Err(err(format!(
+                                            "loop() expects {} argument(s), got {}",
+                                            bindings.len(),
+                                            new_vals.len()
+                                        )));
+                                    }
+                                    current_vals = new_vals;
+                                }
+                                other => return other,
+                            }
                         }
                         Err(e) => return Err(e),
                     }
@@ -1767,7 +1779,7 @@ impl Interpreter {
                 let Value::Float(f) = &args[0] else {
                     return Err(err("float.ceil requires a float"));
                 };
-                Ok(Value::Int(f.ceil() as i64))
+                Ok(Value::Float(f.ceil()))
             }
             "floor" => {
                 if args.len() != 1 {
@@ -1776,7 +1788,7 @@ impl Interpreter {
                 let Value::Float(f) = &args[0] else {
                     return Err(err("float.floor requires a float"));
                 };
-                Ok(Value::Int(f.floor() as i64))
+                Ok(Value::Float(f.floor()))
             }
             "abs" => {
                 if args.len() != 1 {
@@ -4621,7 +4633,7 @@ mod tests {
                 (a, b, c)
             }
         "#);
-        assert_eq!(result, Value::Tuple(vec![Value::Int(4), Value::Int(4), Value::Int(3)]));
+        assert_eq!(result, Value::Tuple(vec![Value::Int(4), Value::Float(4.0), Value::Float(3.0)]));
     }
 
     #[test]
