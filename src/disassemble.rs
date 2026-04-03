@@ -89,6 +89,9 @@ fn op_from_byte(byte: u8) -> Option<Op> {
         b if b == Op::DestructList as u8 => Op::DestructList,
         b if b == Op::DestructListRest as u8 => Op::DestructListRest,
         b if b == Op::DestructRecordField as u8 => Op::DestructRecordField,
+        b if b == Op::TestRecordTag as u8 => Op::TestRecordTag,
+        b if b == Op::TestMapHasKey as u8 => Op::TestMapHasKey,
+        b if b == Op::DestructMapValue as u8 => Op::DestructMapValue,
 
         b if b == Op::LoopSetup as u8 => Op::LoopSetup,
         b if b == Op::Recur as u8 => Op::Recur,
@@ -177,6 +180,9 @@ fn op_name(op: Op) -> &'static str {
         Op::DestructList => "DestructList",
         Op::DestructListRest => "DestructListRest",
         Op::DestructRecordField => "DestructRecordField",
+        Op::TestRecordTag => "TestRecordTag",
+        Op::TestMapHasKey => "TestMapHasKey",
+        Op::DestructMapValue => "DestructMapValue",
         Op::LoopSetup => "LoopSetup",
         Op::Recur => "Recur",
         Op::QuestionMark => "QuestionMark",
@@ -297,7 +303,8 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
 
         // ── u16 operand with constant comment ─────────────────
         Op::Constant | Op::GetGlobal | Op::SetGlobal | Op::TestTag
-        | Op::TestEqual | Op::GetField | Op::DestructRecordField => {
+        | Op::TestEqual | Op::GetField | Op::DestructRecordField
+        | Op::TestRecordTag | Op::TestMapHasKey | Op::DestructMapValue => {
             let index = read_u16(code, offset + 1);
             let comment = constant_comment(chunk, index);
             (format!("{offset:04}  {name:<20} {index:<5} ; {comment}"), offset + 3)
@@ -315,11 +322,13 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             (format!("{offset:04}  {name:<20} {count}"), offset + 3)
         }
 
-        // ── u16 operand (range patterns via constants) ────────
+        // ── 2x u16 operand (range patterns via constants) ────────
         Op::TestIntRange | Op::TestFloatRange => {
-            let index = read_u16(code, offset + 1);
-            let comment = constant_comment(chunk, index);
-            (format!("{offset:04}  {name:<20} {index:<5} ; {comment}"), offset + 3)
+            let lo_index = read_u16(code, offset + 1);
+            let hi_index = read_u16(code, offset + 3);
+            let lo_comment = constant_comment(chunk, lo_index);
+            let hi_comment = constant_comment(chunk, hi_index);
+            (format!("{offset:04}  {name:<20} {lo_index:<5} {hi_index:<5} ; {lo_comment}..{hi_comment}"), offset + 5)
         }
 
         // ── Jump instructions: show target offset ─────────────
@@ -650,6 +659,7 @@ mod tests {
             Op::TestListExact, Op::TestIntRange, Op::TestFloatRange, Op::TestBool,
             Op::DestructTuple, Op::DestructVariant, Op::DestructList,
             Op::DestructListRest, Op::DestructRecordField,
+            Op::TestRecordTag, Op::TestMapHasKey, Op::DestructMapValue,
             Op::LoopSetup, Op::Recur,
             Op::QuestionMark, Op::Panic,
             Op::ChanNew, Op::ChanSend, Op::ChanRecv, Op::ChanClose,

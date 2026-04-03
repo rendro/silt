@@ -746,6 +746,41 @@ impl Vm {
                         }
                     }
                 }
+                Some(Op::TestRecordTag) => {
+                    let name_index = self.read_u16() as usize;
+                    let name = self.read_constant_string(name_index)?;
+                    let val = self.peek();
+                    let result = matches!(val, Value::Record(tag, _) if *tag == name);
+                    self.push(Value::Bool(result));
+                }
+                Some(Op::TestMapHasKey) => {
+                    let const_index = self.read_u16() as usize;
+                    let key_name = self.read_constant_string(const_index)?;
+                    let val = self.peek();
+                    let result = match val {
+                        Value::Map(map) => map.contains_key(&Value::String(key_name)),
+                        _ => false,
+                    };
+                    self.push(Value::Bool(result));
+                }
+                Some(Op::DestructMapValue) => {
+                    let const_index = self.read_u16() as usize;
+                    let key_name = self.read_constant_string(const_index)?;
+                    let val = self.peek().clone();
+                    match val {
+                        Value::Map(map) => {
+                            let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| {
+                                VmError::new(format!("map has no key '{key_name}'"))
+                            })?;
+                            self.push(value);
+                        }
+                        _ => {
+                            return Err(VmError::new(
+                                "DestructMapValue on non-map".to_string(),
+                            ))
+                        }
+                    }
+                }
 
                 // ── Loop ──────────────────────────────────────
                 Some(Op::LoopSetup) => {
@@ -1386,6 +1421,32 @@ impl Vm {
                     let field = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
                     self.push(field);
                 } else { return Err(VmError::new("DestructRecordField on non-record".into())); }
+            }
+            Op::TestRecordTag => {
+                let ni = self.read_u16() as usize;
+                let name = self.read_constant_string(ni)?;
+                let val = self.peek();
+                let result = matches!(val, Value::Record(tag, _) if *tag == name);
+                self.push(Value::Bool(result));
+            }
+            Op::TestMapHasKey => {
+                let ci = self.read_u16() as usize;
+                let key_name = self.read_constant_string(ci)?;
+                let val = self.peek();
+                let result = match val {
+                    Value::Map(map) => map.contains_key(&Value::String(key_name)),
+                    _ => false,
+                };
+                self.push(Value::Bool(result));
+            }
+            Op::DestructMapValue => {
+                let ci = self.read_u16() as usize;
+                let key_name = self.read_constant_string(ci)?;
+                let val = self.peek().clone();
+                if let Value::Map(map) = val {
+                    let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
+                    self.push(value);
+                } else { return Err(VmError::new("DestructMapValue on non-map".into())); }
             }
             Op::LoopSetup => { let _ = self.read_u8(); }
             Op::Recur => {
@@ -3331,5 +3392,706 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::List(Rc::new(vec![Value::Int(14), Value::Int(15)])));
+    }
+
+    // ── Phase 4: Full pattern matching ──────────────────────────────
+
+    #[test]
+    fn test_match_int_literal() {
+        let result = run_vm(r#"
+            fn main() { match 42 { 42 -> "yes" _ -> "no" } }
+        "#);
+        assert_eq!(result, Value::String("yes".into()));
+    }
+
+    #[test]
+    fn test_match_int_fallthrough() {
+        let result = run_vm(r#"
+            fn main() { match 99 { 42 -> "yes" _ -> "no" } }
+        "#);
+        assert_eq!(result, Value::String("no".into()));
+    }
+
+    #[test]
+    fn test_match_string_literal() {
+        let result = run_vm(r#"
+            fn main() { match "hello" { "hello" -> 1 _ -> 0 } }
+        "#);
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_match_bool_literal() {
+        let result = run_vm(r#"
+            fn main() { match true { true -> "yes" false -> "no" } }
+        "#);
+        assert_eq!(result, Value::String("yes".into()));
+    }
+
+    #[test]
+    fn test_match_float_literal() {
+        let result = run_vm(r#"
+            fn main() { match 3.14 { 3.14 -> "pi" _ -> "other" } }
+        "#);
+        assert_eq!(result, Value::String("pi".into()));
+    }
+
+    #[test]
+    fn test_match_tuple() {
+        let result = run_vm(r#"
+            fn main() {
+                match (1, 2) { (1, y) -> y * 10  _ -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(20));
+    }
+
+    #[test]
+    fn test_match_tuple_wildcard() {
+        let result = run_vm(r#"
+            fn main() {
+                match (1, 2) { (_, y) -> y + 100  _ -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(102));
+    }
+
+    #[test]
+    fn test_match_tuple_len_mismatch() {
+        let result = run_vm(r#"
+            fn main() {
+                match (1, 2, 3) { (a, b) -> a + b  _ -> 99 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(99));
+    }
+
+    #[test]
+    fn test_match_list_exact() {
+        let result = run_vm(r#"
+            fn main() {
+                match [1, 2, 3] { [a, b, c] -> a + b + c  _ -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_match_list_exact_mismatch() {
+        let result = run_vm(r#"
+            fn main() {
+                match [1, 2] { [a, b, c] -> a + b + c  _ -> 99 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(99));
+    }
+
+    #[test]
+    fn test_match_list_head_rest() {
+        let result = run_vm(r#"
+            fn main() {
+                match [10, 20, 30] { [h, ..t] -> h  _ -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_match_list_rest_value() {
+        let result = run_vm(r#"
+            fn main() {
+                match [10, 20, 30] { [_, ..t] -> t  _ -> [] }
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(20), Value::Int(30)])));
+    }
+
+    #[test]
+    fn test_match_list_empty_rest() {
+        let result = run_vm(r#"
+            fn main() {
+                match [10] { [h, ..t] -> t  _ -> [99] }
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![])));
+    }
+
+    #[test]
+    fn test_match_constructor_simple() {
+        let result = run_vm(r#"
+            fn main() {
+                match Some(42) { Some(n) -> n  None -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_match_constructor_none() {
+        let result = run_vm(r#"
+            fn main() {
+                match None { Some(n) -> n  None -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_match_constructor_ok_err() {
+        let result = run_vm(r#"
+            fn main() {
+                let v = Ok(42)
+                match v { Ok(n) -> n  Err(_) -> -1 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_match_nested_constructor_tuple() {
+        let result = run_vm(r#"
+            fn main() {
+                match Some((1, 2)) { Some((a, b)) -> a + b  None -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_match_nested_constructor_list() {
+        let result = run_vm(r#"
+            fn main() {
+                match Some([10, 20]) {
+                    Some([h, ..t]) -> h
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_match_or_pattern() {
+        let result = run_vm(r#"
+            fn main() {
+                match 2 { 1 | 2 | 3 -> "small" _ -> "big" }
+            }
+        "#);
+        assert_eq!(result, Value::String("small".into()));
+    }
+
+    #[test]
+    fn test_match_or_pattern_no_match() {
+        let result = run_vm(r#"
+            fn main() {
+                match 5 { 1 | 2 | 3 -> "small" _ -> "big" }
+            }
+        "#);
+        assert_eq!(result, Value::String("big".into()));
+    }
+
+    #[test]
+    fn test_match_guard() {
+        let result = run_vm(r#"
+            fn main() {
+                match 42 {
+                    n when n > 100 -> "big"
+                    n when n > 0 -> "positive"
+                    _ -> "other"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("positive".into()));
+    }
+
+    #[test]
+    fn test_match_guard_all_fail() {
+        let result = run_vm(r#"
+            fn main() {
+                match -5 {
+                    n when n > 100 -> "big"
+                    n when n > 0 -> "positive"
+                    _ -> "other"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("other".into()));
+    }
+
+    #[test]
+    fn test_match_range() {
+        let result = run_vm(r#"
+            fn main() {
+                match 5 { 1..10 -> "in range" _ -> "out" }
+            }
+        "#);
+        assert_eq!(result, Value::String("in range".into()));
+    }
+
+    #[test]
+    fn test_match_range_boundary() {
+        let result = run_vm(r#"
+            fn main() {
+                match 10 { 1..10 -> "in range" _ -> "out" }
+            }
+        "#);
+        assert_eq!(result, Value::String("in range".into()));
+    }
+
+    #[test]
+    fn test_match_range_out() {
+        let result = run_vm(r#"
+            fn main() {
+                match 11 { 1..10 -> "in range" _ -> "out" }
+            }
+        "#);
+        assert_eq!(result, Value::String("out".into()));
+    }
+
+    #[test]
+    fn test_guardless_match() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = 5
+                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+            }
+        "#);
+        assert_eq!(result, Value::String("positive".into()));
+    }
+
+    #[test]
+    fn test_guardless_match_default() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = -5
+                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+            }
+        "#);
+        assert_eq!(result, Value::String("other".into()));
+    }
+
+    #[test]
+    fn test_let_tuple_destructure_nested() {
+        let result = run_vm(r#"
+            fn main() {
+                let (a, (b, c)) = (1, (2, 3))
+                a + b + c
+            }
+        "#);
+        assert_eq!(result, Value::Int(6));
+    }
+
+    #[test]
+    fn test_let_list_destructure() {
+        let result = run_vm(r#"
+            fn main() {
+                let [a, b, c] = [10, 20, 30]
+                a + b + c
+            }
+        "#);
+        assert_eq!(result, Value::Int(60));
+    }
+
+    #[test]
+    fn test_let_list_head_rest() {
+        let result = run_vm(r#"
+            fn main() {
+                let [h, ..t] = [1, 2, 3, 4]
+                h
+            }
+        "#);
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_match_multiple_arms() {
+        let result = run_vm(r#"
+            fn classify(n) {
+                match n {
+                    0 -> "zero"
+                    1 -> "one"
+                    2 -> "two"
+                    _ -> "many"
+                }
+            }
+            fn main() {
+                classify(2)
+            }
+        "#);
+        assert_eq!(result, Value::String("two".into()));
+    }
+
+    #[test]
+    fn test_match_ident_binding() {
+        let result = run_vm(r#"
+            fn main() {
+                match 42 { x -> x + 1 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(43));
+    }
+
+    #[test]
+    fn test_match_wildcard() {
+        let result = run_vm(r#"
+            fn main() {
+                match 42 { _ -> "matched" }
+            }
+        "#);
+        assert_eq!(result, Value::String("matched".into()));
+    }
+
+    #[test]
+    fn test_match_constructor_with_guard() {
+        let result = run_vm(r#"
+            fn main() {
+                match Some(5) {
+                    Some(n) when n > 10 -> "big"
+                    Some(n) -> n * 2
+                    None -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_when_bool_guard() {
+        let result = run_vm(r#"
+            fn safe_div(a, b) {
+                when b != 0 else { return Err("div by zero") }
+                Ok(a / b)
+            }
+            fn main() {
+                match safe_div(10, 2) { Ok(n) -> n  Err(_) -> -1 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn test_when_bool_guard_fails() {
+        let result = run_vm(r#"
+            fn safe_div(a, b) {
+                when b != 0 else { return Err("div by zero") }
+                Ok(a / b)
+            }
+            fn main() {
+                match safe_div(10, 0) { Ok(n) -> n  Err(_) -> -1 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn test_match_list_two_elems_with_rest() {
+        let result = run_vm(r#"
+            fn main() {
+                match [1, 2, 3, 4, 5] {
+                    [a, b, ..rest] -> a + b
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_match_tuple_three() {
+        let result = run_vm(r#"
+            fn main() {
+                match (10, 20, 30) {
+                    (a, b, c) -> a + b + c
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(60));
+    }
+
+    #[test]
+    fn test_match_nested_tuple_in_list() {
+        // Match a list where elements are extracted as simple ints
+        let result = run_vm(r#"
+            fn main() {
+                match [1, 2] {
+                    [a, b] -> a * 100 + b
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(102));
+    }
+
+    #[test]
+    fn test_match_constructor_wildcard_field() {
+        let result = run_vm(r#"
+            fn main() {
+                match Ok(42) { Ok(_) -> "is ok" Err(_) -> "is err" }
+            }
+        "#);
+        assert_eq!(result, Value::String("is ok".into()));
+    }
+
+    #[test]
+    fn test_match_or_pattern_constructor() {
+        let result = run_vm(r#"
+            fn main() {
+                match None { Some(_) -> "has value"  None -> "empty" }
+            }
+        "#);
+        assert_eq!(result, Value::String("empty".into()));
+    }
+
+    #[test]
+    fn test_match_deeply_nested() {
+        // Some((a, [h, ..t]))
+        let result = run_vm(r#"
+            fn main() {
+                match Some((1, [10, 20, 30])) {
+                    Some((a, [h, ..t])) -> a + h
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(11));
+    }
+
+    #[test]
+    fn test_guardless_match_first_branch() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = 50
+                match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
+            }
+        "#);
+        assert_eq!(result, Value::String("big".into()));
+    }
+
+    #[test]
+    fn test_match_in_function() {
+        let result = run_vm(r#"
+            fn describe(opt) {
+                match opt {
+                    Some(n) when n > 0 -> "positive"
+                    Some(0) -> "zero"
+                    Some(_) -> "negative"
+                    None -> "nothing"
+                }
+            }
+            fn main() {
+                describe(Some(0))
+            }
+        "#);
+        assert_eq!(result, Value::String("zero".into()));
+    }
+
+    #[test]
+    fn test_match_float_range() {
+        let result = run_vm(r#"
+            fn main() {
+                match 3.14 {
+                    0.0..1.0 -> "small"
+                    1.0..5.0 -> "medium"
+                    _ -> "large"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("medium".into()));
+    }
+
+    #[test]
+    fn test_match_float_range_out() {
+        let result = run_vm(r#"
+            fn main() {
+                match 10.0 {
+                    0.0..1.0 -> "small"
+                    1.0..5.0 -> "medium"
+                    _ -> "large"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("large".into()));
+    }
+
+    #[test]
+    fn test_match_recursive_list_sum() {
+        // Use match to destructure a list recursively
+        let result = run_vm(r#"
+            fn sum(xs) {
+                match xs {
+                    [] -> 0
+                    [h, ..t] -> h + sum(t)
+                }
+            }
+            fn main() {
+                sum([1, 2, 3, 4, 5])
+            }
+        "#);
+        assert_eq!(result, Value::Int(15));
+    }
+
+    #[test]
+    fn test_match_map_pattern() {
+        let result = run_vm(r#"
+            fn main() {
+                let m = #{"name": "Alice", "age": "30"}
+                match m {
+                    #{"name": n} -> n
+                    _ -> "unknown"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("Alice".into()));
+    }
+
+    #[test]
+    fn test_match_constructor_nested_or() {
+        let result = run_vm(r#"
+            fn main() {
+                match 42 {
+                    1 | 2 | 3 -> "tiny"
+                    n when n > 40 -> "big"
+                    _ -> "other"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("big".into()));
+    }
+
+    #[test]
+    fn test_match_tuple_nested_wildcard() {
+        let result = run_vm(r#"
+            fn main() {
+                match (1, (2, 3)) {
+                    (1, (_, c)) -> c * 10
+                    _ -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_match_list_empty() {
+        let result = run_vm(r#"
+            fn main() {
+                match [] {
+                    [] -> "empty"
+                    _ -> "not empty"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("empty".into()));
+    }
+
+    #[test]
+    fn test_let_constructor_destructure() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = Ok(42)
+                match x { Ok(n) -> n  Err(_) -> 0 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_match_multiple_constructors_sequence() {
+        let result = run_vm(r#"
+            fn process(items) {
+                match items {
+                    [] -> 0
+                    [h, ..t] -> h + process(t)
+                }
+            }
+            fn main() {
+                process([10, 20, 30])
+            }
+        "#);
+        assert_eq!(result, Value::Int(60));
+    }
+
+    #[test]
+    fn test_match_pin_pattern() {
+        let result = run_vm(r#"
+            fn main() {
+                let expected = 42
+                match 42 {
+                    ^expected -> "matched"
+                    _ -> "nope"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("matched".into()));
+    }
+
+    #[test]
+    fn test_match_pin_pattern_no_match() {
+        let result = run_vm(r#"
+            fn main() {
+                let expected = 42
+                match 99 {
+                    ^expected -> "matched"
+                    _ -> "nope"
+                }
+            }
+        "#);
+        assert_eq!(result, Value::String("nope".into()));
+    }
+
+    #[test]
+    fn test_when_pattern_match() {
+        let result = run_vm(r#"
+            fn extract(val) {
+                when Some(n) = val else { return -1 }
+                n
+            }
+            fn main() {
+                extract(Some(42))
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_when_pattern_match_fails() {
+        let result = run_vm(r#"
+            fn extract(val) {
+                when Some(n) = val else { return -1 }
+                n
+            }
+            fn main() {
+                extract(None)
+            }
+        "#);
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn test_match_or_pattern_with_binding() {
+        // Or-patterns where each alt binds the same variable
+        let result = run_vm(r#"
+            fn main() {
+                match Some(5) {
+                    Some(n) -> n * 2
+                    None -> 0
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(10));
+    }
+
+    #[test]
+    fn test_match_guard_with_tuple() {
+        let result = run_vm(r#"
+            fn main() {
+                match (3, 4) {
+                    (a, b) when a + b > 10 -> "big"
+                    (a, b) -> a + b
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(7));
     }
 }

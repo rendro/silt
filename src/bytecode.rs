@@ -153,6 +153,12 @@ pub enum Op {
     DestructListRest, // operand: u8 start
     /// Extract named record field. Peek record, push value.
     DestructRecordField, // operand: u16 name_index
+    /// Test if TOS is a record with given type name. Peek, push bool.
+    TestRecordTag,  // operand: u16 name_index
+    /// Test if TOS map contains key. Peek, push bool.
+    TestMapHasKey,  // operand: u16 const_index (string key)
+    /// Extract map value by key. Peek map, push value.
+    DestructMapValue, // operand: u16 const_index (string key)
 
     // ── Loop ───────────────────────────────────────────────────
     /// Store `u8` values from stack into loop-binding locals.
@@ -248,6 +254,9 @@ impl Op {
             b if b == Op::DestructList as u8 => Some(Op::DestructList),
             b if b == Op::DestructListRest as u8 => Some(Op::DestructListRest),
             b if b == Op::DestructRecordField as u8 => Some(Op::DestructRecordField),
+            b if b == Op::TestRecordTag as u8 => Some(Op::TestRecordTag),
+            b if b == Op::TestMapHasKey as u8 => Some(Op::TestMapHasKey),
+            b if b == Op::DestructMapValue as u8 => Some(Op::DestructMapValue),
             b if b == Op::LoopSetup as u8 => Some(Op::LoopSetup),
             b if b == Op::Recur as u8 => Some(Op::Recur),
             b if b == Op::QuestionMark as u8 => Some(Op::QuestionMark),

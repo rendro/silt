@@ -1,9 +1,10 @@
 //! AST-to-bytecode compiler for Silt.
 //!
 //! Walks the AST and emits stack-based bytecode into `Function` objects.
-//! Phase 3: closures with upvalue capture (value-copy semantics),
-//! let tuple destructuring, plus all Phase 2 features (function calls,
-//! builtins, let bindings, string interpolation, match, pipes, lambdas).
+//! Phase 4: full pattern matching compilation for all pattern types,
+//! including nested/recursive patterns, or-patterns, guards, ranges,
+//! list/tuple/record/map destructuring, pin patterns, when/else,
+//! plus all previous features (closures, upvalues, pipes, lambdas).
 
 use std::rc::Rc;
 
@@ -13,6 +14,18 @@ use crate::ast::{
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::lexer::Span;
 use crate::value::Value;
+
+// ── Bind destruct kind ───────────────────────────────────────────────
+
+/// Describes how to destructure a sub-value from a compound pattern.
+enum BindDestructKind {
+    Variant(u8),
+    Tuple(u8),
+    List(u8),
+    ListRest(u8),
+    RecordField(String),
+    MapValue(String),
+}
 
 // ── Compiler context ──────────────────────────────────────────────────
 
@@ -104,18 +117,37 @@ impl Compiler {
                 self.contexts
                     .push(CompileContext::new(fn_decl.name.clone(), arity));
 
-                // Add parameters as locals.
-                for param in &fn_decl.params {
+                // Add parameters as locals. Each parameter occupies one slot initially.
+                // For non-Ident patterns, we use a hidden name and destructure after.
+                let mut param_slots = Vec::new();
+                for (i, param) in fn_decl.params.iter().enumerate() {
                     match &param.pattern {
                         Pattern::Ident(name) => {
                             self.add_local(name.clone());
+                            param_slots.push((i, None)); // no destructuring needed
                         }
                         _ => {
-                            return Err(format!(
-                                "unsupported parameter pattern in function '{}'",
-                                fn_decl.name
-                            ));
+                            let slot = self.add_local(format!("__param_{i}__"));
+                            param_slots.push((i, Some((slot, param.pattern.clone()))));
                         }
+                    }
+                }
+
+                // Emit destructuring for non-Ident parameter patterns.
+                // The parameter value is already on the stack as a local.
+                // compile_pattern_bind expects TOS = value. Since the param
+                // IS at its local slot (which IS a stack position), we just
+                // GetLocal it to put it on TOS, then bind.
+                for (_i, maybe_destruct) in &param_slots {
+                    if let Some((slot, pattern)) = maybe_destruct {
+                        self.current_chunk().emit_op(Op::GetLocal, span);
+                        self.current_chunk().emit_u16(*slot, span);
+                        // This GetLocal pushes a copy. Register it as a hidden local.
+                        let _hidden = self.add_local("__param_copy__".into());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(_hidden, span);
+                        // Now TOS = param value copy (as hidden local). Bind sub-patterns.
+                        self.compile_pattern_bind(pattern, span)?;
                     }
                 }
 
@@ -192,58 +224,28 @@ impl Compiler {
                 match pattern {
                     Pattern::Ident(name) => {
                         let slot = self.add_local(name.clone());
-                        // The compiled expression left the value on TOS, which IS
-                        // the local's stack slot. SetLocal copies TOS into the slot
-                        // (they're the same position for sequential allocation).
-                        // The value stays on the stack -- locals are stack-resident.
                         self.current_chunk().emit_op(Op::SetLocal, span);
                         self.current_chunk().emit_u16(slot, span);
-                        // Don't pop: the value stays as the local slot.
-                        // If this is the last statement, push Unit as the block result.
-                        if is_last {
-                            self.current_chunk().emit_op(Op::Unit, span);
-                        }
-                    }
-                    Pattern::Tuple(pats) => {
-                        // let (a, b) = expr
-                        // Reserve a hidden local slot for the tuple so subsequent
-                        // locals get correct slot numbers.
-                        let tuple_slot = self.add_local("__tuple__".into());
-                        self.current_chunk().emit_op(Op::SetLocal, span);
-                        self.current_chunk().emit_u16(tuple_slot, span);
-
-                        // For each sub-pattern, push a copy of the tuple, destructure
-                        // the element, and bind it to a local. DestructTuple peeks
-                        // TOS, so after GetLocal + DestructTuple the stack has:
-                        //   [..., tuple(slot), tuple_copy, element]
-                        // We reserve a dummy slot for tuple_copy, then set the
-                        // named local to the element value.
-                        for (i, pat) in pats.iter().enumerate() {
-                            match pat {
-                                Pattern::Ident(name) => {
-                                    self.current_chunk().emit_op(Op::GetLocal, span);
-                                    self.current_chunk().emit_u16(tuple_slot, span);
-                                    self.current_chunk().emit_op(Op::DestructTuple, span);
-                                    self.current_chunk().emit_u8(i as u8, span);
-                                    let _copy_slot = self.add_local("__destruct_copy__".into());
-                                    let elem_slot = self.add_local(name.clone());
-                                    self.current_chunk().emit_op(Op::SetLocal, span);
-                                    self.current_chunk().emit_u16(elem_slot, span);
-                                }
-                                Pattern::Wildcard => {
-                                    // No binding needed.
-                                }
-                                _ => {
-                                    return Err("unsupported nested pattern in let tuple destructuring".into());
-                                }
-                            }
-                        }
                         if is_last {
                             self.current_chunk().emit_op(Op::Unit, span);
                         }
                     }
                     _ => {
-                        return Err("unsupported pattern in let statement".into());
+                        // General pattern destructuring for let bindings.
+                        // The value is on TOS. Register it as a hidden local,
+                        // then recursively bind sub-patterns.
+                        let _val_slot = self.add_local("__let_val__".into());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(_val_slot, span);
+
+                        // The value is now on the stack as a hidden local.
+                        // compile_pattern_bind expects the value on TOS.
+                        // TOS IS the value (it's the hidden local slot).
+                        self.compile_pattern_bind(pattern, span)?;
+
+                        if is_last {
+                            self.current_chunk().emit_op(Op::Unit, span);
+                        }
                     }
                 }
 
@@ -259,8 +261,64 @@ impl Compiler {
                 Ok(())
             }
 
-            Stmt::When { .. } | Stmt::WhenBool { .. } => {
-                Err("when statements not yet supported in compiler".into())
+            Stmt::WhenBool {
+                condition,
+                else_body,
+            } => {
+                // Compile condition, jump to else if false
+                self.compile_expr(condition)?;
+                let else_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, condition.span);
+
+                // Condition was true — skip else block
+                let end_jump = self.current_chunk().emit_jump(Op::Jump, condition.span);
+
+                // Else block: condition was false
+                self.current_chunk().patch_jump(else_jump);
+                self.compile_expr(else_body)?;
+                // The else body must diverge (return or panic).
+                // If it doesn't, we just pop its value and continue.
+                self.current_chunk().emit_op(Op::Pop, condition.span);
+
+                self.current_chunk().patch_jump(end_jump);
+
+                if is_last {
+                    self.current_chunk().emit_op(Op::Unit, condition.span);
+                }
+                Ok(())
+            }
+
+            Stmt::When {
+                pattern,
+                expr,
+                else_body,
+            } => {
+                // Compile expression
+                self.compile_expr(expr)?;
+                let span = expr.span;
+
+                // Test pattern
+                self.current_chunk().emit_op(Op::Dup, span);
+                let fail_jumps = self.compile_pattern_test(pattern, span)?;
+
+                // Pattern matched — bind variables
+                self.compile_pattern_bind(pattern, span)?;
+                self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
+                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+
+                // Pattern didn't match
+                for fj in fail_jumps {
+                    self.current_chunk().patch_jump(fj);
+                }
+                self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
+                self.compile_expr(else_body)?;
+                self.current_chunk().emit_op(Op::Pop, span); // pop else result
+
+                self.current_chunk().patch_jump(end_jump);
+
+                if is_last {
+                    self.current_chunk().emit_op(Op::Unit, span);
+                }
+                Ok(())
             }
         }
     }
@@ -448,15 +506,30 @@ impl Compiler {
                 self.contexts
                     .push(CompileContext::new("<lambda>".into(), arity));
 
-                // Add parameters as locals.
-                for param in params {
+                // Add parameters as locals, with destructuring support.
+                let mut lambda_param_slots = Vec::new();
+                for (i, param) in params.iter().enumerate() {
                     match &param.pattern {
                         Pattern::Ident(name) => {
                             self.add_local(name.clone());
+                            lambda_param_slots.push(None);
                         }
                         _ => {
-                            return Err("unsupported parameter pattern in lambda".into());
+                            let slot = self.add_local(format!("__param_{i}__"));
+                            lambda_param_slots.push(Some((slot, param.pattern.clone())));
                         }
+                    }
+                }
+
+                // Emit destructuring for non-Ident lambda parameter patterns.
+                for maybe_destruct in &lambda_param_slots {
+                    if let Some((slot, pattern)) = maybe_destruct {
+                        self.current_chunk().emit_op(Op::GetLocal, span);
+                        self.current_chunk().emit_u16(*slot, span);
+                        let _hidden = self.add_local("__param_copy__".into());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(_hidden, span);
+                        self.compile_pattern_bind(pattern, span)?;
                     }
                 }
 
@@ -606,26 +679,45 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
     ) -> Result<(), String> {
-        // If there's a scrutinee, compile it and leave it on TOS.
-        if let Some(scrutinee_expr) = scrutinee {
-            self.compile_expr(scrutinee_expr)?;
+        // ── Guardless match (no scrutinee) ───────────────────────
+        if scrutinee.is_none() {
+            return self.compile_guardless_match(arms, span);
         }
 
-        // For each arm, we test the pattern, jump over if it doesn't match,
-        // compile the body, then jump to the end.
+        // Compile the scrutinee and save it in a known local slot.
+        // This lets us GetLocal it for each arm's test and binding.
+        self.compile_expr(scrutinee.unwrap())?;
+        self.begin_scope();
+        let scrutinee_slot = self.add_local("__scrutinee__".into());
+        self.current_chunk().emit_op(Op::SetLocal, span);
+        self.current_chunk().emit_u16(scrutinee_slot, span);
+
         let mut end_jumps = Vec::new();
 
         for arm in arms {
-            // For each arm:
-            //   1. Test the pattern against TOS (scrutinee is peeked, not consumed)
-            //   2. If no match, jump to next arm
-            //   3. Bind pattern variables
-            //   4. Pop scrutinee, compile body
-            //   5. Jump to end
+            // 1. Push scrutinee for testing
+            self.current_chunk().emit_op(Op::GetLocal, span);
+            self.current_chunk().emit_u16(scrutinee_slot, span);
 
-            let next_arm_jump = self.compile_pattern_test(&arm.pattern, span)?;
+            // 2. Test the pattern (value is on TOS, tests peek it)
+            let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
 
-            // Guard (if present)
+            // 3. Pop the test copy
+            self.current_chunk().emit_op(Op::Pop, span);
+
+            // 4. Begin a scope for this arm's bindings
+            self.begin_scope();
+
+            // 5. Push scrutinee again and bind pattern variables
+            self.current_chunk().emit_op(Op::GetLocal, span);
+            self.current_chunk().emit_u16(scrutinee_slot, span);
+            // Register this GetLocal'd copy as a hidden local
+            let _bind_copy = self.add_local("__bind_src__".into());
+            self.current_chunk().emit_op(Op::SetLocal, span);
+            self.current_chunk().emit_u16(_bind_copy, span);
+            self.compile_pattern_bind(&arm.pattern, span)?;
+
+            // 6. Guard (if present)
             let guard_jump = if let Some(guard) = &arm.guard {
                 self.compile_expr(guard)?;
                 let j = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -634,44 +726,35 @@ impl Compiler {
                 None
             };
 
-            // Begin a scope for pattern bindings
-            self.begin_scope();
-
-            // Bind pattern variables
-            if scrutinee.is_some() {
-                self.compile_pattern_bindings(&arm.pattern, span)?;
-            }
-
-            // Pop the scrutinee (it's been peeked during tests)
-            if scrutinee.is_some() {
-                self.current_chunk().emit_op(Op::Pop, span);
-            }
-
-            // Compile the arm body
+            // 7. Compile the arm body
             self.compile_expr(&arm.body)?;
 
             self.end_scope(span);
 
-            // Jump to end
+            // 8. Jump to end of match
             let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
             end_jumps.push(end_jump);
 
-            // Patch the jumps for no-match
+            // 9. Patch failure / guard jumps to here (next arm)
             if let Some(gj) = guard_jump {
                 self.current_chunk().patch_jump(gj);
             }
-            for nj in next_arm_jump {
-                self.current_chunk().patch_jump(nj);
+            for fj in fail_jumps {
+                self.current_chunk().patch_jump(fj);
             }
         }
 
-        // If no arm matched, push Unit as default
-        if scrutinee.is_some() {
-            self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
-        }
-        self.current_chunk().emit_op(Op::Unit, span);
+        // No arm matched — panic
+        let msg_idx = self.current_chunk().add_constant(
+            Value::String("non-exhaustive match: no arm matched".into()),
+        );
+        self.current_chunk().emit_op(Op::Constant, span);
+        self.current_chunk().emit_u16(msg_idx, span);
+        self.current_chunk().emit_op(Op::Panic, span);
 
-        // Patch all end jumps
+        self.end_scope(span);
+
+        // Patch all end jumps to here
         for ej in end_jumps {
             self.current_chunk().patch_jump(ej);
         }
@@ -679,8 +762,54 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compile a pattern test. Returns a list of jump offsets to patch
-    /// (they should jump to the next arm if the test fails).
+    /// Compile a guardless match: `match { cond1 -> body1, ... }`
+    fn compile_guardless_match(
+        &mut self,
+        arms: &[MatchArm],
+        span: Span,
+    ) -> Result<(), String> {
+        let mut end_jumps = Vec::new();
+
+        for arm in arms {
+            if arm.guard.is_some() {
+                // The guard IS the condition in a guardless match
+                self.compile_expr(arm.guard.as_ref().unwrap())?;
+                let fail_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+
+                self.compile_expr(&arm.body)?;
+                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                end_jumps.push(end_jump);
+
+                self.current_chunk().patch_jump(fail_jump);
+            } else {
+                // Wildcard / default arm — always matches
+                self.compile_expr(&arm.body)?;
+                let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+                end_jumps.push(end_jump);
+            }
+        }
+
+        // No arm matched — panic
+        let msg_idx = self.current_chunk().add_constant(
+            Value::String("non-exhaustive match: no condition was true".into()),
+        );
+        self.current_chunk().emit_op(Op::Constant, span);
+        self.current_chunk().emit_u16(msg_idx, span);
+        self.current_chunk().emit_op(Op::Panic, span);
+
+        for ej in end_jumps {
+            self.current_chunk().patch_jump(ej);
+        }
+
+        Ok(())
+    }
+
+    // ── Recursive pattern test ───────────────────────────────────
+    //
+    // Emit test opcodes for a pattern. The value to test is on TOS
+    // (peeked, not consumed). Returns jump-patch addresses for failure.
+    // For nested patterns, uses Dup + Destruct to get sub-values.
+
     fn compile_pattern_test(
         &mut self,
         pattern: &Pattern,
@@ -688,9 +817,10 @@ impl Compiler {
     ) -> Result<Vec<usize>, String> {
         match pattern {
             Pattern::Wildcard | Pattern::Ident(_) => {
-                // Always matches
+                // Always matches, no test needed
                 Ok(vec![])
             }
+
             Pattern::Int(n) => {
                 let idx = self.current_chunk().add_constant(Value::Int(*n));
                 self.current_chunk().emit_op(Op::TestEqual, span);
@@ -698,6 +828,7 @@ impl Compiler {
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
             }
+
             Pattern::Float(n) => {
                 let idx = self.current_chunk().add_constant(Value::Float(*n));
                 self.current_chunk().emit_op(Op::TestEqual, span);
@@ -705,12 +836,14 @@ impl Compiler {
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
             }
+
             Pattern::Bool(b) => {
                 self.current_chunk().emit_op(Op::TestBool, span);
                 self.current_chunk().emit_u8(if *b { 1 } else { 0 }, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
             }
+
             Pattern::StringLit(s) => {
                 let idx = self.current_chunk().add_constant(Value::String(s.clone()));
                 self.current_chunk().emit_op(Op::TestEqual, span);
@@ -718,19 +851,122 @@ impl Compiler {
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
             }
-            Pattern::Constructor(name, _) => {
+
+            Pattern::Constructor(name, fields) => {
+                // Test: tag matches?
                 let idx = self.current_chunk().add_constant(Value::String(name.clone()));
                 self.current_chunk().emit_op(Op::TestTag, span);
                 self.current_chunk().emit_u16(idx, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
-                Ok(vec![jump])
+                let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let mut all_jumps = vec![tag_jump];
+
+                // Test nested field patterns
+                for (i, field_pat) in fields.iter().enumerate() {
+                    if !self.pattern_is_irrefutable(field_pat) {
+                        // Destructure to get sub-value, test it, then pop
+                        self.current_chunk().emit_op(Op::DestructVariant, span);
+                        self.current_chunk().emit_u8(i as u8, span);
+                        let sub_fails = self.compile_pattern_test(field_pat, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                Ok(all_jumps)
             }
+
             Pattern::Tuple(pats) => {
+                // Test length
                 self.current_chunk().emit_op(Op::TestTupleLen, span);
                 self.current_chunk().emit_u8(pats.len() as u8, span);
-                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
-                Ok(vec![jump])
+                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let mut all_jumps = vec![len_jump];
+
+                // Test nested element patterns
+                for (i, pat) in pats.iter().enumerate() {
+                    if !self.pattern_is_irrefutable(pat) {
+                        self.current_chunk().emit_op(Op::DestructTuple, span);
+                        self.current_chunk().emit_u8(i as u8, span);
+                        let sub_fails = self.compile_pattern_test(pat, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                Ok(all_jumps)
             }
+
+            Pattern::List(elements, rest) => {
+                let elem_count = elements.len() as u8;
+
+                if rest.is_some() {
+                    // [h, ..t] — at least elem_count elements
+                    self.current_chunk().emit_op(Op::TestListMin, span);
+                    self.current_chunk().emit_u8(elem_count, span);
+                } else {
+                    // [a, b, c] — exactly elem_count elements
+                    self.current_chunk().emit_op(Op::TestListExact, span);
+                    self.current_chunk().emit_u8(elem_count, span);
+                }
+                let len_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                let mut all_jumps = vec![len_jump];
+
+                // Test nested element patterns
+                for (i, pat) in elements.iter().enumerate() {
+                    if !self.pattern_is_irrefutable(pat) {
+                        self.current_chunk().emit_op(Op::DestructList, span);
+                        self.current_chunk().emit_u8(i as u8, span);
+                        let sub_fails = self.compile_pattern_test(pat, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                // Test rest pattern if it's refutable
+                if let Some(rest_pat) = rest {
+                    if !self.pattern_is_irrefutable(rest_pat) {
+                        self.current_chunk().emit_op(Op::DestructListRest, span);
+                        self.current_chunk().emit_u8(elem_count, span);
+                        let sub_fails = self.compile_pattern_test(rest_pat, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                Ok(all_jumps)
+            }
+
+            Pattern::Record { name, fields, .. } => {
+                let mut all_jumps = Vec::new();
+
+                // Test tag if present
+                if let Some(type_name) = name {
+                    let idx = self.current_chunk().add_constant(Value::String(type_name.clone()));
+                    self.current_chunk().emit_op(Op::TestRecordTag, span);
+                    self.current_chunk().emit_u16(idx, span);
+                    let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    all_jumps.push(tag_jump);
+                }
+
+                // Test each field's sub-pattern
+                for (field_name, sub_pat) in fields {
+                    let sub_pattern = match sub_pat {
+                        Some(p) => p,
+                        None => continue, // shorthand binding {name} — always matches
+                    };
+                    if !self.pattern_is_irrefutable(sub_pattern) {
+                        let field_idx = self.current_chunk().add_constant(Value::String(field_name.clone()));
+                        self.current_chunk().emit_op(Op::DestructRecordField, span);
+                        self.current_chunk().emit_u16(field_idx, span);
+                        let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                Ok(all_jumps)
+            }
+
             Pattern::Range(lo, hi) => {
                 let lo_idx = self.current_chunk().add_constant(Value::Int(*lo));
                 let hi_idx = self.current_chunk().add_constant(Value::Int(*hi));
@@ -740,105 +976,334 @@ impl Compiler {
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![jump])
             }
-            Pattern::Or(pats) => {
-                // For or-patterns, we test each sub-pattern and jump to the body
-                // if ANY of them match.
+
+            Pattern::FloatRange(lo, hi) => {
+                let lo_idx = self.current_chunk().add_constant(Value::Float(*lo));
+                let hi_idx = self.current_chunk().add_constant(Value::Float(*hi));
+                self.current_chunk().emit_op(Op::TestFloatRange, span);
+                self.current_chunk().emit_u16(lo_idx, span);
+                self.current_chunk().emit_u16(hi_idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+
+            Pattern::Or(alternatives) => {
+                // Try each alternative; if any succeeds, jump to success.
                 let mut fail_jumps = Vec::new();
                 let mut success_jumps = Vec::new();
-                for (i, pat) in pats.iter().enumerate() {
-                    let sub_fails = self.compile_pattern_test(pat, span)?;
-                    if i < pats.len() - 1 {
-                        // If this sub-pattern matched, jump to success
+
+                for (i, alt) in alternatives.iter().enumerate() {
+                    let sub_fails = self.compile_pattern_test(alt, span)?;
+
+                    if i < alternatives.len() - 1 {
+                        // Not the last alt: if it matched, jump to success
                         let success = self.current_chunk().emit_jump(Op::Jump, span);
                         success_jumps.push(success);
-                        // Patch the failure jumps for this sub-pattern to try next
+                        // Patch this alt's failures to try the next
                         for fj in sub_fails {
                             self.current_chunk().patch_jump(fj);
                         }
                     } else {
-                        // Last sub-pattern: its failures are the overall failures
+                        // Last alt: its failures are the overall failures
                         fail_jumps = sub_fails;
                     }
                 }
-                // Patch success jumps to here
+
+                // Patch all success jumps to here
                 for sj in success_jumps {
                     self.current_chunk().patch_jump(sj);
                 }
+
                 Ok(fail_jumps)
             }
-            _ => {
-                // For other patterns (List, Record, etc.) -- treat as always-match for now
-                // and let runtime handle it
-                Ok(vec![])
+
+            Pattern::Pin(name) => {
+                // Pin pattern: match against the existing variable's value.
+                // TOS = scrutinee (peeked, not consumed).
+                // Strategy: Dup scrutinee, push pin value, Eq (pops both), JumpIfFalse.
+                // After: scrutinee remains on stack below the bool result.
+
+                // Dup the scrutinee
+                self.current_chunk().emit_op(Op::Dup, span);
+
+                // Push the pin value
+                if let Some(slot) = self.resolve_local(name) {
+                    self.current_chunk().emit_op(Op::GetLocal, span);
+                    self.current_chunk().emit_u16(slot, span);
+                } else if let Some(idx) = self.resolve_upvalue(name) {
+                    self.current_chunk().emit_op(Op::GetUpvalue, span);
+                    self.current_chunk().emit_u8(idx, span);
+                } else {
+                    let name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                    self.current_chunk().emit_op(Op::GetGlobal, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                }
+
+                // Stack: [... scrutinee, scrutinee_copy, pin_value]
+                self.current_chunk().emit_op(Op::Eq, span);
+                // Stack: [... scrutinee, bool_result]
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+
+            Pattern::Map(entries) => {
+                let mut all_jumps = Vec::new();
+
+                for (key, sub_pat) in entries {
+                    // Test if key exists
+                    let key_idx = self.current_chunk().add_constant(Value::String(key.clone()));
+                    self.current_chunk().emit_op(Op::TestMapHasKey, span);
+                    self.current_chunk().emit_u16(key_idx, span);
+                    let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    all_jumps.push(key_jump);
+
+                    // Test sub-pattern if refutable
+                    if !self.pattern_is_irrefutable(sub_pat) {
+                        let key_idx2 = self.current_chunk().add_constant(Value::String(key.clone()));
+                        self.current_chunk().emit_op(Op::DestructMapValue, span);
+                        self.current_chunk().emit_u16(key_idx2, span);
+                        let sub_fails = self.compile_pattern_test(sub_pat, span)?;
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        all_jumps.extend(sub_fails);
+                    }
+                }
+
+                Ok(all_jumps)
             }
         }
     }
 
-    /// Compile pattern bindings: destructure the value on TOS into local variables.
-    fn compile_pattern_bindings(
+    // ── Recursive pattern bind ───────────────────────────────────
+    //
+    // Emit binding opcodes for a pattern after test has succeeded.
+    // The value to bind FROM is on TOS.
+    //
+    // Contract: TOS has the value. After this call, TOS is unchanged
+    // (the value is still there). New locals are pushed ABOVE it on
+    // the stack via GetLocal + Destruct sequences.
+    //
+    // Stack layout for compound patterns like (a, b):
+    //   Before: [..., tuple]
+    //   After:  [..., tuple, tuple_copy(hidden), elem0, a_local,
+    //                        tuple_copy2(hidden), elem1, b_local]
+    // Where each GetLocal pushes a copy, Destruct pushes the element,
+    // and the Ident bind dups it as the named local.
+
+    fn compile_pattern_bind(
         &mut self,
         pattern: &Pattern,
         span: Span,
     ) -> Result<(), String> {
         match pattern {
             Pattern::Ident(name) => {
-                // Peek the scrutinee and bind it
-                let val = self.peek_tos(span);
+                // Dup the value, the dup'd copy becomes the local's stack slot.
+                self.current_chunk().emit_op(Op::Dup, span);
                 let slot = self.add_local(name.clone());
                 self.current_chunk().emit_op(Op::SetLocal, span);
                 self.current_chunk().emit_u16(slot, span);
-                self.current_chunk().emit_op(Op::Pop, span);
-                let _ = val; // SetLocal peeks, so we pop the extra
             }
+
             Pattern::Constructor(_, fields) => {
-                for (i, field_pat) in fields.iter().enumerate() {
-                    if let Pattern::Ident(name) = field_pat {
-                        // Destructure variant field
-                        self.current_chunk().emit_op(Op::DestructVariant, span);
-                        self.current_chunk().emit_u8(i as u8, span);
-                        let slot = self.add_local(name.clone());
-                        self.current_chunk().emit_op(Op::SetLocal, span);
-                        self.current_chunk().emit_u16(slot, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
-                    } else if let Pattern::Wildcard = field_pat {
-                        // skip
+                self.compile_compound_bind(fields.iter().enumerate().filter_map(|(i, pat)| {
+                    if self.pattern_has_bindings(pat) {
+                        Some((BindDestructKind::Variant(i as u8), pat.clone()))
                     } else {
-                        // For nested patterns, we'd need recursive destructuring
-                        // For now, skip
+                        None
                     }
-                }
+                }).collect(), span)?;
             }
+
             Pattern::Tuple(pats) => {
-                for (i, pat) in pats.iter().enumerate() {
-                    if let Pattern::Ident(name) = pat {
-                        self.current_chunk().emit_op(Op::DestructTuple, span);
-                        self.current_chunk().emit_u8(i as u8, span);
-                        let slot = self.add_local(name.clone());
-                        self.current_chunk().emit_op(Op::SetLocal, span);
-                        self.current_chunk().emit_u16(slot, span);
-                        self.current_chunk().emit_op(Op::Pop, span);
+                self.compile_compound_bind(pats.iter().enumerate().filter_map(|(i, pat)| {
+                    if self.pattern_has_bindings(pat) {
+                        Some((BindDestructKind::Tuple(i as u8), pat.clone()))
+                    } else {
+                        None
+                    }
+                }).collect(), span)?;
+            }
+
+            Pattern::List(elements, rest) => {
+                let mut items: Vec<(BindDestructKind, Pattern)> = elements.iter().enumerate().filter_map(|(i, pat)| {
+                    if self.pattern_has_bindings(pat) {
+                        Some((BindDestructKind::List(i as u8), pat.clone()))
+                    } else {
+                        None
+                    }
+                }).collect();
+                if let Some(rest_pat) = rest {
+                    if self.pattern_has_bindings(rest_pat) {
+                        items.push((BindDestructKind::ListRest(elements.len() as u8), (**rest_pat).clone()));
                     }
                 }
+                self.compile_compound_bind(items, span)?;
             }
+
+            Pattern::Record { fields, .. } => {
+                let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(pat) => {
+                            if self.pattern_has_bindings(pat) {
+                                items.push((BindDestructKind::RecordField(field_name.clone()), pat.clone()));
+                            }
+                        }
+                        None => {
+                            // Shorthand: { name } binds field to local with same name
+                            items.push((BindDestructKind::RecordField(field_name.clone()), Pattern::Ident(field_name.clone())));
+                        }
+                    }
+                }
+                self.compile_compound_bind(items, span)?;
+            }
+
+            Pattern::Map(entries) => {
+                let items: Vec<(BindDestructKind, Pattern)> = entries.iter().filter_map(|(key, sub_pat)| {
+                    if self.pattern_has_bindings(sub_pat) {
+                        Some((BindDestructKind::MapValue(key.clone()), sub_pat.clone()))
+                    } else {
+                        None
+                    }
+                }).collect();
+                self.compile_compound_bind(items, span)?;
+            }
+
+            Pattern::Or(alternatives) => {
+                // All alternatives bind the same variables. Bind using first alt's structure.
+                if let Some(first) = alternatives.first() {
+                    self.compile_pattern_bind(first, span)?;
+                }
+            }
+
+            // Patterns with no bindings
             Pattern::Wildcard
             | Pattern::Int(_)
             | Pattern::Float(_)
             | Pattern::Bool(_)
             | Pattern::StringLit(_)
             | Pattern::Range(..)
-            | Pattern::Or(_) => {
+            | Pattern::FloatRange(..)
+            | Pattern::Pin(_) => {
                 // No bindings to create
-            }
-            _ => {
-                // Other patterns: skip bindings for now
             }
         }
         Ok(())
     }
 
-    /// Helper: emit a Dup to peek TOS (for pattern binding)
-    fn peek_tos(&mut self, span: Span) {
+    /// Compile bindings for a compound pattern (tuple, constructor, list, record, map).
+    ///
+    /// The parent value is on TOS. For each sub-pattern that has bindings,
+    /// we GetLocal the parent, Destruct the sub-value, register intermediate
+    /// stack values as hidden locals, and recurse.
+    ///
+    /// This approach "wastes" stack slots for intermediate copies but ensures
+    /// local slot numbers always match actual stack positions.
+    fn compile_compound_bind(
+        &mut self,
+        items: Vec<(BindDestructKind, Pattern)>,
+        span: Span,
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        // The parent is on TOS. We need it in a known local slot so we
+        // can GetLocal it repeatedly. We know TOS is at the "next" stack
+        // position, so we can register it as a hidden local.
+        // But TOS may not yet be registered. We need to check: is TOS already
+        // at the expected slot position?
+        //
+        // Strategy: just Dup + add_local + SetLocal to get a known slot.
+        // The Dup'd copy becomes a hidden local.
         self.current_chunk().emit_op(Op::Dup, span);
+        let parent_slot = self.add_local("__bind_parent__".into());
+        self.current_chunk().emit_op(Op::SetLocal, span);
+        self.current_chunk().emit_u16(parent_slot, span);
+
+        for (kind, sub_pat) in &items {
+            // Push the parent value from the known slot
+            self.current_chunk().emit_op(Op::GetLocal, span);
+            self.current_chunk().emit_u16(parent_slot, span);
+
+            // Destruct to get the sub-value
+            match kind {
+                BindDestructKind::Variant(i) => {
+                    self.current_chunk().emit_op(Op::DestructVariant, span);
+                    self.current_chunk().emit_u8(*i, span);
+                }
+                BindDestructKind::Tuple(i) => {
+                    self.current_chunk().emit_op(Op::DestructTuple, span);
+                    self.current_chunk().emit_u8(*i, span);
+                }
+                BindDestructKind::List(i) => {
+                    self.current_chunk().emit_op(Op::DestructList, span);
+                    self.current_chunk().emit_u8(*i, span);
+                }
+                BindDestructKind::ListRest(start) => {
+                    self.current_chunk().emit_op(Op::DestructListRest, span);
+                    self.current_chunk().emit_u8(*start, span);
+                }
+                BindDestructKind::RecordField(name) => {
+                    let field_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                    self.current_chunk().emit_op(Op::DestructRecordField, span);
+                    self.current_chunk().emit_u16(field_idx, span);
+                }
+                BindDestructKind::MapValue(key) => {
+                    let key_idx = self.current_chunk().add_constant(Value::String(key.clone()));
+                    self.current_chunk().emit_op(Op::DestructMapValue, span);
+                    self.current_chunk().emit_u16(key_idx, span);
+                }
+            }
+
+            // Stack: [..., parent_copy_from_GetLocal, sub_value]
+            // Register the parent_copy as a hidden local
+            let _copy_slot = self.add_local("__destruct_copy__".into());
+            // Now sub_value is at the next stack position, ready for recursion.
+
+            // Recurse into the sub-pattern for binding
+            self.compile_pattern_bind(sub_pat, span)?;
+        }
+
+        Ok(())
+    }
+
+    // ── Pattern analysis helpers ─────────────────────────────────
+
+    /// Returns true if the pattern always matches (no runtime test needed).
+    fn pattern_is_irrefutable(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard | Pattern::Ident(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true if the pattern (or any sub-pattern) binds any variable.
+    fn pattern_has_bindings(&self, pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Ident(_) => true,
+            Pattern::Wildcard
+            | Pattern::Int(_)
+            | Pattern::Float(_)
+            | Pattern::Bool(_)
+            | Pattern::StringLit(_)
+            | Pattern::Range(..)
+            | Pattern::FloatRange(..)
+            | Pattern::Pin(_) => false,
+            Pattern::Constructor(_, fields) => fields.iter().any(|p| self.pattern_has_bindings(p)),
+            Pattern::Tuple(pats) => pats.iter().any(|p| self.pattern_has_bindings(p)),
+            Pattern::List(elems, rest) => {
+                elems.iter().any(|p| self.pattern_has_bindings(p))
+                    || rest.as_ref().map_or(false, |r| self.pattern_has_bindings(r))
+            }
+            Pattern::Record { fields, .. } => fields.iter().any(|(_, p)| {
+                match p {
+                    Some(pat) => self.pattern_has_bindings(pat),
+                    None => true, // shorthand {name} always binds
+                }
+            }),
+            Pattern::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
+            Pattern::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
+        }
     }
 
     // ── Pipe compilation ─────────────────────────────────────────
