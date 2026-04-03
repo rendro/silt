@@ -1,2202 +1,2517 @@
 # Silt Standard Library Reference
 
-Complete reference for all built-in functions and standard library modules.
+Complete API reference for every built-in function in silt.
 
-Silt has a deliberately small set of **13 global names** that are always available
-without any module qualification. Everything else is organized into modules and
-accessed with dot notation (e.g. `list.map`, `string.split`, `channel.new`).
+## Module Index
 
------
+| Module | Functions | Description |
+|--------|:---------:|-------------|
+| [Globals](#globals) | 13 | `print`, `println`, `panic`, `try`, variant constructors, type descriptors |
+| [list](#list) | 31 | Create, transform, query, and iterate over ordered collections |
+| [string](#string) | 27 | Split, join, search, transform, and classify strings |
+| [map](#map) | 14 | Lookup, insert, merge, and iterate over key-value maps |
+| [set](#set) | 15 | Create, combine, query, and iterate over unordered unique collections |
+| [int](#int) | 6 | Parse, convert, and compare integers |
+| [float](#float) | 9 | Parse, round, convert, and compare floats |
+| [result](#result) | 7 | Transform and query `Result(a, e)` values |
+| [option](#option) | 6 | Transform and query `Option(a)` values |
+| [io](#io) | 5 | File I/O, stdin, command-line args, debug inspection |
+| [fs](#fs) | 1 | Filesystem path queries |
+| [test](#test) | 3 | Assertions for test scripts |
+| [regex](#regex) | 9 | Match, find, split, replace, and capture with regular expressions |
+| [json](#json) | 5 | Parse JSON into typed records/maps, serialize values to JSON |
+| [math](#math) | 11 + 2 | Trigonometry, logarithms, exponentiation, and constants |
+| [channel](#channel) | 8 | Bounded channels for cooperative concurrency |
+| [task](#task) | 3 | Spawn, join, and cancel cooperative tasks |
+
+**Total: 163 names** (13 globals + 4 type descriptors + 146 module functions/constants)
+
+---
 
 ## Globals
 
 Always available. No import or qualification needed.
 
-| Name | Kind | Description |
-|------|------|-------------|
-| `print`  | `print(args...) -> Unit` | Print values separated by spaces, no trailing newline |
-| `println` | `println(args...) -> Unit` | Print values separated by spaces, with trailing newline |
-| `panic` | `panic(msg) -> !` | Abort execution with an error message |
-| `try` | `try(fn) -> Result` | Call a zero-argument function, catching errors into a Result |
-| `Ok` | `Ok(value) -> Result` | Construct a success Result |
-| `Err` | `Err(value) -> Result` | Construct an error Result |
-| `Some` | `Some(value) -> Option` | Construct a present Option |
-| `None` | value | The absent Option value (not a function) |
-| `Stop` | `Stop(value) -> Step` | Signal early termination from `list.fold_until` |
-| `Continue` | `Continue(value) -> Step` | Signal continuation in `list.fold_until` |
-| `Message` | `Message(value) -> ChannelResult` | Wraps a received channel value |
-| `Closed` | value | Channel is closed (from `channel.receive`/`try_receive`) |
-| `Empty` | value | Channel buffer empty (from `channel.try_receive`) |
+### Summary
 
-These are the **only** names in the global namespace. There is no global `map`,
-`filter`, `fold`, `len`, `inspect`, `spawn`, `send`, or `receive`. Use the
-module-qualified versions: `list.map`, `list.filter`, `list.fold`,
-`list.length`, `io.inspect`, `task.spawn`, `channel.send`, `channel.receive`.
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `print` | `(a) -> ()` | Print a value without trailing newline |
+| `println` | `(a) -> ()` | Print a value with trailing newline |
+| `panic` | `(String) -> a` | Crash with an error message |
+| `try` | `(() -> a) -> Result(a, String)` | Catch panics into a Result |
+| `Ok` | `(a) -> Result(a, e)` | Construct a success Result |
+| `Err` | `(e) -> Result(a, e)` | Construct an error Result |
+| `Some` | `(a) -> Option(a)` | Construct a present Option |
+| `None` | `Option(a)` | The absent Option value (not a function) |
+| `Stop` | `(a) -> Step(a)` | Signal early termination in `list.fold_until` |
+| `Continue` | `(a) -> Step(a)` | Signal continuation in `list.fold_until` |
+| `Message` | `(a) -> ChannelResult(a)` | Wraps a received channel value |
+| `Closed` | `ChannelResult(a)` | Channel is closed |
+| `Empty` | `ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
+
+Additionally, four **type descriptors** are in the global namespace for use with
+`json.parse_map` and similar type-directed APIs:
+
+| Name | Description |
+|------|-------------|
+| `Int` | Integer type descriptor |
+| `Float` | Float type descriptor |
+| `String` | String type descriptor |
+| `Bool` | Boolean type descriptor |
+
+---
 
 ### `print`
 
 ```
-print(args...) -> Unit
+print(value: a) -> ()
 ```
 
-Prints all arguments separated by spaces. Does not append a newline.
+Prints a value to stdout. Does not append a newline. Multiple values in a single
+call are separated by spaces.
 
 ```silt
 fn main() {
-  print("hello")
-  print(" ")
-  print("world")
-  -- output: hello world
+    print("hello ")
+    print("world")
+    // output: hello world
 }
 ```
+
+---
 
 ### `println`
 
 ```
-println(args...) -> Unit
+println(value: a) -> ()
 ```
 
-Prints all arguments separated by spaces, followed by a newline.
+Prints a value to stdout followed by a newline.
 
 ```silt
 fn main() {
-  println("hello, world")
-  println("a", "b", "c")
-  -- output:
-  -- hello, world
-  -- a b c
+    println("hello, world")
+    // output: hello, world\n
 }
 ```
+
+---
 
 ### `panic`
 
 ```
-panic(msg) -> !
+panic(message: String) -> a
 ```
 
-Aborts execution immediately with the given error message. Never returns.
+Terminates execution with an error message. The return type is polymorphic
+because `panic` never returns -- it can appear anywhere a value is expected.
 
 ```silt
 fn main() {
-  panic("something went terribly wrong")
-  -- runtime error: panic: something went terribly wrong
+    panic("something went wrong")
 }
 ```
+
+---
 
 ### `try`
 
 ```
-try(fn) -> Result
+try(f: () -> a) -> Result(a, String)
 ```
 
-Calls a zero-argument function and wraps its return value in `Ok`. If the
-function causes a runtime error, catches it and returns `Err(message)`.
+Calls a zero-argument function. If it completes normally, returns `Ok(value)`.
+If it panics, catches the error and returns `Err(message)`.
 
 ```silt
 fn main() {
-  let result = try(fn() { 42 })
-  -- Ok(42)
+    let result = try(fn() { 1 + 2 })
+    // result == Ok(3)
 
-  let result = try(fn() { panic("boom") })
-  -- Err("panic: boom")
+    let err = try(fn() { panic("boom") })
+    // err == Err("panic: panic: boom")
 }
 ```
+
+---
 
 ### `Ok`
 
 ```
-Ok(value) -> Result
+Ok(value: a) -> Result(a, e)
 ```
 
-Wraps a value in a successful Result.
+Constructs a success variant of `Result`.
 
 ```silt
 fn main() {
-  let r = Ok(42)
-  -- Ok(42)
+    let r = Ok(42)
+    // r is Result(Int, e)
 }
 ```
+
+---
 
 ### `Err`
 
 ```
-Err(value) -> Result
+Err(error: e) -> Result(a, e)
 ```
 
-Wraps a value in an error Result.
+Constructs an error variant of `Result`.
 
 ```silt
 fn main() {
-  let r = Err("something failed")
-  -- Err("something failed")
+    let r = Err("not found")
+    // r is Result(a, String)
 }
 ```
+
+---
 
 ### `Some`
 
 ```
-Some(value) -> Option
+Some(value: a) -> Option(a)
 ```
 
-Wraps a value in a present Option.
+Constructs a present variant of `Option`.
 
 ```silt
 fn main() {
-  let opt = Some(42)
-  -- Some(42)
+    let x = Some(42)
+    match x {
+        Some(n) -> println(n)
+        None -> println("nothing")
+    }
 }
 ```
+
+---
 
 ### `None`
 
 ```
-None -> Option
+None : Option(a)
 ```
 
-The absent Option value. This is a value, not a function call.
+The absent variant of `Option`. This is a value, not a function.
 
 ```silt
 fn main() {
-  let opt = None
-  -- None
+    let x = None
+    println(option.is_none(x))  // true
 }
 ```
 
------
+---
 
-## `list` Module
+### `Stop`
 
-Higher-order functions and utilities for working with lists. Used with the pipe
-operator (`|>`) and trailing closures.
+```
+Stop(value: a) -> Step(a)
+```
+
+Signals early termination from `list.fold_until`. The value becomes the final
+accumulator result.
+
+```silt
+fn main() {
+    let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+        when acc + x > 6 -> Stop(acc)
+        else -> Continue(acc + x)
+    }
+    println(result)  // 6
+}
+```
+
+---
+
+### `Continue`
+
+```
+Continue(value: a) -> Step(a)
+```
+
+Signals continuation in `list.fold_until`. The value becomes the next
+accumulator.
+
+---
+
+### `Message`
+
+```
+Message(value: a) -> ChannelResult(a)
+```
+
+Wraps a value received from a channel. Returned by `channel.receive` and
+`channel.try_receive` when a value is available.
+
+```silt
+fn main() {
+    let ch = channel.new(1)
+    channel.send(ch, 42)
+    let Message(v) = channel.receive(ch)
+    println(v)  // 42
+}
+```
+
+---
+
+### `Closed`
+
+```
+Closed : ChannelResult(a)
+```
+
+Indicates the channel has been closed. Returned by `channel.receive` and
+`channel.try_receive` when no more messages will arrive.
+
+---
+
+### `Empty`
+
+```
+Empty : ChannelResult(a)
+```
+
+Indicates the channel buffer is currently empty but not closed. Only returned by
+`channel.try_receive` (the non-blocking variant).
+
+---
+
+## list
+
+Functions for working with ordered, immutable lists (`List(a)`). Lists use
+`[...]` literal syntax and support the range operator `1..5`.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `list.map` | `list.map(list, fn) -> List` | Apply a function to each element, return new list |
-| `list.filter` | `list.filter(list, fn) -> List` | Keep elements where the function returns truthy |
-| `list.each` | `list.each(list, fn) -> Unit` | Execute a function for each element (side effects) |
-| `list.fold` | `list.fold(list, init, fn) -> T` | Reduce a list to a single value with an accumulator |
-| `list.fold_until` | `list.fold_until(list, init, fn) -> T` | Fold with early termination via `Stop(val)` / `Continue(val)` |
-| `list.unfold` | `list.unfold(seed, fn) -> List` | Generate a list from a seed; fn returns `Some((elem, next))` or `None` |
-| `list.find` | `list.find(list, fn) -> Option` | Return the first element matching the predicate |
-| `list.zip` | `list.zip(list_a, list_b) -> List(Tuple)` | Pair up elements from two lists into tuples |
-| `list.flatten` | `list.flatten(list) -> List` | Flatten one level of nested lists |
-| `list.flat_map` | `list.flat_map(list, fn) -> List` | Map then flatten in one step |
-| `list.filter_map` | `list.filter_map(list, fn) -> List` | Apply fn returning Option; keep and unwrap Some values |
-| `list.sort_by` | `list.sort_by(list, key_fn) -> List` | Sort using a key extraction function |
-| `list.any` | `list.any(list, fn) -> Bool` | True if any element satisfies the predicate |
-| `list.all` | `list.all(list, fn) -> Bool` | True if all elements satisfy the predicate |
-| `list.head` | `list.head(list) -> Option` | Get the first element |
-| `list.tail` | `list.tail(list) -> List` | Get all elements except the first |
-| `list.last` | `list.last(list) -> Option` | Get the last element |
-| `list.reverse` | `list.reverse(list) -> List` | Reverse the list |
-| `list.sort` | `list.sort(list) -> List` | Sort the list in ascending order |
-| `list.unique` | `list.unique(list) -> List` | Remove duplicate elements, preserving first occurrence |
-| `list.contains` | `list.contains(list, value) -> Bool` | Check if list contains a value |
-| `list.length` | `list.length(list) -> Int` | Return the number of elements |
-| `list.append` | `list.append(list, element) -> List` | Return a new list with the element added at the end |
-| `list.prepend` | `list.prepend(list, element) -> List` | Return a new list with the element added at the front |
-| `list.concat` | `list.concat(list_a, list_b) -> List` | Concatenate two lists |
-| `list.get` | `list.get(list, index) -> Option` | Get element at index (zero-based) |
-| `list.set` | `list.set(list, index, value) -> List` | Return new list with element at index replaced |
-| `list.take` | `list.take(list, n) -> List` | Take the first n elements |
-| `list.drop` | `list.drop(list, n) -> List` | Drop the first n elements |
-| `list.enumerate` | `list.enumerate(list) -> List(Tuple(Int, T))` | Pair each element with its index |
-| `list.group_by` | `list.group_by(list, key_fn) -> Map` | Group elements by key function |
+| `all` | `(List(a), (a) -> Bool) -> Bool` | True if predicate holds for every element |
+| `any` | `(List(a), (a) -> Bool) -> Bool` | True if predicate holds for at least one element |
+| `append` | `(List(a), a) -> List(a)` | Add an element to the end |
+| `concat` | `(List(a), List(a)) -> List(a)` | Concatenate two lists |
+| `contains` | `(List(a), a) -> Bool` | Check if element is in list |
+| `drop` | `(List(a), Int) -> List(a)` | Remove first n elements |
+| `each` | `(List(a), (a) -> ()) -> ()` | Call function for each element (side effects) |
+| `enumerate` | `(List(a)) -> List((Int, a))` | Pair each element with its index |
+| `filter` | `(List(a), (a) -> Bool) -> List(a)` | Keep elements matching predicate |
+| `filter_map` | `(List(a), (a) -> Option(b)) -> List(b)` | Filter and transform in one pass |
+| `find` | `(List(a), (a) -> Bool) -> Option(a)` | First element matching predicate |
+| `flat_map` | `(List(a), (a) -> List(b)) -> List(b)` | Map then flatten |
+| `flatten` | `(List(List(a))) -> List(a)` | Flatten one level of nesting |
+| `fold` | `(List(a), b, (b, a) -> b) -> b` | Reduce to a single value |
+| `fold_until` | `(List(a), b, (b, a) -> Step(b)) -> b` | Fold with early termination |
+| `get` | `(List(a), Int) -> Option(a)` | Element at index, or None |
+| `group_by` | `(List(a), (a) -> k) -> Map(k, List(a))` | Group elements by key function |
+| `head` | `(List(a)) -> Option(a)` | First element, or None |
+| `last` | `(List(a)) -> Option(a)` | Last element, or None |
+| `length` | `(List(a)) -> Int` | Number of elements |
+| `map` | `(List(a), (a) -> b) -> List(b)` | Transform each element |
+| `prepend` | `(List(a), a) -> List(a)` | Add an element to the front |
+| `reverse` | `(List(a)) -> List(a)` | Reverse element order |
+| `set` | `(List(a), Int, a) -> List(a)` | Return new list with element at index replaced |
+| `sort` | `(List(a)) -> List(a)` | Sort in natural order |
+| `sort_by` | `(List(a), (a) -> b) -> List(a)` | Sort by key function |
+| `tail` | `(List(a)) -> List(a)` | All elements except the first |
+| `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
+| `unfold` | `(a, (a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
+| `unique` | `(List(a)) -> List(a)` | Remove duplicates, preserving first occurrence |
+| `zip` | `(List(a), List(b)) -> List((a, b))` | Pair elements from two lists |
 
-### `list.map`
+---
+
+### `list.all`
 
 ```
-list.map(list, fn) -> List
+list.all(xs: List(a), f: (a) -> Bool) -> Bool
 ```
 
-Applies `fn` to each element of `list` and returns a new list of results.
+Returns `true` if `f` returns `true` for every element. Short-circuits on the
+first `false`.
 
 ```silt
 fn main() {
-  [1, 2, 3] |> list.map { x -> x * 2 }
-  -- [2, 4, 6]
+    let result = list.all([2, 4, 6]) { x -> x % 2 == 0 }
+    println(result)  // true
 }
 ```
 
-### `list.filter`
+---
+
+### `list.any`
 
 ```
-list.filter(list, fn) -> List
+list.any(xs: List(a), f: (a) -> Bool) -> Bool
 ```
 
-Returns a new list containing only elements for which `fn` returns a truthy value.
+Returns `true` if `f` returns `true` for at least one element. Short-circuits on
+the first `true`.
 
 ```silt
 fn main() {
-  [1, 2, 3, 4, 5] |> list.filter { x -> x > 2 }
-  -- [3, 4, 5]
+    let result = list.any([1, 3, 4]) { x -> x % 2 == 0 }
+    println(result)  // true
 }
 ```
+
+---
+
+### `list.append`
+
+```
+list.append(xs: List(a), elem: a) -> List(a)
+```
+
+Returns a new list with `elem` added at the end.
+
+```silt
+fn main() {
+    let xs = [1, 2, 3] |> list.append(4)
+    println(xs)  // [1, 2, 3, 4]
+}
+```
+
+---
+
+### `list.concat`
+
+```
+list.concat(xs: List(a), ys: List(a)) -> List(a)
+```
+
+Concatenates two lists into a single list.
+
+```silt
+fn main() {
+    let result = list.concat([1, 2], [3, 4])
+    println(result)  // [1, 2, 3, 4]
+}
+```
+
+---
+
+### `list.contains`
+
+```
+list.contains(xs: List(a), elem: a) -> Bool
+```
+
+Returns `true` if `elem` is in the list (by value equality).
+
+```silt
+fn main() {
+    println(list.contains([1, 2, 3], 2))  // true
+    println(list.contains([1, 2, 3], 5))  // false
+}
+```
+
+---
+
+### `list.drop`
+
+```
+list.drop(xs: List(a), n: Int) -> List(a)
+```
+
+Returns the list without its first `n` elements. If `n >= length`, returns an
+empty list.
+
+```silt
+fn main() {
+    let result = list.drop([1, 2, 3, 4, 5], 2)
+    println(result)  // [3, 4, 5]
+}
+```
+
+---
 
 ### `list.each`
 
 ```
-list.each(list, fn) -> Unit
+list.each(xs: List(a), f: (a) -> ()) -> ()
 ```
 
-Calls `fn` on each element for side effects. Returns `Unit`.
+Calls `f` for every element in the list. Used for side effects. Returns unit.
 
 ```silt
 fn main() {
-  ["Alice", "Bob"] |> list.each { name -> println("hello {name}") }
-  -- output:
-  -- hello Alice
-  -- hello Bob
+    [1, 2, 3] |> list.each { x -> println(x) }
 }
 ```
 
-### `list.fold`
+---
+
+### `list.enumerate`
 
 ```
-list.fold(list, init, fn) -> T
+list.enumerate(xs: List(a)) -> List((Int, a))
 ```
 
-Reduces a list to a single value. `fn` receives `(accumulator, element)` on each step.
+Returns a list of `(index, element)` tuples, with indices starting at 0.
 
 ```silt
 fn main() {
-  [1, 2, 3, 4, 5]
-  |> list.filter { x -> x > 2 }
-  |> list.map { x -> x * 10 }
-  |> list.fold(0) { acc, x -> acc + x }
-  -- 120
+    let pairs = list.enumerate(["a", "b", "c"])
+    // [(0, "a"), (1, "b"), (2, "c")]
+    list.each(pairs) { (i, v) -> println("{i}: {v}") }
 }
 ```
 
-### `list.fold_until`
+---
+
+### `list.filter`
 
 ```
-list.fold_until(list, init, fn) -> T
+list.filter(xs: List(a), f: (a) -> Bool) -> List(a)
 ```
 
-Like `list.fold`, but the callback returns `Continue(acc)` to keep going or `Stop(value)` to terminate early. If the list is exhausted without a `Stop`, returns the last accumulator.
+Returns a list containing only the elements for which `f` returns `true`.
 
 ```silt
--- Sum until exceeding a threshold
-let total = [10, 20, 30, 40] |> list.fold_until(0) { acc, x ->
-  match acc + x > 50 {
-    true -> Stop(acc)
-    _ -> Continue(acc + x)
-  }
+fn main() {
+    let evens = [1, 2, 3, 4, 5] |> list.filter { x -> x % 2 == 0 }
+    println(evens)  // [2, 4]
 }
--- total == 30 (stopped before adding 30, since 30+30=60 > 50)
 ```
 
-**Note:** `Stop` and `Continue` must carry the same type. For search patterns where "found" has a different shape than "keep looking" (e.g., returning `Some(path)` vs. continuing with a queue), use `loop` instead -- it can return any expression to terminate.
+---
 
-### `list.unfold`
+### `list.filter_map`
 
 ```
-list.unfold(seed, fn) -> List
+list.filter_map(xs: List(a), f: (a) -> Option(b)) -> List(b)
 ```
 
-Generate a list from a seed value. The callback receives the current state and returns `Some((element, next_state))` to emit an element and continue, or `None` to stop.
+Applies `f` to each element. Keeps the inner values from `Some` results and
+discards `None` results. Combines filtering and mapping in one pass.
 
 ```silt
--- Powers of 2 up to 32
-let powers = list.unfold(1) { n ->
-  match n > 32 {
-    true -> None
-    _ -> Some((n, n * 2))
-  }
+fn main() {
+    let results = ["1", "abc", "3"] |> list.filter_map { s ->
+        match int.parse(s) {
+            Ok(n) -> Some(n * 10)
+            Err(_) -> None
+        }
+    }
+    println(results)  // [10, 30]
 }
--- [1, 2, 4, 8, 16, 32]
 ```
+
+---
 
 ### `list.find`
 
 ```
-list.find(list, fn) -> Option
+list.find(xs: List(a), f: (a) -> Bool) -> Option(a)
 ```
 
-Returns `Some(element)` for the first element where `fn` returns truthy, or `None` if no match.
+Returns `Some(element)` for the first element where `f` returns `true`, or
+`None` if no match is found.
 
 ```silt
 fn main() {
-  let result = [1, 2, 3, 4] |> list.find { x -> x > 2 }
-  -- Some(3)
-
-  let nothing = [1, 2] |> list.find { x -> x > 10 }
-  -- None
+    let result = list.find([1, 2, 3, 4]) { x -> x > 2 }
+    println(result)  // Some(3)
 }
 ```
 
-### `list.zip`
+---
+
+### `list.flat_map`
 
 ```
-list.zip(list_a, list_b) -> List(Tuple)
+list.flat_map(xs: List(a), f: (a) -> List(b)) -> List(b)
 ```
 
-Pairs elements from two lists into a list of tuples. Stops at the shorter list.
+Maps each element to a list, then flattens the results into a single list.
 
 ```silt
 fn main() {
-  let names = ["Alice", "Bob"]
-  let ages = [30, 25]
-  list.zip(names, ages)
-  -- [("Alice", 30), ("Bob", 25)]
+    let result = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
+    println(result)  // [1, 10, 2, 20, 3, 30]
 }
 ```
+
+---
 
 ### `list.flatten`
 
 ```
-list.flatten(list) -> List
+list.flatten(xs: List(List(a))) -> List(a)
 ```
 
 Flattens one level of nesting. Non-list elements are kept as-is.
 
 ```silt
 fn main() {
-  [[1, 2], [3, 4], [5]] |> list.flatten
-  -- [1, 2, 3, 4, 5]
+    let result = list.flatten([[1, 2], [3], [4, 5]])
+    println(result)  // [1, 2, 3, 4, 5]
 }
 ```
 
-### `list.flat_map`
+---
+
+### `list.fold`
 
 ```
-list.flat_map(list, fn) -> List
+list.fold(xs: List(a), init: b, f: (b, a) -> b) -> b
 ```
 
-Applies `fn` to each element (which should return a list), then flattens the
-result one level. Equivalent to `list.map` followed by `list.flatten`.
+Reduces a list to a single value. Starts with `init`, then calls `f(acc, elem)`
+for each element.
 
 ```silt
 fn main() {
-  [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
-  -- [1, 10, 2, 20, 3, 30]
+    let sum = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+    println(sum)  // 6
 }
 ```
 
-### `list.filter_map`
+---
+
+### `list.fold_until`
 
 ```
-list.filter_map(list, fn) -> List
+list.fold_until(xs: List(a), init: b, f: (b, a) -> Step(b)) -> b
 ```
 
-Applies `fn` to each element. `fn` returns an `Option`: `Some(value)` values are
-unwrapped and included in the result, `None` values are discarded. Combines
-`list.map` + `list.filter` + unwrap in a single pass.
-
-```silt
-fn parse_int_maybe(s) {
-  match int.parse(s) {
-    Ok(n) -> Some(n)
-    Err(_) -> None
-  }
-}
-
-fn main() {
-  ["1", "hello", "3", "world"]
-  |> list.filter_map { s -> parse_int_maybe(s) }
-  -- [1, 3]
-}
-```
-
-This is particularly useful when a transformation might fail and you want to
-collect only the successes:
-
-```silt
-lines |> list.filter_map { l -> parse_todo_line(l) }
--- List(Todo), not List(Option(Todo)) — no unwrap needed
-```
-
-### `list.sort_by`
-
-```
-list.sort_by(list, key_fn) -> List
-```
-
-Sorts a list using a key extraction function. Elements are compared by the
-values returned by `key_fn`.
+Like `fold`, but the callback returns `Continue(acc)` to keep going or
+`Stop(value)` to terminate early.
 
 ```silt
 fn main() {
-  let users = [
-    User { name: "Bob", age: 25 },
-    User { name: "Alice", age: 30 },
-  ]
-  users |> list.sort_by { u -> u.age }
-  -- sorted by age ascending
+    // Sum until we exceed 5
+    let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+        let next = acc + x
+        when next > 5 -> Stop(acc)
+        else -> Continue(next)
+    }
+    println(result)  // 3
 }
 ```
 
-### `list.any`
+---
+
+### `list.get`
 
 ```
-list.any(list, fn) -> Bool
+list.get(xs: List(a), index: Int) -> Option(a)
 ```
 
-Returns `true` if any element satisfies the predicate `fn`.
+Returns `Some(element)` at the given index, or `None` if out of bounds.
 
 ```silt
 fn main() {
-  [1, 2, 3] |> list.any { x -> x > 2 }   -- true
-  [1, 2, 3] |> list.any { x -> x > 5 }   -- false
+    let xs = [10, 20, 30]
+    println(list.get(xs, 1))   // Some(20)
+    println(list.get(xs, 10))  // None
 }
 ```
 
-### `list.all`
+---
+
+### `list.group_by`
 
 ```
-list.all(list, fn) -> Bool
+list.group_by(xs: List(a), f: (a) -> k) -> Map(k, List(a))
 ```
 
-Returns `true` if all elements satisfy the predicate `fn`.
+Groups elements by the result of applying `f`. Returns a map from keys to lists
+of elements that produced that key.
 
 ```silt
 fn main() {
-  [2, 4, 6] |> list.all { x -> x % 2 == 0 }   -- true
-  [2, 3, 6] |> list.all { x -> x % 2 == 0 }   -- false
+    let groups = [1, 2, 3, 4, 5, 6] |> list.group_by { x -> x % 2 }
+    // #{0: [2, 4, 6], 1: [1, 3, 5]}
 }
 ```
+
+---
 
 ### `list.head`
 
 ```
-list.head(list) -> Option
+list.head(xs: List(a)) -> Option(a)
 ```
 
-Returns `Some(element)` for the first element, or `None` if the list is empty.
+Returns `Some(first_element)` or `None` if the list is empty.
 
 ```silt
 fn main() {
-  list.head([1, 2, 3])  -- Some(1)
-  list.head([])          -- None
+    println(list.head([1, 2, 3]))  // Some(1)
+    println(list.head([]))         // None
 }
 ```
 
-### `list.tail`
-
-```
-list.tail(list) -> List
-```
-
-Returns a new list with all elements except the first. Returns an empty list if the input is empty.
-
-```silt
-fn main() {
-  list.tail([1, 2, 3])  -- [2, 3]
-  list.tail([])          -- []
-}
-```
+---
 
 ### `list.last`
 
 ```
-list.last(list) -> Option
+list.last(xs: List(a)) -> Option(a)
 ```
 
-Returns `Some(element)` for the last element, or `None` if the list is empty.
+Returns `Some(last_element)` or `None` if the list is empty.
 
 ```silt
 fn main() {
-  list.last([1, 2, 3])  -- Some(3)
-  list.last([])          -- None
+    println(list.last([1, 2, 3]))  // Some(3)
+    println(list.last([]))         // None
 }
 ```
+
+---
+
+### `list.length`
+
+```
+list.length(xs: List(a)) -> Int
+```
+
+Returns the number of elements in the list.
+
+```silt
+fn main() {
+    println(list.length([1, 2, 3]))  // 3
+    println(list.length([]))         // 0
+}
+```
+
+---
+
+### `list.map`
+
+```
+list.map(xs: List(a), f: (a) -> b) -> List(b)
+```
+
+Returns a new list with `f` applied to each element.
+
+```silt
+fn main() {
+    let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
+    println(doubled)  // [2, 4, 6]
+}
+```
+
+---
+
+### `list.prepend`
+
+```
+list.prepend(xs: List(a), elem: a) -> List(a)
+```
+
+Returns a new list with `elem` added at the front.
+
+```silt
+fn main() {
+    let xs = [2, 3] |> list.prepend(1)
+    println(xs)  // [1, 2, 3]
+}
+```
+
+---
 
 ### `list.reverse`
 
 ```
-list.reverse(list) -> List
+list.reverse(xs: List(a)) -> List(a)
 ```
 
 Returns a new list with elements in reverse order.
 
 ```silt
 fn main() {
-  list.reverse([1, 2, 3])  -- [3, 2, 1]
+    println(list.reverse([1, 2, 3]))  // [3, 2, 1]
 }
 ```
 
-### `list.sort`
-
-```
-list.sort(list) -> List
-```
-
-Returns a new list sorted in ascending order. Uses partial comparison, so elements should be of the same comparable type.
-
-```silt
-fn main() {
-  list.sort([3, 1, 4, 1, 5])  -- [1, 1, 3, 4, 5]
-}
-```
-
-### `list.unique`
-
-```
-list.unique(list) -> List
-```
-
-Returns a new list with duplicate elements removed. Preserves the first occurrence of each element.
-
-```silt
-fn main() {
-  list.unique([1, 3, 2, 1, 3, 4])  -- [1, 3, 2, 4]
-  list.unique(["a", "b", "a"])      -- ["a", "b"]
-}
-```
-
-### `list.contains`
-
-```
-list.contains(list, value) -> Bool
-```
-
-Returns `true` if the list contains the given value.
-
-```silt
-fn main() {
-  list.contains([1, 2, 3], 2)      -- true
-  list.contains([1, 2, 3], 99)     -- false
-  list.contains(["a", "b"], "a")   -- true
-}
-```
-
-### `list.length`
-
-```
-list.length(list) -> Int
-```
-
-Returns the number of elements in the list. This replaces the old bare `len()` function.
-
-```silt
-fn main() {
-  list.length([1, 2, 3])  -- 3
-  list.length([])          -- 0
-}
-```
-
-### `list.append`
-
-```
-list.append(list, element) -> List
-```
-
-Returns a new list with `element` added at the end.
-
-```silt
-fn main() {
-  list.append([1, 2, 3], 4)  -- [1, 2, 3, 4]
-}
-```
-
-### `list.prepend`
-
-```
-list.prepend(list, element) -> List
-```
-
-Returns a new list with `element` added at the front.
-
-```silt
-fn main() {
-  list.prepend([2, 3, 4], 1)  -- [1, 2, 3, 4]
-
-  -- useful for building lists in reverse / stack operations
-  [] |> list.prepend(3) |> list.prepend(2) |> list.prepend(1)
-  -- [1, 2, 3]
-}
-```
-
-### `list.concat`
-
-```
-list.concat(list_a, list_b) -> List
-```
-
-Concatenates two lists into a new list.
-
-```silt
-fn main() {
-  list.concat([1, 2], [3, 4])  -- [1, 2, 3, 4]
-}
-```
-
-### `list.get`
-
-```
-list.get(list, index) -> Option
-```
-
-Returns `Some(element)` at the given zero-based index, or `None` if out of bounds.
-
-```silt
-fn main() {
-  list.get([10, 20, 30], 1)  -- Some(20)
-  list.get([10, 20, 30], 5)  -- None
-}
-```
+---
 
 ### `list.set`
 
 ```
-list.set(list, index, value) -> List
+list.set(xs: List(a), index: Int, value: a) -> List(a)
 ```
 
-Returns a new list with the element at `index` replaced by `value`. The index is zero-based. Panics if the index is out of bounds.
+Returns a new list with the element at `index` replaced by `value`. Panics if
+the index is out of bounds.
 
 ```silt
 fn main() {
-  list.set([10, 20, 30], 1, 99)  -- [10, 99, 30]
+    let xs = list.set([10, 20, 30], 1, 99)
+    println(xs)  // [10, 99, 30]
 }
 ```
+
+---
+
+### `list.sort`
+
+```
+list.sort(xs: List(a)) -> List(a)
+```
+
+Returns a new list sorted in natural (ascending) order.
+
+```silt
+fn main() {
+    println(list.sort([3, 1, 2]))  // [1, 2, 3]
+}
+```
+
+---
+
+### `list.sort_by`
+
+```
+list.sort_by(xs: List(a), key: (a) -> b) -> List(a)
+```
+
+Returns a new list sorted by the result of applying the key function to each
+element.
+
+```silt
+fn main() {
+    let words = ["banana", "fig", "apple"]
+    let sorted = words |> list.sort_by { w -> string.length(w) }
+    println(sorted)  // ["fig", "apple", "banana"]
+}
+```
+
+---
+
+### `list.tail`
+
+```
+list.tail(xs: List(a)) -> List(a)
+```
+
+Returns all elements except the first. Returns an empty list if the input is
+empty.
+
+```silt
+fn main() {
+    println(list.tail([1, 2, 3]))  // [2, 3]
+    println(list.tail([]))         // []
+}
+```
+
+---
 
 ### `list.take`
 
 ```
-list.take(list, n) -> List
+list.take(xs: List(a), n: Int) -> List(a)
 ```
 
-Returns a new list with at most `n` elements from the front.
+Returns the first `n` elements. If `n >= length`, returns the whole list.
 
 ```silt
 fn main() {
-  list.take([1, 2, 3, 4, 5], 3)  -- [1, 2, 3]
-  list.take([1, 2], 5)            -- [1, 2]
+    println(list.take([1, 2, 3, 4, 5], 3))  // [1, 2, 3]
 }
 ```
 
-### `list.drop`
+---
+
+### `list.unfold`
 
 ```
-list.drop(list, n) -> List
+list.unfold(seed: a, f: (a) -> Option((b, a))) -> List(b)
 ```
 
-Returns a new list with the first `n` elements removed.
+Builds a list from a seed value. The function returns `Some((element, next_seed))`
+to emit an element and continue, or `None` to stop.
 
 ```silt
 fn main() {
-  list.drop([1, 2, 3, 4, 5], 2)  -- [3, 4, 5]
-  list.drop([1, 2], 5)            -- []
+    let countdown = list.unfold(5) { n ->
+        when n <= 0 -> None
+        else -> Some((n, n - 1))
+    }
+    println(countdown)  // [5, 4, 3, 2, 1]
 }
 ```
 
-### `list.enumerate`
+---
+
+### `list.unique`
 
 ```
-list.enumerate(list) -> List(Tuple(Int, T))
+list.unique(xs: List(a)) -> List(a)
 ```
 
-Returns a list of `(index, element)` tuples.
+Removes duplicate elements, preserving the order of first occurrences.
 
 ```silt
 fn main() {
-  list.enumerate(["a", "b", "c"])
-  -- [(0, "a"), (1, "b"), (2, "c")]
+    println(list.unique([1, 2, 1, 3, 2]))  // [1, 2, 3]
 }
 ```
 
-### `list.group_by`
+---
+
+### `list.zip`
 
 ```
-list.group_by(list, key_fn) -> Map
+list.zip(xs: List(a), ys: List(b)) -> List((a, b))
 ```
 
-Groups elements by a key function. Returns a map from keys to lists of elements that produced that key.
+Pairs up elements from two lists. Stops at the shorter list.
 
 ```silt
 fn main() {
-  let words = ["hello", "hi", "world", "hey", "wonder"]
-  words |> list.group_by { w -> string.slice(w, 0, 1) }
-  -- #{ "h": ["hello", "hi", "hey"], "w": ["world", "wonder"] }
+    let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
+    println(pairs)  // [(1, "a"), (2, "b"), (3, "c")]
 }
 ```
 
------
+---
 
-## `string` Module
+## string
 
-Functions for working with strings.
+Functions for working with immutable strings. Strings use `"..."` literal syntax
+with `{expr}` interpolation.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `string.split` | `string.split(s, sep) -> List(String)` | Split a string by separator |
-| `string.join` | `string.join(list, sep) -> String` | Join a list into a string with separator |
-| `string.trim` | `string.trim(s) -> String` | Remove leading and trailing whitespace |
-| `string.contains` | `string.contains(s, sub) -> Bool` | Check if string contains a substring |
-| `string.replace` | `string.replace(s, from, to) -> String` | Replace all occurrences of a substring |
-| `string.length` | `string.length(s) -> Int` | Return the byte length of a string |
-| `string.to_upper` | `string.to_upper(s) -> String` | Convert to uppercase |
-| `string.to_lower` | `string.to_lower(s) -> String` | Convert to lowercase |
-| `string.starts_with` | `string.starts_with(s, prefix) -> Bool` | Check if string starts with prefix |
-| `string.ends_with` | `string.ends_with(s, suffix) -> Bool` | Check if string ends with suffix |
-| `string.chars` | `string.chars(s) -> List(String)` | Split string into single-character strings |
-| `string.repeat` | `string.repeat(s, n) -> String` | Repeat a string n times |
-| `string.index_of` | `string.index_of(s, needle) -> Option(Int)` | Find index of substring |
-| `string.slice` | `string.slice(s, start, end) -> String` | Extract a substring by char indices |
-| `string.pad_left` | `string.pad_left(s, width, pad) -> String` | Pad on the left to reach width |
-| `string.pad_right` | `string.pad_right(s, width, pad) -> String` | Pad on the right to reach width |
-| `string.trim_start` | `string.trim_start(s) -> String` | Remove leading whitespace |
-| `string.trim_end` | `string.trim_end(s) -> String` | Remove trailing whitespace |
-| `string.char_code` | `string.char_code(s) -> Int` | Unicode code point of the first character |
-| `string.from_char_code` | `string.from_char_code(n) -> String` | Single-character string from a code point |
-| `string.is_empty` | `string.is_empty(s) -> Bool` | True if string has length 0 |
-| `string.is_alpha` | `string.is_alpha(s) -> Bool` | True if first char is alphabetic (Unicode) |
-| `string.is_digit` | `string.is_digit(s) -> Bool` | True if first char is ASCII digit (0-9) |
-| `string.is_upper` | `string.is_upper(s) -> Bool` | True if first char is uppercase |
-| `string.is_lower` | `string.is_lower(s) -> Bool` | True if first char is lowercase |
-| `string.is_alnum` | `string.is_alnum(s) -> Bool` | True if first char is alphanumeric |
-| `string.is_whitespace` | `string.is_whitespace(s) -> Bool` | True if first char is whitespace |
-
-### `string.split`
-
-```
-string.split(s, sep) -> List(String)
-```
-
-Splits string `s` by the separator `sep`. Returns a list of string parts.
-
-```silt
-fn main() {
-  "hello world" |> string.split(" ")
-  -- ["hello", "world"]
-
-  "a,b,c" |> string.split(",")
-  -- ["a", "b", "c"]
-}
-```
-
-### `string.join`
-
-```
-string.join(list, sep) -> String
-```
-
-Joins a list of values into a single string, separated by `sep`. Each element is converted to its string representation.
-
-```silt
-fn main() {
-  string.join(["hello", "world"], " ")
-  -- "hello world"
-
-  string.join([1, 2, 3], ", ")
-  -- "1, 2, 3"
-}
-```
-
-### `string.trim`
-
-```
-string.trim(s) -> String
-```
-
-Removes leading and trailing whitespace from a string.
-
-```silt
-fn main() {
-  string.trim("  hello  ")
-  -- "hello"
-}
-```
-
-### `string.contains`
-
-```
-string.contains(s, sub) -> Bool
-```
-
-Returns `true` if `s` contains the substring `sub`.
-
-```silt
-fn main() {
-  string.contains("hello world", "world")  -- true
-  string.contains("hello world", "xyz")    -- false
-}
-```
-
-### `string.replace`
-
-```
-string.replace(s, from, to) -> String
-```
-
-Replaces all occurrences of `from` with `to` in string `s`.
-
-```silt
-fn main() {
-  "host=localhost" |> string.replace("host=", "")
-  -- "localhost"
-}
-```
-
-### `string.length`
-
-```
-string.length(s) -> Int
-```
-
-Returns the byte length of a string. This replaces the old bare `len()` function for strings.
-
-```silt
-fn main() {
-  string.length("hello")  -- 5
-  string.length("")        -- 0
-}
-```
-
-### `string.to_upper`
-
-```
-string.to_upper(s) -> String
-```
-
-Converts all characters in the string to uppercase.
-
-```silt
-fn main() {
-  string.to_upper("hello")  -- "HELLO"
-}
-```
-
-### `string.to_lower`
-
-```
-string.to_lower(s) -> String
-```
-
-Converts all characters in the string to lowercase.
-
-```silt
-fn main() {
-  string.to_lower("HELLO")  -- "hello"
-}
-```
-
-### `string.starts_with`
-
-```
-string.starts_with(s, prefix) -> Bool
-```
-
-Returns `true` if string `s` starts with `prefix`.
-
-```silt
-fn main() {
-  string.starts_with("hello world", "hello")  -- true
-  string.starts_with("hello world", "world")  -- false
-}
-```
-
-### `string.ends_with`
-
-```
-string.ends_with(s, suffix) -> Bool
-```
-
-Returns `true` if string `s` ends with `suffix`.
-
-```silt
-fn main() {
-  string.ends_with("hello world", "world")  -- true
-  string.ends_with("hello world", "hello")  -- false
-}
-```
-
-### `string.chars`
-
-```
-string.chars(s) -> List(String)
-```
-
-Splits a string into a list of single-character strings.
-
-```silt
-fn main() {
-  string.chars("abc")
-  -- ["a", "b", "c"]
-}
-```
-
-### `string.repeat`
-
-```
-string.repeat(s, n) -> String
-```
-
-Repeats a string `n` times. `n` must be a non-negative integer.
-
-```silt
-fn main() {
-  string.repeat("ha", 3)
-  -- "hahaha"
-
-  string.repeat("-", 10)
-  -- "----------"
-}
-```
-
-### `string.index_of`
-
-```
-string.index_of(s, needle) -> Option(Int)
-```
-
-Returns `Some(index)` of the first occurrence of `needle` in `s`, or `None` if
-not found.
-
-```silt
-fn main() {
-  string.index_of("hello world", "world")  -- Some(6)
-  string.index_of("hello world", "xyz")    -- None
-}
-```
-
-### `string.slice`
-
-```
-string.slice(s, start, end) -> String
-```
-
-Extracts a substring by character indices (zero-based, exclusive end).
-
-```silt
-fn main() {
-  string.slice("hello world", 0, 5)   -- "hello"
-  string.slice("hello world", 6, 11)  -- "world"
-}
-```
-
-### `string.pad_left`
-
-```
-string.pad_left(s, width, pad_char) -> String
-```
-
-Pads a string on the left with `pad_char` until it reaches `width`. If the
-string is already at least `width` characters, it is returned unchanged. Only
-the first character of `pad_char` is used.
-
-```silt
-fn main() {
-  string.pad_left("42", 5, "0")    -- "00042"
-  string.pad_left("hello", 3, " ") -- "hello" (already wide enough)
-}
-```
-
-### `string.pad_right`
-
-```
-string.pad_right(s, width, pad_char) -> String
-```
-
-Pads a string on the right with `pad_char` until it reaches `width`.
-
-```silt
-fn main() {
-  string.pad_right("42", 5, ".")    -- "42..."
-  string.pad_right("hello", 3, " ") -- "hello" (already wide enough)
-}
-```
-
-### `string.trim_start`
-
-```
-string.trim_start(s) -> String
-```
-
-Removes leading whitespace from a string.
-
-```silt
-fn main() {
-  string.trim_start("  hello  ")  -- "hello  "
-}
-```
-
-### `string.trim_end`
-
-```
-string.trim_end(s) -> String
-```
-
-Removes trailing whitespace from a string.
-
-```silt
-fn main() {
-  string.trim_end("  hello  ")  -- "  hello"
-}
-```
+| `char_code` | `(String) -> Int` | Unicode code point of first character |
+| `chars` | `(String) -> List(String)` | Split string into single-character strings |
+| `contains` | `(String, String) -> Bool` | Check if substring exists |
+| `ends_with` | `(String, String) -> Bool` | Check suffix |
+| `from_char_code` | `(Int) -> String` | Character from Unicode code point |
+| `index_of` | `(String, String) -> Option(Int)` | Byte position of first occurrence |
+| `is_alnum` | `(String) -> Bool` | First char is alphanumeric |
+| `is_alpha` | `(String) -> Bool` | First char is alphabetic |
+| `is_digit` | `(String) -> Bool` | First char is ASCII digit |
+| `is_empty` | `(String) -> Bool` | String has zero length |
+| `is_lower` | `(String) -> Bool` | First char is lowercase |
+| `is_upper` | `(String) -> Bool` | First char is uppercase |
+| `is_whitespace` | `(String) -> Bool` | First char is whitespace |
+| `join` | `(List(String), String) -> String` | Join list with separator |
+| `length` | `(String) -> Int` | Byte length |
+| `pad_left` | `(String, Int, String) -> String` | Pad to width on the left |
+| `pad_right` | `(String, Int, String) -> String` | Pad to width on the right |
+| `repeat` | `(String, Int) -> String` | Repeat string n times |
+| `replace` | `(String, String, String) -> String` | Replace all occurrences |
+| `slice` | `(String, Int, Int) -> String` | Substring by character indices |
+| `split` | `(String, String) -> List(String)` | Split on separator |
+| `starts_with` | `(String, String) -> Bool` | Check prefix |
+| `to_lower` | `(String) -> String` | Convert to lowercase |
+| `to_upper` | `(String) -> String` | Convert to uppercase |
+| `trim` | `(String) -> String` | Remove leading and trailing whitespace |
+| `trim_end` | `(String) -> String` | Remove trailing whitespace |
+| `trim_start` | `(String) -> String` | Remove leading whitespace |
+
+---
 
 ### `string.char_code`
 
 ```
-string.char_code(s) -> Int
+string.char_code(s: String) -> Int
 ```
 
-Returns the Unicode code point of the first character. Panics if the string is empty.
+Returns the Unicode code point of the first character. Panics on empty strings.
 
 ```silt
 fn main() {
-  string.char_code("A")    -- 65
-  string.char_code("hello") -- 104
+    println(string.char_code("A"))  // 65
 }
 ```
+
+---
+
+### `string.chars`
+
+```
+string.chars(s: String) -> List(String)
+```
+
+Splits the string into a list of single-character strings.
+
+```silt
+fn main() {
+    println(string.chars("hi"))  // ["h", "i"]
+}
+```
+
+---
+
+### `string.contains`
+
+```
+string.contains(s: String, sub: String) -> Bool
+```
+
+Returns `true` if `sub` appears anywhere in `s`.
+
+```silt
+fn main() {
+    println(string.contains("hello world", "world"))  // true
+}
+```
+
+---
+
+### `string.ends_with`
+
+```
+string.ends_with(s: String, suffix: String) -> Bool
+```
+
+Returns `true` if `s` ends with `suffix`.
+
+```silt
+fn main() {
+    println(string.ends_with("hello.silt", ".silt"))  // true
+}
+```
+
+---
 
 ### `string.from_char_code`
 
 ```
-string.from_char_code(n) -> String
+string.from_char_code(code: Int) -> String
 ```
 
-Returns a single-character string from a Unicode code point. Panics if the code point is invalid.
+Converts a Unicode code point to a single-character string. Panics on invalid
+code points.
 
 ```silt
 fn main() {
-  string.from_char_code(65)   -- "A"
-  string.from_char_code(104)  -- "h"
+    println(string.from_char_code(65))  // "A"
 }
 ```
+
+---
+
+### `string.index_of`
+
+```
+string.index_of(s: String, needle: String) -> Option(Int)
+```
+
+Returns `Some(byte_index)` of the first occurrence of `needle` in `s`, or
+`None` if not found.
+
+```silt
+fn main() {
+    println(string.index_of("hello", "ll"))  // Some(2)
+    println(string.index_of("hello", "z"))   // None
+}
+```
+
+---
+
+### `string.is_alnum`
+
+```
+string.is_alnum(s: String) -> Bool
+```
+
+Returns `true` if the first character is alphanumeric. Returns `false` for empty
+strings.
+
+```silt
+fn main() {
+    println(string.is_alnum("a"))   // true
+    println(string.is_alnum("3"))   // true
+    println(string.is_alnum("!"))   // false
+}
+```
+
+---
+
+### `string.is_alpha`
+
+```
+string.is_alpha(s: String) -> Bool
+```
+
+Returns `true` if the first character is alphabetic. Returns `false` for empty
+strings.
+
+```silt
+fn main() {
+    println(string.is_alpha("a"))  // true
+    println(string.is_alpha("1"))  // false
+}
+```
+
+---
+
+### `string.is_digit`
+
+```
+string.is_digit(s: String) -> Bool
+```
+
+Returns `true` if the first character is an ASCII digit (0-9). Returns `false`
+for empty strings.
+
+```silt
+fn main() {
+    println(string.is_digit("5"))  // true
+    println(string.is_digit("a"))  // false
+}
+```
+
+---
 
 ### `string.is_empty`
 
 ```
-string.is_empty(s) -> Bool
+string.is_empty(s: String) -> Bool
 ```
 
-Returns true if the string has length 0.
-
-```silt
-  string.is_empty("")     -- true
-  string.is_empty("hi")   -- false
-```
-
-### Character classification
-
-These functions operate on the first character of a string. They return `false` for empty strings.
-
-```
-string.is_alpha(s) -> Bool        -- Unicode alphabetic
-string.is_digit(s) -> Bool        -- ASCII digit (0-9)
-string.is_upper(s) -> Bool        -- Uppercase letter
-string.is_lower(s) -> Bool        -- Lowercase letter
-string.is_alnum(s) -> Bool        -- Alphanumeric
-string.is_whitespace(s) -> Bool   -- Whitespace (space, tab, newline, etc.)
-```
-
-```silt
-  -- Use with string.chars for character-level processing:
-  let word = "Hello123"
-  let letters = string.chars(word) |> list.filter { c -> string.is_alpha(c) }
-  -- ["H", "e", "l", "l", "o"]
-
-  let digits = string.chars(word) |> list.filter { c -> string.is_digit(c) }
-  -- ["1", "2", "3"]
-
-  -- Caesar cipher character classification:
-  fn shift_char(c, shift) {
-    match {
-      string.is_upper(c) -> {
-        let code = string.char_code(c) - 65
-        string.from_char_code(((code + shift) % 26) + 65)
-      }
-      string.is_lower(c) -> {
-        let code = string.char_code(c) - 97
-        string.from_char_code(((code + shift) % 26) + 97)
-      }
-      _ -> c
-    }
-  }
-```
-
------
-
-## `map` Module
-
-Functions for working with maps. Keys can be any hashable type (Int, Float, String, Bool, tuples, enums, records — any type that implements the `Hash` trait). All map operations return new maps (immutable).
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `map.get` | `map.get(m, key) -> Option` | Look up a key, return `Some(value)` or `None` |
-| `map.contains` | `map.contains(m, key) -> Bool` | Check if a key exists in the map |
-| `map.set` | `map.set(m, key, value) -> Map` | Return a new map with the key set |
-| `map.delete` | `map.delete(m, key) -> Map` | Return a new map with the key removed |
-| `map.keys` | `map.keys(m) -> List(String)` | Return all keys as a list |
-| `map.values` | `map.values(m) -> List` | Return all values as a list |
-| `map.merge` | `map.merge(m1, m2) -> Map` | Merge two maps; `m2` values take priority |
-| `map.length` | `map.length(m) -> Int` | Return the number of key-value pairs |
-| `map.filter` | `map.filter(m, fn) -> Map` | Keep entries where `fn(key, value)` returns truthy |
-| `map.map` | `map.map(m, fn) -> Map` | Transform entries; `fn(key, value)` returns `(new_key, new_value)` |
-| `map.entries` | `map.entries(m) -> List(Tuple)` | Convert map to list of `(key, value)` tuples |
-| `map.from_entries` | `map.from_entries(list) -> Map` | Convert list of `(key, value)` tuples to a map |
-| `map.each` | `map.each(map, fn) -> ()` | Iterate over entries, calling fn(key, value) |
-| `map.update` | `map.update(m, key, default, fn) -> Map` | Update a key by applying fn to its current value (or default) |
-
-### `map.get`
-
-```
-map.get(m, key) -> Option
-```
-
-Looks up `key` in map `m`. Returns `Some(value)` if found, `None` otherwise.
+Returns `true` if the string has zero length.
 
 ```silt
 fn main() {
-  let m = #{ "name": "Alice", "age": "30" }
-  map.get(m, "name")    -- Some("Alice")
-  map.get(m, "email")   -- None
+    println(string.is_empty(""))     // true
+    println(string.is_empty("hi"))   // false
 }
 ```
+
+---
+
+### `string.is_lower`
+
+```
+string.is_lower(s: String) -> Bool
+```
+
+Returns `true` if the first character is lowercase. Returns `false` for empty
+strings.
+
+```silt
+fn main() {
+    println(string.is_lower("a"))  // true
+    println(string.is_lower("A"))  // false
+}
+```
+
+---
+
+### `string.is_upper`
+
+```
+string.is_upper(s: String) -> Bool
+```
+
+Returns `true` if the first character is uppercase. Returns `false` for empty
+strings.
+
+```silt
+fn main() {
+    println(string.is_upper("A"))  // true
+    println(string.is_upper("a"))  // false
+}
+```
+
+---
+
+### `string.is_whitespace`
+
+```
+string.is_whitespace(s: String) -> Bool
+```
+
+Returns `true` if the first character is whitespace. Returns `false` for empty
+strings.
+
+```silt
+fn main() {
+    println(string.is_whitespace(" "))   // true
+    println(string.is_whitespace("a"))   // false
+}
+```
+
+---
+
+### `string.join`
+
+```
+string.join(parts: List(String), separator: String) -> String
+```
+
+Joins a list of strings with a separator between each pair.
+
+```silt
+fn main() {
+    let result = string.join(["a", "b", "c"], ", ")
+    println(result)  // "a, b, c"
+}
+```
+
+---
+
+### `string.length`
+
+```
+string.length(s: String) -> Int
+```
+
+Returns the byte length of the string.
+
+```silt
+fn main() {
+    println(string.length("hello"))  // 5
+}
+```
+
+---
+
+### `string.pad_left`
+
+```
+string.pad_left(s: String, width: Int, pad: String) -> String
+```
+
+Pads `s` on the left with the first character of `pad` until it reaches
+`width`. Returns `s` unchanged if already at or beyond `width`.
+
+```silt
+fn main() {
+    println(string.pad_left("42", 5, "0"))  // "00042"
+}
+```
+
+---
+
+### `string.pad_right`
+
+```
+string.pad_right(s: String, width: Int, pad: String) -> String
+```
+
+Pads `s` on the right with the first character of `pad` until it reaches
+`width`. Returns `s` unchanged if already at or beyond `width`.
+
+```silt
+fn main() {
+    println(string.pad_right("hi", 5, "."))  // "hi..."
+}
+```
+
+---
+
+### `string.repeat`
+
+```
+string.repeat(s: String, n: Int) -> String
+```
+
+Returns the string repeated `n` times. `n` must be non-negative.
+
+```silt
+fn main() {
+    println(string.repeat("ab", 3))  // "ababab"
+}
+```
+
+---
+
+### `string.replace`
+
+```
+string.replace(s: String, from: String, to: String) -> String
+```
+
+Replaces all occurrences of `from` with `to`.
+
+```silt
+fn main() {
+    println(string.replace("hello world", "world", "silt"))
+    // "hello silt"
+}
+```
+
+---
+
+### `string.slice`
+
+```
+string.slice(s: String, start: Int, end: Int) -> String
+```
+
+Returns the substring from character index `start` (inclusive) to `end`
+(exclusive). Indices are clamped to the string length. Returns an empty string
+if `start > end`.
+
+```silt
+fn main() {
+    println(string.slice("hello", 1, 4))  // "ell"
+}
+```
+
+---
+
+### `string.split`
+
+```
+string.split(s: String, separator: String) -> List(String)
+```
+
+Splits the string on every occurrence of `separator`.
+
+```silt
+fn main() {
+    let parts = string.split("a,b,c", ",")
+    println(parts)  // ["a", "b", "c"]
+}
+```
+
+---
+
+### `string.starts_with`
+
+```
+string.starts_with(s: String, prefix: String) -> Bool
+```
+
+Returns `true` if `s` starts with `prefix`.
+
+```silt
+fn main() {
+    println(string.starts_with("hello", "hel"))  // true
+}
+```
+
+---
+
+### `string.to_lower`
+
+```
+string.to_lower(s: String) -> String
+```
+
+Converts all characters to lowercase.
+
+```silt
+fn main() {
+    println(string.to_lower("HELLO"))  // "hello"
+}
+```
+
+---
+
+### `string.to_upper`
+
+```
+string.to_upper(s: String) -> String
+```
+
+Converts all characters to uppercase.
+
+```silt
+fn main() {
+    println(string.to_upper("hello"))  // "HELLO"
+}
+```
+
+---
+
+### `string.trim`
+
+```
+string.trim(s: String) -> String
+```
+
+Removes leading and trailing whitespace.
+
+```silt
+fn main() {
+    println(string.trim("  hello  "))  // "hello"
+}
+```
+
+---
+
+### `string.trim_end`
+
+```
+string.trim_end(s: String) -> String
+```
+
+Removes trailing whitespace only.
+
+```silt
+fn main() {
+    println(string.trim_end("hello   "))  // "hello"
+}
+```
+
+---
+
+### `string.trim_start`
+
+```
+string.trim_start(s: String) -> String
+```
+
+Removes leading whitespace only.
+
+```silt
+fn main() {
+    println(string.trim_start("   hello"))  // "hello"
+}
+```
+
+---
+
+## map
+
+Functions for working with immutable, ordered maps (`Map(k, v)`). Maps use
+`#{key: value}` literal syntax. Keys must satisfy the `Hash` trait constraint.
+
+### Summary
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `contains` | `(Map(k, v), k) -> Bool` | Check if key exists |
+| `delete` | `(Map(k, v), k) -> Map(k, v)` | Remove a key |
+| `each` | `(Map(k, v), (k, v) -> ()) -> ()` | Iterate over all entries |
+| `entries` | `(Map(k, v)) -> List((k, v))` | All key-value pairs as tuples |
+| `filter` | `(Map(k, v), (k, v) -> Bool) -> Map(k, v)` | Keep entries matching predicate |
+| `from_entries` | `(List((k, v))) -> Map(k, v)` | Build map from tuple list |
+| `get` | `(Map(k, v), k) -> Option(v)` | Look up value by key |
+| `keys` | `(Map(k, v)) -> List(k)` | All keys as a list |
+| `length` | `(Map(k, v)) -> Int` | Number of entries |
+| `map` | `(Map(k, v), (k, v) -> (k2, v2)) -> Map(k2, v2)` | Transform all entries |
+| `merge` | `(Map(k, v), Map(k, v)) -> Map(k, v)` | Merge two maps (right wins) |
+| `set` | `(Map(k, v), k, v) -> Map(k, v)` | Insert or update a key |
+| `update` | `(Map(k, v), k, v, (v) -> v) -> Map(k, v)` | Update existing or insert default |
+| `values` | `(Map(k, v)) -> List(v)` | All values as a list |
+
+---
 
 ### `map.contains`
 
 ```
-map.contains(m, key) -> Bool
+map.contains(m: Map(k, v), key: k) -> Bool
 ```
 
-Returns `true` if the map contains `key`, `false` otherwise.
+Returns `true` if the map has an entry for `key`.
 
 ```silt
 fn main() {
-  let m = #{ "name": "Alice", "age": "30" }
-  map.contains(m, "name")    -- true
-  map.contains(m, "email")   -- false
+    let m = #{"a": 1, "b": 2}
+    println(map.contains(m, "a"))  // true
+    println(map.contains(m, "z"))  // false
 }
 ```
 
-### `map.set`
-
-```
-map.set(m, key, value) -> Map
-```
-
-Returns a new map with `key` set to `value`. If the key already exists, its value is replaced.
-
-```silt
-fn main() {
-  let m = #{ "a": 1 }
-  let m2 = map.set(m, "b", 2)
-  -- m2 is #{ "a": 1, "b": 2 }
-}
-```
+---
 
 ### `map.delete`
 
 ```
-map.delete(m, key) -> Map
+map.delete(m: Map(k, v), key: k) -> Map(k, v)
 ```
 
-Returns a new map with `key` removed. If the key does not exist, the map is returned unchanged.
+Returns a new map with `key` removed. No-op if key does not exist.
 
 ```silt
 fn main() {
-  let m = #{ "a": 1, "b": 2 }
-  let m2 = map.delete(m, "a")
-  -- m2 is #{ "b": 2 }
+    let m = #{"a": 1, "b": 2}
+    let m2 = map.delete(m, "a")
+    println(map.length(m2))  // 1
 }
 ```
 
-### `map.keys`
-
-```
-map.keys(m) -> List(String)
-```
-
-Returns a list of all keys in the map.
-
-```silt
-fn main() {
-  let m = #{ "name": "Alice", "age": "30" }
-  map.keys(m)
-  -- ["age", "name"]  (sorted, BTreeMap order)
-}
-```
-
-### `map.values`
-
-```
-map.values(m) -> List
-```
-
-Returns a list of all values in the map.
-
-```silt
-fn main() {
-  let m = #{ "x": 1, "y": 2 }
-  map.values(m)
-  -- [1, 2]  (in key-sorted order)
-}
-```
-
-### `map.merge`
-
-```
-map.merge(m1, m2) -> Map
-```
-
-Merges two maps. Keys from `m2` override keys from `m1`.
-
-```silt
-fn main() {
-  let defaults = #{ "host": "localhost", "port": "80" }
-  let overrides = #{ "port": "8080" }
-  map.merge(defaults, overrides)
-  -- #{ "host": "localhost", "port": "8080" }
-}
-```
-
-### `map.length`
-
-```
-map.length(m) -> Int
-```
-
-Returns the number of key-value pairs in the map.
-
-```silt
-fn main() {
-  map.length(#{ "a": 1, "b": 2 })  -- 2
-  map.length(#{})                    -- 0
-}
-```
-
-### `map.filter`
-
-```
-map.filter(m, fn) -> Map
-```
-
-Returns a new map containing only entries for which `fn(key, value)` returns a truthy value.
-
-```silt
-fn main() {
-  let m = #{ "a": 1, "b": 2, "c": 3 }
-  map.filter(m, fn(k, v) { v > 1 })
-  -- #{ "b": 2, "c": 3 }
-}
-```
-
-### `map.map`
-
-```
-map.map(m, fn) -> Map
-```
-
-Transforms each entry in the map. `fn` receives `(key, value)` and must return a `(new_key, new_value)` tuple.
-
-```silt
-fn main() {
-  let m = #{ "a": 1, "b": 2 }
-  map.map(m, fn(k, v) { (k, v * 10) })
-  -- #{ "a": 10, "b": 20 }
-}
-```
-
-### `map.entries`
-
-```
-map.entries(m) -> List(Tuple(String, T))
-```
-
-Converts a map to a list of `(key, value)` tuples.
-
-```silt
-fn main() {
-  let m = #{ "x": 1, "y": 2 }
-  map.entries(m)
-  -- [("x", 1), ("y", 2)]
-}
-```
-
-### `map.from_entries`
-
-```
-map.from_entries(list) -> Map
-```
-
-Converts a list of `(key, value)` tuples into a map.
-
-```silt
-fn main() {
-  map.from_entries([("a", 1), ("b", 2)])
-  -- #{ "a": 1, "b": 2 }
-}
-```
+---
 
 ### `map.each`
 
 ```
-map.each(map, fn) -> ()
+map.each(m: Map(k, v), f: (k, v) -> ()) -> ()
 ```
 
-Iterates over all entries in the map, calling `fn(key, value)` for each. Returns Unit. Entries are visited in key order.
+Calls `f` with each key-value pair. Used for side effects.
 
 ```silt
-  let scores = #{"Alice": 95, "Bob": 87, "Carol": 92}
-  map.each(scores) { name, score ->
-    println("{name}: {score}")
-  }
-  -- Alice: 95
-  -- Bob: 87
-  -- Carol: 92
+fn main() {
+    let m = #{"x": 10, "y": 20}
+    map.each(m) { k, v -> println("{k} = {v}") }
+}
 ```
+
+---
+
+### `map.entries`
+
+```
+map.entries(m: Map(k, v)) -> List((k, v))
+```
+
+Returns all key-value pairs as a list of tuples.
+
+```silt
+fn main() {
+    let m = #{"a": 1, "b": 2}
+    let pairs = map.entries(m)
+    // [("a", 1), ("b", 2)]
+}
+```
+
+---
+
+### `map.filter`
+
+```
+map.filter(m: Map(k, v), f: (k, v) -> Bool) -> Map(k, v)
+```
+
+Returns a new map containing only entries where `f` returns `true`.
+
+```silt
+fn main() {
+    let m = #{"a": 1, "b": 2, "c": 3}
+    let big = map.filter(m) { k, v -> v > 1 }
+    // #{"b": 2, "c": 3}
+}
+```
+
+---
+
+### `map.from_entries`
+
+```
+map.from_entries(entries: List((k, v))) -> Map(k, v)
+```
+
+Builds a map from a list of `(key, value)` tuples. Later entries overwrite
+earlier ones with the same key.
+
+```silt
+fn main() {
+    let m = map.from_entries([("a", 1), ("b", 2)])
+    println(m)  // #{"a": 1, "b": 2}
+}
+```
+
+---
+
+### `map.get`
+
+```
+map.get(m: Map(k, v), key: k) -> Option(v)
+```
+
+Returns `Some(value)` if the key exists, or `None` otherwise.
+
+```silt
+fn main() {
+    let m = #{"name": "silt"}
+    match map.get(m, "name") {
+        Some(v) -> println(v)
+        None -> println("not found")
+    }
+}
+```
+
+---
+
+### `map.keys`
+
+```
+map.keys(m: Map(k, v)) -> List(k)
+```
+
+Returns all keys as a list, in sorted order.
+
+```silt
+fn main() {
+    let ks = map.keys(#{"b": 2, "a": 1})
+    println(ks)  // ["a", "b"]
+}
+```
+
+---
+
+### `map.length`
+
+```
+map.length(m: Map(k, v)) -> Int
+```
+
+Returns the number of entries in the map.
+
+```silt
+fn main() {
+    println(map.length(#{"a": 1, "b": 2}))  // 2
+}
+```
+
+---
+
+### `map.map`
+
+```
+map.map(m: Map(k, v), f: (k, v) -> (k2, v2)) -> Map(k2, v2)
+```
+
+Transforms each entry. The callback must return a `(key, value)` tuple.
+
+```silt
+fn main() {
+    let m = #{"a": 1, "b": 2}
+    let doubled = map.map(m) { k, v -> (k, v * 2) }
+    // #{"a": 2, "b": 4}
+}
+```
+
+---
+
+### `map.merge`
+
+```
+map.merge(m1: Map(k, v), m2: Map(k, v)) -> Map(k, v)
+```
+
+Merges two maps. When both have the same key, the value from `m2` wins.
+
+```silt
+fn main() {
+    let a = #{"x": 1, "y": 2}
+    let b = #{"y": 99, "z": 3}
+    let merged = map.merge(a, b)
+    // #{"x": 1, "y": 99, "z": 3}
+}
+```
+
+---
+
+### `map.set`
+
+```
+map.set(m: Map(k, v), key: k, value: v) -> Map(k, v)
+```
+
+Returns a new map with the key set to value. Inserts if new, overwrites if
+existing.
+
+```silt
+fn main() {
+    let m = #{"a": 1}
+    let m2 = map.set(m, "b", 2)
+    println(m2)  // #{"a": 1, "b": 2}
+}
+```
+
+---
 
 ### `map.update`
 
 ```
-map.update(m, key, default, fn) -> Map
+map.update(m: Map(k, v), key: k, default: v, f: (v) -> v) -> Map(k, v)
 ```
 
-Updates a key in the map. If the key exists, applies `fn` to the current value. If the key doesn't exist, applies `fn` to `default`. Returns a new map with the updated value.
-
-```silt
-let freq = #{ "a": 1, "b": 2 }
-let updated = map.update(freq, "a", 0) { n -> n + 1 }   -- #{ "a": 2, "b": 2 }
-let new_key = map.update(freq, "c", 0) { n -> n + 1 }    -- #{ "a": 1, "b": 2, "c": 1 }
-```
-
------
-
-## `set` Module
-
-Functions for working with sets. Sets provide O(log n) membership testing and store unique values in sorted order. All set operations return new sets (immutable). Literal syntax: `#[1, 2, 3]`.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `set.new` | `set.new() -> Set` | Create an empty set |
-| `set.from_list` | `set.from_list(list) -> Set` | Create a set from a list (deduplicates) |
-| `set.to_list` | `set.to_list(s) -> List` | Convert a set to a sorted list |
-| `set.contains` | `set.contains(s, value) -> Bool` | Check if a value is in the set |
-| `set.insert` | `set.insert(s, value) -> Set` | Return a new set with the value added |
-| `set.remove` | `set.remove(s, value) -> Set` | Return a new set with the value removed |
-| `set.length` | `set.length(s) -> Int` | Return the number of elements |
-| `set.union` | `set.union(a, b) -> Set` | Return elements in either set |
-| `set.intersection` | `set.intersection(a, b) -> Set` | Return elements in both sets |
-| `set.difference` | `set.difference(a, b) -> Set` | Return elements in `a` but not in `b` |
-| `set.is_subset` | `set.is_subset(a, b) -> Bool` | Check if `a` is a subset of `b` |
-| `set.map` | `set.map(s, fn) -> Set` | Transform each element |
-| `set.filter` | `set.filter(s, fn) -> Set` | Keep elements where `fn(elem)` is truthy |
-| `set.each` | `set.each(s, fn) -> ()` | Iterate over elements, calling `fn(elem)` |
-| `set.fold` | `set.fold(s, init, fn) -> b` | Reduce elements with `fn(acc, elem)` |
-
-### `set.new`
-
-```
-set.new() -> Set
-```
-
-Creates an empty set.
+If `key` exists, applies `f` to the current value. If `key` does not exist,
+applies `f` to `default`. Inserts the result.
 
 ```silt
 fn main() {
-  let s = set.new()
-  let s2 = set.insert(s, 42)
-  set.contains(s2, 42)   -- true
+    let m = #{"a": 1}
+    let m2 = map.update(m, "a", 0) { v -> v + 10 }
+    let m3 = map.update(m2, "b", 0) { v -> v + 10 }
+    // m2 == #{"a": 11}
+    // m3 == #{"a": 11, "b": 10}
 }
 ```
+
+---
+
+### `map.values`
+
+```
+map.values(m: Map(k, v)) -> List(v)
+```
+
+Returns all values as a list, in key-sorted order.
+
+```silt
+fn main() {
+    let vs = map.values(#{"a": 1, "b": 2})
+    println(vs)  // [1, 2]
+}
+```
+
+---
+
+## set
+
+Functions for working with immutable, ordered sets (`Set(a)`). Sets use `#[...]`
+literal syntax and contain unique values.
+
+### Summary
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `contains` | `(Set(a), a) -> Bool` | Check membership |
+| `difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in first but not second |
+| `each` | `(Set(a), (a) -> ()) -> ()` | Iterate over all elements |
+| `filter` | `(Set(a), (a) -> Bool) -> Set(a)` | Keep elements matching predicate |
+| `fold` | `(Set(a), b, (b, a) -> b) -> b` | Reduce to a single value |
+| `from_list` | `(List(a)) -> Set(a)` | Create set from list |
+| `insert` | `(Set(a), a) -> Set(a)` | Add an element |
+| `intersection` | `(Set(a), Set(a)) -> Set(a)` | Elements in both sets |
+| `is_subset` | `(Set(a), Set(a)) -> Bool` | True if first is subset of second |
+| `length` | `(Set(a)) -> Int` | Number of elements |
+| `map` | `(Set(a), (a) -> b) -> Set(b)` | Transform each element |
+| `new` | `() -> Set(a)` | Create an empty set |
+| `remove` | `(Set(a), a) -> Set(a)` | Remove an element |
+| `to_list` | `(Set(a)) -> List(a)` | Convert set to sorted list |
+| `union` | `(Set(a), Set(a)) -> Set(a)` | Combine all elements |
+
+---
+
+### `set.contains`
+
+```
+set.contains(s: Set(a), elem: a) -> Bool
+```
+
+Returns `true` if `elem` is in the set.
+
+```silt
+fn main() {
+    let s = #[1, 2, 3]
+    println(set.contains(s, 2))  // true
+    println(set.contains(s, 5))  // false
+}
+```
+
+---
+
+### `set.difference`
+
+```
+set.difference(a: Set(a), b: Set(a)) -> Set(a)
+```
+
+Returns elements that are in `a` but not in `b`.
+
+```silt
+fn main() {
+    let result = set.difference(#[1, 2, 3], #[2, 3, 4])
+    println(set.to_list(result))  // [1]
+}
+```
+
+---
+
+### `set.each`
+
+```
+set.each(s: Set(a), f: (a) -> ()) -> ()
+```
+
+Calls `f` for every element. Used for side effects.
+
+```silt
+fn main() {
+    set.each(#[1, 2, 3]) { x -> println(x) }
+}
+```
+
+---
+
+### `set.filter`
+
+```
+set.filter(s: Set(a), f: (a) -> Bool) -> Set(a)
+```
+
+Returns a new set containing only elements for which `f` returns `true`.
+
+```silt
+fn main() {
+    let evens = set.filter(#[1, 2, 3, 4]) { x -> x % 2 == 0 }
+    println(set.to_list(evens))  // [2, 4]
+}
+```
+
+---
+
+### `set.fold`
+
+```
+set.fold(s: Set(a), init: b, f: (b, a) -> b) -> b
+```
+
+Reduces the set to a single value. Iteration order is sorted.
+
+```silt
+fn main() {
+    let sum = set.fold(#[1, 2, 3], 0) { acc, x -> acc + x }
+    println(sum)  // 6
+}
+```
+
+---
 
 ### `set.from_list`
 
 ```
-set.from_list(list) -> Set
+set.from_list(xs: List(a)) -> Set(a)
 ```
 
 Creates a set from a list, removing duplicates.
 
 ```silt
 fn main() {
-  let s = set.from_list([3, 1, 2, 1, 3])
-  set.to_list(s)   -- [1, 2, 3]
+    let s = set.from_list([1, 2, 2, 3])
+    println(set.length(s))  // 3
 }
 ```
 
-### `set.to_list`
-
-```
-set.to_list(s) -> List
-```
-
-Converts a set to a sorted list.
-
-```silt
-fn main() {
-  set.to_list(#[3, 1, 2])   -- [1, 2, 3]
-}
-```
-
-### `set.contains`
-
-```
-set.contains(s, value) -> Bool
-```
-
-Returns `true` if the set contains `value`.
-
-```silt
-fn main() {
-  let s = #[1, 2, 3]
-  set.contains(s, 2)   -- true
-  set.contains(s, 4)   -- false
-}
-```
+---
 
 ### `set.insert`
 
 ```
-set.insert(s, value) -> Set
+set.insert(s: Set(a), elem: a) -> Set(a)
 ```
 
-Returns a new set with `value` added. If the value already exists, the set is unchanged.
+Returns a new set with `elem` added. No-op if already present.
 
 ```silt
 fn main() {
-  let s = #[1, 2]
-  let s2 = set.insert(s, 3)
-  set.to_list(s2)   -- [1, 2, 3]
+    let s = set.insert(#[1, 2], 3)
+    println(set.to_list(s))  // [1, 2, 3]
 }
 ```
 
-### `set.remove`
-
-```
-set.remove(s, value) -> Set
-```
-
-Returns a new set with `value` removed. If the value does not exist, the set is unchanged.
-
-```silt
-fn main() {
-  let s = #[1, 2, 3]
-  let s2 = set.remove(s, 2)
-  set.to_list(s2)   -- [1, 3]
-}
-```
-
-### `set.length`
-
-```
-set.length(s) -> Int
-```
-
-Returns the number of elements in the set.
-
-```silt
-fn main() {
-  set.length(#[1, 2, 3])   -- 3
-}
-```
-
-### `set.union`
-
-```
-set.union(a, b) -> Set
-```
-
-Returns a set containing all elements from both sets.
-
-```silt
-fn main() {
-  let a = #[1, 2, 3]
-  let b = #[3, 4, 5]
-  set.to_list(set.union(a, b))   -- [1, 2, 3, 4, 5]
-}
-```
+---
 
 ### `set.intersection`
 
 ```
-set.intersection(a, b) -> Set
+set.intersection(a: Set(a), b: Set(a)) -> Set(a)
 ```
 
-Returns a set containing only elements present in both sets.
+Returns elements that are in both `a` and `b`.
 
 ```silt
 fn main() {
-  let a = #[1, 2, 3, 4]
-  let b = #[3, 4, 5, 6]
-  set.to_list(set.intersection(a, b))   -- [3, 4]
+    let result = set.intersection(#[1, 2, 3], #[2, 3, 4])
+    println(set.to_list(result))  // [2, 3]
 }
 ```
 
-### `set.difference`
-
-```
-set.difference(a, b) -> Set
-```
-
-Returns a set containing elements in `a` that are not in `b`.
-
-```silt
-fn main() {
-  let a = #[1, 2, 3]
-  let b = #[2, 3, 4]
-  set.to_list(set.difference(a, b))   -- [1]
-}
-```
+---
 
 ### `set.is_subset`
 
 ```
-set.is_subset(a, b) -> Bool
+set.is_subset(a: Set(a), b: Set(a)) -> Bool
 ```
 
 Returns `true` if every element of `a` is also in `b`.
 
 ```silt
 fn main() {
-  set.is_subset(#[1, 2], #[1, 2, 3])   -- true
-  set.is_subset(#[1, 4], #[1, 2, 3])   -- false
+    println(set.is_subset(#[1, 2], #[1, 2, 3]))  // true
+    println(set.is_subset(#[1, 4], #[1, 2, 3]))  // false
 }
 ```
+
+---
+
+### `set.length`
+
+```
+set.length(s: Set(a)) -> Int
+```
+
+Returns the number of elements in the set.
+
+```silt
+fn main() {
+    println(set.length(#[1, 2, 3]))  // 3
+}
+```
+
+---
 
 ### `set.map`
 
 ```
-set.map(s, fn) -> Set
+set.map(s: Set(a), f: (a) -> b) -> Set(b)
 ```
 
-Returns a new set with `fn` applied to each element.
+Returns a new set with `f` applied to each element. The result set may be
+smaller if `f` maps distinct elements to the same value.
 
 ```silt
 fn main() {
-  let s = #[1, 2, 3]
-  set.to_list(set.map(s) { x -> x * 10 })   -- [10, 20, 30]
+    let result = set.map(#[1, 2, 3]) { x -> x * 10 }
+    println(set.to_list(result))  // [10, 20, 30]
 }
 ```
 
-### `set.filter`
+---
+
+### `set.new`
 
 ```
-set.filter(s, fn) -> Set
+set.new() -> Set(a)
 ```
 
-Returns a new set with only elements where `fn(elem)` returns truthy.
+Creates a new empty set.
 
 ```silt
 fn main() {
-  let s = #[1, 2, 3, 4, 5]
-  set.to_list(set.filter(s) { x -> x > 3 })   -- [4, 5]
+    let s = set.new()
+    let s = set.insert(s, 42)
+    println(set.length(s))  // 1
 }
 ```
 
-### `set.each`
+---
+
+### `set.remove`
 
 ```
-set.each(s, fn) -> ()
+set.remove(s: Set(a), elem: a) -> Set(a)
 ```
 
-Iterates over each element, calling `fn(elem)` for side effects.
+Returns a new set with `elem` removed. No-op if not present.
 
 ```silt
 fn main() {
-  set.each(#[1, 2, 3]) { x -> println(x) }
-  -- 1
-  -- 2
-  -- 3
+    let s = set.remove(#[1, 2, 3], 2)
+    println(set.to_list(s))  // [1, 3]
 }
 ```
 
-### `set.fold`
+---
+
+### `set.to_list`
 
 ```
-set.fold(s, init, fn) -> b
+set.to_list(s: Set(a)) -> List(a)
 ```
 
-Reduces the set to a single value by applying `fn(acc, elem)` for each element.
+Converts the set to a sorted list.
 
 ```silt
 fn main() {
-  let s = #[1, 2, 3, 4]
-  set.fold(s, 0) { acc, x -> acc + x }   -- 10
+    let xs = set.to_list(#[3, 1, 2])
+    println(xs)  // [1, 2, 3]
 }
 ```
 
------
+---
 
-## `int` Module
+### `set.union`
 
-Functions for working with integers.
+```
+set.union(a: Set(a), b: Set(a)) -> Set(a)
+```
+
+Returns a set containing all elements from both `a` and `b`.
+
+```silt
+fn main() {
+    let result = set.union(#[1, 2], #[2, 3])
+    println(set.to_list(result))  // [1, 2, 3]
+}
+```
+
+---
+
+## int
+
+Functions for parsing, converting, and comparing integers.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `int.parse` | `int.parse(s) -> Result(Int, String)` | Parse a string to an integer |
-| `int.abs` | `int.abs(n) -> Int` | Absolute value |
-| `int.min` | `int.min(a, b) -> Int` | Return the smaller of two integers |
-| `int.max` | `int.max(a, b) -> Int` | Return the larger of two integers |
-| `int.to_float` | `int.to_float(n) -> Float` | Convert an integer to a float |
-| `int.to_string` | `int.to_string(n) -> String` | Convert an integer to a string |
+| `abs` | `(Int) -> Int` | Absolute value |
+| `max` | `(Int, Int) -> Int` | Larger of two values |
+| `min` | `(Int, Int) -> Int` | Smaller of two values |
+| `parse` | `(String) -> Result(Int, String)` | Parse string to integer |
+| `to_float` | `(Int) -> Float` | Convert to float |
+| `to_string` | `(Int) -> String` | Convert to string |
 
-### `int.parse`
-
-```
-int.parse(s) -> Result(Int, String)
-```
-
-Parses a string into an integer. Returns `Ok(n)` on success, `Err(message)` on failure. Leading/trailing whitespace is trimmed.
-
-```silt
-fn main() {
-  int.parse("42")       -- Ok(42)
-  int.parse("-7")       -- Ok(-7)
-  int.parse("hello")    -- Err("invalid digit found in string")
-}
-```
+---
 
 ### `int.abs`
 
 ```
-int.abs(n) -> Int
+int.abs(n: Int) -> Int
 ```
 
-Returns the absolute value of an integer.
+Returns the absolute value.
 
 ```silt
 fn main() {
-  int.abs(-5)   -- 5
-  int.abs(3)    -- 3
+    println(int.abs(-42))  // 42
+    println(int.abs(7))    // 7
 }
 ```
 
-### `int.min`
-
-```
-int.min(a, b) -> Int
-```
-
-Returns the smaller of two integers.
-
-```silt
-fn main() {
-  int.min(3, 7)    -- 3
-  int.min(10, 2)   -- 2
-}
-```
+---
 
 ### `int.max`
 
 ```
-int.max(a, b) -> Int
+int.max(a: Int, b: Int) -> Int
 ```
 
 Returns the larger of two integers.
 
 ```silt
 fn main() {
-  int.max(3, 7)    -- 7
-  int.max(10, 2)   -- 10
+    println(int.max(3, 7))  // 7
 }
 ```
+
+---
+
+### `int.min`
+
+```
+int.min(a: Int, b: Int) -> Int
+```
+
+Returns the smaller of two integers.
+
+```silt
+fn main() {
+    println(int.min(3, 7))  // 3
+}
+```
+
+---
+
+### `int.parse`
+
+```
+int.parse(s: String) -> Result(Int, String)
+```
+
+Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
+`Ok(n)` on success, `Err(message)` on failure.
+
+```silt
+fn main() {
+    match int.parse("42") {
+        Ok(n) -> println(n)
+        Err(e) -> println("parse error: {e}")
+    }
+}
+```
+
+---
 
 ### `int.to_float`
 
 ```
-int.to_float(n) -> Float
+int.to_float(n: Int) -> Float
 ```
 
-Converts an integer to a floating-point number.
+Converts an integer to a float.
 
 ```silt
 fn main() {
-  int.to_float(42)   -- 42.0
+    let f = int.to_float(42)
+    println(f)  // 42.0
 }
 ```
+
+---
 
 ### `int.to_string`
 
 ```
-int.to_string(n) -> String
+int.to_string(n: Int) -> String
 ```
 
 Converts an integer to its string representation.
 
 ```silt
 fn main() {
-  int.to_string(42)    -- "42"
-  int.to_string(-7)    -- "-7"
+    let s = int.to_string(42)
+    println(s)  // "42"
 }
 ```
 
------
+---
 
-## `float` Module
+## float
 
-Functions for working with floating-point numbers.
+Functions for parsing, rounding, converting, and comparing floats.
+
+> **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
+> `float.to_int` to convert the result to an integer.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `float.parse` | `float.parse(s) -> Result(Float, String)` | Parse a string to a float |
-| `float.round` | `float.round(f) -> Int` | Round to the nearest integer |
-| `float.ceil` | `float.ceil(f) -> Int` | Round up to the nearest integer |
-| `float.floor` | `float.floor(f) -> Int` | Round down to the nearest integer |
-| `float.abs` | `float.abs(f) -> Float` | Absolute value |
-| `float.min` | `float.min(a, b) -> Float` | Return the smaller of two floats |
-| `float.max` | `float.max(a, b) -> Float` | Return the larger of two floats |
-| `float.to_string` | `float.to_string(f, decimals) -> String` | Format a float to N decimal places |
-| `float.to_int` | `float.to_int(f) -> Int` | Truncate a float to an integer |
+| `abs` | `(Float) -> Float` | Absolute value |
+| `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
+| `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
+| `max` | `(Float, Float) -> Float` | Larger of two values |
+| `min` | `(Float, Float) -> Float` | Smaller of two values |
+| `parse` | `(String) -> Result(Float, String)` | Parse string to float |
+| `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
+| `to_int` | `(Float) -> Int` | Truncate to integer |
+| `to_string` | `(Float, Int) -> String` | Format with decimal places |
 
-### `float.parse`
-
-```
-float.parse(s) -> Result(Float, String)
-```
-
-Parses a string into a float. Returns `Ok(f)` on success, `Err(message)` on failure. Leading/trailing whitespace is trimmed.
-
-```silt
-fn main() {
-  float.parse("3.14")     -- Ok(3.14)
-  float.parse("hello")    -- Err("invalid float literal")
-}
-```
-
-### `float.round`
-
-```
-float.round(f) -> Int
-```
-
-Rounds a float to the nearest integer (standard rounding: 0.5 rounds up).
-
-```silt
-fn main() {
-  float.round(3.7)    -- 4
-  float.round(3.2)    -- 3
-  float.round(-1.5)   -- -2
-}
-```
-
-### `float.ceil`
-
-```
-float.ceil(f) -> Int
-```
-
-Rounds a float up to the nearest integer (toward positive infinity).
-
-```silt
-fn main() {
-  float.ceil(3.2)    -- 4
-  float.ceil(-1.7)   -- -1
-}
-```
-
-### `float.floor`
-
-```
-float.floor(f) -> Int
-```
-
-Rounds a float down to the nearest integer (toward negative infinity).
-
-```silt
-fn main() {
-  float.floor(3.9)    -- 3
-  float.floor(-1.2)   -- -2
-}
-```
+---
 
 ### `float.abs`
 
 ```
-float.abs(f) -> Float
+float.abs(f: Float) -> Float
 ```
 
-Returns the absolute value of a float.
+Returns the absolute value.
 
 ```silt
 fn main() {
-  float.abs(-3.14)   -- 3.14
-  float.abs(2.0)     -- 2.0
+    println(float.abs(-3.14))  // 3.14
 }
 ```
 
-### `float.min`
+---
+
+### `float.ceil`
 
 ```
-float.min(a, b) -> Float
+float.ceil(f: Float) -> Float
 ```
 
-Returns the smaller of two floats.
+Rounds up to the nearest integer, returned as a Float.
 
 ```silt
 fn main() {
-  float.min(3.14, 2.72)   -- 2.72
+    println(float.ceil(3.2))   // 4.0
+    println(float.ceil(-3.2))  // -3.0
 }
 ```
+
+---
+
+### `float.floor`
+
+```
+float.floor(f: Float) -> Float
+```
+
+Rounds down to the nearest integer, returned as a Float.
+
+```silt
+fn main() {
+    println(float.floor(3.9))   // 3.0
+    println(float.floor(-3.2))  // -4.0
+}
+```
+
+---
 
 ### `float.max`
 
 ```
-float.max(a, b) -> Float
+float.max(a: Float, b: Float) -> Float
 ```
 
 Returns the larger of two floats.
 
 ```silt
 fn main() {
-  float.max(3.14, 2.72)   -- 3.14
+    println(float.max(1.5, 2.5))  // 2.5
 }
 ```
 
-### `float.to_string`
+---
+
+### `float.min`
 
 ```
-float.to_string(f, decimals) -> String
+float.min(a: Float, b: Float) -> Float
 ```
 
-Formats a float to exactly N decimal places (padding with zeros or truncating as needed).
+Returns the smaller of two floats.
 
 ```silt
 fn main() {
-  float.to_string(3.14159, 2)  -- "3.14"
-  float.to_string(3.1, 4)      -- "3.1000"
-  float.to_string(3.7, 0)      -- "4"
+    println(float.min(1.5, 2.5))  // 1.5
 }
 ```
+
+---
+
+### `float.parse`
+
+```
+float.parse(s: String) -> Result(Float, String)
+```
+
+Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
+`Ok(f)` on success, `Err(message)` on failure.
+
+```silt
+fn main() {
+    match float.parse("3.14") {
+        Ok(f) -> println(f)
+        Err(e) -> println("error: {e}")
+    }
+}
+```
+
+---
+
+### `float.round`
+
+```
+float.round(f: Float) -> Float
+```
+
+Rounds to the nearest integer, returned as a Float. Ties round away from zero.
+
+```silt
+fn main() {
+    println(float.round(3.6))  // 4.0
+    println(float.round(3.4))  // 3.0
+}
+```
+
+---
 
 ### `float.to_int`
 
 ```
-float.to_int(f) -> Int
+float.to_int(f: Float) -> Int
 ```
 
-Truncates a float to an integer (rounds toward zero).
+Truncates toward zero, converting to an integer.
 
 ```silt
 fn main() {
-  float.to_int(3.7)    -- 3
-  float.to_int(-2.9)   -- -2
+    println(float.to_int(3.9))   // 3
+    println(float.to_int(-3.9))  // -3
 }
 ```
 
------
+---
 
-## `result` Module
+### `float.to_string`
 
-Functions for working with `Result` values (`Ok(value)` or `Err(error)`).
+```
+float.to_string(f: Float, decimals: Int) -> String
+```
+
+Formats a float as a string with exactly `decimals` decimal places. The
+`decimals` argument is required and must be non-negative.
+
+```silt
+fn main() {
+    println(float.to_string(3.14159, 2))  // "3.14"
+    println(float.to_string(42.0, 0))     // "42"
+}
+```
+
+---
+
+## result
+
+Functions for transforming and querying `Result(a, e)` values without pattern
+matching.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `result.map_ok` | `result.map_ok(result, fn) -> Result` | Transform the Ok value, pass Err through |
-| `result.map_err` | `result.map_err(result, fn) -> Result` | Transform the Err value, pass Ok through |
-| `result.unwrap_or` | `result.unwrap_or(result, default) -> T` | Extract the Ok value, or return default |
-| `result.flat_map` | `result.flat_map(result, fn) -> Result` | Apply fn to the Ok value (fn returns Result), pass Err through |
-| `result.flatten` | `result.flatten(result) -> Result` | Flatten a nested `Ok(Ok(v))` into `Ok(v)` |
-| `result.is_ok` | `result.is_ok(result) -> Bool` | Check if the result is Ok |
-| `result.is_err` | `result.is_err(result) -> Bool` | Check if the result is Err |
+| `flat_map` | `(Result(a, e), (a) -> Result(b, e)) -> Result(b, e)` | Chain fallible operations |
+| `flatten` | `(Result(Result(a, e), e)) -> Result(a, e)` | Remove one nesting level |
+| `is_err` | `(Result(a, e)) -> Bool` | True if Err |
+| `is_ok` | `(Result(a, e)) -> Bool` | True if Ok |
+| `map_err` | `(Result(a, e), (e) -> f) -> Result(a, f)` | Transform the error |
+| `map_ok` | `(Result(a, e), (a) -> b) -> Result(b, e)` | Transform the success value |
+| `unwrap_or` | `(Result(a, e), a) -> a` | Extract value or use default |
 
-### `result.map_ok`
-
-```
-result.map_ok(result, fn) -> Result
-```
-
-If the value is `Ok(v)`, applies `fn` to `v` and wraps the result in `Ok`. If `Err`, passes it through unchanged.
-
-```silt
-fn main() {
-  result.map_ok(Ok(21), fn(x) { x * 2 })   -- Ok(42)
-  result.map_ok(Err("fail"), fn(x) { x })   -- Err("fail")
-}
-```
-
-### `result.map_err`
-
-```
-result.map_err(result, fn) -> Result
-```
-
-If the value is `Err(e)`, applies `fn` to `e` and wraps the result in `Err`. If `Ok`, passes it through unchanged.
-
-```silt
-fn main() {
-  result.map_err(Err("fail"), fn(e) { "error: {e}" })
-  -- Err("error: fail")
-
-  result.map_err(Ok(42), fn(e) { "error: {e}" })
-  -- Ok(42)
-}
-```
-
-### `result.unwrap_or`
-
-```
-result.unwrap_or(result, default) -> T
-```
-
-If the value is `Ok(v)` or `Some(v)`, returns `v`. Otherwise returns `default`.
-
-```silt
-fn main() {
-  result.unwrap_or(Ok(42), 0)       -- 42
-  result.unwrap_or(Err("nope"), 0)  -- 0
-}
-```
+---
 
 ### `result.flat_map`
 
 ```
-result.flat_map(result, fn) -> Result
+result.flat_map(r: Result(a, e), f: (a) -> Result(b, e)) -> Result(b, e)
 ```
 
-If the value is `Ok(v)`, applies `fn` to `v` (which must return a `Result`). If `Err`, passes it through unchanged. This is like `result.map_ok` but avoids nested `Ok(Ok(...))` when the function itself returns a `Result`.
+If `r` is `Ok(v)`, calls `f(v)` and returns its result. If `r` is `Err`,
+returns the `Err` unchanged. Useful for chaining fallible operations.
 
 ```silt
-fn parse_and_double(s) {
-  match int.parse(s) {
-    Ok(n) -> Ok(n * 2)
-    Err(e) -> Err(e)
-  }
-}
-
 fn main() {
-  result.flat_map(Ok("21"), fn(s) { parse_and_double(s) })  -- Ok(42)
-  result.flat_map(Ok("abc"), fn(s) { parse_and_double(s) })  -- Err("invalid digit found in string")
-  result.flat_map(Err("no input"), fn(s) { parse_and_double(s) })  -- Err("no input")
+    let r = Ok("42")
+        |> result.flat_map { s -> int.parse(s) }
+    println(r)  // Ok(42)
 }
 ```
+
+---
 
 ### `result.flatten`
 
 ```
-result.flatten(result) -> Result
+result.flatten(r: Result(Result(a, e), e)) -> Result(a, e)
 ```
 
-Flattens a nested Result. `Ok(Ok(v))` becomes `Ok(v)`, `Ok(Err(e))` becomes `Err(e)`, and `Err(e)` stays `Err(e)`.
+Collapses a nested Result. `Ok(Ok(v))` becomes `Ok(v)`, `Ok(Err(e))` becomes
+`Err(e)`, and `Err(e)` stays `Err(e)`.
 
 ```silt
 fn main() {
-  result.flatten(Ok(Ok(42)))          -- Ok(42)
-  result.flatten(Ok(Err("inner")))    -- Err("inner")
-  result.flatten(Err("outer"))        -- Err("outer")
+    println(result.flatten(Ok(Ok(42))))         // Ok(42)
+    println(result.flatten(Ok(Err("oops"))))    // Err("oops")
 }
 ```
 
-### `result.is_ok`
-
-```
-result.is_ok(result) -> Bool
-```
-
-Returns `true` if the value is `Ok`, `false` if `Err`.
-
-```silt
-fn main() {
-  result.is_ok(Ok(1))       -- true
-  result.is_ok(Err("no"))   -- false
-}
-```
+---
 
 ### `result.is_err`
 
 ```
-result.is_err(result) -> Bool
+result.is_err(r: Result(a, e)) -> Bool
 ```
 
-Returns `true` if the value is `Err`, `false` if `Ok`.
+Returns `true` if the result is an `Err`.
 
 ```silt
 fn main() {
-  result.is_err(Err("no"))   -- true
-  result.is_err(Ok(1))       -- false
+    println(result.is_err(Err("fail")))  // true
+    println(result.is_err(Ok(42)))       // false
 }
 ```
 
------
+---
 
-## `option` Module
+### `result.is_ok`
 
-Functions for working with `Option` values (`Some(value)` or `None`).
+```
+result.is_ok(r: Result(a, e)) -> Bool
+```
+
+Returns `true` if the result is an `Ok`.
+
+```silt
+fn main() {
+    println(result.is_ok(Ok(42)))       // true
+    println(result.is_ok(Err("fail")))  // false
+}
+```
+
+---
+
+### `result.map_err`
+
+```
+result.map_err(r: Result(a, e), f: (e) -> f) -> Result(a, f)
+```
+
+If `r` is `Err(e)`, returns `Err(f(e))`. If `r` is `Ok`, returns it unchanged.
+
+```silt
+fn main() {
+    let r = Err("not found") |> result.map_err { e -> "Error: {e}" }
+    println(r)  // Err("Error: not found")
+}
+```
+
+---
+
+### `result.map_ok`
+
+```
+result.map_ok(r: Result(a, e), f: (a) -> b) -> Result(b, e)
+```
+
+If `r` is `Ok(v)`, returns `Ok(f(v))`. If `r` is `Err`, returns it unchanged.
+
+```silt
+fn main() {
+    let r = Ok(21) |> result.map_ok { n -> n * 2 }
+    println(r)  // Ok(42)
+}
+```
+
+---
+
+### `result.unwrap_or`
+
+```
+result.unwrap_or(r: Result(a, e), default: a) -> a
+```
+
+Returns the `Ok` value, or `default` if the result is `Err`.
+
+```silt
+fn main() {
+    println(result.unwrap_or(Ok(42), 0))        // 42
+    println(result.unwrap_or(Err("fail"), 0))    // 0
+}
+```
+
+---
+
+## option
+
+Functions for transforming and querying `Option(a)` values without pattern
+matching.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `option.map` | `option.map(opt, fn) -> Option` | Transform the Some value, pass None through |
-| `option.flat_map` | `option.flat_map(opt, fn) -> Option` | Apply fn returning Option, flatten the result |
-| `option.unwrap_or` | `option.unwrap_or(opt, default) -> T` | Extract the inner value, or return default |
-| `option.to_result` | `option.to_result(opt, err) -> Result` | Convert Option to Result with an error value |
-| `option.is_some` | `option.is_some(opt) -> Bool` | Check if the option is Some |
-| `option.is_none` | `option.is_none(opt) -> Bool` | Check if the option is None |
+| `flat_map` | `(Option(a), (a) -> Option(b)) -> Option(b)` | Chain optional operations |
+| `is_none` | `(Option(a)) -> Bool` | True if None |
+| `is_some` | `(Option(a)) -> Bool` | True if Some |
+| `map` | `(Option(a), (a) -> b) -> Option(b)` | Transform the inner value |
+| `to_result` | `(Option(a), e) -> Result(a, e)` | Convert to Result with error value |
+| `unwrap_or` | `(Option(a), a) -> a` | Extract value or use default |
 
-### `option.map`
-
-```
-option.map(opt, fn) -> Option
-```
-
-If the value is `Some(v)`, applies `fn` to `v` and wraps the result in `Some`. If `None`, returns `None`.
-
-```silt
-fn main() {
-  option.map(Some(21), fn(x) { x * 2 })   -- Some(42)
-  option.map(None, fn(x) { x * 2 })       -- None
-}
-```
+---
 
 ### `option.flat_map`
 
 ```
-option.flat_map(opt, fn) -> Option
+option.flat_map(opt: Option(a), f: (a) -> Option(b)) -> Option(b)
 ```
 
-If the value is `Some(v)`, applies `fn` to `v` (which must return an `Option`). If `None`, returns `None`. This is like `option.map` but avoids nested `Some(Some(...))` when the function itself returns an `Option`.
-
-```silt
-fn safe_div(a, b) {
-  match b == 0 {
-    true -> None
-    _ -> Some(a / b)
-  }
-}
-
-fn main() {
-  option.flat_map(Some(10), fn(x) { safe_div(x, 2) })  -- Some(5)
-  option.flat_map(Some(10), fn(x) { safe_div(x, 0) })  -- None
-  option.flat_map(None, fn(x) { safe_div(x, 2) })      -- None
-}
-```
-
-### `option.unwrap_or`
-
-```
-option.unwrap_or(opt, default) -> T
-```
-
-If the value is `Some(v)`, returns `v`. If `None`, returns `default`.
+If `opt` is `Some(v)`, calls `f(v)` and returns its result. If `opt` is `None`,
+returns `None`.
 
 ```silt
 fn main() {
-  option.unwrap_or(Some(42), 0)   -- 42
-  option.unwrap_or(None, 0)       -- 0
+    let result = Some(42) |> option.flat_map { n ->
+        when n > 0 -> Some(n * 2)
+        else -> None
+    }
+    println(result)  // Some(84)
 }
 ```
 
-### `option.to_result`
-
-```
-option.to_result(opt, err) -> Result
-```
-
-Converts an Option to a Result. `Some(v)` becomes `Ok(v)`, `None` becomes `Err(err)`.
-
-```silt
-fn main() {
-  option.to_result(Some(42), "missing")     -- Ok(42)
-  option.to_result(None, "missing")         -- Err("missing")
-}
-```
-
-### `option.is_some`
-
-```
-option.is_some(opt) -> Bool
-```
-
-Returns `true` if the value is `Some`, `false` if `None`.
-
-```silt
-fn main() {
-  option.is_some(Some(1))   -- true
-  option.is_some(None)      -- false
-}
-```
+---
 
 ### `option.is_none`
 
 ```
-option.is_none(opt) -> Bool
+option.is_none(opt: Option(a)) -> Bool
 ```
 
-Returns `true` if the value is `None`, `false` if `Some`.
+Returns `true` if the option is `None`.
 
 ```silt
 fn main() {
-  option.is_none(None)      -- true
-  option.is_none(Some(1))   -- false
+    println(option.is_none(None))      // true
+    println(option.is_none(Some(1)))   // false
 }
 ```
 
------
+---
 
-## `io` Module
+### `option.is_some`
 
-Functions for file I/O, standard input, debug inspection, and command-line arguments.
+```
+option.is_some(opt: Option(a)) -> Bool
+```
+
+Returns `true` if the option is `Some`.
+
+```silt
+fn main() {
+    println(option.is_some(Some(1)))   // true
+    println(option.is_some(None))      // false
+}
+```
+
+---
+
+### `option.map`
+
+```
+option.map(opt: Option(a), f: (a) -> b) -> Option(b)
+```
+
+If `opt` is `Some(v)`, returns `Some(f(v))`. If `opt` is `None`, returns `None`.
+
+```silt
+fn main() {
+    let result = Some(21) |> option.map { n -> n * 2 }
+    println(result)  // Some(42)
+}
+```
+
+---
+
+### `option.to_result`
+
+```
+option.to_result(opt: Option(a), error: e) -> Result(a, e)
+```
+
+Converts `Some(v)` to `Ok(v)` and `None` to `Err(error)`.
+
+```silt
+fn main() {
+    let r = option.to_result(Some(42), "missing")
+    println(r)  // Ok(42)
+
+    let r2 = option.to_result(None, "missing")
+    println(r2)  // Err("missing")
+}
+```
+
+---
+
+### `option.unwrap_or`
+
+```
+option.unwrap_or(opt: Option(a), default: a) -> a
+```
+
+Returns the inner value if `Some`, otherwise returns `default`.
+
+```silt
+fn main() {
+    println(option.unwrap_or(Some(42), 0))  // 42
+    println(option.unwrap_or(None, 0))      // 0
+}
+```
+
+---
+
+## io
+
+Functions for file I/O, stdin, command-line arguments, and debug inspection.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `io.inspect` | `io.inspect(value) -> String` | Return the silt-syntax representation of a value |
-| `io.read_file` | `io.read_file(path) -> Result(String, String)` | Read an entire file as a string |
-| `io.write_file` | `io.write_file(path, content) -> Result(Unit, String)` | Write a string to a file |
-| `io.read_line` | `io.read_line() -> Result(String, String)` | Read one line from stdin |
-| `io.args` | `io.args() -> List(String)` | Get command-line arguments |
+| `args` | `() -> List(String)` | Command-line arguments |
+| `inspect` | `(a) -> String` | Debug representation of any value |
+| `read_file` | `(String) -> Result(String, String)` | Read entire file as string |
+| `read_line` | `() -> Result(String, String)` | Read one line from stdin |
+| `write_file` | `(String, String) -> Result((), String)` | Write string to file |
 
-### `io.inspect`
-
-```
-io.inspect(value) -> String
-```
-
-Returns the silt-syntax representation of any value as a String. Useful for debugging complex data structures. Strings are quoted to distinguish them from bare text, collections use silt literal syntax, and functions display as `<fn>`.
-
-```silt
-fn main() {
-  println(io.inspect(42))          -- output: 42
-  println(io.inspect("hello"))     -- output: "hello"
-  println(io.inspect([1, 2, 3]))   -- output: [1, 2, 3]
-  println(io.inspect(#{"a": 1}))   -- output: #{"a": 1}
-  println(io.inspect(Some(42)))    -- output: Some(42)
-  println(io.inspect(None))        -- output: None
-  println(io.inspect((1, "two")))  -- output: (1, "two")
-}
-```
-
-### `io.read_file`
-
-```
-io.read_file(path) -> Result(String, String)
-```
-
-Reads the entire contents of a file as a string. Returns `Ok(content)` on success, `Err(message)` on failure.
-
-```silt
-fn main() {
-  match io.read_file("data.txt") {
-    Ok(content) -> println(content)
-    Err(e) -> println("error: {e}")
-  }
-}
-```
-
-### `io.write_file`
-
-```
-io.write_file(path, content) -> Result(Unit, String)
-```
-
-Writes `content` to a file at `path`, creating or overwriting it. Returns `Ok(())` on success, `Err(message)` on failure.
-
-```silt
-fn main() {
-  match io.write_file("out.txt", "hello world") {
-    Ok(_) -> println("written")
-    Err(e) -> println("error: {e}")
-  }
-}
-```
-
-### `io.read_line`
-
-```
-io.read_line() -> Result(String, String)
-```
-
-Reads one line from standard input. The trailing newline is stripped. Returns `Ok(line)` on success, `Err(message)` on failure.
-
-```silt
-fn main() {
-  match io.read_line() {
-    Ok(name) -> println("hello {name}")
-    Err(e) -> println("error: {e}")
-  }
-}
-```
+---
 
 ### `io.args`
 
@@ -2204,973 +2519,997 @@ fn main() {
 io.args() -> List(String)
 ```
 
-Returns the full argument vector as a list of strings. This includes the
-interpreter binary, the subcommand, the script path, and any user-provided
-arguments. For `silt run script.silt foo bar`, the list is:
-
-```
-["/path/to/silt", "run", "script.silt", "foo", "bar"]
-```
-
-Index 0 is the silt binary, index 1 is the subcommand (e.g. `"run"`), index 2
-is the script path, and indices 3+ are user-provided arguments. Use
-`list.drop(io.args(), 3)` to get only user arguments.
+Returns the command-line arguments as a list of strings, including the program
+name.
 
 ```silt
 fn main() {
-  let args = io.args()
-  let user_args = args |> list.drop(3)
-  user_args |> list.each { a -> println(a) }
+    let args = io.args()
+    list.each(args) { a -> println(a) }
 }
 ```
 
------
+---
 
-## `fs` Module
+### `io.inspect`
 
-File system utility functions.
+```
+io.inspect(value: a) -> String
+```
+
+Returns a debug-style string representation of any value, using silt syntax
+(e.g., strings include quotes, lists show brackets).
+
+```silt
+fn main() {
+    let s = io.inspect([1, "hello", true])
+    println(s)  // [1, "hello", true]
+}
+```
+
+---
+
+### `io.read_file`
+
+```
+io.read_file(path: String) -> Result(String, String)
+```
+
+Reads the entire contents of a file. Returns `Ok(contents)` on success or
+`Err(message)` on failure.
+
+```silt
+fn main() {
+    match io.read_file("data.txt") {
+        Ok(contents) -> println(contents)
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+---
+
+### `io.read_line`
+
+```
+io.read_line() -> Result(String, String)
+```
+
+Reads a single line from stdin (trailing newline stripped). Returns
+`Ok(line)` on success or `Err(message)` on failure.
+
+```silt
+fn main() {
+    print("Name: ")
+    match io.read_line() {
+        Ok(name) -> println("Hello, {name}!")
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+---
+
+### `io.write_file`
+
+```
+io.write_file(path: String, contents: String) -> Result((), String)
+```
+
+Writes a string to a file, creating or overwriting it. Returns `Ok(())` on
+success or `Err(message)` on failure.
+
+```silt
+fn main() {
+    match io.write_file("output.txt", "hello") {
+        Ok(_) -> println("written")
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+---
+
+## fs
+
+Filesystem path queries.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `fs.exists` | `fs.exists(path) -> Bool` | Check if a file or directory exists |
+| `exists` | `(String) -> Bool` | Check if path exists |
+
+---
 
 ### `fs.exists`
 
 ```
-fs.exists(path) -> Bool
+fs.exists(path: String) -> Bool
 ```
 
-Returns `true` if the file or directory at `path` exists, `false` otherwise.
+Returns `true` if the file or directory at `path` exists.
 
 ```silt
 fn main() {
-  fs.exists("data.txt")    -- true or false
-  fs.exists("/tmp")         -- true (on most systems)
+    when fs.exists("config.toml") -> println("found config")
+    else -> println("no config")
 }
 ```
 
------
+---
 
-## `test` Module
+## test
 
-Assertion functions for testing.
+Assertion functions for test scripts. Each accepts an optional trailing `String`
+message argument.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `test.assert` | `test.assert(value) -> Unit` | Assert that a value is truthy |
-| `test.assert_eq` | `test.assert_eq(a, b) -> Unit` | Assert that two values are equal |
-| `test.assert_ne` | `test.assert_ne(a, b) -> Unit` | Assert that two values are not equal |
+| `assert` | `(Bool, String?) -> ()` | Assert value is truthy |
+| `assert_eq` | `(a, a, String?) -> ()` | Assert two values are equal |
+| `assert_ne` | `(a, a, String?) -> ()` | Assert two values are not equal |
+
+---
 
 ### `test.assert`
 
 ```
-test.assert(value) -> Unit
+test.assert(condition: Bool) -> ()
+test.assert(condition: Bool, message: String) -> ()
 ```
 
-Passes if `value` is truthy. Aborts with an error if the value is falsy.
+Panics if `condition` is `false`. The optional message is included in the error.
 
 ```silt
-fn test_basics() {
-  test.assert(true)
-  test.assert(1 + 1 == 2)
+fn main() {
+    test.assert(1 + 1 == 2)
+    test.assert(1 + 1 == 2, "math should work")
 }
 ```
+
+---
 
 ### `test.assert_eq`
 
 ```
-test.assert_eq(a, b) -> Unit
+test.assert_eq(left: a, right: a) -> ()
+test.assert_eq(left: a, right: a, message: String) -> ()
 ```
 
-Passes if `a` equals `b`. Aborts with a message showing both values if they differ.
+Panics if `left != right`, displaying both values.
 
 ```silt
-fn test_addition() {
-  test.assert_eq(1 + 1, 2)
-  test.assert_eq("hello", "hello")
+fn main() {
+    test.assert_eq(list.length([1, 2, 3]), 3)
+    test.assert_eq(1 + 1, 2, "addition")
 }
 ```
+
+---
 
 ### `test.assert_ne`
 
 ```
-test.assert_ne(a, b) -> Unit
+test.assert_ne(left: a, right: a) -> ()
+test.assert_ne(left: a, right: a, message: String) -> ()
 ```
 
-Passes if `a` does not equal `b`. Aborts with a message showing both values if they are equal.
+Panics if `left == right`, displaying both values.
 
 ```silt
-fn test_not_equal() {
-  test.assert_ne(1, 2)
-  test.assert_ne("hello", "world")
+fn main() {
+    test.assert_ne("hello", "world")
 }
 ```
 
------
+---
 
-## `channel` Module
+## regex
 
-CSP-style typed channel operations. These have special evaluation semantics for
-cooperative scheduling (they receive unevaluated expressions so the scheduler
-can manage blocking).
+Regular expression functions. Pattern strings use standard regex syntax.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `channel.new` | `channel.new() -> Channel` / `channel.new(n) -> Channel` | Create a channel |
-| `channel.send` | `channel.send(ch, value) -> Unit` | Send a value into a channel |
-| `channel.receive` | `channel.receive(ch) -> Message(T) \| Closed` | Receive a value from a channel |
-| `channel.close` | `channel.close(ch) -> Unit` | Close a channel; no more sends allowed |
-| `channel.select` | `channel.select(channels) -> (Channel, Message(T) \| Closed)` | Wait on multiple channels; returns `(channel, Message(value))` or `(channel, Closed)` |
-| `channel.each` | `channel.each(ch, fn) -> Unit` | Call fn for each message until channel closes |
-| `channel.try_send` | `channel.try_send(ch, value) -> Bool` | Non-blocking send; true if sent |
-| `channel.try_receive` | `channel.try_receive(ch) -> Message(T) \| Empty \| Closed` | Non-blocking receive |
-
-### `channel.new`
-
-```
-channel.new() -> Channel
-channel.new(capacity) -> Channel
-```
-
-Creates a new channel. With no arguments, creates an unbuffered channel (capacity 0). With a non-negative integer argument, creates a buffered channel with that capacity.
-
-```silt
-fn main() {
-  let unbuffered = channel.new()
-  let buffered = channel.new(10)
-}
-```
-
-### `channel.send`
-
-```
-channel.send(ch, value) -> Unit
-```
-
-Sends a value into a channel. If the channel buffer is full, cooperatively yields to other tasks until space is available. Errors with a deadlock message if no progress can be made.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-  channel.send(ch, 42)
-  channel.send(ch, "hello")
-  channel.send(ch, [1, 2, 3])
-}
-```
-
-### `channel.receive`
-
-```
-channel.receive(ch) -> Message(T) | Closed
-```
-
-Receives a value from a channel. Returns `Message(value)` when a value is available, or `Closed` when the channel is closed and drained. If the channel is empty (but not closed), cooperatively yields to other tasks until a value is available. Errors with a deadlock message if no progress can be made.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-  channel.send(ch, 42)
-  let Message(value) = channel.receive(ch)
-  println(value)   -- 42
-}
-```
-
-### `channel.close`
-
-```
-channel.close(ch) -> Unit
-```
-
-Closes a channel. After closing, `channel.send` on the channel will error. `channel.receive` on a closed channel returns any remaining buffered values as `Message(value)`; once the buffer is empty, it returns `Closed`.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-
-  let producer = task.spawn(fn() {
-    channel.send(ch, "hello")
-    channel.send(ch, "world")
-    channel.close(ch)
-  })
-
-  let consumer = task.spawn(fn() {
-    let Message(msg1) = channel.receive(ch)
-    let Message(msg2) = channel.receive(ch)
-    let msg3 = channel.receive(ch)   -- Closed (channel closed and empty)
-    println("{msg1} {msg2}")
-  })
-
-  task.join(producer)
-  task.join(consumer)
-}
-```
-
-### `channel.try_send`
-
-```
-channel.try_send(ch, value) -> Bool
-```
-
-Attempts a non-blocking send. Returns `true` if the value was successfully sent, `false` if the channel buffer is full or the channel is closed. Never blocks.
-
-```silt
-fn main() {
-  let ch = channel.new(1)
-
-  let sent1 = channel.try_send(ch, "first")    -- true (buffer has space)
-  let sent2 = channel.try_send(ch, "second")   -- false (buffer full)
-
-  println("sent1: {sent1}")   -- true
-  println("sent2: {sent2}")   -- false
-}
-```
-
-### `channel.try_receive`
-
-```
-channel.try_receive(ch) -> Message(T) | Empty | Closed
-```
-
-Attempts a non-blocking receive. Returns `Message(value)` if a value is available, `Empty` if the channel has no data yet, or `Closed` if the channel is closed and drained. Never blocks.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-  channel.send(ch, 42)
-
-  let got1 = channel.try_receive(ch)   -- Message(42)
-  let got2 = channel.try_receive(ch)   -- Empty
-
-  match got1 {
-    Message(val) -> println("got: {val}")   -- got: 42
-    Empty -> println("nothing yet")
-    Closed -> println("channel closed")
-  }
-}
-```
-
------
-
-## `task` Module
-
-Task spawning and lifecycle management.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `task.spawn` | `task.spawn(fn) -> Handle` | Spawn a concurrent task |
-| `task.join` | `task.join(handle) -> T` | Wait for a task to complete and get its result |
-| `task.cancel` | `task.cancel(handle) -> Unit` | Cancel a spawned task |
-
-### `task.spawn`
-
-```
-task.spawn(fn) -> Handle
-```
-
-Spawns a concurrent task from a zero-argument function. Returns a handle that can be used with `task.join` or `task.cancel`. The task runs cooperatively, interleaved with other tasks.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-
-  let producer = task.spawn(fn() {
-    channel.send(ch, "hello")
-    channel.send(ch, "world")
-  })
-
-  task.join(producer)
-  let Message(msg1) = channel.receive(ch)
-  let Message(msg2) = channel.receive(ch)
-  println("{msg1} {msg2}")
-}
-```
-
-### `task.join`
-
-```
-task.join(handle) -> T
-```
-
-Waits for a spawned task to complete and returns its result value. Runs pending tasks cooperatively while waiting. Errors if the joined task failed or if a deadlock is detected.
-
-```silt
-fn main() {
-  let h = task.spawn(fn() { 42 })
-  let result = task.join(h)
-  println(result)   -- 42
-}
-```
-
-### `task.cancel`
-
-```
-task.cancel(handle) -> Unit
-```
-
-Cancels a spawned task. The task will not be scheduled for further execution.
-
-```silt
-fn main() {
-  let h = task.spawn(fn() { 42 })
-  task.cancel(h)
-}
-```
-
------
-
-### `channel.select`
-
-```
-channel.select(channels) -> (Channel, Message(T) | Closed)
-```
-
-Waits on multiple channels simultaneously. Returns a `(channel, Message(value))`
-tuple for whichever channel has data first, or `(channel, Closed)` when all
-channels are closed and drained. The channels are polled in order. If no channel
-is ready, the scheduler cooperatively runs pending tasks and retries. Errors with
-a deadlock message if no progress can be made.
-
-Use the `^` pin operator in pattern matching to identify which channel produced
-the value. The `^` prefix matches against the current value of an existing
-variable instead of creating a new binding.
-
-```silt
-fn main() {
-  let ch1 = channel.new(10)
-  let ch2 = channel.new(10)
-
-  channel.send(ch2, "from ch2")
-
-  match channel.select([ch1, ch2]) {
-    (^ch1, Message(msg)) -> println("got from ch1: {msg}")
-    (^ch2, Message(msg)) -> println("got from ch2: {msg}")
-    (_, Closed) -> println("all channels closed")
-    _ -> panic("unexpected")
-  }
-  -- "got from ch2: from ch2"
-}
-```
-
-### `channel.each`
-
-```
-channel.each(ch, fn) -> Unit
-```
-
-Receives messages from a channel in a loop, calling `fn` for each message, until
-the channel is closed and drained. Returns `Unit` when the channel closes. This
-is the channel equivalent of `list.each` — use it when you want to process all
-messages without manually matching `Message`/`Closed`.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-  channel.send(ch, "hello")
-  channel.send(ch, "world")
-  channel.close(ch)
-
-  channel.each(ch) { msg ->
-    println("got: {msg}")
-  }
-  -- prints "got: hello" then "got: world", then returns
-}
-```
-
------
-
-## `regex` Module
-
-Regular expression matching and replacement. Patterns are standard regex strings,
-compiled per call. The function is named `is_match` (not `match`) because `match`
-is a keyword.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `regex.is_match` | `regex.is_match(pattern, text) -> Bool` | Test whether the pattern matches anywhere in the text |
-| `regex.find` | `regex.find(pattern, text) -> Option(String)` | Return the first match, or `None` |
-| `regex.find_all` | `regex.find_all(pattern, text) -> List(String)` | Return all non-overlapping matches |
-| `regex.split` | `regex.split(pattern, text) -> List(String)` | Split text on every match of the pattern |
-| `regex.replace` | `regex.replace(pattern, text, replacement) -> String` | Replace the first match |
-| `regex.captures` | `regex.captures(pattern, text) -> Option(List(String))` | Return capture groups from the first match |
-| `regex.captures_all` | `regex.captures_all(pattern, text) -> List(List(String))` | Return capture groups from all matches |
-| `regex.replace_all` | `regex.replace_all(pattern, text, replacement) -> String` | Replace all matches |
-| `regex.replace_all_with` | `regex.replace_all_with(pattern, text, fn) -> String` | Replace all matches using a callback function |
-
-### `regex.is_match`
-
-```
-regex.is_match(pattern, text) -> Bool
-```
-
-Returns `true` if `pattern` matches anywhere in `text`.
-
-```silt
-fn main() {
-  regex.is_match("\\d+", "order 42")   -- true
-  regex.is_match("\\d+", "no digits")  -- false
-}
-```
-
-### `regex.find`
-
-```
-regex.find(pattern, text) -> Option(String)
-```
-
-Returns `Some(match_string)` for the first match, or `None` if there is no match.
-
-```silt
-fn main() {
-  regex.find("\\d+", "order 42 and 99")
-  -- Some("42")
-
-  regex.find("\\d+", "no digits")
-  -- None
-}
-```
-
-### `regex.find_all`
-
-```
-regex.find_all(pattern, text) -> List(String)
-```
-
-Returns a list of all non-overlapping matches.
-
-```silt
-fn main() {
-  regex.find_all("\\d+", "order 42 and 99")
-  -- ["42", "99"]
-
-  regex.find_all("[a-z]+@[a-z.]+", "alice@x.com and bob@y.org")
-  -- ["alice@x.com", "bob@y.org"]
-}
-```
-
-### `regex.split`
-
-```
-regex.split(pattern, text) -> List(String)
-```
-
-Splits `text` on every match of `pattern`. Similar to `string.split` but with regex
-delimiters.
-
-```silt
-fn main() {
-  regex.split("[,;\\s]+", "a, b; c  d")
-  -- ["a", "b", "c", "d"]
-}
-```
-
-### `regex.replace`
-
-```
-regex.replace(pattern, text, replacement) -> String
-```
-
-Replaces the **first** match of `pattern` in `text` with `replacement`.
-
-```silt
-fn main() {
-  regex.replace("\\d+", "order 42 and 99", "N")
-  -- "order N and 99"
-}
-```
-
-### `regex.replace_all`
-
-```
-regex.replace_all(pattern, text, replacement) -> String
-```
-
-Replaces **all** matches of `pattern` in `text` with `replacement`.
-
-```silt
-fn main() {
-  regex.replace_all("\\d+", "order 42 and 99", "N")
-  -- "order N and N"
-}
-```
-
-### `regex.replace_all_with`
-
-```
-regex.replace_all_with(pattern, text, fn) -> String
-```
-
-Like `regex.replace_all`, but calls `fn` with each match string and uses the return value as the replacement.
-
-```silt
-regex.replace_all_with("[a-z]+", "hello world", fn(m) { string.to_upper(m) })
--- "HELLO WORLD"
-```
+| `captures` | `(String, String) -> Option(List(String))` | Capture groups from first match |
+| `captures_all` | `(String, String) -> List(List(String))` | Capture groups from all matches |
+| `find` | `(String, String) -> Option(String)` | First match |
+| `find_all` | `(String, String) -> List(String)` | All matches |
+| `is_match` | `(String, String) -> Bool` | Test if pattern matches |
+| `replace` | `(String, String, String) -> String` | Replace first match |
+| `replace_all` | `(String, String, String) -> String` | Replace all matches |
+| `replace_all_with` | `(String, String, (String) -> String) -> String` | Replace all with callback |
+| `split` | `(String, String) -> List(String)` | Split on pattern |
+
+---
 
 ### `regex.captures`
 
 ```
-regex.captures(pattern, text) -> Option(List(String))
+regex.captures(pattern: String, text: String) -> Option(List(String))
 ```
 
-Returns capture groups from the first match as `Some(list)`, or `None` if there is
-no match. Index 0 is the full match, indices 1+ are the capture groups.
+Returns capture groups from the first match, or `None` if no match. The full
+match is at index 0, followed by numbered groups.
 
 ```silt
 fn main() {
-  regex.captures("(\\w+)@(\\w+)", "user@host")
-  -- Some(["user@host", "user", "host"])
-
-  regex.captures("(\\d+)-(\\d+)", "no match here")
-  -- None
+    match regex.captures("(\\w+)@(\\w+)", "user@host") {
+        Some(groups) -> {
+            println(list.get(groups, 1))  // Some("user")
+            println(list.get(groups, 2))  // Some("host")
+        }
+        None -> println("no match")
+    }
 }
 ```
+
+---
 
 ### `regex.captures_all`
 
 ```
-regex.captures_all(pattern, text) -> List(List(String))
+regex.captures_all(pattern: String, text: String) -> List(List(String))
 ```
 
-Returns capture groups from **all** matches as a list of lists. Each inner list
-has index 0 as the full match and indices 1+ as the capture groups. Returns an
-empty list if there are no matches.
+Returns capture groups for every match. Each inner list has the full match at
+index 0 followed by numbered groups.
 
 ```silt
 fn main() {
-  regex.captures_all("(\\w+)@(\\w+)", "alice@x.com and bob@y.org")
-  -- [["alice@x.com", "alice", "x"], ["bob@y.org", "bob", "y"]]
+    let results = regex.captures_all("(\\d+)-(\\d+)", "1-2 and 3-4")
+    // [["1-2", "1", "2"], ["3-4", "3", "4"]]
 }
 ```
 
------
+---
 
-## `json` Module
+### `regex.find`
 
-Typed JSON parsing and serialization. `json.parse` takes a record type and
-returns a fully typed record. `json.stringify` and `json.pretty` serialize any
-Silt value (records, maps, lists, primitives) to JSON.
+```
+regex.find(pattern: String, text: String) -> Option(String)
+```
+
+Returns `Some(matched_text)` for the first match, or `None`.
+
+```silt
+fn main() {
+    let result = regex.find("\\d+", "abc 123 def")
+    println(result)  // Some("123")
+}
+```
+
+---
+
+### `regex.find_all`
+
+```
+regex.find_all(pattern: String, text: String) -> List(String)
+```
+
+Returns all non-overlapping matches as a list of strings.
+
+```silt
+fn main() {
+    let nums = regex.find_all("\\d+", "a1 b22 c333")
+    println(nums)  // ["1", "22", "333"]
+}
+```
+
+---
+
+### `regex.is_match`
+
+```
+regex.is_match(pattern: String, text: String) -> Bool
+```
+
+Returns `true` if the pattern matches anywhere in the text.
+
+```silt
+fn main() {
+    println(regex.is_match("^\\d+$", "123"))    // true
+    println(regex.is_match("^\\d+$", "abc"))    // false
+}
+```
+
+---
+
+### `regex.replace`
+
+```
+regex.replace(pattern: String, text: String, replacement: String) -> String
+```
+
+Replaces the first match with the replacement string.
+
+```silt
+fn main() {
+    let result = regex.replace("\\d+", "abc 123 def 456", "NUM")
+    println(result)  // "abc NUM def 456"
+}
+```
+
+---
+
+### `regex.replace_all`
+
+```
+regex.replace_all(pattern: String, text: String, replacement: String) -> String
+```
+
+Replaces all matches with the replacement string.
+
+```silt
+fn main() {
+    let result = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
+    println(result)  // "abc NUM def NUM"
+}
+```
+
+---
+
+### `regex.replace_all_with`
+
+```
+regex.replace_all_with(pattern: String, text: String, f: (String) -> String) -> String
+```
+
+Replaces all matches by calling `f` with each matched text. The callback must
+return a string.
+
+```silt
+fn main() {
+    let result = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
+        int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })
+    }
+    // "a2 b44 c666"
+}
+```
+
+---
+
+### `regex.split`
+
+```
+regex.split(pattern: String, text: String) -> List(String)
+```
+
+Splits the text on every occurrence of the pattern.
+
+```silt
+fn main() {
+    let parts = regex.split("\\s+", "hello   world   silt")
+    println(parts)  // ["hello", "world", "silt"]
+}
+```
+
+---
+
+## json
+
+Parse JSON strings into typed silt values and serialize values to JSON.
+
+### Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `json.parse` | `json.parse(Type, s) -> Result(T, String)` | Parse a JSON string into a typed record |
-| `json.parse_list` | `json.parse_list(Type, s) -> Result(List(T), String)` | Parse a JSON array into a typed list of records |
-| `json.parse_map` | `json.parse_map(ValueType, s) -> Result(Map(String, T), String)` | Parse a JSON object into a map with typed values |
-| `json.stringify` | `json.stringify(value) -> String` | Serialize a Silt value to compact JSON |
-| `json.pretty` | `json.pretty(value) -> String` | Serialize a Silt value to pretty-printed JSON |
+| `parse` | `(Type, String) -> Result(T, String)` | Parse JSON object into record |
+| `parse_list` | `(Type, String) -> Result(List(T), String)` | Parse JSON array into record list |
+| `parse_map` | `(Type, String) -> Result(Map(String, v), String)` | Parse JSON object into map |
+| `pretty` | `(a) -> String` | Pretty-print value as JSON |
+| `stringify` | `(a) -> String` | Serialize value as compact JSON |
 
-### Field type mapping (json.parse)
-
-When parsing JSON into a record, each field is converted based on its declared
-type:
-
-| Record field type | JSON value | Conversion |
-|-------------------|------------|------------|
-| `String` | `"string"` | direct |
-| `Int` | integer number | direct |
-| `Float` | number | direct |
-| `Bool` | `true` / `false` | direct |
-| `List(T)` | `[array]` | recursive per-element |
-| `Option(T)` | value or `null` | `Some(v)` or `None` |
-| `RecordType` | `{object}` | recursive record parse |
-
-Missing `Option` fields default to `None`. Missing non-optional fields produce
-an error.
-
-### `json.parse_map`
-
-Parse a JSON object into a `Map(String, T)` where `T` is specified by the first argument:
-
-```silt
-json.parse_map(String, "{\"a\": \"hello\"}") -- Ok(#{"a": "hello"})
-json.parse_map(Int, "{\"x\": 1, \"y\": 2}")  -- Ok(#{"x": 1, "y": 2})
-json.parse_map(Float, "{\"pi\": 3.14}")       -- Ok(#{"pi": 3.14})
-json.parse_map(Bool, "{\"on\": true}")         -- Ok(#{"on": true})
-json.parse_map(Employee, "{...}")              -- Ok(#{"e1": Employee{...}})
-```
-
-Keys are always strings (as in JSON). The value type can be any primitive (`Int`, `Float`, `String`, `Bool`) or a record type. Returns `Err(message)` if the JSON is malformed, not an object, or values don't match the expected type.
-
-### `json.parse_list`
-
-```
-json.parse_list(Type, s) -> Result(List(T), String)
-```
-
-Parses a top-level JSON array into a typed list of records. The first argument is
-a record type name; the second is the JSON string. Returns `Ok(list)` on success
-or `Err(message)` on failure. This is the natural way to handle API responses
-that return arrays of objects.
-
-```silt
-type Employee { name: String, department: String, salary: Int }
-
-fn main() {
-  let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
-  match json.parse_list(Employee, json_str) {
-    Ok(employees) -> {
-      list.each(employees, fn(e) {
-        println("{e.name} works in {e.department}")
-      })
-    }
-    Err(e) -> println("error: {e}")
-  }
-  -- Alice works in Eng
-  -- Bob works in Sales
-}
-```
-
-Empty arrays are valid and return `Ok([])`:
-
-```silt
-json.parse_list(Employee, "[]")  -- Ok([])
-```
-
-Nested records within each array element are handled recursively:
-
-```silt
-type Address { city: String, zip: String }
-type Person { name: String, address: Address }
-
-fn main() {
-  let json_str = "[\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}]"
-  match json.parse_list(Person, json_str) {
-    Ok(people) -> match list.get(people, 0) {
-      Some(p) -> println(p.address.city)  -- "NYC"
-      None -> ()
-    }
-    Err(e) -> println("error: {e}")
-  }
-}
-```
-
-Error messages include the element index and field path:
-
-```silt
--- Not a JSON array:
--- Err("json.parse_list(Employee): expected JSON array, got object")
-
--- Invalid field in element:
--- Err("json.parse_list(Employee): element 0: json.parse(Employee): field 'salary': expected Int, got string")
-```
-
-### Serialization mapping (json.stringify / json.pretty)
-
-| Silt | JSON |
-|------|------|
-| `String` | `"string"` |
-| `Int` | integer number |
-| `Float` | float number |
-| `Bool` | `true` / `false` |
-| `List` | `[array]` |
-| `Map` | `{object}` |
-| `Record` | `{object}` (keyed by field name) |
-| `Tuple` | `[array]` |
-| `None` | `null` |
-| `Some(v)` | serialized `v` |
-| `Unit` | `null` |
+---
 
 ### `json.parse`
 
 ```
-json.parse(Type, s) -> Result(T, String)
+json.parse(T: Type, s: String) -> Result(T, String)
 ```
 
-Parses a JSON string into a typed record. The first argument is a record type
-name; the second is the JSON string. Returns `Ok(record)` on success or
-`Err(message)` on failure. Error messages include the type name and field path.
+Parses a JSON string into a record of type `T`. The first argument is a record
+type name (not a string). Fields are matched by name; `Option` fields default to
+`None` if missing from the JSON.
 
 ```silt
-type User { name: String, age: Int }
-
-fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
-    Ok(user) -> println("{user.name} is {user.age}")
-    Err(e) -> println("error: {e}")
-  }
-  -- Alice is 30
+type User {
+    name: String,
+    age: Int,
 }
-```
-
-Nested records, lists, and optional fields are handled recursively:
-
-```silt
-type Address { city: String, zip: String }
-type User { name: String, address: Address, skills: List(String), email: Option(String) }
 
 fn main() {
-  let json_str = "\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}, \"skills\": [\"go\", \"rust\"]\}"
-  match json.parse(User, json_str) {
-    Ok(user) -> {
-      println(user.address.city)  -- "NYC"
-      println(user.skills)         -- [go, rust]
-      println(user.email)          -- None (missing Optional field defaults to None)
+    let json = "{\"name\": \"Alice\", \"age\": 30}"
+    match json.parse(User, json) {
+        Ok(user) -> println(user.name)
+        Err(e) -> println("Error: {e}")
     }
-    Err(e) -> println("error: {e}")
-  }
 }
 ```
 
-Error messages are descriptive and include the field name:
+---
+
+### `json.parse_list`
+
+```
+json.parse_list(T: Type, s: String) -> Result(List(T), String)
+```
+
+Parses a JSON array where each element is a record of type `T`.
 
 ```silt
--- Missing required field:
--- Err("json.parse(User): missing field 'age'")
-
--- Wrong type:
--- Err("json.parse(User): field 'name': expected String, got number")
-
--- Not a JSON object:
--- Err("json.parse(User): expected JSON object, got array")
-```
-
-### `json.stringify`
-
-```
-json.stringify(value) -> String
-```
-
-Converts a Silt value to a compact JSON string. Works with records, maps, lists,
-and primitives.
-
-```silt
-type User { name: String, age: Int }
+type Point {
+    x: Int,
+    y: Int,
+}
 
 fn main() {
-  -- Records serialize to JSON objects
-  let u = User { name: "Alice", age: 30 }
-  json.stringify(u)
-  -- {"age":30,"name":"Alice"}
-
-  -- Maps, lists, and primitives also work
-  json.stringify(#{ "x": 1, "y": 2 })
-  -- {"x":1,"y":2}
-
-  json.stringify([1, 2, 3])
-  -- [1,2,3]
-
-  json.stringify(None)
-  -- null
+    let json = "[{\"x\": 1, \"y\": 2}, {\"x\": 3, \"y\": 4}]"
+    match json.parse_list(Point, json) {
+        Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
+        Err(e) -> println("Error: {e}")
+    }
 }
 ```
+
+---
+
+### `json.parse_map`
+
+```
+json.parse_map(V: Type, s: String) -> Result(Map(String, V), String)
+```
+
+Parses a JSON object into a `Map(String, V)`. The first argument is a type
+descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
+
+```silt
+fn main() {
+    let json = "{\"x\": 10, \"y\": 20}"
+    match json.parse_map(Int, json) {
+        Ok(m) -> println(map.get(m, "x"))  // Some(10)
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+---
 
 ### `json.pretty`
 
 ```
-json.pretty(value) -> String
+json.pretty(value: a) -> String
 ```
 
-Converts a Silt value to a pretty-printed JSON string with indentation.
-
-```silt
-type User { name: String, scores: List(Int) }
-
-fn main() {
-  let u = User { name: "Alice", scores: [95, 87, 92] }
-  println(json.pretty(u))
-  -- {
-  --   "name": "Alice",
-  --   "scores": [
-  --     95,
-  --     87,
-  --     92
-  --   ]
-  -- }
-}
-```
-
------
-
-## `math` Module
-
-Mathematical functions and constants.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `math.pi` | `Float` | The constant pi (3.14159...) |
-| `math.e` | `Float` | Euler's number (2.71828...) |
-| `math.sqrt` | `math.sqrt(f) -> Float` | Square root |
-| `math.pow` | `math.pow(base, exp) -> Float` | Raise base to a power |
-| `math.log` | `math.log(f) -> Float` | Natural logarithm (base e) |
-| `math.log10` | `math.log10(f) -> Float` | Base-10 logarithm |
-| `math.sin` | `math.sin(f) -> Float` | Sine (radians) |
-| `math.cos` | `math.cos(f) -> Float` | Cosine (radians) |
-| `math.tan` | `math.tan(f) -> Float` | Tangent (radians) |
-| `math.asin` | `math.asin(f) -> Float` | Arcsine |
-| `math.acos` | `math.acos(f) -> Float` | Arccosine |
-| `math.atan` | `math.atan(f) -> Float` | Arctangent |
-| `math.atan2` | `math.atan2(y, x) -> Float` | Two-argument arctangent |
-
-### `math.pi`, `math.e`
+Serializes any value to a pretty-printed JSON string (with indentation and
+newlines).
 
 ```silt
 fn main() {
-  println(math.pi)   -- 3.141592653589793
-  println(math.e)    -- 2.718281828459045
+    let data = #{"name": "silt", "version": 1}
+    println(json.pretty(data))
 }
 ```
 
-### `math.sqrt`
+---
+
+### `json.stringify`
 
 ```
-math.sqrt(f) -> Float
+json.stringify(value: a) -> String
 ```
 
-Returns the square root of a float.
+Serializes any value to a compact JSON string.
 
 ```silt
 fn main() {
-  math.sqrt(9.0)    -- 3.0
-  math.sqrt(2.0)    -- 1.4142135623730951
+    let data = #{"key": [1, 2, 3]}
+    println(json.stringify(data))
+    // {"key":[1,2,3]}
 }
 ```
+
+---
+
+## math
+
+Mathematical functions and constants. All functions operate on `Float` values.
+
+### Summary
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `acos` | `(Float) -> Float` | Arccosine (radians) |
+| `asin` | `(Float) -> Float` | Arcsine (radians) |
+| `atan` | `(Float) -> Float` | Arctangent (radians) |
+| `atan2` | `(Float, Float) -> Float` | Two-argument arctangent |
+| `cos` | `(Float) -> Float` | Cosine |
+| `e` | `Float` | Euler's number (2.71828...) |
+| `log` | `(Float) -> Float` | Natural logarithm (ln) |
+| `log10` | `(Float) -> Float` | Base-10 logarithm |
+| `pi` | `Float` | Pi (3.14159...) |
+| `pow` | `(Float, Float) -> Float` | Exponentiation |
+| `sin` | `(Float) -> Float` | Sine |
+| `sqrt` | `(Float) -> Float` | Square root |
+| `tan` | `(Float) -> Float` | Tangent |
+
+---
+
+### `math.acos`
+
+```
+math.acos(x: Float) -> Float
+```
+
+Returns the arccosine of `x` in radians.
+
+```silt
+fn main() {
+    println(math.acos(1.0))  // 0.0
+}
+```
+
+---
+
+### `math.asin`
+
+```
+math.asin(x: Float) -> Float
+```
+
+Returns the arcsine of `x` in radians.
+
+```silt
+fn main() {
+    println(math.asin(1.0))  // 1.5707... (pi/2)
+}
+```
+
+---
+
+### `math.atan`
+
+```
+math.atan(x: Float) -> Float
+```
+
+Returns the arctangent of `x` in radians.
+
+```silt
+fn main() {
+    println(math.atan(1.0))  // 0.7853... (pi/4)
+}
+```
+
+---
+
+### `math.atan2`
+
+```
+math.atan2(y: Float, x: Float) -> Float
+```
+
+Returns the angle in radians between the positive x-axis and the point (x, y).
+Handles all quadrants correctly.
+
+```silt
+fn main() {
+    println(math.atan2(1.0, 1.0))  // 0.7853... (pi/4)
+}
+```
+
+---
+
+### `math.cos`
+
+```
+math.cos(x: Float) -> Float
+```
+
+Returns the cosine of `x` (in radians).
+
+```silt
+fn main() {
+    println(math.cos(0.0))       // 1.0
+    println(math.cos(math.pi))   // -1.0
+}
+```
+
+---
+
+### `math.e`
+
+```
+math.e : Float
+```
+
+Euler's number, approximately 2.718281828459045. This is a constant, not a
+function.
+
+```silt
+fn main() {
+    println(math.e)  // 2.718281828459045
+}
+```
+
+---
+
+### `math.log`
+
+```
+math.log(x: Float) -> Float
+```
+
+Returns the natural logarithm (base e) of `x`.
+
+```silt
+fn main() {
+    println(math.log(math.e))  // 1.0
+    println(math.log(1.0))     // 0.0
+}
+```
+
+---
+
+### `math.log10`
+
+```
+math.log10(x: Float) -> Float
+```
+
+Returns the base-10 logarithm of `x`.
+
+```silt
+fn main() {
+    println(math.log10(100.0))  // 2.0
+}
+```
+
+---
+
+### `math.pi`
+
+```
+math.pi : Float
+```
+
+Pi, approximately 3.141592653589793. This is a constant, not a function.
+
+```silt
+fn main() {
+    let circumference = 2.0 * math.pi * 5.0
+    println(circumference)
+}
+```
+
+---
 
 ### `math.pow`
 
 ```
-math.pow(base, exp) -> Float
+math.pow(base: Float, exponent: Float) -> Float
 ```
 
-Raises `base` to the power `exp`.
+Returns `base` raised to the power of `exponent`.
 
 ```silt
 fn main() {
-  math.pow(2.0, 10.0)   -- 1024.0
-  math.pow(3.0, 0.5)    -- 1.7320508075688772
+    println(math.pow(2.0, 10.0))  // 1024.0
 }
 ```
 
-### `math.log`, `math.log10`
+---
+
+### `math.sin`
 
 ```
-math.log(f) -> Float
-math.log10(f) -> Float
+math.sin(x: Float) -> Float
 ```
 
-Natural logarithm (base e) and base-10 logarithm.
+Returns the sine of `x` (in radians).
 
 ```silt
 fn main() {
-  math.log(math.e)    -- 1.0
-  math.log10(100.0)   -- 2.0
+    println(math.sin(0.0))           // 0.0
+    println(math.sin(math.pi / 2.0)) // 1.0
 }
 ```
 
-### Trigonometric functions
+---
+
+### `math.sqrt`
 
 ```
-math.sin(f) -> Float
-math.cos(f) -> Float
-math.tan(f) -> Float
-math.asin(f) -> Float
-math.acos(f) -> Float
-math.atan(f) -> Float
-math.atan2(y, x) -> Float
+math.sqrt(x: Float) -> Float
 ```
 
-Standard trigonometric functions. Arguments are in radians.
+Returns the square root of `x`.
 
 ```silt
 fn main() {
-  math.sin(0.0)              -- 0.0
-  math.cos(0.0)              -- 1.0
-  math.atan2(1.0, 1.0)       -- 0.7853981633974483 (pi/4)
+    println(math.sqrt(4.0))   // 2.0
+    println(math.sqrt(2.0))   // 1.4142...
 }
+```
 
------
+---
 
-## Built-in Traits
-
-Silt provides four built-in traits that are **automatically derived** for all types,
-including user-defined enums and records. No manual implementation is required unless
-you want to override the default behavior.
-
-| Trait      | Method                              | Purpose                          |
-|------------|-------------------------------------|----------------------------------|
-| `Display`  | `val.display() -> String`           | Convert to human-readable string |
-| `Equal`    | `val.equal(other) -> Bool`          | Equality comparison              |
-| `Compare`  | `val.compare(other) -> Int`         | Ordering (-1, 0, 1)             |
-| `Hash`     | `val.hash() -> Int`                 | Hash value for map keys          |
-
-### Auto-derived Display
-
-Every user-defined type automatically gets a `Display` implementation that formats
-values in constructor syntax:
+### `math.tan`
 
 ```
-val.display() -> String
+math.tan(x: Float) -> Float
 ```
+
+Returns the tangent of `x` (in radians).
 
 ```silt
-type Color { Red, Green, Blue }
-type Shape { Circle(Int), Rect(Int, Int) }
-type Point { x: Int, y: Int }
-
 fn main() {
-  println(Red.display())           -- "Red"
-  println(Circle(5).display())     -- "Circle(5)"
-  println(Rect(3, 4).display())    -- "Rect(3, 4)"
-
-  let p = Point { x: 1, y: 2 }
-  println(p.display())             -- "Point {x: 1, y: 2}"
+    println(math.tan(0.0))           // 0.0
+    println(math.tan(math.pi / 4.0)) // 1.0 (approximately)
 }
 ```
 
-Nested values are displayed recursively:
+---
 
-```silt
-println(Some(42).display())        -- "Some(42)"
-println(None.display())            -- "None"
+## channel
+
+Bounded channels for cooperative concurrency. Channels provide communication
+between tasks spawned with `task.spawn`.
+
+### Summary
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `close` | `(Channel) -> ()` | Close the channel |
+| `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
+| `new` | `(Int) -> Channel` | Create a bounded channel |
+| `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
+| `select` | `(List(Channel)) -> (Channel, a)` | Wait on multiple channels |
+| `send` | `(Channel, a) -> ()` | Blocking send |
+| `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
+| `try_send` | `(Channel, a) -> Bool` | Non-blocking send |
+
+---
+
+### `channel.close`
+
+```
+channel.close(ch: Channel) -> ()
 ```
 
-### Overriding auto-derived Display
-
-If the constructor syntax is not suitable, write your own `trait Display for T`
-implementation. It will take precedence over the auto-derived version:
+Closes the channel. Subsequent sends will fail. Receivers will see `Closed`
+after all buffered messages are consumed.
 
 ```silt
-trait Display for Shape {
-  fn display(self) -> String {
-    match self {
-      Circle(r) -> "a circle of radius {r}"
-      Rect(w, h) -> "a {w}x{h} rectangle"
+fn main() {
+    let ch = channel.new(10)
+    channel.send(ch, 1)
+    channel.close(ch)
+}
+```
+
+---
+
+### `channel.each`
+
+```
+channel.each(ch: Channel, f: (a) -> b) -> ()
+```
+
+Receives messages from the channel and calls `f` with each one, until the
+channel is closed. This is the idiomatic way to consume all messages.
+
+```silt
+fn main() {
+    let ch = channel.new(10)
+    task.spawn(fn() {
+        channel.send(ch, 1)
+        channel.send(ch, 2)
+        channel.close(ch)
+    })
+    channel.each(ch) { msg -> println(msg) }
+    // prints 1, then 2
+}
+```
+
+---
+
+### `channel.new`
+
+```
+channel.new(capacity: Int) -> Channel
+```
+
+Creates a new bounded channel with the given buffer capacity. Sends block when
+the buffer is full; receives block when the buffer is empty.
+
+```silt
+fn main() {
+    let ch = channel.new(10)
+}
+```
+
+---
+
+### `channel.receive`
+
+```
+channel.receive(ch: Channel) -> ChannelResult(a)
+```
+
+Receives a value from the channel. Returns `Message(value)` when a value is
+available, or `Closed` when the channel is closed and empty. Cooperatively
+yields to other tasks while waiting.
+
+```silt
+fn main() {
+    let ch = channel.new(1)
+    channel.send(ch, 42)
+    match channel.receive(ch) {
+        Message(v) -> println(v)
+        Closed -> println("done")
     }
-  }
-}
-
-fn main() {
-  println(Circle(5).display())     -- "a circle of radius 5"
 }
 ```
 
-### Display and string interpolation
+---
 
-String interpolation (`"{value}"`) automatically calls the `Display` trait. This means
-both auto-derived and user-written Display implementations are invoked when a value
-appears inside a string:
+### `channel.select`
+
+```
+channel.select(channels: List(Channel)) -> (Channel, a)
+```
+
+Waits until one of the channels has a message ready. Returns a tuple of
+`(channel, value)`. Cooperatively yields while waiting.
 
 ```silt
-type Color { Red, Green, Blue }
-
 fn main() {
-  let c = Red
-  println("color: {c}")            -- "color: Red"
+    let ch1 = channel.new(1)
+    let ch2 = channel.new(1)
+    task.spawn(fn() { channel.send(ch2, "hello") })
+    let (ch, val) = channel.select([ch1, ch2])
+    println(val)  // "hello"
 }
 ```
 
-With a custom Display override:
+---
+
+### `channel.send`
+
+```
+channel.send(ch: Channel, value: a) -> ()
+```
+
+Sends a value into the channel. Blocks (cooperatively yields) if the buffer is
+full.
 
 ```silt
-trait Display for Color {
-  fn display(self) -> String {
-    match self {
-      Red -> "red"
-      Green -> "green"
-      Blue -> "blue"
+fn main() {
+    let ch = channel.new(1)
+    channel.send(ch, "hello")
+}
+```
+
+---
+
+### `channel.try_receive`
+
+```
+channel.try_receive(ch: Channel) -> ChannelResult(a)
+```
+
+Non-blocking receive. Returns `Message(value)` if a value is immediately
+available, `Empty` if the channel is open but has no data, or `Closed` if the
+channel is closed and empty.
+
+```silt
+fn main() {
+    let ch = channel.new(1)
+    match channel.try_receive(ch) {
+        Message(v) -> println(v)
+        Empty -> println("nothing yet")
+        Closed -> println("done")
     }
-  }
 }
+```
 
+---
+
+### `channel.try_send`
+
+```
+channel.try_send(ch: Channel, value: a) -> Bool
+```
+
+Non-blocking send. Returns `true` if the value was successfully buffered,
+`false` if the buffer is full or the channel is closed.
+
+```silt
 fn main() {
-  let c = Red
-  println("color: {c}")            -- "color: red"
+    let ch = channel.new(1)
+    let ok = channel.try_send(ch, 42)
+    println(ok)  // true
 }
+```
+
+---
+
+## task
+
+Cooperative concurrency primitives. Tasks are scheduled cooperatively -- the
+runtime yields between tasks at regular intervals and at blocking operations
+(channel send/receive).
+
+### Summary
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `cancel` | `(Handle) -> ()` | Cancel a running task |
+| `join` | `(Handle) -> a` | Wait for a task to complete |
+| `spawn` | `(() -> a) -> Handle` | Spawn a new cooperative task |
+
+---
+
+### `task.cancel`
+
+```
+task.cancel(handle: Handle) -> ()
+```
+
+Cancels a running task. The task will not execute further. No-op if the task has
+already completed.
+
+```silt
+fn main() {
+    let h = task.spawn(fn() {
+        // long-running work
+    })
+    task.cancel(h)
+}
+```
+
+---
+
+### `task.join`
+
+```
+task.join(handle: Handle) -> a
+```
+
+Blocks until the task completes and returns its result. Cooperatively yields
+while waiting.
+
+```silt
+fn main() {
+    let h = task.spawn(fn() { 1 + 2 })
+    let result = task.join(h)
+    println(result)  // 3
+}
+```
+
+---
+
+### `task.spawn`
+
+```
+task.spawn(f: () -> a) -> Handle
+```
+
+Spawns a zero-argument function as a cooperative task. Returns a handle that can
+be used with `task.join` or `task.cancel`.
+
+```silt
+fn main() {
+    let h = task.spawn(fn() {
+        println("running in a task")
+        42
+    })
+    let result = task.join(h)
+    println(result)  // 42
+}
+```

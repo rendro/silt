@@ -2,48 +2,29 @@
 
 ## What is Silt?
 
-Silt is a minimal, statically-typed, expression-based programming language with CSP-style concurrency. It compiles to a tree-walk interpreter written in Rust.
-
-The language is built around a small set of principles: just 14 keywords, fully immutable bindings, pattern matching as the sole branching construct, and explicit error handling through `Result` and `Option` -- no exceptions, no null. Types are inferred via Hindley-Milner, so you rarely need to write annotations. Concurrency is modeled after Communicating Sequential Processes with typed channels, tasks, and `channel.select`.
-
-The global namespace is deliberately small: only 13 names (`print`, `println`, `panic`, `try`, `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`, `Empty`) are available without qualification. Everything else lives in a module (`list.map`, `string.split`, `channel.new`, `task.spawn`, etc.).
-
-If you like the safety of Rust, the expressiveness of ML-family languages, and the simplicity of Go's concurrency model -- but want something you can learn in an afternoon -- Silt might be for you.
+Silt is a statically-typed, expression-based language with 14 keywords, full immutability, and CSP-style concurrency. Pattern matching is the sole branching construct -- there is no `if`/`else`, no `for`/`while`, no `mut`, and no exceptions. Types are inferred via Hindley-Milner, errors are values (`Result`/`Option`), and concurrent tasks communicate through typed channels.
 
 ## Installation
 
-Silt is implemented in Rust. To build from source:
+Silt is implemented in Rust. Install it from a local checkout:
 
 ```sh
-git clone https://github.com/rendro/silt.git
-cd silt
-cargo build --release
+cargo install --path .
 ```
 
-The compiled binary is at `target/release/silt`. Add it to your PATH:
+Or run programs directly without installing:
 
 ```sh
-cp target/release/silt ~/.local/bin/
+cargo run -- run file.silt
 ```
 
-Verify it works:
+Verify the installation:
 
 ```sh
 silt run examples/hello.silt
 ```
 
-## CLI Commands
-
-```sh
-silt run <file.silt>       -- run a program
-silt test [file.silt]      -- run test functions
-silt repl                  -- interactive read-eval-print loop
-silt fmt <file.silt>       -- format a source file
-```
-
-## Your First Program
-
-Create a file called `hello.silt`:
+## Hello World
 
 ```silt
 fn main() {
@@ -51,70 +32,60 @@ fn main() {
 }
 ```
 
-Run it:
+Save this as `hello.silt` and run it with `silt run hello.silt`. Every silt program starts at `fn main()`.
 
-```sh
-silt run hello.silt
-```
-
-Every Silt program needs a `main()` function as its entry point. The `println` function is one of 13 global builtins -- always available, no import needed.
+---
 
 ## Language Tour
 
 ### Bindings
 
-All bindings are immutable. There is no mutable state. You can shadow a binding by re-declaring it with `let`:
+All bindings are immutable. There is no reassignment -- only shadowing.
 
 ```silt
-let x = 42
-let name = "Alice"
-let x = x + 1   -- shadowing, not mutation
-let items = [1, 2, 3]           -- list
-let config = #{ "key": "val" }  -- map
-let tags = #[1, 2, 3]           -- set
-```
-
-Type annotations are optional -- the compiler infers types for you:
-
-```silt
-let x: Int = 42   -- valid, but rarely needed
-```
-
-Bindings can also appear at the top level of a file, outside any function:
-
-```silt
-let default_port = 8080
-
 fn main() {
-  println("port: {default_port}")
+  let x = 42
+  let name = "Alice"
+  let x = x + 1    -- shadowing, not mutation; x is now 43
+  println("{name} has {x}")
 }
 ```
 
+Type annotations are optional thanks to Hindley-Milner inference:
+`let x: Int = 42`, `let ratio: Float = 3.14`.
+
 ### Functions
 
-Functions are expressions. The last expression in the body is the return value:
+Named functions use `fn`. The last expression in the body is the return value.
 
 ```silt
 fn add(a, b) {
   a + b
 }
-```
 
-For single-expression functions, use the shorthand form:
-
-```silt
+-- Single-expression shorthand with =
 fn square(x) = x * x
+
+fn main() {
+  println("{add(2, 3)}")   -- 5
+  println("{square(4)}")   -- 16
+}
 ```
 
-Anonymous functions work too:
+Functions are values. Anonymous functions close over their environment:
 
 ```silt
-let double = fn(x) { x * 2 }
+fn main() {
+  let double = fn(x) { x * 2 }
+  println("{double(5)}")   -- 10
+}
 ```
 
 ### Pattern Matching
 
-`match` is the only branching construct in Silt. There are no `if`/`else` statements. The compiler checks that your matches are exhaustive:
+`match` is the only branching construct. No `if`/`else` exists in Silt.
+
+**With a scrutinee** -- match a value against patterns:
 
 ```silt
 fn fizzbuzz(n) {
@@ -125,20 +96,13 @@ fn fizzbuzz(n) {
     _      -> "{n}"
   }
 }
-```
 
-**Match without a scrutinee (boolean branching):** Since Silt has no `if`/`else`, the way to branch on boolean conditions is `match` with no scrutinee. Each arm is a boolean expression; the first one that evaluates to `true` wins:
-
-```silt
--- Other languages: if age >= 18 { "adult" } else { "minor" }
--- Silt:
-match {
-  age >= 18 -> "adult"
-  _ -> "minor"
+fn main() {
+  1..21 |> list.each { n -> println(fizzbuzz(n)) }
 }
 ```
 
-This is the primary way to do boolean branching in Silt. Use it anywhere you'd reach for `if`/`else`:
+**Without a scrutinee** -- acts like a conditional chain:
 
 ```silt
 fn classify(n) {
@@ -148,170 +112,80 @@ fn classify(n) {
     _      -> "negative"
   }
 }
+
+fn main() {
+  println(classify(5))    -- positive
+  println(classify(-3))   -- negative
+  println(classify(0))    -- zero
+}
 ```
 
-Guards let you add conditions to match arms:
+**Guards** -- add `when` conditions to arms:
 
 ```silt
-fn classify(n) {
+fn describe(n) {
   match n {
     0 -> "zero"
-    x when x > 0 -> "positive"
-    _ -> "negative"
+    x when x > 100 -> "big: {x}"
+    x when x > 0   -> "positive: {x}"
+    _               -> "negative"
   }
 }
-```
 
-The `^` pin operator matches against an existing variable's value instead of binding:
-
-```silt
-let expected = 42
-match input {
-  ^expected -> "got what we wanted"
-  other -> "got {other} instead"
+fn main() {
+  println(describe(150))   -- big: 150
+  println(describe(-1))    -- negative
 }
 ```
 
-### The Pipe Operator
-
-The `|>` operator passes the left-hand side as the first argument to the right-hand side. This makes data transformation pipelines easy to read:
+**Or-patterns** -- match multiple alternatives in one arm:
 
 ```silt
-1..101
-|> list.map { n -> fizzbuzz(n) }
-|> list.each { s -> println(s) }
-```
+type Color { Red, Green, Blue, Yellow, Cyan }
 
-**Note on pipes with function calls:** `|>` always inserts the left-hand side as the *first* argument. This means `value |> f(arg)` calls `f(value, arg)` — it does not call `f(arg)` and then pass `value` to the result. If you have a function factory that returns a closure, pre-bind it:
-
-```silt
--- This calls make_grep(lines, "ERROR"), not make_grep("ERROR")(lines):
--- lines |> make_grep("ERROR")
-
--- Instead, bind the factory result first:
-let grep_error = make_grep("ERROR")
-lines |> grep_error
-```
-
-### Trailing Closures
-
-When the last argument to a function is a closure, you can write it outside the parentheses using `{ args -> body }` syntax:
-
-```silt
--- these are equivalent
-[1, 2, 3] |> list.map(fn(x) { x * 2 })
-[1, 2, 3] |> list.map { x -> x * 2 }
-
--- multi-line
-users |> list.filter { user ->
-  user.age > 18 && user.active
-}
-
--- multiple args
-[1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
-```
-
-### String Interpolation
-
-Curly braces inside strings evaluate expressions. All types implement the `Display` trait
-automatically, so any value can be interpolated:
-
-```silt
-let name = "Alice"
-let age = 30
-println("hello {name}, you are {age} years old")
-println("2 + 2 = {2 + 2}")
-```
-
-Use `\{` to include a literal brace.
-
-### Triple-Quoted Strings
-
-For multiline text, embedded quotes, or raw content (JSON, regex, etc.), use triple-quoted
-strings. They do not process escape sequences or interpolation, and they strip leading
-indentation based on the closing `"""` position:
-
-```silt
-let json = """
-  {
-    "name": "Alice",
-    "age": 30
+fn is_primary(c) {
+  match c {
+    Red | Blue | Yellow -> true
+    _ -> false
   }
-  """
--- Result: '{\n  "name": "Alice",\n  "age": 30\n}'
+}
 
-let pattern = """[\w]+\d{3}"""     -- literal backslashes, braces stay as-is
+fn main() {
+  println("{is_primary(Red)}")    -- true
+  println("{is_primary(Cyan)}")   -- false
+}
 ```
 
-### Error Handling
-
-Silt has no exceptions. All errors are represented as values using `Result` and `Option`:
+**`when`/`else` guards** -- flat early-return style. The `else` block must
+diverge (via `return` or `panic`):
 
 ```silt
-fn parse_config(text) {
-  let lines = text |> string.split("\n")
-
-  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
-    return Err("missing host in config")
+fn parse_positive(s) {
+  when Ok(n) = int.parse(s) else {
+    return Err("not a number")
   }
-
-  let host = host_line |> string.replace("host=", "")
-  Ok(host)
-}
-```
-
-The `?` operator provides sugar for early returns on `Err` or `None`:
-
-```silt
-fn process(input) {
-  let n = parse_int(input)?       -- returns Err early if parse fails
-  let result = validate(n)?       -- same here
-  Ok(result * 2)
-}
-```
-
-The `try()` builtin wraps a function call in a `Result`, catching any runtime errors:
-
-```silt
-let result = try(fn() { risky_operation() })
--- Ok(value) on success, Err(message) on failure
-```
-
-Use `match` for explicit handling, `?` for propagation, and `when`-`else` for inline assertions with destructuring:
-
-```silt
--- explicit match
-match parse_int("42") {
-  Ok(n) -> println("got {n}")
-  Err(e) -> println("failed: {e}")
+  when n > 0 else {
+    return Err("not positive")
+  }
+  Ok(n)
 }
 
--- pipe-friendly combinators
-parse_int("42")
-|> result.map_ok { n -> n * 2 }
-|> result.unwrap_or(0)
-```
-
-`when`-`else` also accepts boolean expressions for flat guard sequences:
-
-```silt
-fn buy(qty, balance, price) {
-  when qty > 0 else { return Err("out of stock") }
-  when balance >= price else { return Err("not enough money") }
-  Ok("purchased")
+fn main() {
+  match parse_positive("42") {
+    Ok(n)  -> println("got {n}")
+    Err(e) -> println("error: {e}")
+  }
 }
 ```
 
 ### Types
 
-Silt has algebraic data types (tagged unions) and records.
-
-**Algebraic types** define a set of variants, each optionally carrying data:
+**Algebraic data types (ADTs)** -- define enums with `type`:
 
 ```silt
 type Shape {
-  Circle(Float),
-  Rect(Float, Float),
+  Circle(Float)
+  Rect(Float, Float)
 }
 
 fn area(shape) {
@@ -320,9 +194,16 @@ fn area(shape) {
     Rect(w, h) -> w * h
   }
 }
+
+fn main() {
+  let shapes = [Circle(5.0), Rect(3.0, 4.0)]
+  shapes |> list.each { s -> println("{area(s)}") }
+}
 ```
 
-**Records** are types with named fields:
+Negative patterns work in matches: `Num(-1)`, `0.0..1.0`.
+
+**Records** -- named fields with `type`:
 
 ```silt
 type User {
@@ -331,84 +212,45 @@ type User {
   active: Bool,
 }
 
-let u = User { name: "Alice", age: 30, active: true }
-println(u.name)                  -- "Alice"
-let u2 = u.{ age: 31 }          -- record update (returns new record)
-```
-
-### Loop Expressions
-
-`loop` provides stack-safe iteration. It binds initial state, evaluates a body, and re-enters via `loop(new_values)`. Any expression that is not `loop(...)` terminates the loop and becomes its value.
-
-```silt
--- Sum 0..9
-let total = loop i = 0, acc = 0 {
-  match i >= 10 {
-    true -> acc
-    _ -> loop(i + 1, acc + i)
-  }
-}
-println(total)  -- 45
-```
-
-Zero-binding loops work for infinite-style iteration:
-
-```silt
-loop {
-  match io.read_line() {
-    Ok("quit") -> println("goodbye")
-    Ok(line) -> {
-      println("echo: {line}")
-      loop()
-    }
-    _ -> println("goodbye")
-  }
-}
-```
-
-**`loop` for search algorithms:** For search patterns (BFS, DFS, etc.) where the result type differs from the iteration state, use `loop` instead of `fold_until`. Unlike `fold_until` (where `Stop` and `Continue` must carry the same type), `loop` can return any expression to terminate:
-
-```silt
--- Find a target in an adjacency list using BFS
-fn bfs(graph, start, goal) {
-  loop queue = [start], visited = [start] {
-    match queue {
-      [] -> None                      -- not found (Option)
-      [node, ..rest] -> match node == goal {
-        true -> Some(node)            -- found! (different type than state)
-        _ -> {
-          let neighbors = map.get(graph, node) |> option.unwrap_or([])
-          let new = neighbors |> list.filter { n -> !list.contains(visited, n) }
-          loop(list.concat(rest, new), list.concat(visited, new))
-        }
-      }
-    }
-  }
-}
-```
-
-See `examples/search.silt` for a complete working example.
-
-### Traits
-
-Traits define interfaces that types can implement. Silt has four built-in traits: `Display`, `Compare`, `Equal`, and `Hash`. All four are **automatically derived** for every user-defined type.
-
-```silt
-type Shape {
-  Circle(Int),
-  Rect(Int, Int),
+fn birthday(user: User) -> User {
+  user.{ age: user.age + 1 }
 }
 
 fn main() {
-  let s = Circle(5)
-  println(s.display())     -- "Circle(5)"   (auto-derived)
-  println("shape: {s}")    -- "shape: Circle(5)"  (interpolation calls Display)
+  let u = User { name: "Alice", age: 30, active: true }
+  let u = birthday(u)
+  println("{u.name} is {u.age}")   -- Alice is 31
 }
 ```
 
-To customize how a type is displayed, write your own implementation -- it overrides the auto-derived version:
+Record update syntax (`user.{ field: value }`) returns a new value -- nothing
+is mutated.
+
+**Tuples** -- lightweight grouping with parentheses:
 
 ```silt
+fn swap(pair) {
+  let (a, b) = pair
+  (b, a)
+}
+
+fn main() {
+  let (x, y) = swap((1, 2))
+  println("{x}, {y}")   -- 2, 1
+}
+```
+
+### Traits
+
+Traits define shared behavior. All user-defined types auto-derive `Display`,
+`Compare`, `Equal`, and `Hash`.
+
+```silt
+type Shape {
+  Circle(Float)
+  Rect(Float, Float)
+}
+
 trait Display for Shape {
   fn display(self) -> String {
     match self {
@@ -419,140 +261,250 @@ trait Display for Shape {
 }
 
 fn main() {
-  let s = Circle(5)
-  println("shape: {s}")    -- "shape: Circle(r=5)"
+  let s = Circle(5.0)
+  println(s.display())   -- Circle(r=5)
 }
 ```
 
-Traits can be used as constraints with `where`:
+**`where` clauses** constrain generic type parameters. You must use explicit
+type annotations -- `fn f(x) where a: Display` is an error:
 
 ```silt
 fn print_all(items: List(a)) where a: Display {
   items |> list.each { item -> println(item.display()) }
 }
-```
-
-### Unary Operators
-
-Silt supports unary negation (`-`) for numbers and logical not (`!`) for booleans:
-
-```silt
-let x = 42
-println(-x)      -- -42
-println(-3.14)   -- -3.14
-println(!true)   -- false
-```
-
-## Working with Files
-
-### Running a program
-
-```sh
-silt run myfile.silt
-```
-
-This finds the `main()` function in the file and executes it. You can also omit the `run` subcommand for `.silt` files:
-
-```sh
-silt myfile.silt
-```
-
-### Interactive REPL
-
-```sh
-silt repl
-```
-
-Launches an interactive session where you can evaluate expressions and define bindings on the fly.
-
-### Formatting code
-
-```sh
-silt fmt myfile.silt
-```
-
-Formats a Silt source file according to the standard style.
-
-### Running tests
-
-Test functions are any function whose name starts with `test_`. Put them in files ending with `_test.silt`:
-
-```silt
--- math_test.silt
-import math
-
-fn test_add() {
-  test.assert_eq(math.add(1, 2), 3)
-  test.assert_eq(math.add(-1, 1), 0)
-}
-
-fn test_square() {
-  test.assert_eq(math.square(5), 25)
-}
-```
-
-Run a specific test file:
-
-```sh
-silt test math_test.silt
-```
-
-Or discover and run all test files in the current directory:
-
-```sh
-silt test
-```
-
-This finds all `*_test.silt` and `*.test.silt` files automatically.
-
-## Project Structure
-
-In Silt, each file is a module. The filename (without `.silt`) is the module name. Everything in a file is private by default -- use `pub` to export:
-
-```silt
--- math.silt
-pub fn add(a, b) = a + b
-pub fn square(x) = x * x
-fn internal_helper(x) = x * 2   -- private, not visible to importers
-```
-
-Other files import modules by name:
-
-```silt
--- main.silt
-import math
 
 fn main() {
-  let result = math.add(3, 4)
-  println("3 + 4 = {result}")
-  println("5^2 = {math.square(5)}")
+  print_all([Circle(1.0), Rect(2.0, 3.0)])
 }
 ```
 
-You can also import specific items or rename modules:
+### Pipe Operator
+
+`|>` passes the left-hand value as the **first argument** to the right-hand
+function. Trailing closures go after the call:
 
 ```silt
-import math.{ add, square }    -- import specific functions
-import math as m                -- rename the module
+fn main() {
+  let result =
+    [1, 2, 3, 4, 5]
+    |> list.filter { x -> x > 2 }
+    |> list.map { x -> x * 10 }
+    |> list.fold(0) { acc, x -> acc + x }
+
+  println("{result}")   -- 120
+}
 ```
 
-### Example project layout
+Without pipes, the same code nests inward and reads inside-out.
 
+### String Interpolation
+
+Expressions inside `{...}` are evaluated and interpolated:
+
+```silt
+fn main() {
+  let name = "world"
+  let n = 6
+  println("hello {name}, 2+2={2 + 2}, n*7={n * 7}")
+}
 ```
-my-project/
-  main.silt          -- entry point with main()
-  math.silt          -- pub functions for math operations
-  user.silt          -- pub type User and related functions
-  math_test.silt     -- tests for math module
-  user_test.silt     -- tests for user module
+
+Triple-quoted strings (`"""..."""`) disable interpolation and escape processing.
+Use them for regex patterns and literal braces:
+
+```silt
+fn main() {
+  let pattern = """\d{2}:\d{2}"""
+  println(pattern)   -- \d{2}:\d{2}
+}
 ```
 
-Run the project with `silt run main.silt` from the project directory. The interpreter resolves imports relative to the entry file's directory.
+### Error Handling
 
-## Where to Go Next
+Errors are values, not exceptions. Two types: `Result(a, e)` with `Ok`/`Err`,
+and `Option(a)` with `Some`/`None`.
 
-- **Language Guide** -- `docs/language-guide.md` -- deep dive into all language features
-- **Standard Library Reference** -- `docs/stdlib-reference.md` -- every module, function, and type
-- **Concurrency Guide** -- `docs/concurrency.md` -- channels, tasks, `channel.select`, and patterns
-- **Design Decisions** -- `docs/design-decisions.md` -- why Silt is the way it is
-- **Examples** -- the `examples/` directory has working programs covering records, traits, error handling, concurrency, and multi-file projects
+**`?` operator** -- propagates errors early:
+
+```silt
+fn add_strings(a, b) {
+  let x = int.parse(a)?
+  let y = int.parse(b)?
+  Ok(x + y)
+}
+
+fn main() {
+  match add_strings("10", "20") {
+    Ok(n)  -> println("{n}")
+    Err(e) -> println("error: {e}")
+  }
+}
+```
+
+**`try()`** catches panics into a Result: `let r = try(fn() { panic("boom") })`
+returns `Err("boom")`.
+
+**`when`/`else`** provides flat error handling without nesting (see Pattern
+Matching section above).
+
+`return` and `panic()` produce the `Never` type, which unifies with any type
+in match arms.
+
+### Collections
+
+**Lists** -- ordered, variable-length, `[]` syntax. List patterns destructure
+by shape:
+
+```silt
+fn sum(xs) {
+  match xs {
+    [] -> 0
+    [head, ..tail] -> head + sum(tail)
+  }
+}
+
+fn main() {
+  println("{sum([1, 2, 3, 4, 5])}")   -- 15
+}
+```
+
+**Maps** -- key-value pairs with `#{}` syntax:
+
+```silt
+fn main() {
+  let m = #{ "name": "Alice", "role": "admin" }
+  match map.get(m, "name") {
+    Some(name) -> println("found: {name}")
+    None -> println("not found")
+  }
+  println("{map.contains(m, "role")}")   -- true
+}
+```
+
+Use `map.contains` (not `has_key`) for key membership.
+
+**Sets** -- unique values with `#[]` syntax:
+
+```silt
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[3, 4, 5]
+  let both = set.intersection(a, b)
+  println("{set.to_list(both)}")   -- [3]
+  println("{set.contains(a, 2)}")  -- true
+}
+```
+
+### Loop Expressions
+
+`loop` binds initial state and re-enters with `loop(new_values)`. Any
+non-`loop()` expression terminates and becomes the result. There is no
+`for`/`while` -- use `loop` for general iteration and `list.map`/`list.each`
+for collection traversal.
+
+```silt
+fn main() {
+  -- Sum 0 through 9
+  let total = loop i = 0, acc = 0 {
+    match i >= 10 {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+  println("sum: {total}")   -- sum: 45
+}
+```
+
+Zero-binding form for infinite-style loops (use `loop()` to re-enter, or
+produce any other value to terminate):
+
+```silt
+fn main() {
+  let ch = channel.new(5)
+  channel.send(ch, "one")
+  channel.send(ch, "two")
+  channel.close(ch)
+
+  loop {
+    match channel.receive(ch) {
+      Message(msg) -> { println(msg); loop() }
+      Closed -> println("done")
+    }
+  }
+}
+```
+
+### Concurrency
+
+Silt uses CSP (Communicating Sequential Processes): tasks communicate through
+channels, not shared memory. All concurrency primitives are module-qualified.
+
+```silt
+fn main() {
+  let ch = channel.new(10)
+
+  -- Spawn a producer task
+  let producer = task.spawn(fn() {
+    channel.send(ch, "hello")
+    channel.send(ch, "from")
+    channel.send(ch, "silt")
+    channel.close(ch)
+  })
+
+  -- Spawn a consumer task
+  let consumer = task.spawn(fn() {
+    let Message(a) = channel.receive(ch)
+    let Message(b) = channel.receive(ch)
+    let Message(c) = channel.receive(ch)
+    println("{a} {b} {c}")
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+```
+
+**`channel.select`** waits on multiple channels. Use `^pin` to identify which
+channel fired:
+
+```silt
+fn main() {
+  let urgent = channel.new(5)
+  let normal = channel.new(5)
+
+  channel.send(urgent, "alert!")
+  channel.send(normal, "background done")
+
+  match channel.select([urgent, normal]) {
+    (^urgent, Message(msg)) -> println("URGENT: {msg}")
+    (^normal, Message(msg)) -> println("Normal: {msg}")
+    (_, Closed) -> println("channel closed")
+  }
+}
+```
+
+---
+
+## Running Programs
+
+```sh
+silt run <file.silt>       -- run a program
+silt test [file.silt]      -- run test functions
+silt repl                  -- interactive read-eval-print loop
+silt fmt <file.silt>       -- format a source file
+```
+
+During development, you can also run with cargo:
+
+```sh
+cargo run -- run file.silt
+```
+
+---
+
+## What's Next
+
+- **[Language Guide](language-guide.md)** -- complete coverage of every feature
+- **[Standard Library Reference](stdlib-reference.md)** -- all modules and functions
+- **[Concurrency Guide](concurrency.md)** -- channels, tasks, select, and scheduling
