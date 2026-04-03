@@ -2006,6 +2006,22 @@ impl Interpreter {
                 }
                 Ok(Value::Unit)
             }
+            "update" => {
+                if args.len() != 4 {
+                    return Err(err("map.update takes 4 arguments (map, key, default, fn)"));
+                }
+                let Value::Map(m) = &args[0] else {
+                    return Err(err("map.update requires a map as first argument"));
+                };
+                let key = &args[1];
+                let default = &args[2];
+                let current = m.get(key).unwrap_or(default).clone();
+                let new_value = self.call_value(&args[3], &[current])?;
+                let mut rc = Rc::new((**m).clone());
+                let map = Rc::make_mut(&mut rc);
+                map.insert(key.clone(), new_value);
+                Ok(Value::Map(rc))
+            }
             _ => Err(err(format!("unknown map function: {name}"))),
         }
     }
@@ -2545,6 +2561,31 @@ impl Interpreter {
                 };
                 let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
                 Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
+            }
+            "replace_all_with" => {
+                if args.len() != 3 {
+                    return Err(err("regex.replace_all_with takes 3 arguments (pattern, text, fn)"));
+                }
+                let Value::String(pattern) = &args[0] else {
+                    return Err(err("regex.replace_all_with requires a string pattern"));
+                };
+                let Value::String(text) = &args[1] else {
+                    return Err(err("regex.replace_all_with requires a string text"));
+                };
+                let re = Regex::new(pattern).map_err(|e| err(format!("invalid regex: {e}")))?;
+                let mut result = String::new();
+                let mut last_end = 0;
+                for m in re.find_iter(text) {
+                    result.push_str(&text[last_end..m.start()]);
+                    let replacement = self.call_value(&args[2], &[Value::String(m.as_str().to_string())])?;
+                    match replacement {
+                        Value::String(s) => result.push_str(&s),
+                        _ => return Err(err("regex.replace_all_with callback must return a string")),
+                    }
+                    last_end = m.end();
+                }
+                result.push_str(&text[last_end..]);
+                Ok(Value::String(result))
             }
             "captures" => {
                 if args.len() != 2 { return Err(err("regex.captures takes 2 arguments (pattern, text)")); }
@@ -4264,6 +4305,7 @@ fn register_builtins(env: &Env) {
         "map.entries",
         "map.from_entries",
         "map.each",
+        "map.update",
         "set.new",
         "set.from_list",
         "set.to_list",
@@ -4293,6 +4335,7 @@ fn register_builtins(env: &Env) {
         "regex.split",
         "regex.replace",
         "regex.replace_all",
+        "regex.replace_all_with",
         "regex.captures",
         "regex.captures_all",
         "json.parse",

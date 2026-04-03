@@ -176,7 +176,7 @@ fn builtin_names() -> Vec<String> {
         "float.to_string", "float.to_int", "float.min", "float.max",
         "map.get", "map.set", "map.delete", "map.keys", "map.values",
         "map.length", "map.merge", "map.filter", "map.map", "map.entries", "map.from_entries",
-        "map.each",
+        "map.each", "map.update",
         "result.unwrap_or", "result.map_ok", "result.map_err", "result.flatten",
         "result.is_ok", "result.is_err",
         "option.map", "option.unwrap_or", "option.to_result", "option.is_some", "option.is_none",
@@ -188,7 +188,7 @@ fn builtin_names() -> Vec<String> {
         "channel.try_send", "channel.try_receive", "channel.select",
         "task.spawn", "task.join", "task.cancel",
         "regex.is_match", "regex.find", "regex.find_all", "regex.split",
-        "regex.replace", "regex.replace_all", "regex.captures",
+        "regex.replace", "regex.replace_all", "regex.replace_all_with", "regex.captures",
         "json.parse", "json.stringify", "json.pretty",
         "test.assert", "test.assert_eq", "test.assert_ne",
     ];

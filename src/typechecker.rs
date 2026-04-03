@@ -222,7 +222,7 @@ impl TypeChecker {
         let t2 = self.apply(t2);
 
         match (&t1, &t2) {
-            (Type::Error, _) | (_, Type::Error) => {}
+            (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
             | (Type::Bool, Type::Bool)
@@ -952,6 +952,12 @@ impl TypeChecker {
         // regex.replace_all: (String, String, String) -> String
         env.define("regex.replace_all".into(), Scheme::mono(Type::Fun(
             vec![Type::String, Type::String, Type::String],
+            Box::new(Type::String),
+        )));
+
+        // regex.replace_all_with: (String, String, (String) -> String) -> String
+        env.define("regex.replace_all_with".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String, Type::Fun(vec![Type::String], Box::new(Type::String))],
             Box::new(Type::String),
         )));
 
@@ -2013,6 +2019,25 @@ impl TypeChecker {
                 constraints: vec![],
             });
         }
+
+        // map.update: (Map(k, v), k, v, (v) -> v) -> Map(k, v)
+        {
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define("map.update".into(), Scheme {
+                vars: vec![kv, vv],
+                ty: Type::Fun(
+                    vec![
+                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        k.clone(),
+                        v.clone(),
+                        Type::Fun(vec![v.clone()], Box::new(v.clone())),
+                    ],
+                    Box::new(Type::Map(Box::new(k), Box::new(v))),
+                ),
+                constraints: vec![],
+            });
+        }
     }
 
     fn register_set_builtins(&mut self, env: &mut TypeEnv) {
@@ -2892,8 +2917,7 @@ impl TypeChecker {
         let mut scheme = self.generalize(env, &fn_type);
 
         // Resolve where clauses to (TyVar, trait_name) using param_map.
-        // Primary path: look up type variable names in param_map (e.g., "a" from List(a)).
-        // Fallback: match against parameter names for unannotated params.
+        // Type variables must be introduced via explicit type annotations in the signature.
         for (type_param, trait_name) in &f.where_clauses {
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
@@ -2901,17 +2925,19 @@ impl TypeChecker {
                     scheme.constraints.push((tv, trait_name.clone()));
                 }
             } else {
-                for (i, param) in f.params.iter().enumerate() {
-                    if let Pattern::Ident(name) = &param.pattern {
-                        if name == type_param {
-                            let resolved = self.apply(&param_types[i]);
-                            if let Type::Var(tv) = resolved {
-                                scheme.constraints.push((tv, trait_name.clone()));
-                            }
-                            break;
-                        }
-                    }
-                }
+                self.error(
+                    format!(
+                        "type variable '{}' in where clause is not introduced in the function signature; \
+                         use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
+                        type_param, f.name,
+                        f.params.first().map(|p| match &p.pattern {
+                            Pattern::Ident(n) => n.as_str(),
+                            _ => "_",
+                        }).unwrap_or("_"),
+                        type_param, type_param, trait_name
+                    ),
+                    f.span,
+                );
             }
         }
 
@@ -3854,10 +3880,9 @@ impl TypeChecker {
 
             ExprKind::Return(maybe_expr) => {
                 if let Some(e) = maybe_expr {
-                    self.infer_expr(e, env)
-                } else {
-                    Type::Unit
+                    self.infer_expr(e, env);
                 }
+                Type::Never
             }
 
             ExprKind::Block(stmts) => {
@@ -4722,7 +4747,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         }
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error => false,
+        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error | Type::Never => false,
     }
 }
 

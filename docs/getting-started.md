@@ -427,7 +427,7 @@ fn main() {
 Traits can be used as constraints with `where`:
 
 ```silt
-fn print_all(items) where a: Display {
+fn print_all(items: List(a)) where a: Display {
   items |> list.each { item -> println(item.display()) }
 }
 ```

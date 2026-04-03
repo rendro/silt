@@ -2103,7 +2103,7 @@ trait Display for Shape {
   }
 }
 
-fn show(x) where x: Display {
+fn show(x: a) where a: Display {
   x.display()
 }
 
@@ -2117,7 +2117,7 @@ fn main() {
 #[test]
 fn test_where_clause_with_equal() {
     run_ok(r#"
-fn are_same(a, b) where a: Equal {
+fn are_same(a: t, b: t) where t: Equal {
   a == b
 }
 
@@ -2131,7 +2131,7 @@ fn main() {
 #[test]
 fn test_where_clause_with_compare() {
     run_ok(r#"
-fn is_less(a, b) where a: Compare {
+fn is_less(a: t, b: t) where t: Compare {
   a < b
 }
 

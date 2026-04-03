@@ -40,6 +40,8 @@ pub enum Type {
     Set(Box<Type>),
     /// An error type used to allow inference to continue after errors.
     Error,
+    /// A bottom type for expressions that never produce a value (return, panic).
+    Never,
 }
 
 impl std::fmt::Display for Type {
@@ -113,6 +115,7 @@ impl std::fmt::Display for Type {
             Type::Map(k, v) => write!(f, "Map({k}, {v})"),
             Type::Set(inner) => write!(f, "Set({inner})"),
             Type::Error => write!(f, "<error>"),
+            Type::Never => write!(f, "Never"),
         }
     }
 }
@@ -238,7 +241,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             fvs
         }
         Type::Set(inner) => free_vars_in(inner),
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error => {
+        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error | Type::Never => {
             Vec::new()
         }
     }
