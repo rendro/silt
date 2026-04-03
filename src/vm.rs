@@ -8,8 +8,100 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use regex::Regex;
+
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::value::Value;
+
+// ── Field type for JSON parsing ──────────────────────────────────────
+
+#[derive(Debug, Clone)]
+enum FieldType {
+    Int,
+    Float,
+    String,
+    Bool,
+    List(Box<FieldType>),
+    Option(Box<FieldType>),
+    Record(std::string::String),
+}
+
+/// Decode a type encoding string (from compiler metadata) into a FieldType.
+fn decode_field_type(s: &str) -> FieldType {
+    if let Some(rest) = s.strip_prefix("List:") {
+        FieldType::List(Box::new(decode_field_type(rest)))
+    } else if let Some(rest) = s.strip_prefix("Option:") {
+        FieldType::Option(Box::new(decode_field_type(rest)))
+    } else if let Some(rest) = s.strip_prefix("Record:") {
+        FieldType::Record(rest.to_string())
+    } else {
+        match s {
+            "Int" => FieldType::Int,
+            "Float" => FieldType::Float,
+            "String" => FieldType::String,
+            "Bool" => FieldType::Bool,
+            other => FieldType::Record(other.to_string()),
+        }
+    }
+}
+
+fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+fn value_to_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Int(n) => serde_json::Value::Number((*n).into()),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::String(s) => serde_json::Value::String(s.clone()),
+        Value::List(xs) => serde_json::Value::Array(xs.iter().map(value_to_json).collect()),
+        Value::Map(m) => {
+            let obj: serde_json::Map<std::string::String, serde_json::Value> = m
+                .iter()
+                .map(|(k, v)| (k.to_string(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Tuple(vs) => serde_json::Value::Array(vs.iter().map(value_to_json).collect()),
+        Value::Record(_name, fields) => {
+            let obj: serde_json::Map<std::string::String, serde_json::Value> = fields
+                .iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Variant(name, fields) if name == "None" && fields.is_empty() => {
+            serde_json::Value::Null
+        }
+        Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
+            value_to_json(&fields[0])
+        }
+        Value::Variant(name, fields) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("variant".into(), serde_json::Value::String(name.clone()));
+            if !fields.is_empty() {
+                obj.insert(
+                    "fields".into(),
+                    serde_json::Value::Array(fields.iter().map(value_to_json).collect()),
+                );
+            }
+            serde_json::Value::Object(obj)
+        }
+        Value::Unit => serde_json::Value::Null,
+        Value::VariantConstructor(name, _) => serde_json::Value::String(name.clone()),
+        _ => serde_json::Value::Null,
+    }
+}
 
 // ── Error type ────────────────────────────────────────────────────
 
@@ -49,6 +141,8 @@ pub struct Vm {
     /// Maps variant tag names to their parent type name, for method dispatch.
     #[allow(dead_code)]
     variant_types: HashMap<String, String>,
+    /// Maps record type names to their field definitions (name, type) for json.parse.
+    record_types: HashMap<String, Vec<(String, FieldType)>>,
 }
 
 impl Vm {
@@ -58,6 +152,7 @@ impl Vm {
             stack: Vec::new(),
             globals: HashMap::new(),
             variant_types: HashMap::new(),
+            record_types: HashMap::new(),
         };
         vm.register_builtins();
         vm
@@ -131,6 +226,11 @@ impl Vm {
             "math.sqrt", "math.pow", "math.log", "math.log10",
             "math.sin", "math.cos", "math.tan",
             "math.asin", "math.acos", "math.atan", "math.atan2",
+            "regex.is_match", "regex.find", "regex.find_all", "regex.split",
+            "regex.replace", "regex.replace_all", "regex.replace_all_with",
+            "regex.captures", "regex.captures_all",
+            "json.parse", "json.parse_list", "json.parse_map",
+            "json.stringify", "json.pretty",
         ];
 
         for name in builtin_names {
@@ -1780,6 +1880,8 @@ impl Vm {
                 "fs" => self.dispatch_fs(func, args),
                 "test" => self.dispatch_test(func, args),
                 "math" => self.dispatch_math(func, args),
+                "regex" => self.dispatch_regex(func, args),
+                "json" => self.dispatch_json(func, args),
                 _ => Err(VmError::new(format!("unknown module: {module}"))),
             }
         } else {
@@ -2922,6 +3024,532 @@ impl Vm {
                 Ok(Value::Float(y.atan2(x)))
             }
             _ => Err(VmError::new(format!("unknown math function: {name}"))),
+        }
+    }
+
+    // ── Regex module ─────────────────────────────────────────────
+
+    fn dispatch_regex(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "is_match" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.is_match takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.is_match requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                Ok(Value::Bool(re.is_match(text)))
+            }
+            "find" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.find takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.find requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                match re.find(text) {
+                    Some(m) => Ok(Value::Variant("Some".into(), vec![Value::String(m.as_str().to_string())])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "find_all" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.find_all takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.find_all requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                let matches: Vec<Value> = re.find_iter(text)
+                    .map(|m| Value::String(m.as_str().to_string()))
+                    .collect();
+                Ok(Value::List(Rc::new(matches)))
+            }
+            "split" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.split takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.split requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                let parts: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
+                Ok(Value::List(Rc::new(parts)))
+            }
+            "replace" => {
+                if args.len() != 3 {
+                    return Err(VmError::new("regex.replace takes 3 arguments (pattern, text, replacement)".into()));
+                }
+                let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(VmError::new("regex.replace requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                Ok(Value::String(re.replace(text, replacement.as_str()).to_string()))
+            }
+            "replace_all" => {
+                if args.len() != 3 {
+                    return Err(VmError::new("regex.replace_all takes 3 arguments (pattern, text, replacement)".into()));
+                }
+                let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(VmError::new("regex.replace_all requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
+            }
+            "replace_all_with" => {
+                if args.len() != 3 {
+                    return Err(VmError::new("regex.replace_all_with takes 3 arguments (pattern, text, fn)".into()));
+                }
+                let Value::String(pattern) = &args[0] else {
+                    return Err(VmError::new("regex.replace_all_with requires a string pattern".into()));
+                };
+                let Value::String(text) = &args[1] else {
+                    return Err(VmError::new("regex.replace_all_with requires a string text".into()));
+                };
+                let callback = args[2].clone();
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                let mut result = std::string::String::new();
+                let mut last_end = 0;
+                for m in re.find_iter(text) {
+                    result.push_str(&text[last_end..m.start()]);
+                    let replacement = self.invoke_callable(&callback, &[Value::String(m.as_str().to_string())])?;
+                    match replacement {
+                        Value::String(s) => result.push_str(&s),
+                        _ => return Err(VmError::new("regex.replace_all_with callback must return a string".into())),
+                    }
+                    last_end = m.end();
+                }
+                result.push_str(&text[last_end..]);
+                Ok(Value::String(result))
+            }
+            "captures" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.captures takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.captures requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                match re.captures(text) {
+                    Some(caps) => {
+                        let groups: Vec<Value> = caps.iter()
+                            .map(|m| match m {
+                                Some(m) => Value::String(m.as_str().to_string()),
+                                None => Value::String(std::string::String::new()),
+                            })
+                            .collect();
+                        Ok(Value::Variant("Some".into(), vec![Value::List(Rc::new(groups))]))
+                    }
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "captures_all" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("regex.captures_all takes 2 arguments (pattern, text)".into()));
+                }
+                let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("regex.captures_all requires string arguments".into()));
+                };
+                let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+                let all_captures: Vec<Value> = re.captures_iter(text)
+                    .map(|caps| {
+                        let groups: Vec<Value> = caps.iter()
+                            .map(|m| match m {
+                                Some(m) => Value::String(m.as_str().to_string()),
+                                None => Value::String(std::string::String::new()),
+                            })
+                            .collect();
+                        Value::List(Rc::new(groups))
+                    })
+                    .collect();
+                Ok(Value::List(Rc::new(all_captures)))
+            }
+            _ => Err(VmError::new(format!("unknown regex function: {name}"))),
+        }
+    }
+
+    // ── JSON module ──────────────────────────────────────────────
+
+    /// Load record field info from the `__record_fields__<type>` global metadata.
+    fn load_record_fields(&mut self, type_name: &str) -> Result<Vec<(String, FieldType)>, VmError> {
+        // Check cache first
+        if let Some(fields) = self.record_types.get(type_name) {
+            return Ok(fields.clone());
+        }
+        // Look up the metadata global
+        let meta_key = format!("__record_fields__{type_name}");
+        let meta = self.globals.get(&meta_key).cloned();
+        match meta {
+            Some(Value::List(items)) => {
+                let mut fields = Vec::new();
+                let mut i = 0;
+                while i + 1 < items.len() {
+                    if let (Value::String(fname), Value::String(ftype)) = (&items[i], &items[i + 1]) {
+                        fields.push((fname.clone(), decode_field_type(ftype)));
+                    }
+                    i += 2;
+                }
+                self.record_types.insert(type_name.to_string(), fields.clone());
+                Ok(fields)
+            }
+            _ => Err(VmError::new(format!("json.parse: unknown record type '{type_name}'"))),
+        }
+    }
+
+    fn dispatch_json(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "parse" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("json.parse takes 2 arguments: (Type, String)".into()));
+                }
+                let Value::RecordDescriptor(type_name) = &args[0] else {
+                    return Err(VmError::new("json.parse: first argument must be a record type".into()));
+                };
+                let type_name = type_name.clone();
+                let Value::String(s) = &args[1] else {
+                    return Err(VmError::new("json.parse: second argument must be a string".into()));
+                };
+                let s = s.clone();
+                let fields = self.load_record_fields(&type_name)?;
+                match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(json_val) => self.json_to_record(&type_name, &fields, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse: {e}"))],
+                    )),
+                }
+            }
+            "parse_list" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("json.parse_list takes 2 arguments: (Type, String)".into()));
+                }
+                let Value::RecordDescriptor(type_name) = &args[0] else {
+                    return Err(VmError::new("json.parse_list: first argument must be a record type".into()));
+                };
+                let type_name = type_name.clone();
+                let Value::String(s) = &args[1] else {
+                    return Err(VmError::new("json.parse_list: second argument must be a string".into()));
+                };
+                let s = s.clone();
+                let fields = self.load_record_fields(&type_name)?;
+                match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(json_val) => self.json_to_record_list(&type_name, &fields, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse_list: {e}"))],
+                    )),
+                }
+            }
+            "parse_map" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("json.parse_map takes 2 arguments: (ValueType, String)".into()));
+                }
+                let value_type = match &args[0] {
+                    Value::PrimitiveDescriptor(name) => name.clone(),
+                    Value::RecordDescriptor(name) => name.clone(),
+                    _ => return Err(VmError::new(
+                        "json.parse_map: first argument must be a type (Int, Float, String, Bool, or a record type)".into()
+                    )),
+                };
+                let Value::String(s) = &args[1] else {
+                    return Err(VmError::new("json.parse_map: second argument must be a string".into()));
+                };
+                let s = s.clone();
+                match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(json_val) => self.json_to_map(&value_type, &json_val),
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("json.parse_map: {e}"))],
+                    )),
+                }
+            }
+            "stringify" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("json.stringify takes 1 argument".into()));
+                }
+                let j = value_to_json(&args[0]);
+                Ok(Value::String(j.to_string()))
+            }
+            "pretty" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("json.pretty takes 1 argument".into()));
+                }
+                let j = value_to_json(&args[0]);
+                Ok(Value::String(serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())))
+            }
+            _ => Err(VmError::new(format!("unknown json function: {name}"))),
+        }
+    }
+
+    // ── JSON helpers ─────────────────────────────────────────────
+
+    fn json_to_record(
+        &mut self,
+        type_name: &str,
+        fields: &[(String, FieldType)],
+        json: &serde_json::Value,
+    ) -> Result<Value, VmError> {
+        let serde_json::Value::Object(obj) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse({type_name}): expected JSON object, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        let mut record_fields = BTreeMap::new();
+        for (field_name, field_type) in fields {
+            match obj.get(field_name) {
+                Some(json_val) => {
+                    match self.json_to_typed_value(json_val, field_type, type_name, field_name) {
+                        Ok(val) => {
+                            record_fields.insert(field_name.clone(), val);
+                        }
+                        Err(e) => {
+                            return Ok(Value::Variant(
+                                "Err".into(),
+                                vec![Value::String(e.message.clone())],
+                            ));
+                        }
+                    }
+                }
+                None => match field_type {
+                    FieldType::Option(_) => {
+                        record_fields.insert(
+                            field_name.clone(),
+                            Value::Variant("None".into(), Vec::new()),
+                        );
+                    }
+                    _ => {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse({type_name}): missing field '{field_name}'"
+                            ))],
+                        ));
+                    }
+                },
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::Record(type_name.to_string(), Rc::new(record_fields))],
+        ))
+    }
+
+    fn json_to_record_list(
+        &mut self,
+        type_name: &str,
+        fields: &[(String, FieldType)],
+        json: &serde_json::Value,
+    ) -> Result<Value, VmError> {
+        let serde_json::Value::Array(arr) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse_list({type_name}): expected JSON array, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        let mut records = Vec::new();
+        for (i, item) in arr.iter().enumerate() {
+            let result = self.json_to_record(type_name, fields, item)?;
+            match result {
+                Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+                    records.push(inner.into_iter().next().unwrap());
+                }
+                Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
+                    if let Value::String(msg) = &inner[0] {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse_list({type_name}): element {i}: {msg}"
+                            ))],
+                        ));
+                    } else {
+                        return Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!(
+                                "json.parse_list({type_name}): element {i}: parse error"
+                            ))],
+                        ));
+                    }
+                }
+                _ => {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_list({type_name}): element {i}: unexpected result"
+                        ))],
+                    ));
+                }
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::List(Rc::new(records))],
+        ))
+    }
+
+    fn json_to_map(
+        &mut self,
+        value_type: &str,
+        json: &serde_json::Value,
+    ) -> Result<Value, VmError> {
+        let serde_json::Value::Object(obj) = json else {
+            return Ok(Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!(
+                    "json.parse_map: expected JSON object, got {}", json_type_name(json)
+                ))],
+            ));
+        };
+        let field_type = match value_type {
+            "String" => FieldType::String,
+            "Int" => FieldType::Int,
+            "Float" => FieldType::Float,
+            "Bool" => FieldType::Bool,
+            record_name => {
+                // Check if it's a known record type
+                let meta_key = format!("__record_fields__{record_name}");
+                if !self.globals.contains_key(&meta_key) {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_map: unknown value type '{record_name}'"
+                        ))],
+                    ));
+                }
+                FieldType::Record(record_name.to_string())
+            }
+        };
+        let mut map = BTreeMap::new();
+        for (key, json_val) in obj {
+            match self.json_to_typed_value(json_val, &field_type, "Map", key) {
+                Ok(val) => {
+                    map.insert(Value::String(key.clone()), val);
+                }
+                Err(e) => {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!(
+                            "json.parse_map: key '{key}': {}", e.message
+                        ))],
+                    ));
+                }
+            }
+        }
+        Ok(Value::Variant(
+            "Ok".into(),
+            vec![Value::Map(Rc::new(map))],
+        ))
+    }
+
+    fn json_to_typed_value(
+        &mut self,
+        json: &serde_json::Value,
+        expected: &FieldType,
+        parent_type: &str,
+        field_name: &str,
+    ) -> Result<Value, VmError> {
+        match expected {
+            FieldType::String => match json {
+                serde_json::Value::String(s) => Ok(Value::String(s.clone())),
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected String, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Int => match json {
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Ok(Value::Int(i))
+                    } else if let Some(f) = n.as_f64() {
+                        Ok(Value::Int(f as i64))
+                    } else {
+                        Err(VmError::new(format!(
+                            "json.parse({parent_type}): field '{field_name}': expected Int, got number that doesn't fit"
+                        )))
+                    }
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Int, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Float => match json {
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        Ok(Value::Float(f))
+                    } else {
+                        Err(VmError::new(format!(
+                            "json.parse({parent_type}): field '{field_name}': expected Float, got non-numeric number"
+                        )))
+                    }
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Float, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Bool => match json {
+                serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected Bool, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::List(inner) => match json {
+                serde_json::Value::Array(arr) => {
+                    let mut values = Vec::new();
+                    for (i, item) in arr.iter().enumerate() {
+                        let idx_name = format!("{field_name}[{i}]");
+                        match self.json_to_typed_value(item, inner, parent_type, &idx_name) {
+                            Ok(v) => values.push(v),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Ok(Value::List(Rc::new(values)))
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected List, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Option(inner) => match json {
+                serde_json::Value::Null => {
+                    Ok(Value::Variant("None".into(), Vec::new()))
+                }
+                _ => {
+                    let val = self.json_to_typed_value(json, inner, parent_type, field_name)?;
+                    Ok(Value::Variant("Some".into(), vec![val]))
+                }
+            },
+            FieldType::Record(rec_name) => {
+                let fields = self.load_record_fields(rec_name)?;
+                let result = self.json_to_record(rec_name, &fields, json)?;
+                match &result {
+                    Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
+                        Ok(inner[0].clone())
+                    }
+                    Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
+                        if let Value::String(msg) = &inner[0] {
+                            Err(VmError::new(format!(
+                                "json.parse({parent_type}): field '{field_name}': {msg}"
+                            )))
+                        } else {
+                            Err(VmError::new(format!(
+                                "json.parse({parent_type}): field '{field_name}': failed to parse {rec_name}"
+                            )))
+                        }
+                    }
+                    _ => Err(VmError::new(format!(
+                        "json.parse({parent_type}): field '{field_name}': unexpected result"
+                    ))),
+                }
+            }
         }
     }
 }

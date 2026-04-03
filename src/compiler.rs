@@ -9,11 +9,39 @@
 use std::rc::Rc;
 
 use crate::ast::{
-    BinOp, Decl, Expr, ExprKind, ListElem, MatchArm, Pattern, Program, Stmt, StringPart, UnaryOp,
+    BinOp, Decl, Expr, ExprKind, ListElem, MatchArm, Pattern, Program, Stmt, StringPart, TypeExpr, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::lexer::Span;
 use crate::value::Value;
+
+// ── Type encoding for record field metadata ─────────────────────────
+
+/// Encode a TypeExpr as a compact string for runtime JSON parsing.
+/// Examples: "String", "Int", "List:String", "Option:Int", "Record:Address"
+fn encode_type_expr(te: &TypeExpr) -> String {
+    match te {
+        TypeExpr::Named(n) => match n.as_str() {
+            "Int" | "Float" | "String" | "Bool" => n.clone(),
+            _ if n.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
+                format!("Record:{n}")
+            }
+            _ => "String".to_string(),
+        },
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "List" => {
+                let inner = args.first().map(encode_type_expr).unwrap_or_else(|| "String".into());
+                format!("List:{inner}")
+            }
+            "Option" => {
+                let inner = args.first().map(encode_type_expr).unwrap_or_else(|| "String".into());
+                format!("Option:{inner}")
+            }
+            _ => "String".to_string(),
+        },
+        _ => "String".to_string(),
+    }
+}
 
 // ── Bind destruct kind ───────────────────────────────────────────────
 
@@ -252,7 +280,7 @@ impl Compiler {
                             self.current_chunk().emit_op(Op::Pop, span);
                         }
                     }
-                    crate::ast::TypeBody::Record(_fields) => {
+                    crate::ast::TypeBody::Record(fields) => {
                         // Register the record type name as a RecordDescriptor global.
                         let val = Value::RecordDescriptor(type_decl.name.clone());
                         let val_idx = self.current_chunk().add_constant(val);
@@ -261,6 +289,26 @@ impl Compiler {
                         let name_idx = self.current_chunk().add_constant(Value::String(type_decl.name.clone()));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+
+                        // Emit record field metadata as a global list for json module.
+                        // Format: list of alternating [field_name, type_encoding, ...]
+                        let field_count = fields.len();
+                        for f in fields {
+                            let fname = self.current_chunk().add_constant(Value::String(f.name.clone()));
+                            self.current_chunk().emit_op(Op::Constant, span);
+                            self.current_chunk().emit_u16(fname, span);
+                            let ftype = self.current_chunk().add_constant(Value::String(encode_type_expr(&f.ty)));
+                            self.current_chunk().emit_op(Op::Constant, span);
+                            self.current_chunk().emit_u16(ftype, span);
+                        }
+                        self.current_chunk().emit_op(Op::MakeList, span);
+                        self.current_chunk().emit_u16((field_count * 2) as u16, span);
+                        let meta_key = self.current_chunk().add_constant(
+                            Value::String(format!("__record_fields__{}", type_decl.name))
+                        );
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(meta_key, span);
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                 }
