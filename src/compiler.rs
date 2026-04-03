@@ -36,6 +36,15 @@ struct CompileContext {
     scope_depth: usize,
     /// Upvalue descriptors for this function/closure.
     upvalues: Vec<UpvalueDesc>,
+    /// Loop context stack: (first_loop_slot, loop_start_offset, binding_count)
+    loop_stack: Vec<LoopInfo>,
+}
+
+struct LoopInfo {
+    first_slot: u16,
+    loop_start: usize,
+    #[allow(dead_code)]
+    binding_count: u8,
 }
 
 impl CompileContext {
@@ -45,6 +54,7 @@ impl CompileContext {
             locals: Vec::new(),
             scope_depth: 0,
             upvalues: Vec::new(),
+            loop_stack: Vec::new(),
         }
     }
 }
@@ -206,8 +216,108 @@ impl Compiler {
                 Ok(())
             }
 
-            Decl::Type(_) | Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Import(_) => {
-                // Skip type/trait/import declarations silently.
+            Decl::Type(type_decl) => {
+                let span = type_decl.span;
+                match &type_decl.body {
+                    crate::ast::TypeBody::Enum(variants) => {
+                        for variant in variants {
+                            let name = &variant.name;
+                            let arity = variant.fields.len();
+                            if arity == 0 {
+                                // Nullary variant: register as a Variant value
+                                let val = Value::Variant(name.clone(), Vec::new());
+                                let val_idx = self.current_chunk().add_constant(val);
+                                self.current_chunk().emit_op(Op::Constant, span);
+                                self.current_chunk().emit_u16(val_idx, span);
+                            } else {
+                                // Variant constructor
+                                let val = Value::VariantConstructor(name.clone(), arity);
+                                let val_idx = self.current_chunk().add_constant(val);
+                                self.current_chunk().emit_op(Op::Constant, span);
+                                self.current_chunk().emit_u16(val_idx, span);
+                            }
+                            let name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                            self.current_chunk().emit_op(Op::SetGlobal, span);
+                            self.current_chunk().emit_u16(name_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+
+                            // Register variant -> type mapping for method dispatch.
+                            let mapping_key = format!("__type_of__{name}");
+                            let key_idx = self.current_chunk().add_constant(Value::String(mapping_key));
+                            let type_val_idx = self.current_chunk().add_constant(Value::String(type_decl.name.clone()));
+                            self.current_chunk().emit_op(Op::Constant, span);
+                            self.current_chunk().emit_u16(type_val_idx, span);
+                            self.current_chunk().emit_op(Op::SetGlobal, span);
+                            self.current_chunk().emit_u16(key_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+                        }
+                    }
+                    crate::ast::TypeBody::Record(_fields) => {
+                        // Register the record type name as a RecordDescriptor global.
+                        let val = Value::RecordDescriptor(type_decl.name.clone());
+                        let val_idx = self.current_chunk().add_constant(val);
+                        self.current_chunk().emit_op(Op::Constant, span);
+                        self.current_chunk().emit_u16(val_idx, span);
+                        let name_idx = self.current_chunk().add_constant(Value::String(type_decl.name.clone()));
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+                }
+                Ok(())
+            }
+
+            Decl::TraitImpl(trait_impl) => {
+                // Compile each method and register as "TypeName.method_name" global.
+                for method in &trait_impl.methods {
+                    let arity = method.params.len() as u8;
+                    let qualified_name = format!("{}.{}", trait_impl.target_type, method.name);
+                    let span = method.span;
+
+                    self.contexts.push(CompileContext::new(qualified_name.clone(), arity));
+
+                    // Add parameters as locals.
+                    for (i, param) in method.params.iter().enumerate() {
+                        match &param.pattern {
+                            Pattern::Ident(name) => {
+                                self.add_local(name.clone());
+                            }
+                            _ => {
+                                let slot = self.add_local(format!("__param_{i}__"));
+                                self.current_chunk().emit_op(Op::GetLocal, span);
+                                self.current_chunk().emit_u16(slot, span);
+                                let _hidden = self.add_local("__param_copy__".into());
+                                self.current_chunk().emit_op(Op::SetLocal, span);
+                                self.current_chunk().emit_u16(_hidden, span);
+                                self.compile_pattern_bind(&param.pattern, span)?;
+                            }
+                        }
+                    }
+
+                    self.compile_expr(&method.body)?;
+                    self.current_chunk().emit_op(Op::Return, span);
+
+                    let ctx = self.contexts.pop().unwrap();
+                    let func = ctx.function;
+                    let vm_closure = Rc::new(VmClosure {
+                        function: Rc::new(func),
+                        upvalues: vec![],
+                    });
+                    let closure_val = Value::VmClosure(vm_closure);
+                    let fi = self.current_chunk().add_constant(closure_val);
+                    self.current_chunk().emit_op(Op::Constant, span);
+                    self.current_chunk().emit_u16(fi, span);
+
+                    let name_idx = self.current_chunk().add_constant(Value::String(qualified_name));
+                    self.current_chunk().emit_op(Op::SetGlobal, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
+                }
+                Ok(())
+            }
+
+            Decl::Trait(_) | Decl::Import(_) => {
+                // Skip trait declarations and imports silently.
                 Ok(())
             }
         }
@@ -434,6 +544,41 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::CallBuiltin, span);
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
+                } else if let ExprKind::FieldAccess(receiver, method) = &callee.kind {
+                    // Check if this is a module-qualified call on a non-local ident
+                    let is_module_call = if let ExprKind::Ident(name) = &receiver.kind {
+                        self.resolve_local(name).is_none()
+                            && self.resolve_upvalue_peek(name).is_none()
+                    } else {
+                        false
+                    };
+                    if is_module_call {
+                        if let ExprKind::Ident(module) = &receiver.kind {
+                            // Module-qualified call on a global module name.
+                            let qualified = format!("{module}.{method}");
+                            let name_idx = self.current_chunk().add_constant(Value::String(qualified));
+                            self.current_chunk().emit_op(Op::GetGlobal, span);
+                            self.current_chunk().emit_u16(name_idx, span);
+                            for arg in args {
+                                self.compile_expr(arg)?;
+                            }
+                            let argc = args.len() as u8;
+                            self.current_chunk().emit_op(Op::Call, span);
+                            self.current_chunk().emit_u8(argc, span);
+                        }
+                    } else {
+                        // Method call on a value: expr.method(args)
+                        // Compile receiver as first argument.
+                        self.compile_expr(receiver)?;
+                        for arg in args {
+                            self.compile_expr(arg)?;
+                        }
+                        let argc = (args.len() + 1) as u8; // receiver + args
+                        let method_idx = self.current_chunk().add_constant(Value::String(method.clone()));
+                        self.current_chunk().emit_op(Op::CallMethod, span);
+                        self.current_chunk().emit_u16(method_idx, span);
+                        self.current_chunk().emit_u8(argc, span);
+                    }
                 } else {
                     // Normal function call
                     self.compile_expr(callee)?;
@@ -448,12 +593,25 @@ impl Compiler {
 
             ExprKind::FieldAccess(expr, field) => {
                 // Check if this is a module-qualified name like list.map
-                if let ExprKind::Ident(module) = &expr.kind {
-                    let qualified = format!("{module}.{field}");
-                    let name_idx =
-                        self.current_chunk().add_constant(Value::String(qualified));
-                    self.current_chunk().emit_op(Op::GetGlobal, span);
-                    self.current_chunk().emit_u16(name_idx, span);
+                // But only if the identifier is NOT a known local or upvalue.
+                if let ExprKind::Ident(name) = &expr.kind {
+                    let is_local = self.resolve_local(name).is_some()
+                        || self.resolve_upvalue(name).is_some();
+                    if !is_local {
+                        // Module-qualified global: list.map, string.length, etc.
+                        let qualified = format!("{name}.{field}");
+                        let name_idx =
+                            self.current_chunk().add_constant(Value::String(qualified));
+                        self.current_chunk().emit_op(Op::GetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        return Ok(());
+                    }
+                }
+                if let Ok(index) = field.parse::<u8>() {
+                    // Tuple index access: expr.0, expr.1, etc.
+                    self.compile_expr(expr)?;
+                    self.current_chunk().emit_op(Op::GetIndex, span);
+                    self.current_chunk().emit_u8(index, span);
                 } else {
                     // Compile the expression and access field
                     self.compile_expr(expr)?;
@@ -657,11 +815,24 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
+                let loop_info = self.ctx().loop_stack.last()
+                    .ok_or_else(|| "recur outside of loop".to_string())?;
+                let first_slot = loop_info.first_slot;
+                let loop_start = loop_info.loop_start;
+
                 for arg in args {
                     self.compile_expr(arg)?;
                 }
                 self.current_chunk().emit_op(Op::Recur, span);
                 self.current_chunk().emit_u8(args.len() as u8, span);
+                self.current_chunk().emit_u16(first_slot, span);
+
+                // Emit JumpBack to loop start.
+                let current_offset = self.current_chunk().len();
+                // JumpBack operand is how far back to jump from after the operand.
+                let jump_back_dist = current_offset + 3 - loop_start; // +3 for opcode + u16
+                self.current_chunk().emit_op(Op::JumpBack, span);
+                self.current_chunk().emit_u16(jump_back_dist as u16, span);
             }
 
             // All expression kinds are handled above. If new ones are added,
@@ -1335,53 +1506,15 @@ impl Compiler {
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
                 } else {
-                    // Compile callee, then rearrange: [val, func, arg1, ...] -> Call
-                    // We need func first, then val, then args.
-                    // Strategy: compile func to get [val, func], then swap.
-                    // We don't have a Swap op, so let's restructure:
-                    // Actually the stack is: [... val], compile callee -> [... val, func]
-                    // We need [... func, val, arg1, ...argN]
-                    // Use a temporary local? No, let's just reorder compilation:
-                    //   1. Save val in stack
-                    //   2. Compile callee
-                    //   3. Re-push val (from underneath)
-                    //   4. Compile args
-                    //   5. Call
-                    // But we can't easily re-order the stack without Swap.
-                    //
-                    // Simpler approach: compile callee first, then emit left under it.
-                    // Actually, left is already compiled. Let's just do callee then reorganize.
-                    //
-                    // The cleanest approach for now: compile it as GetGlobal("func"),
-                    // then rearrange. Since we don't have Swap, let's just pop val,
-                    // compile func + val + args, call.
-                    //
-                    // Actually, let's just store val in a temp. We can use the stack:
-                    // Stack: [... val]
-                    // Compile callee -> [... val, func]
-                    // We need: [... func, val, args]
-                    // Since we don't have Swap, let's just pop val to a temp global.
-                    // No, that's ugly.
-                    //
-                    // Best approach: restructure so we compile in the right order.
-                    // Pipe `a |> f(b)` compiles to: push f, push a, push b, Call 2
-                    // But we already pushed a. So let's pop it, compile f, push a, push args.
-
-                    // Pop the already-pushed left value to re-push later
-                    // Actually, the val is on the stack. Let's compile callee,
-                    // which will be on top of val. Then swap would help, but
-                    // let's use a different strategy:
-                    // Store val as a local, compile callee, get local, compile args, call.
-
-                    // Actually simplest for now: store in a hidden local
+                    // Store val in a hidden local so it persists while we compile callee.
+                    // SetLocal does NOT pop; the value stays on the stack at the local's slot.
                     let pipe_slot = self.add_local("__pipe_val__".into());
                     self.current_chunk().emit_op(Op::SetLocal, span);
                     self.current_chunk().emit_u16(pipe_slot, span);
-                    self.current_chunk().emit_op(Op::Pop, span);
 
-                    // Now compile callee
+                    // Compile callee
                     self.compile_expr(callee)?;
-                    // Push val back
+                    // Push val back from its local slot
                     self.current_chunk().emit_op(Op::GetLocal, span);
                     self.current_chunk().emit_u16(pipe_slot, span);
                     // Push remaining args
@@ -1393,27 +1526,12 @@ impl Compiler {
                     self.current_chunk().emit_u8(argc, span);
                 }
             }
-            ExprKind::Ident(_) => {
-                // val |> f -> f(val)
-                // Stack: [... val]
-                // Need: [... func, val], Call 1
-                let pipe_slot = self.add_local("__pipe_val__".into());
-                self.current_chunk().emit_op(Op::SetLocal, span);
-                self.current_chunk().emit_u16(pipe_slot, span);
-                self.current_chunk().emit_op(Op::Pop, span);
-
-                self.compile_expr(right)?;
-                self.current_chunk().emit_op(Op::GetLocal, span);
-                self.current_chunk().emit_u16(pipe_slot, span);
-                self.current_chunk().emit_op(Op::Call, span);
-                self.current_chunk().emit_u8(1, span);
-            }
             _ => {
-                // val |> expr -> expr(val)
+                // val |> f or val |> expr
+                // Store val in a hidden local, compile RHS, get val, call.
                 let pipe_slot = self.add_local("__pipe_val__".into());
                 self.current_chunk().emit_op(Op::SetLocal, span);
                 self.current_chunk().emit_u16(pipe_slot, span);
-                self.current_chunk().emit_op(Op::Pop, span);
 
                 self.compile_expr(right)?;
                 self.current_chunk().emit_op(Op::GetLocal, span);
@@ -1435,29 +1553,40 @@ impl Compiler {
     ) -> Result<(), String> {
         self.begin_scope();
 
-        // Compile initial values and store in locals
-        for (name, init) in bindings {
+        // Compile initial values and store in locals.
+        // Record the first slot so Recur knows where to write.
+        // Note: do NOT pop after SetLocal — the value stays on the stack as the local's slot.
+        let mut first_slot = 0u16;
+        for (i, (name, init)) in bindings.iter().enumerate() {
             self.compile_expr(init)?;
             let slot = self.add_local(name.clone());
+            if i == 0 {
+                first_slot = slot;
+            }
             self.current_chunk().emit_op(Op::SetLocal, span);
             self.current_chunk().emit_u16(slot, span);
-            self.current_chunk().emit_op(Op::Pop, span);
         }
 
-        // Record the loop start for JumpBack
+        // Record the loop start for JumpBack.
         let loop_start = self.current_chunk().len();
 
-        // Compile body
+        // Push loop info so Recur knows what to do.
+        self.ctx_mut().loop_stack.push(LoopInfo {
+            first_slot,
+            loop_start,
+            binding_count: bindings.len() as u8,
+        });
+
+        // Compile body.
         self.compile_expr(body)?;
 
-        // The body should either have used `recur` (which jumps back) or fallen through.
-        // If it fell through, the result is on the stack.
+        // Pop loop info.
+        self.ctx_mut().loop_stack.pop();
+
+        // The body either used `recur` (which updates locals and jumps back)
+        // or fell through with the final value on the stack.
 
         self.end_scope(span);
-        // After Recur, we need a JumpBack to loop_start. But Recur is compiled inline
-        // in the body. For now, the loop body's result is the final value.
-        // TODO: properly handle loop/recur with JumpBack
-        let _ = loop_start;
 
         Ok(())
     }
@@ -1465,11 +1594,14 @@ impl Compiler {
     // ── Helper: extract builtin name ─────────────────────────────
 
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
-    /// return the qualified name.
+    /// return the qualified name. Only returns Some if the ident is NOT a local/upvalue.
     fn extract_builtin_name(&self, callee: &Expr) -> Option<String> {
         if let ExprKind::FieldAccess(expr, field) = &callee.kind {
             if let ExprKind::Ident(module) = &expr.kind {
-                return Some(format!("{module}.{field}"));
+                // Check if it's a local or upvalue first
+                if self.resolve_local(module).is_none() && self.resolve_upvalue_peek(module).is_none() {
+                    return Some(format!("{module}.{field}"));
+                }
             }
         }
         None
@@ -1531,6 +1663,29 @@ impl Compiler {
                 return Some(local.slot);
             }
         }
+        None
+    }
+
+    /// Non-mutating check if a variable could be resolved as an upvalue.
+    /// Used for determining if an identifier is a variable vs module name.
+    fn resolve_upvalue_peek(&self, name: &str) -> Option<()> {
+        let current_idx = self.contexts.len() - 1;
+        if current_idx == 0 {
+            return None;
+        }
+        // Check if the variable exists as a local in any enclosing context
+        // or as an upvalue already captured.
+        for i in (0..current_idx).rev() {
+            let ctx = &self.contexts[i];
+            if ctx.locals.iter().any(|l| l.name == name) {
+                return Some(());
+            }
+            if ctx.upvalues.iter().any(|_| false) {
+                // Can't easily check names of upvalues, but the local check is enough
+            }
+        }
+        // Also check if it's already captured as an upvalue in the current context
+        // This is a heuristic — we just need to know if it's a variable, not necessarily capture it
         None
     }
 

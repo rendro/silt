@@ -725,6 +725,12 @@ impl Parser {
                             },
                             span,
                         );
+                    } else if let Token::Int(n) = self.peek() {
+                        // Tuple index access: expr.0, expr.1, etc.
+                        let field = n.to_string();
+                        self.advance();
+                        let span = left.span;
+                        left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
                     } else {
                         let (field, _) = self.expect_ident()?;
                         let span = left.span;

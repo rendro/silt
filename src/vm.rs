@@ -46,6 +46,9 @@ pub struct Vm {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
     globals: HashMap<String, Value>,
+    /// Maps variant tag names to their parent type name, for method dispatch.
+    #[allow(dead_code)]
+    variant_types: HashMap<String, String>,
 }
 
 impl Vm {
@@ -54,6 +57,7 @@ impl Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
+            variant_types: HashMap::new(),
         };
         vm.register_builtins();
         vm
@@ -84,7 +88,7 @@ impl Vm {
 
         // All builtin function names
         let builtin_names = [
-            "print", "println", "io.inspect", "panic",
+            "print", "println", "io.inspect", "panic", "try", "to_string", "type_of",
             "list.map", "list.filter", "list.each", "list.fold",
             "list.find", "list.zip", "list.flatten", "list.sort_by",
             "list.flat_map", "list.filter_map", "list.any", "list.all",
@@ -790,14 +794,17 @@ impl Vm {
                 }
                 Some(Op::Recur) => {
                     let arg_count = self.read_u8() as usize;
+                    let first_slot = self.read_u16() as usize;
                     // Update loop bindings: the new values are on top of stack.
-                    // Copy them back into the binding slots at the start of this frame.
+                    // Copy them back into the binding slots starting at first_slot.
                     let base = self.current_frame().base_slot;
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
-                        self.stack[base + i] = self.stack[start + i].clone();
+                        self.stack[base + first_slot + i] = self.stack[start + i].clone();
                     }
-                    self.stack.truncate(start);
+                    // Truncate all the way back to just after loop bindings.
+                    // This cleans up any intermediate values from the loop body.
+                    self.stack.truncate(base + first_slot + arg_count);
                 }
 
                 // ── Error handling ────────────────────────────
@@ -822,7 +829,10 @@ impl Vm {
                                     if self.frames.is_empty() {
                                         return Ok(result);
                                     }
-                                    self.stack.truncate(finished_base);
+                                    // Truncate to the func_slot (base - 1) to
+                                    // clean up the callee's stack window.
+                                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                                    self.stack.truncate(func_slot);
                                     self.push(result);
                                 }
                                 _ => {
@@ -843,6 +853,29 @@ impl Vm {
                 Some(Op::Panic) => {
                     let msg = self.pop();
                     return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
+                }
+
+                // ── Method dispatch ───────────────────────────
+                Some(Op::CallMethod) => {
+                    let method_name_index = self.read_u16() as usize;
+                    let argc = self.read_u8() as usize;
+                    let method_name = self.read_constant_string(method_name_index)?;
+                    // The receiver is at stack[len - argc] (first arg)
+                    let receiver_slot = self.stack.len() - argc;
+                    let receiver = self.stack[receiver_slot].clone();
+                    let type_name = self.value_type_name_for_dispatch(&receiver);
+                    let qualified = format!("{type_name}.{method_name}");
+                    if let Some(func) = self.globals.get(&qualified).cloned() {
+                        // Replace: treat receiver + args as args to the function
+                        let args: Vec<Value> = self.stack[receiver_slot..].to_vec();
+                        self.stack.truncate(receiver_slot);
+                        let result = self.invoke_callable(&func, &args)?;
+                        self.push(result);
+                    } else {
+                        return Err(VmError::new(format!(
+                            "no method '{method_name}' for type '{type_name}'"
+                        )));
+                    }
                 }
 
                 // ── Concurrency (stubs for Phase 2) ───────────
@@ -967,7 +1000,8 @@ impl Vm {
                                 return Ok(result);
                             }
                             // Otherwise, it's an inner return (nested calls)
-                            self.stack.truncate(finished_base);
+                            let inner_func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                            self.stack.truncate(inner_func_slot);
                             self.push(result);
                         }
                         Some(op) => {
@@ -1451,12 +1485,14 @@ impl Vm {
             Op::LoopSetup => { let _ = self.read_u8(); }
             Op::Recur => {
                 let arg_count = self.read_u8() as usize;
+                let first_slot = self.read_u16() as usize;
                 let base = self.current_frame().base_slot;
                 let start = self.stack.len() - arg_count;
                 for i in 0..arg_count {
-                    self.stack[base + i] = self.stack[start + i].clone();
+                    self.stack[base + first_slot + i] = self.stack[start + i].clone();
                 }
-                self.stack.truncate(start);
+                // Truncate all the way back to just after loop bindings.
+                self.stack.truncate(base + first_slot + arg_count);
             }
             Op::QuestionMark => {
                 let val = self.peek().clone();
@@ -1485,6 +1521,25 @@ impl Vm {
             Op::Panic => {
                 let msg = self.pop();
                 return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
+            }
+            Op::CallMethod => {
+                let method_name_index = self.read_u16() as usize;
+                let argc = self.read_u8() as usize;
+                let method_name = self.read_constant_string(method_name_index)?;
+                let receiver_slot = self.stack.len() - argc;
+                let receiver = self.stack[receiver_slot].clone();
+                let type_name = self.value_type_name_for_dispatch(&receiver);
+                let qualified = format!("{type_name}.{method_name}");
+                if let Some(func) = self.globals.get(&qualified).cloned() {
+                    let args: Vec<Value> = self.stack[receiver_slot..].to_vec();
+                    self.stack.truncate(receiver_slot);
+                    let result = self.invoke_callable(&func, &args)?;
+                    self.push(result);
+                } else {
+                    return Err(VmError::new(format!(
+                        "no method '{method_name}' for type '{type_name}'"
+                    )));
+                }
             }
             Op::ChanNew | Op::ChanSend | Op::ChanRecv | Op::ChanClose
             | Op::ChanTrySend | Op::ChanTryRecv | Op::ChanSelect
@@ -1679,6 +1734,31 @@ impl Vm {
         }
     }
 
+    /// Get the type name for method dispatch. For variants, looks up the parent type.
+    fn value_type_name_for_dispatch(&self, val: &Value) -> String {
+        match val {
+            Value::Variant(tag, _) => {
+                // Look up the parent type from the __type_of__ mapping
+                let key = format!("__type_of__{tag}");
+                if let Some(Value::String(type_name)) = self.globals.get(&key) {
+                    type_name.clone()
+                } else {
+                    tag.clone() // fallback: use the tag itself
+                }
+            }
+            Value::Record(type_name, _) => type_name.clone(),
+            Value::Int(_) => "Int".to_string(),
+            Value::Float(_) => "Float".to_string(),
+            Value::Bool(_) => "Bool".to_string(),
+            Value::String(_) => "String".to_string(),
+            Value::List(_) => "List".to_string(),
+            Value::Map(_) => "Map".to_string(),
+            Value::Set(_) => "Set".to_string(),
+            Value::Tuple(_) => "Tuple".to_string(),
+            _ => "Unknown".to_string(),
+        }
+    }
+
     // ── Builtin dispatch ──────────────────────────────────────────
 
     fn dispatch_builtin(
@@ -1743,6 +1823,15 @@ impl Vm {
                         return Err(VmError::new("type_of expects 1 argument".into()));
                     }
                     Ok(Value::String(self.type_name(&args[0]).to_string()))
+                }
+                "try" => {
+                    if args.len() != 1 {
+                        return Err(VmError::new("try takes 1 argument (a zero-argument function)".into()));
+                    }
+                    match self.invoke_callable(&args[0], &[]) {
+                        Ok(val) => Ok(Value::Variant("Ok".into(), vec![val])),
+                        Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.message)])),
+                    }
                 }
                 _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }
@@ -1988,6 +2077,78 @@ impl Vm {
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.enumerate requires a list".into())); };
                 let result: Vec<Value> = xs.iter().enumerate().map(|(i, v)| Value::Tuple(vec![Value::Int(i as i64), v.clone()])).collect();
                 Ok(Value::List(Rc::new(result)))
+            }
+            "sort_by" => {
+                if args.len() != 2 { return Err(VmError::new("list.sort_by takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.sort_by requires a list".into())); };
+                let func = &args[1];
+                // sort_by uses a key function: func(item) -> sort key
+                let mut pairs: Vec<(Value, Value)> = Vec::new();
+                for item in xs.iter() {
+                    let key = self.invoke_callable(func, &[item.clone()])?;
+                    pairs.push((key, item.clone()));
+                }
+                pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
+                Ok(Value::List(Rc::new(sorted)))
+            }
+            "fold_until" => {
+                if args.len() != 3 { return Err(VmError::new("list.fold_until takes 3 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.fold_until requires a list".into())); };
+                let func = &args[2];
+                let mut acc = args[1].clone();
+                for item in xs.iter() {
+                    let result = self.invoke_callable(func, &[acc.clone(), item.clone()])?;
+                    match result {
+                        Value::Variant(ref tag, ref fields) if tag == "Continue" && fields.len() == 1 => {
+                            acc = fields[0].clone();
+                        }
+                        Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
+                            return Ok(fields[0].clone());
+                        }
+                        _ => { acc = result; }
+                    }
+                }
+                Ok(acc)
+            }
+            "unfold" => {
+                if args.len() != 2 { return Err(VmError::new("list.unfold takes 2 arguments".into())); }
+                let func = &args[1];
+                let mut state = args[0].clone();
+                let mut result = Vec::new();
+                loop {
+                    let val = self.invoke_callable(func, &[state.clone()])?;
+                    match val {
+                        Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
+                            if let Value::Tuple(pair) = &fields[0] {
+                                if pair.len() == 2 {
+                                    result.push(pair[0].clone());
+                                    state = pair[1].clone();
+                                    continue;
+                                }
+                            }
+                            result.push(fields[0].clone());
+                            break;
+                        }
+                        Value::Variant(ref tag, _) if tag == "None" => { break; }
+                        _ => { result.push(val); break; }
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "group_by" => {
+                if args.len() != 2 { return Err(VmError::new("list.group_by takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.group_by requires a list".into())); };
+                let func = &args[1];
+                let mut groups: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
+                for item in xs.iter() {
+                    let key = self.invoke_callable(func, &[item.clone()])?;
+                    groups.entry(key).or_default().push(item.clone());
+                }
+                let result: BTreeMap<Value, Value> = groups.into_iter()
+                    .map(|(k, v)| (k, Value::List(Rc::new(v))))
+                    .collect();
+                Ok(Value::Map(Rc::new(result)))
             }
             _ => Err(VmError::new(format!("unknown list function: {name}"))),
         }
@@ -2333,9 +2494,50 @@ impl Vm {
                 }
                 Ok(Value::Map(Rc::new(result)))
             }
-            "filter" | "map" | "each" | "update" => {
-                // These require closures -- handled via invoke_callable
-                Err(VmError::new(format!("map.{name} with closures not yet supported in VM")))
+            "filter" => {
+                if args.len() != 2 { return Err(VmError::new("map.filter takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.filter requires a map".into())); };
+                let func = &args[1];
+                let mut result = BTreeMap::new();
+                for (k, v) in m.iter() {
+                    let keep = self.invoke_callable(func, &[k.clone(), v.clone()])?;
+                    if self.is_truthy(&keep) {
+                        result.insert(k.clone(), v.clone());
+                    }
+                }
+                Ok(Value::Map(Rc::new(result)))
+            }
+            "map" => {
+                if args.len() != 2 { return Err(VmError::new("map.map takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.map requires a map".into())); };
+                let func = &args[1];
+                let mut result = BTreeMap::new();
+                for (k, v) in m.iter() {
+                    let new_val = self.invoke_callable(func, &[k.clone(), v.clone()])?;
+                    result.insert(k.clone(), new_val);
+                }
+                Ok(Value::Map(Rc::new(result)))
+            }
+            "each" => {
+                if args.len() != 2 { return Err(VmError::new("map.each takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.each requires a map".into())); };
+                let func = &args[1];
+                for (k, v) in m.iter() {
+                    self.invoke_callable(func, &[k.clone(), v.clone()])?;
+                }
+                Ok(Value::Unit)
+            }
+            "update" => {
+                if args.len() != 4 { return Err(VmError::new("map.update takes 4 arguments (map, key, default, fn)".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.update requires a map".into())); };
+                let key = &args[1];
+                let default = &args[2];
+                let func = &args[3];
+                let current = m.get(key).unwrap_or(default).clone();
+                let new_val = self.invoke_callable(func, &[current])?;
+                let mut new_map = (**m).clone();
+                new_map.insert(key.clone(), new_val);
+                Ok(Value::Map(Rc::new(new_map)))
             }
             _ => Err(VmError::new(format!("unknown map function: {name}"))),
         }
@@ -2398,13 +2600,56 @@ impl Vm {
                 let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.is_subset requires sets".into())); };
                 Ok(Value::Bool(a.is_subset(b)))
             }
+            "map" => {
+                if args.len() != 2 { return Err(VmError::new("set.map takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.map requires a set".into())); };
+                let func = &args[1];
+                let mut result = BTreeSet::new();
+                for item in s.iter() {
+                    let val = self.invoke_callable(func, &[item.clone()])?;
+                    result.insert(val);
+                }
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "filter" => {
+                if args.len() != 2 { return Err(VmError::new("set.filter takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.filter requires a set".into())); };
+                let func = &args[1];
+                let mut result = BTreeSet::new();
+                for item in s.iter() {
+                    let keep = self.invoke_callable(func, &[item.clone()])?;
+                    if self.is_truthy(&keep) {
+                        result.insert(item.clone());
+                    }
+                }
+                Ok(Value::Set(Rc::new(result)))
+            }
+            "each" => {
+                if args.len() != 2 { return Err(VmError::new("set.each takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.each requires a set".into())); };
+                let func = &args[1];
+                for item in s.iter() {
+                    self.invoke_callable(func, &[item.clone()])?;
+                }
+                Ok(Value::Unit)
+            }
+            "fold" => {
+                if args.len() != 3 { return Err(VmError::new("set.fold takes 3 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.fold requires a set".into())); };
+                let func = &args[2];
+                let mut acc = args[1].clone();
+                for item in s.iter() {
+                    acc = self.invoke_callable(func, &[acc, item.clone()])?;
+                }
+                Ok(acc)
+            }
             _ => Err(VmError::new(format!("unknown set function: {name}"))),
         }
     }
 
     // ── Result builtins ───────────────────────────────────────────
 
-    fn dispatch_result(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+    fn dispatch_result(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         match name {
             "unwrap_or" => {
                 if args.len() != 2 { return Err(VmError::new("result.unwrap_or takes 2 arguments".into())); }
@@ -2422,13 +2667,58 @@ impl Vm {
                 if args.len() != 1 { return Err(VmError::new("result.is_err takes 1 argument".into())); }
                 Ok(Value::Bool(matches!(&args[0], Value::Variant(tag, _) if tag == "Err")))
             }
+            "map_ok" => {
+                if args.len() != 2 { return Err(VmError::new("result.map_ok takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
+                        let new_val = self.invoke_callable(&args[1], &[fields[0].clone()])?;
+                        Ok(Value::Variant("Ok".into(), vec![new_val]))
+                    }
+                    other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
+                    _ => Err(VmError::new("result.map_ok requires a Result".into())),
+                }
+            }
+            "map_err" => {
+                if args.len() != 2 { return Err(VmError::new("result.map_err takes 2 arguments".into())); }
+                match &args[0] {
+                    other @ Value::Variant(tag, _) if tag == "Ok" => Ok(other.clone()),
+                    Value::Variant(tag, fields) if tag == "Err" && fields.len() == 1 => {
+                        let new_val = self.invoke_callable(&args[1], &[fields[0].clone()])?;
+                        Ok(Value::Variant("Err".into(), vec![new_val]))
+                    }
+                    _ => Err(VmError::new("result.map_err requires a Result".into())),
+                }
+            }
+            "flatten" => {
+                if args.len() != 1 { return Err(VmError::new("result.flatten takes 1 argument".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
+                        match &fields[0] {
+                            ok @ Value::Variant(inner_tag, _) if inner_tag == "Ok" || inner_tag == "Err" => Ok(ok.clone()),
+                            _ => Ok(args[0].clone()),
+                        }
+                    }
+                    other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
+                    _ => Err(VmError::new("result.flatten requires a Result".into())),
+                }
+            }
+            "flat_map" => {
+                if args.len() != 2 { return Err(VmError::new("result.flat_map takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
+                        self.invoke_callable(&args[1], &[fields[0].clone()])
+                    }
+                    other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
+                    _ => Err(VmError::new("result.flat_map requires a Result".into())),
+                }
+            }
             _ => Err(VmError::new(format!("unknown result function: {name}"))),
         }
     }
 
     // ── Option builtins ───────────────────────────────────────────
 
-    fn dispatch_option(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+    fn dispatch_option(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         match name {
             "unwrap_or" => {
                 if args.len() != 2 { return Err(VmError::new("option.unwrap_or takes 2 arguments".into())); }
@@ -2452,6 +2742,27 @@ impl Vm {
                     Value::Variant(tag, fields) if tag == "Some" => Ok(Value::Variant("Ok".into(), vec![fields[0].clone()])),
                     Value::Variant(tag, _) if tag == "None" => Ok(Value::Variant("Err".into(), vec![args[1].clone()])),
                     _ => Err(VmError::new("option.to_result requires an Option".into())),
+                }
+            }
+            "map" => {
+                if args.len() != 2 { return Err(VmError::new("option.map takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
+                        let new_val = self.invoke_callable(&args[1], &[fields[0].clone()])?;
+                        Ok(Value::Variant("Some".into(), vec![new_val]))
+                    }
+                    other @ Value::Variant(tag, _) if tag == "None" => Ok(other.clone()),
+                    _ => Err(VmError::new("option.map requires an Option".into())),
+                }
+            }
+            "flat_map" => {
+                if args.len() != 2 { return Err(VmError::new("option.flat_map takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
+                        self.invoke_callable(&args[1], &[fields[0].clone()])
+                    }
+                    other @ Value::Variant(tag, _) if tag == "None" => Ok(other.clone()),
+                    _ => Err(VmError::new("option.flat_map requires an Option".into())),
                 }
             }
             _ => Err(VmError::new(format!("unknown option function: {name}"))),
@@ -4093,5 +4404,213 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::Int(7));
+    }
+
+    // ── Phase 5 tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_loop_sum() {
+        let result = run_vm(r#"
+            fn main() {
+                loop x = 0, sum = 0 {
+                    match x >= 10 {
+                        true -> sum
+                        _ -> loop(x + 1, sum + x)
+                    }
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(45));
+    }
+
+    #[test]
+    fn test_loop_factorial() {
+        let result = run_vm(r#"
+            fn main() {
+                loop n = 10, acc = 1 {
+                    match n <= 1 {
+                        true -> acc
+                        _ -> loop(n - 1, acc * n)
+                    }
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(3628800));
+    }
+
+    #[test]
+    fn test_record_create_and_access() {
+        let result = run_vm(r#"
+            type User { name: String, age: Int }
+            fn main() {
+                let u = User { name: "Alice", age: 30 }
+                u.age
+            }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_record_update() {
+        let result = run_vm(r#"
+            type User { name: String, age: Int }
+            fn main() {
+                let u = User { name: "Alice", age: 30 }
+                let u2 = u.{ age: 31 }
+                u2.age
+            }
+        "#);
+        assert_eq!(result, Value::Int(31));
+    }
+
+    #[test]
+    fn test_range_expression() {
+        let result = run_vm(r#"
+            fn main() {
+                let nums = 1..6
+                nums |> list.fold(0) { acc, n -> acc + n }
+            }
+        "#);
+        assert_eq!(result, Value::Int(21));
+    }
+
+    #[test]
+    fn test_set_literal() {
+        let result = run_vm(r#"
+            fn main() {
+                let s = #[1, 2, 3, 2, 1]
+                set.length(s)
+            }
+        "#);
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_question_mark_ok() {
+        let result = run_vm(r#"
+            fn parse_add(a, b) {
+                let x = int.parse(a)?
+                let y = int.parse(b)?
+                Ok(x + y)
+            }
+            fn main() {
+                match parse_add("10", "20") {
+                    Ok(n) -> n
+                    Err(_) -> -1
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_question_mark_err() {
+        let result = run_vm(r#"
+            fn parse_add(a, b) {
+                let x = int.parse(a)?
+                let y = int.parse(b)?
+                Ok(x + y)
+            }
+            fn main() {
+                match parse_add("10", "abc") {
+                    Ok(n) -> n
+                    Err(_) -> -1
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn test_type_decl_variant_constructors() {
+        let result = run_vm(r#"
+            type Color { Red, Green, Blue }
+            fn main() {
+                let c = Red
+                match c { Red -> 1  Green -> 2  Blue -> 3 }
+            }
+        "#);
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_type_decl_variant_with_fields() {
+        let result = run_vm(r#"
+            type Shape { Circle(Float), Rect(Float, Float) }
+            fn main() {
+                let s = Circle(5.0)
+                match s {
+                    Circle(r) -> r
+                    Rect(w, h) -> w + h
+                }
+            }
+        "#);
+        assert_eq!(result, Value::Float(5.0));
+    }
+
+    #[test]
+    fn test_custom_display_trait() {
+        let result = run_vm(r#"
+            type Shape { Circle(Float), Rect(Float, Float) }
+            trait Display for Shape {
+                fn display(self) -> String {
+                    match self {
+                        Circle(r) -> "Circle"
+                        Rect(w, h) -> "Rect"
+                    }
+                }
+            }
+            fn main() {
+                let s = Circle(5.0)
+                s.display()
+            }
+        "#);
+        assert_eq!(result, Value::String("Circle".to_string()));
+    }
+
+    #[test]
+    fn test_tuple_index_access() {
+        let result = run_vm(r#"
+            fn main() {
+                let pair = (10, 20)
+                pair.0 + pair.1
+            }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_recursive_variant_eval() {
+        let result = run_vm(r#"
+            type Expr { Num(Int), Add(Expr, Expr) }
+            fn eval(expr) {
+                match expr {
+                    Num(n) -> n
+                    Add(l, r) -> eval(l) + eval(r)
+                }
+            }
+            fn main() {
+                eval(Add(Num(3), Num(5)))
+            }
+        "#);
+        assert_eq!(result, Value::Int(8));
+    }
+
+    #[test]
+    fn test_loop_in_function() {
+        let result = run_vm(r#"
+            fn sum_to(n) {
+                loop i = 0, acc = 0 {
+                    match i > n {
+                        true -> acc
+                        _ -> loop(i + 1, acc + i)
+                    }
+                }
+            }
+            fn main() {
+                sum_to(100)
+            }
+        "#);
+        assert_eq!(result, Value::Int(5050));
     }
 }

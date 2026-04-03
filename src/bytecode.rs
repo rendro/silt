@@ -172,6 +172,10 @@ pub enum Op {
     /// Panic with message string on TOS.
     Panic,
 
+    /// Runtime method dispatch: pop receiver, look up "TypeName.method" global, call.
+    /// operands: u16 method_name_index, u8 argc (including receiver)
+    CallMethod,
+
     // ── Concurrency ────────────────────────────────────────────
     ChanNew,
     ChanSend,
@@ -261,6 +265,7 @@ impl Op {
             b if b == Op::Recur as u8 => Some(Op::Recur),
             b if b == Op::QuestionMark as u8 => Some(Op::QuestionMark),
             b if b == Op::Panic as u8 => Some(Op::Panic),
+            b if b == Op::CallMethod as u8 => Some(Op::CallMethod),
             b if b == Op::ChanNew as u8 => Some(Op::ChanNew),
             b if b == Op::ChanSend as u8 => Some(Op::ChanSend),
             b if b == Op::ChanRecv as u8 => Some(Op::ChanRecv),

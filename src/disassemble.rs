@@ -198,6 +198,7 @@ fn op_name(op: Op) -> &'static str {
         Op::TaskJoin => "TaskJoin",
         Op::TaskCancel => "TaskCancel",
         Op::Yield => "Yield",
+        Op::CallMethod => "CallMethod",
     }
 }
 
@@ -288,10 +289,16 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         | Op::DestructVariant
         | Op::DestructList
         | Op::DestructListRest
-        | Op::LoopSetup
-        | Op::Recur => {
+        | Op::LoopSetup => {
             let operand = code[offset + 1];
             (format!("{offset:04}  {name:<20} {operand}"), offset + 2)
+        }
+
+        // Recur: u8 arg_count, u16 first_slot
+        Op::Recur => {
+            let arg_count = code[offset + 1];
+            let first_slot = read_u16(code, offset + 2);
+            (format!("{offset:04}  {name:<20} {arg_count}  slot {first_slot}"), offset + 4)
         }
 
         // TestBool: u8 (0=false, 1=true)
@@ -342,6 +349,17 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             let jump_offset = read_u16(code, offset + 1) as usize;
             let target = offset + 3 - jump_offset;
             (format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"), offset + 3)
+        }
+
+        // ── u16 + u8: CallMethod(method_name_index, argc) ─────
+        Op::CallMethod => {
+            let method_name_index = read_u16(code, offset + 1);
+            let argc = code[offset + 3];
+            let comment = constant_comment(chunk, method_name_index);
+            (
+                format!("{offset:04}  {name:<20} {method_name_index:<5} {argc:<3} ; {comment}"),
+                offset + 4,
+            )
         }
 
         // ── u16 + u8: CallBuiltin(name_index, argc) ──────────
