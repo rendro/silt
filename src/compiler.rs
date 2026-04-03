@@ -16,7 +16,7 @@ use crate::ast::{
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::lexer::{Lexer, Span};
-use crate::module::ModuleLoader;
+use crate::module;
 use crate::parser::Parser;
 use crate::value::Value;
 
@@ -159,6 +159,29 @@ impl Compiler {
         let script = self.contexts.pop().unwrap().function;
 
         // Build the result: script first, then all compiled functions.
+        let mut result = vec![script];
+        result.append(&mut self.functions);
+        Ok(result)
+    }
+
+    /// Compile all declarations without calling `main()`.
+    ///
+    /// Returns all compiled functions. The first is a `<script>` that
+    /// registers globals and returns Unit.  Useful for test runners and the
+    /// REPL where `main()` is not the entry-point.
+    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, String> {
+        self.contexts.push(CompileContext::new("<script>".into(), 0));
+
+        for decl in &program.decls {
+            self.compile_decl(decl)?;
+        }
+
+        // Return Unit instead of calling main.
+        let span = Span::new(0, 0);
+        self.current_chunk().emit_op(Op::Unit, span);
+        self.current_chunk().emit_op(Op::Return, span);
+
+        let script = self.contexts.pop().unwrap().function;
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
@@ -403,14 +426,14 @@ impl Compiler {
             ImportTarget::Module(name) => {
                 // Builtin modules (io, string, list, ...) are already registered
                 // in the VM's global table. Nothing to compile.
-                if ModuleLoader::is_builtin_module(name) {
+                if module::is_builtin_module(name) {
                     return Ok(());
                 }
                 self.compile_file_module(name)?;
                 Ok(())
             }
             ImportTarget::Items(module_name, items) => {
-                if ModuleLoader::is_builtin_module(module_name) {
+                if module::is_builtin_module(module_name) {
                     // For builtin modules, create aliases: bare "item" -> "module.item"
                     let span = Span::new(0, 0);
                     for item in items {
@@ -442,7 +465,7 @@ impl Compiler {
                 Ok(())
             }
             ImportTarget::Alias(module_name, _alias) => {
-                if ModuleLoader::is_builtin_module(module_name) {
+                if module::is_builtin_module(module_name) {
                     // Builtin alias: nothing to compile, the VM resolves
                     // "alias.func" at runtime via field access. We don't need
                     // to emit anything because GetField on module.func globals
@@ -761,24 +784,49 @@ impl Compiler {
             }
 
             ExprKind::Binary(left, op, right) => {
-                self.compile_expr(left)?;
-                self.compile_expr(right)?;
-                let opcode = match op {
-                    BinOp::Add => Op::Add,
-                    BinOp::Sub => Op::Sub,
-                    BinOp::Mul => Op::Mul,
-                    BinOp::Div => Op::Div,
-                    BinOp::Mod => Op::Mod,
-                    BinOp::Eq => Op::Eq,
-                    BinOp::Neq => Op::Neq,
-                    BinOp::Lt => Op::Lt,
-                    BinOp::Gt => Op::Gt,
-                    BinOp::Leq => Op::Leq,
-                    BinOp::Geq => Op::Geq,
-                    BinOp::And => Op::And,
-                    BinOp::Or => Op::Or,
-                };
-                self.current_chunk().emit_op(opcode, span);
+                match op {
+                    BinOp::And => {
+                        // Short-circuit: if left is false, skip right
+                        self.compile_expr(left)?;
+                        // Duplicate TOS so we can test and still have the value
+                        self.current_chunk().emit_op(Op::Dup, span);
+                        let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                        // Left was truthy, discard it and evaluate right
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.compile_expr(right)?;
+                        self.current_chunk().patch_jump(jump);
+                    }
+                    BinOp::Or => {
+                        // Short-circuit: if left is true, skip right
+                        self.compile_expr(left)?;
+                        // Duplicate TOS so we can test and still have the value
+                        self.current_chunk().emit_op(Op::Dup, span);
+                        let jump = self.current_chunk().emit_jump(Op::JumpIfTrue, span);
+                        // Left was falsy, discard it and evaluate right
+                        self.current_chunk().emit_op(Op::Pop, span);
+                        self.compile_expr(right)?;
+                        self.current_chunk().patch_jump(jump);
+                    }
+                    _ => {
+                        self.compile_expr(left)?;
+                        self.compile_expr(right)?;
+                        let opcode = match op {
+                            BinOp::Add => Op::Add,
+                            BinOp::Sub => Op::Sub,
+                            BinOp::Mul => Op::Mul,
+                            BinOp::Div => Op::Div,
+                            BinOp::Mod => Op::Mod,
+                            BinOp::Eq => Op::Eq,
+                            BinOp::Neq => Op::Neq,
+                            BinOp::Lt => Op::Lt,
+                            BinOp::Gt => Op::Gt,
+                            BinOp::Leq => Op::Leq,
+                            BinOp::Geq => Op::Geq,
+                            BinOp::And | BinOp::Or => unreachable!(),
+                        };
+                        self.current_chunk().emit_op(opcode, span);
+                    }
+                }
             }
 
             ExprKind::Unary(op, operand) => {
@@ -1893,7 +1941,7 @@ impl Compiler {
                 // Check if it's a local or upvalue first
                 if self.resolve_local(module).is_none()
                     && self.resolve_upvalue_peek(module).is_none()
-                    && ModuleLoader::is_builtin_module(module)
+                    && module::is_builtin_module(module)
                 {
                     return Some(format!("{module}.{field}"));
                 }

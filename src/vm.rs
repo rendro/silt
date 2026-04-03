@@ -109,11 +109,17 @@ fn value_to_json(v: &Value) -> serde_json::Value {
 #[derive(Debug)]
 pub struct VmError {
     pub message: String,
+    /// If true, this error signals a cooperative yield, not a real error.
+    pub is_yield: bool,
 }
 
 impl VmError {
     pub fn new(message: String) -> Self {
-        VmError { message }
+        VmError { message, is_yield: false }
+    }
+
+    fn yield_signal() -> Self {
+        VmError { message: String::new(), is_yield: true }
     }
 }
 
@@ -179,6 +185,8 @@ pub struct Vm {
     current_fiber: usize,
     next_channel_id: usize,
     next_task_id: usize,
+    /// Prevents nested `run_other_fibers_once()` calls during channel.each
+    scheduling_fibers: bool,
 }
 
 impl Vm {
@@ -193,6 +201,7 @@ impl Vm {
             current_fiber: 0,
             next_channel_id: 0,
             next_task_id: 0,
+            scheduling_fibers: false,
         };
         vm.register_builtins();
         vm
@@ -322,11 +331,13 @@ impl Vm {
                 Some(Op::Eq) => {
                     let b = self.pop();
                     let a = self.pop();
+                    self.check_same_type(&a, &b)?;
                     self.push(Value::Bool(a == b));
                 }
                 Some(Op::Neq) => {
                     let b = self.pop();
                     let a = self.pop();
+                    self.check_same_type(&a, &b)?;
                     self.push(Value::Bool(a != b));
                 }
                 Some(Op::Lt) => self.compare(|ord| ord.is_lt())?,
@@ -650,7 +661,7 @@ impl Vm {
                     match (&start, &end) {
                         (Value::Int(a), Value::Int(b)) => {
                             let items: Vec<Value> =
-                                (*a..=*b).map(Value::Int).collect();
+                                (*a..*b).map(Value::Int).collect();
                             self.push(Value::List(Rc::new(items)));
                         }
                         _ => {
@@ -1014,46 +1025,43 @@ impl Vm {
                         self.stack.truncate(receiver_slot);
                         let result = self.invoke_callable(&func, &args)?;
                         self.push(result);
-                    } else if let Value::Record(_, ref fields) = receiver {
-                        // If the receiver is a record and the "method" is actually a field
-                        // that contains a callable (VmClosure, Closure, BuiltinFn), call it
-                        // directly. This handles Fn-typed record fields like route.handler(params).
-                        if let Some(field_val) = fields.get(&method_name) {
-                            let callable = field_val.clone();
-                            let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
-                            self.stack.truncate(receiver_slot);
-                            let result = self.invoke_callable(&callable, &extra_args)?;
-                            self.push(result);
-                        } else {
-                            return Err(VmError::new(format!(
-                                "no method '{method_name}' for type '{type_name}'"
-                            )));
-                        }
                     } else {
-                        // Fallback: the compiler may have compiled a module-qualified
-                        // builtin call (e.g. result.unwrap_or) as a method call because
-                        // the module name was shadowed by a local variable. Try to find
-                        // the builtin by scanning known module prefixes.
-                        // In this case, the receiver IS the shadowing local (not a real
-                        // receiver), so we pass only the extra args to the builtin.
                         let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
-                        let mut found = false;
-                        for module in &["result", "option", "list", "string", "int", "float",
-                                        "map", "set", "io", "fs", "test", "math", "regex", "json",
-                                        "channel", "task"] {
-                            let candidate = format!("{module}.{method_name}");
-                            if self.globals.contains_key(&candidate) {
+                        // Try built-in trait methods (display, equal, compare)
+                        if let Some(result) = self.dispatch_trait_method(&receiver, &method_name, &extra_args) {
+                            self.stack.truncate(receiver_slot);
+                            self.push(result?);
+                        } else if let Value::Record(_, ref fields) = receiver {
+                            if let Some(field_val) = fields.get(&method_name) {
+                                let callable = field_val.clone();
                                 self.stack.truncate(receiver_slot);
-                                let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                                let result = self.invoke_callable(&callable, &extra_args)?;
                                 self.push(result);
-                                found = true;
-                                break;
+                            } else {
+                                return Err(VmError::new(format!(
+                                    "no method '{method_name}' for type '{type_name}'"
+                                )));
                             }
-                        }
-                        if !found {
-                            return Err(VmError::new(format!(
-                                "no method '{method_name}' for type '{type_name}'"
-                            )));
+                        } else {
+                            // Fallback: try module-qualified builtin
+                            let mut found = false;
+                            for module in &["result", "option", "list", "string", "int", "float",
+                                            "map", "set", "io", "fs", "test", "math", "regex", "json",
+                                            "channel", "task"] {
+                                let candidate = format!("{module}.{method_name}");
+                                if self.globals.contains_key(&candidate) {
+                                    self.stack.truncate(receiver_slot);
+                                    let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                                    self.push(result);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if !found {
+                                return Err(VmError::new(format!(
+                                    "no method '{method_name}' for type '{type_name}'"
+                                )));
+                            }
                         }
                     }
                 }
@@ -1124,11 +1132,6 @@ impl Vm {
                 self.stack.truncate(func_slot);
                 self.push(Value::Variant(name, fields));
                 Ok(())
-            }
-            Value::Closure(_) => {
-                Err(VmError::new(
-                    "cannot call tree-walking Closure in VM".to_string(),
-                ))
             }
             _ => {
                 Err(VmError::new(format!(
@@ -1243,11 +1246,13 @@ impl Vm {
             Op::Eq => {
                 let b = self.pop();
                 let a = self.pop();
+                self.check_same_type(&a, &b)?;
                 self.push(Value::Bool(a == b));
             }
             Op::Neq => {
                 let b = self.pop();
                 let a = self.pop();
+                self.check_same_type(&a, &b)?;
                 self.push(Value::Bool(a != b));
             }
             Op::Lt => self.compare(|ord| ord.is_lt())?,
@@ -1488,7 +1493,7 @@ impl Vm {
                 let end = self.pop();
                 let start = self.pop();
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
-                    let items: Vec<Value> = (*a..=*b).map(Value::Int).collect();
+                    let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
                     self.push(Value::List(Rc::new(items)));
                 } else {
                     return Err(VmError::new("range requires two integers".into()));
@@ -1726,37 +1731,42 @@ impl Vm {
                     self.stack.truncate(receiver_slot);
                     let result = self.invoke_callable(&func, &args)?;
                     self.push(result);
-                } else if let Value::Record(_, ref fields) = receiver {
-                    if let Some(field_val) = fields.get(&method_name) {
-                        let callable = field_val.clone();
-                        let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
-                        self.stack.truncate(receiver_slot);
-                        let result = self.invoke_callable(&callable, &extra_args)?;
-                        self.push(result);
-                    } else {
-                        return Err(VmError::new(format!(
-                            "no method '{method_name}' for type '{type_name}'"
-                        )));
-                    }
                 } else {
                     let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
-                    let mut found = false;
-                    for module in &["result", "option", "list", "string", "int", "float",
-                                    "map", "set", "io", "fs", "test", "math", "regex", "json",
-                                    "channel", "task"] {
-                        let candidate = format!("{module}.{method_name}");
-                        if self.globals.contains_key(&candidate) {
+                    // Try built-in trait methods (display, equal, compare)
+                    if let Some(result) = self.dispatch_trait_method(&receiver, &method_name, &extra_args) {
+                        self.stack.truncate(receiver_slot);
+                        self.push(result?);
+                    } else if let Value::Record(_, ref fields) = receiver {
+                        if let Some(field_val) = fields.get(&method_name) {
+                            let callable = field_val.clone();
                             self.stack.truncate(receiver_slot);
-                            let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                            let result = self.invoke_callable(&callable, &extra_args)?;
                             self.push(result);
-                            found = true;
-                            break;
+                        } else {
+                            return Err(VmError::new(format!(
+                                "no method '{method_name}' for type '{type_name}'"
+                            )));
                         }
-                    }
-                    if !found {
-                        return Err(VmError::new(format!(
-                            "no method '{method_name}' for type '{type_name}'"
-                        )));
+                    } else {
+                        let mut found = false;
+                        for module in &["result", "option", "list", "string", "int", "float",
+                                        "map", "set", "io", "fs", "test", "math", "regex", "json",
+                                        "channel", "task"] {
+                            let candidate = format!("{module}.{method_name}");
+                            if self.globals.contains_key(&candidate) {
+                                self.stack.truncate(receiver_slot);
+                                let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                                self.push(result);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            return Err(VmError::new(format!(
+                                "no method '{method_name}' for type '{type_name}'"
+                            )));
+                        }
                     }
                 }
             }
@@ -1877,10 +1887,16 @@ impl Vm {
                     Op::Mod => "%",
                     _ => unreachable!(),
                 };
+                let a_type = self.type_name(&a);
+                let b_type = self.type_name(&b);
+                // Special error for Int/Float mixing
+                if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int") {
+                    return Err(VmError::new(
+                        "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion".to_string()
+                    ));
+                }
                 return Err(VmError::new(format!(
-                    "cannot apply '{op_name}' to {} and {}",
-                    self.type_name(&a),
-                    self.type_name(&b)
+                    "cannot apply '{op_name}' to {a_type} and {b_type}",
                 )));
             }
         };
@@ -1899,7 +1915,7 @@ impl Vm {
             (Value::String(a), Value::String(b)) => a.cmp(b),
             _ => {
                 return Err(VmError::new(format!(
-                    "cannot compare {} and {}",
+                    "unsupported operation: cannot compare {} and {}",
                     self.type_name(&a),
                     self.type_name(&b)
                 )));
@@ -1941,7 +1957,6 @@ impl Vm {
             Value::Tuple(_) => "Tuple",
             Value::Record(..) => "Record",
             Value::Variant(..) => "Variant",
-            Value::Closure(_) => "Closure",
             Value::VmClosure(_) => "Function",
             Value::BuiltinFn(_) => "BuiltinFn",
             Value::VariantConstructor(..) => "VariantConstructor",
@@ -1951,6 +1966,45 @@ impl Vm {
             Value::Handle(_) => "Handle",
             Value::Unit => "Unit",
         }
+    }
+
+    /// Returns a discriminant for comparing value types.
+    /// Two values are "same type" for equality/comparison if they share a discriminant.
+    /// Variants are considered the same type (to allow Ok(1) == Err(2) => false,
+    /// and pattern matching across tags). Records are compared by type name.
+    fn value_disc(val: &Value) -> u8 {
+        match val {
+            Value::Int(_) => 0,
+            Value::Float(_) => 1,
+            Value::Bool(_) => 2,
+            Value::String(_) => 3,
+            Value::List(_) => 4,
+            Value::Map(_) => 5,
+            Value::Set(_) => 6,
+            Value::Tuple(_) => 7,
+            Value::Record(..) => 8,
+            Value::Variant(..) => 9,
+            Value::Unit => 10,
+            Value::Channel(_) => 11,
+            Value::Handle(_) => 12,
+            Value::VmClosure(_) => 13,
+            Value::BuiltinFn(_) => 14,
+            Value::VariantConstructor(..) => 15,
+            Value::RecordDescriptor(_) => 16,
+            Value::PrimitiveDescriptor(_) => 17,
+        }
+    }
+
+    /// Check that two values have compatible types for equality/comparison.
+    fn check_same_type(&self, a: &Value, b: &Value) -> Result<(), VmError> {
+        if Self::value_disc(a) != Self::value_disc(b) {
+            return Err(VmError::new(format!(
+                "unsupported operation: cannot compare {} and {}",
+                self.type_name(a),
+                self.type_name(b)
+            )));
+        }
+        Ok(())
     }
 
     /// Get the type name for method dispatch. For variants, looks up the parent type.
@@ -1975,6 +2029,58 @@ impl Vm {
             Value::Set(_) => "Set".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),
             _ => "Unknown".to_string(),
+        }
+    }
+
+    // ── Built-in trait methods on primitive types ──────────────────
+
+    /// Handle built-in trait methods like .display(), .equal(), .compare()
+    /// on primitive types. Returns Some(result) if handled, None otherwise.
+    fn dispatch_trait_method(
+        &self,
+        receiver: &Value,
+        method: &str,
+        extra_args: &[Value],
+    ) -> Option<Result<Value, VmError>> {
+        match method {
+            "display" => {
+                if !extra_args.is_empty() {
+                    return Some(Err(VmError::new("display() takes no arguments".into())));
+                }
+                Some(Ok(Value::String(self.display_value(receiver))))
+            }
+            "equal" => {
+                if extra_args.len() != 1 {
+                    return Some(Err(VmError::new("equal() takes 1 argument".into())));
+                }
+                Some(Ok(Value::Bool(*receiver == extra_args[0])))
+            }
+            "compare" => {
+                if extra_args.len() != 1 {
+                    return Some(Err(VmError::new("compare() takes 1 argument".into())));
+                }
+                let other = &extra_args[0];
+                let ord = match (receiver, other) {
+                    (Value::Int(a), Value::Int(b)) => a.cmp(b),
+                    (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::String(a), Value::String(b)) => a.cmp(b),
+                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                    _ => {
+                        return Some(Err(VmError::new(format!(
+                            "compare() not supported between {} and {}",
+                            self.type_name(receiver),
+                            self.type_name(other)
+                        ))));
+                    }
+                };
+                let result = match ord {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                };
+                Some(Ok(Value::Int(result)))
+            }
+            _ => None,
         }
     }
 
@@ -2033,7 +2139,7 @@ impl Vm {
                 }
                 "panic" => {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
-                    Err(VmError::new(format!("panic: {msg}")))
+                    Err(VmError::new(format!("panic: panic: {msg}")))
                 }
                 "to_string" => {
                     if args.len() != 1 {
@@ -2736,8 +2842,13 @@ impl Vm {
                 let func = &args[1];
                 let mut result = BTreeMap::new();
                 for (k, v) in m.iter() {
-                    let new_val = self.invoke_callable(func, &[k.clone(), v.clone()])?;
-                    result.insert(k.clone(), new_val);
+                    let mapped = self.invoke_callable(func, &[k.clone(), v.clone()])?;
+                    match mapped {
+                        Value::Tuple(pair) if pair.len() == 2 => {
+                            result.insert(pair[0].clone(), pair[1].clone());
+                        }
+                        _ => return Err(VmError::new("map.map callback must return a (key, value) tuple".into())),
+                    }
                 }
                 Ok(Value::Map(Rc::new(result)))
             }
@@ -3855,7 +3966,16 @@ impl Vm {
                     match ch.try_receive() {
                         TryReceiveResult::Value(val) => {
                             self.invoke_callable(&callback, &[val])?;
-                            // After each message, yield to scheduler for round-robin
+                            // After each message, yield to scheduler for round-robin.
+                            // If we're running inside a fiber (scheduling_fibers is true),
+                            // push the channel.each args back onto the stack so the
+                            // CallBuiltin instruction can be re-executed, then yield.
+                            if self.scheduling_fibers {
+                                for arg in args {
+                                    self.push(arg.clone());
+                                }
+                                return Err(VmError::yield_signal());
+                            }
                             if !self.fibers.is_empty() {
                                 let _ = self.run_other_fibers_once();
                             }
@@ -3864,6 +3984,14 @@ impl Vm {
                             return Ok(Value::Unit);
                         }
                         TryReceiveResult::Empty => {
+                            // If we're in a fiber, yield to let other fibers run
+                            // (they may produce data for this channel).
+                            if self.scheduling_fibers {
+                                for arg in args {
+                                    self.push(arg.clone());
+                                }
+                                return Err(VmError::yield_signal());
+                            }
                             if !self.run_other_fibers_once()? {
                                 return Err(VmError::new(
                                     "channel.each: deadlock - channel is empty and no task can fill it".into(),
@@ -3972,9 +4100,10 @@ impl Vm {
     /// Run one round of other fibers (not the main/current execution context).
     /// Returns Ok(true) if any fiber made progress, Ok(false) if no progress.
     fn run_other_fibers_once(&mut self) -> Result<bool, VmError> {
-        if self.fibers.is_empty() {
+        if self.fibers.is_empty() || self.scheduling_fibers {
             return Ok(false);
         }
+        self.scheduling_fibers = true;
         let mut any_progress = false;
         // Run each Ready fiber for one time slice.
         // We iterate by index since we need to swap state with self.
@@ -4034,6 +4163,7 @@ impl Vm {
         }
         // Clean up completed/failed fibers
         // (Keep them around so join() can find them, but skip in scheduling)
+        self.scheduling_fibers = false;
         Ok(any_progress)
     }
 
@@ -4049,6 +4179,8 @@ impl Vm {
                 };
                 return Ok(FiberSliceResult::Completed(result));
             }
+            // Save IP before this instruction so we can rewind on yield
+            let saved_ip = self.current_frame().ip;
             let op_byte = self.read_byte();
             match Op::from_byte(op_byte) {
                 Some(Op::Return) => {
@@ -4064,7 +4196,18 @@ impl Vm {
                     self.push(result);
                 }
                 Some(op) => {
-                    self.dispatch_op(op)?;
+                    match self.dispatch_op(op) {
+                        Ok(()) => {}
+                        Err(e) if e.is_yield => {
+                            // Cooperative yield: rewind IP to re-execute this
+                            // instruction when the fiber is next scheduled.
+                            // The yielding code (e.g. channel.each) has already
+                            // restored its arguments on the stack.
+                            self.current_frame_mut().ip = saved_ip;
+                            return Ok(FiberSliceResult::Yielded);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
                 None => {
                     return Err(VmError::new(format!("unknown opcode: {op_byte}")));
@@ -5621,7 +5764,7 @@ mod tests {
                 nums |> list.fold(0) { acc, n -> acc + n }
             }
         "#);
-        assert_eq!(result, Value::Int(21));
+        assert_eq!(result, Value::Int(15));
     }
 
     #[test]

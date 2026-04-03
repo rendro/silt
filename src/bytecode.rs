@@ -423,6 +423,20 @@ impl Function {
 
 // ── VmClosure ──────────────────────────────────────────────────────
 
+/// Build a tiny script that calls a named global function with no arguments
+/// and returns the result.  Useful for the test runner and REPL.
+pub fn call_global_script(name: &str) -> Function {
+    let span = Span::new(0, 0);
+    let mut func = Function::new(format!("<call:{name}>"), 0);
+    let idx = func.chunk.add_constant(Value::String(name.into()));
+    func.chunk.emit_op(Op::GetGlobal, span);
+    func.chunk.emit_u16(idx, span);
+    func.chunk.emit_op(Op::Call, span);
+    func.chunk.emit_u8(0, span);
+    func.chunk.emit_op(Op::Return, span);
+    func
+}
+
 /// A runtime closure: a compiled function + captured upvalues.
 ///
 /// Since silt is fully immutable, upvalues are simple value copies

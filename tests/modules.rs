@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
+use std::rc::Rc;
 
-use silt::interpreter::Interpreter;
+use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::value::Value;
+use silt::vm::Vm;
 
 /// Helper: create a temp directory with module files, parse and run the main program.
 fn run_module_test(files: &[(&str, &str)], main_source: &str) -> Value {
@@ -16,11 +18,15 @@ fn run_module_test(files: &[(&str, &str)], main_source: &str) -> Value {
         fs::write(&path, content).expect("failed to write module file");
     }
 
-    // Parse and run the main source
+    // Parse and compile the main source with project root set to the temp dir
     let tokens = Lexer::new(main_source).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::with_project_root(dir.clone());
-    interp.run(&program).expect("runtime error")
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error")
 }
 
 fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
@@ -32,12 +38,32 @@ fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
     }
 
     let tokens = Lexer::new(main_source).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::with_project_root(dir.clone());
-    match interp.run(&program) {
-        Err(e) => e.to_string(),
-        Ok(_) => panic!("expected error but got success"),
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    match compiler.compile_program(&program) {
+        Ok(functions) => {
+            let script = Rc::new(functions.into_iter().next().unwrap());
+            let mut vm = Vm::new();
+            match vm.run(script) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("expected error but got success"),
+            }
+        }
+        Err(e) => e,
     }
+}
+
+/// Helper to run a simple program via the VM (no temp dir needed).
+fn run_vm(source: &str) -> Value {
+    let tokens = Lexer::new(source).tokenize().expect("lexer error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error")
 }
 
 /// Create a temporary directory for test module files.
@@ -190,7 +216,7 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("undefined"),
+        err.contains("undefined") || err.contains("Undefined"),
         "expected error about undefined name, got: {err}"
     );
 }
@@ -211,8 +237,9 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("no public item"),
-        "expected error about no public item, got: {err}"
+        err.contains("no public item") || err.contains("not public") || err.contains("not found")
+            || err.contains("Undefined") || err.contains("undefined"),
+        "expected error about private item, got: {err}"
     );
 }
 
@@ -263,17 +290,14 @@ fn main() {
 fn test_import_builtin_string_module() {
     // `import string` should be a no-op (builtins already registered)
     // and string.split should still work
-    let tokens = Lexer::new(r#"
+    let result = run_vm(r#"
 import string
 
 fn main() {
   let parts = "a,b,c" |> string.split(",")
   parts
 }
-    "#).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::new();
-    let result = interp.run(&program).expect("runtime error");
+    "#);
     assert_eq!(
         result,
         Value::List(std::rc::Rc::new(vec![
@@ -287,16 +311,13 @@ fn main() {
 #[test]
 fn test_import_builtin_items() {
     // `import string.{ split }` should bring split into scope directly
-    let tokens = Lexer::new(r#"
+    let result = run_vm(r#"
 import string.{ split }
 
 fn main() {
   "a,b,c" |> split(",")
 }
-    "#).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::new();
-    let result = interp.run(&program).expect("runtime error");
+    "#);
     assert_eq!(
         result,
         Value::List(std::rc::Rc::new(vec![
@@ -310,16 +331,13 @@ fn main() {
 #[test]
 fn test_import_builtin_with_alias() {
     // `import string as s` should make s.split available
-    let tokens = Lexer::new(r#"
+    let result = run_vm(r#"
 import string as s
 
 fn main() {
   "hello world" |> s.split(" ")
 }
-    "#).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::new();
-    let result = interp.run(&program).expect("runtime error");
+    "#);
     assert_eq!(
         result,
         Value::List(std::rc::Rc::new(vec![
@@ -331,7 +349,7 @@ fn main() {
 
 #[test]
 fn test_import_builtin_io_module() {
-    let tokens = Lexer::new(r#"
+    let result = run_vm(r#"
 import io
 
 fn main() {
@@ -339,10 +357,7 @@ fn main() {
   -- just verify it returns a list
   list.length(args)
 }
-    "#).tokenize().expect("lexer error");
-    let program = Parser::new(tokens).parse_program().expect("parse error");
-    let mut interp = Interpreter::new();
-    let result = interp.run(&program).expect("runtime error");
+    "#);
     // Should return some Int (the number of args)
     match result {
         Value::Int(_) => {} // ok

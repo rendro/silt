@@ -5,9 +5,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use crate::ast::{Expr, Param};
 use crate::bytecode;
-use crate::env::Env;
 
 #[derive(Clone)]
 pub enum Value {
@@ -21,11 +19,10 @@ pub enum Value {
     Tuple(Vec<Value>),
     Record(String, Rc<BTreeMap<String, Value>>),
     Variant(String, Vec<Value>),
-    Closure(Rc<Closure>),
     VmClosure(Rc<bytecode::VmClosure>),
     BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
-    RecordDescriptor(String),          // record type name — field info on Interpreter
+    RecordDescriptor(String),          // record type name
     PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Rc<Channel>),
     Handle(Rc<TaskHandle>),
@@ -121,12 +118,6 @@ pub struct TaskHandle {
     pub result: RefCell<Option<Result<Value, String>>>,
 }
 
-pub struct Closure {
-    pub params: Vec<Param>,
-    pub body: Expr,
-    pub env: Env,
-}
-
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -177,7 +168,6 @@ impl fmt::Debug for Value {
                     write!(f, ")")
                 }
             }
-            Value::Closure(_) => write!(f, "<closure>"),
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
@@ -236,7 +226,6 @@ impl Value {
                     format!("{name}({})", items.join(", "))
                 }
             }
-            Value::Closure(_) => "<fn>".to_string(),
             Value::VmClosure(_) => "<fn>".to_string(),
             Value::BuiltinFn(_) => "<fn>".to_string(),
             Value::VariantConstructor(name, _) => format!("<constructor:{name}>"),
@@ -324,7 +313,6 @@ impl fmt::Display for Value {
                     write!(f, ")")
                 }
             }
-            Value::Closure(_) => write!(f, "<closure>"),
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
@@ -384,12 +372,11 @@ impl Ord for Value {
                 Value::Variant(..) => 10,
                 Value::Channel(_) => 11,
                 Value::Handle(_) => 12,
-                Value::Closure(_) => 13,
-                Value::VmClosure(_) => 14,
-                Value::BuiltinFn(_) => 15,
-                Value::VariantConstructor(..) => 16,
-                Value::RecordDescriptor(_) => 17,
-                Value::PrimitiveDescriptor(_) => 18,
+                Value::VmClosure(_) => 13,
+                Value::BuiltinFn(_) => 14,
+                Value::VariantConstructor(..) => 15,
+                Value::RecordDescriptor(_) => 16,
+                Value::PrimitiveDescriptor(_) => 17,
             }
         };
         let d1 = disc(self);
@@ -480,7 +467,6 @@ impl Hash for Value {
             }
             Value::Channel(ch) => ch.id.hash(state),
             Value::Handle(h) => h.id.hash(state),
-            Value::Closure(_) => {} // not meaningfully hashable
             Value::VmClosure(_) => {} // not meaningfully hashable
             Value::BuiltinFn(name) => name.hash(state),
             Value::VariantConstructor(name, arity) => {

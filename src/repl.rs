@@ -9,10 +9,11 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Editor, Helper, Context};
 
-use crate::ast::{Decl, Stmt};
-use crate::interpreter::Interpreter;
+use crate::compiler::Compiler;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::value::Value;
+use crate::vm::Vm;
 
 const HISTORY_FILE: &str = ".silt_history";
 
@@ -73,7 +74,7 @@ pub fn run_repl() {
     rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
 
-    let mut interp = Interpreter::new();
+    let mut vm = Vm::new();
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
 
@@ -91,10 +92,6 @@ pub fn run_repl() {
                         ":quit" | ":q" => break,
                         ":help" | ":h" => {
                             print_help();
-                            continue;
-                        }
-                        ":env" => {
-                            print_env(&interp);
                             continue;
                         }
                         "" => continue,
@@ -122,16 +119,7 @@ pub fn run_repl() {
 
                 let _ = rl.add_history_entry(&input);
 
-                if is_declaration(&input) {
-                    eval_declaration(&mut interp, &input);
-                } else {
-                    eval_expression(&mut interp, &input);
-                }
-
-                // Update completions with newly defined names
-                let mut all = builtin_names();
-                all.extend(interp.defined_names());
-                *names.borrow_mut() = all;
+                eval_input(&mut vm, &input);
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -151,7 +139,7 @@ pub fn run_repl() {
 fn builtin_names() -> Vec<String> {
     let mut names = vec![
         // Keywords / commands
-        ":quit", ":help", ":env",
+        ":quit", ":help",
         "fn", "let", "type", "trait", "match", "when", "return",
         "import", "loop", "true", "false",
         // Globals
@@ -199,23 +187,11 @@ fn builtin_names() -> Vec<String> {
 fn print_help() {
     println!("Commands:");
     println!("  :help, :h    Show this help");
-    println!("  :env         Show defined names");
     println!("  :quit, :q    Exit the REPL");
     println!("  <Tab>        Autocomplete builtins and user-defined names");
     println!();
     println!("Enter expressions to evaluate, or declarations (fn, type, trait, import).");
     println!("Multi-line input: unclosed braces/parens/brackets continue on the next line.");
-}
-
-fn print_env(interp: &Interpreter) {
-    let names = interp.defined_names();
-    if names.is_empty() {
-        println!("  (no user-defined names)");
-    } else {
-        for name in &names {
-            println!("  {name}");
-        }
-    }
 }
 
 fn has_unclosed_delimiters(input: &str) -> bool {
@@ -258,7 +234,18 @@ fn is_declaration(input: &str) -> bool {
         || trimmed.starts_with("pub ")
 }
 
-fn eval_declaration(interp: &mut Interpreter, input: &str) {
+/// Evaluate a single REPL input.  Declarations are compiled and loaded into
+/// the persistent VM.  Expressions are wrapped in a throwaway function,
+/// compiled, and run; the result is printed if it is not Unit.
+fn eval_input(vm: &mut Vm, input: &str) {
+    if is_declaration(input) {
+        eval_declaration(vm, input);
+    } else {
+        eval_expression(vm, input);
+    }
+}
+
+fn eval_declaration(vm: &mut Vm, input: &str) {
     let tokens = match Lexer::new(input).tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -273,16 +260,26 @@ fn eval_declaration(interp: &mut Interpreter, input: &str) {
             return;
         }
     };
-    for decl in &program.decls {
-        if let Err(e) = interp.register_decl(decl) {
-            eprintln!("{e}");
+
+    // Compile declarations only (no main call)
+    let mut compiler = Compiler::new();
+    let functions = match compiler.compile_declarations(&program) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("compile error: {e}");
             return;
         }
+    };
+
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    if let Err(e) = vm.run(script) {
+        eprintln!("{e}");
     }
 }
 
-fn eval_expression(interp: &mut Interpreter, input: &str) {
-    let wrapped = format!("fn __repl__() {{\n{input}\n}}");
+fn eval_expression(vm: &mut Vm, input: &str) {
+    // Wrap the expression in a fn main() so the compiler can handle it.
+    let wrapped = format!("fn main() {{\n{input}\n}}");
     let tokens = match Lexer::new(&wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -298,29 +295,20 @@ fn eval_expression(interp: &mut Interpreter, input: &str) {
         }
     };
 
-    let stmts: Vec<Stmt> = program
-        .decls
-        .into_iter()
-        .filter_map(|d| {
-            if let Decl::Fn(f) = d {
-                if f.name == "__repl__" {
-                    if let crate::ast::ExprKind::Block(stmts) = f.body.kind {
-                        return Some(stmts);
-                    }
-                }
-            }
-            None
-        })
-        .flatten()
-        .collect();
+    // Use compile_program which emits GetGlobal "main"; Call 0; Return
+    let mut compiler = Compiler::new();
+    let functions = match compiler.compile_program(&program) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("compile error: {e}");
+            return;
+        }
+    };
 
-    if stmts.is_empty() {
-        return;
-    }
-
-    match interp.eval_in_global(&stmts) {
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    match vm.run(script) {
         Ok(val) => {
-            if !matches!(val, crate::value::Value::Unit) {
+            if !matches!(val, Value::Unit) {
                 println!("{val}");
             }
         }

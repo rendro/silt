@@ -7,7 +7,6 @@ use std::rc::Rc;
 use silt::compiler::Compiler;
 use silt::disassemble::disassemble_function;
 use silt::errors::SourceError;
-use silt::interpreter::Interpreter;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
@@ -24,7 +23,6 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: silt run <file.silt>");
-        eprintln!("       silt interp run <file.silt>  (tree-walk interpreter)");
         eprintln!("       silt check <file.silt>");
         eprintln!("       silt test [file.silt]");
         eprintln!("       silt disasm <file.silt>");
@@ -61,22 +59,6 @@ fn main() {
                 }
                 _ => {
                     eprintln!("Usage: silt vm run <file.silt>");
-                    process::exit(1);
-                }
-            }
-        }
-        "interp" => {
-            // Legacy tree-walk interpreter path.
-            match args.get(2).map(|s| s.as_str()) {
-                Some("run") => {
-                    let file = args.get(3).unwrap_or_else(|| {
-                        eprintln!("Usage: silt interp run <file.silt>");
-                        process::exit(1);
-                    });
-                    interp_run_file(file);
-                }
-                _ => {
-                    eprintln!("Usage: silt interp run <file.silt>");
                     process::exit(1);
                 }
             }
@@ -173,74 +155,6 @@ fn format_file(path: &str) {
             eprintln!("{path}: {e}");
             process::exit(1);
         }
-    }
-}
-
-/// Run a file using the tree-walk interpreter (legacy path).
-fn interp_run_file(path: &str) {
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error reading {path}: {e}");
-            process::exit(1);
-        }
-    };
-
-    let tokens = match Lexer::new(&source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("{path}:{e}");
-            process::exit(1);
-        }
-    };
-
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-
-    if !parse_errors.is_empty() {
-        for e in &parse_errors {
-            let source_err = SourceError::from_parse_error(e, &source, path);
-            eprintln!("{source_err}");
-        }
-        process::exit(1);
-    }
-
-    // Run the type checker
-    let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
-    for err in &type_errors {
-        let source_err = SourceError::from_type_error(err, &source, path);
-        eprintln!("{source_err}");
-    }
-    if has_hard_errors {
-        process::exit(1);
-    }
-
-    // Derive project root from the input file's directory
-    let project_root = Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(path).to_path_buf())
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-
-    let mut interp = Interpreter::with_project_root(project_root);
-    if let Err(e) = interp.run(&program) {
-        if let Some(span) = e.span() {
-            let source_err = SourceError::runtime_at(
-                e.message().unwrap_or("runtime error"),
-                span,
-                &source,
-                path,
-            );
-            eprintln!("{source_err}");
-        } else {
-            eprintln!("{e}");
-        }
-        let stack = interp.call_stack();
-        if !stack.is_empty() {
-            eprint!("{}", silt::errors::format_call_stack(&stack, &source, path));
-        }
-        process::exit(1);
     }
 }
 
@@ -517,20 +431,33 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
         };
 
-        // Find all test_ functions — derive project root from the test file path
+        // Compile all declarations (without calling main)
         let test_root = Path::new(path.as_str())
             .canonicalize()
             .unwrap_or_else(|_| Path::new(path.as_str()).to_path_buf())
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-        let mut interp = Interpreter::with_project_root(test_root);
-        if let Err(e) = interp.run_test_setup(&program) {
+        let mut compiler = Compiler::with_project_root(test_root);
+        let functions = match compiler.compile_declarations(&program) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("{path}: compile error: {e}");
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Run the setup script to register all globals in the VM
+        let script = Rc::new(functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        if let Err(e) = vm.run(script) {
             eprintln!("{path}: setup error: {e}");
             failed += 1;
             continue;
         }
 
+        // Run each test function
         for decl in &program.decls {
             if let silt::ast::Decl::Fn(f) = decl {
                 if f.name.starts_with("skip_test_") {
@@ -546,8 +473,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                         }
                     }
                     total += 1;
-                    match interp.run_test(&f.name) {
-                        Ok(()) => {
+                    let caller = silt::bytecode::call_global_script(&f.name);
+                    match vm.run(Rc::new(caller)) {
+                        Ok(_) => {
                             println!("  PASS {path}::{}", f.name);
                             passed += 1;
                         }

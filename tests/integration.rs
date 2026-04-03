@@ -1,31 +1,41 @@
-use silt::interpreter::Interpreter;
+use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::value::Value;
+use silt::vm::Vm;
 use std::rc::Rc;
 
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut interp = Interpreter::new();
-    interp.run(&program).expect("runtime error")
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error")
 }
 
 fn run_ok(input: &str) {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut interp = Interpreter::new();
-    interp.run(&program).expect("runtime error");
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error");
 }
 
 fn run_err(input: &str) -> String {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut interp = Interpreter::new();
-    let err = interp.run(&program).expect_err("expected runtime error");
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Rc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    let err = vm.run(script).expect_err("expected runtime error");
     format!("{err}")
 }
 
