@@ -1,7 +1,10 @@
 //! Stack-based bytecode VM for Silt.
 //!
 //! Executes compiled `Function` objects produced by the compiler.
+//! Phase 2: full function calls (VmClosure + builtins), many builtin
+//! dispatches, variant constructors, and end-to-end program execution.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -47,10 +50,87 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Vm {
+        let mut vm = Vm {
             frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
+        };
+        vm.register_builtins();
+        vm
+    }
+
+    /// Register all builtin functions and variant constructors in globals.
+    fn register_builtins(&mut self) {
+        // Variant constructors
+        self.globals.insert("Ok".into(), Value::VariantConstructor("Ok".into(), 1));
+        self.globals.insert("Err".into(), Value::VariantConstructor("Err".into(), 1));
+        self.globals.insert("Some".into(), Value::VariantConstructor("Some".into(), 1));
+        self.globals.insert("None".into(), Value::Variant("None".into(), Vec::new()));
+        self.globals.insert("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
+        self.globals.insert("Continue".into(), Value::VariantConstructor("Continue".into(), 1));
+        self.globals.insert("Message".into(), Value::VariantConstructor("Message".into(), 1));
+        self.globals.insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
+        self.globals.insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
+
+        // Primitive type descriptors
+        self.globals.insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
+        self.globals.insert("Float".into(), Value::PrimitiveDescriptor("Float".into()));
+        self.globals.insert("String".into(), Value::PrimitiveDescriptor("String".into()));
+        self.globals.insert("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
+
+        // Math constants
+        self.globals.insert("math.pi".into(), Value::Float(std::f64::consts::PI));
+        self.globals.insert("math.e".into(), Value::Float(std::f64::consts::E));
+
+        // All builtin function names
+        let builtin_names = [
+            "print", "println", "io.inspect", "panic",
+            "list.map", "list.filter", "list.each", "list.fold",
+            "list.find", "list.zip", "list.flatten", "list.sort_by",
+            "list.flat_map", "list.filter_map", "list.any", "list.all",
+            "list.fold_until", "list.unfold",
+            "list.head", "list.tail", "list.last", "list.reverse",
+            "list.sort", "list.unique", "list.contains", "list.length",
+            "list.append", "list.prepend", "list.concat",
+            "list.get", "list.set", "list.take", "list.drop",
+            "list.enumerate", "list.group_by",
+            "result.unwrap_or", "result.map_ok", "result.map_err",
+            "result.flatten", "result.flat_map", "result.is_ok", "result.is_err",
+            "option.map", "option.unwrap_or", "option.to_result",
+            "option.is_some", "option.is_none", "option.flat_map",
+            "string.split", "string.trim", "string.trim_start", "string.trim_end",
+            "string.char_code", "string.from_char_code",
+            "string.contains", "string.replace", "string.join",
+            "string.length", "string.to_upper", "string.to_lower",
+            "string.starts_with", "string.ends_with", "string.chars",
+            "string.repeat", "string.index_of", "string.slice",
+            "string.pad_left", "string.pad_right",
+            "string.is_empty", "string.is_alpha", "string.is_digit",
+            "string.is_upper", "string.is_lower", "string.is_alnum",
+            "string.is_whitespace",
+            "int.parse", "int.abs", "int.min", "int.max",
+            "int.to_float", "int.to_string",
+            "float.parse", "float.round", "float.ceil", "float.floor",
+            "float.abs", "float.to_string", "float.to_int",
+            "float.min", "float.max",
+            "map.get", "map.set", "map.delete", "map.contains",
+            "map.keys", "map.values", "map.length", "map.merge",
+            "map.filter", "map.map", "map.entries", "map.from_entries",
+            "map.each", "map.update",
+            "set.new", "set.from_list", "set.to_list", "set.contains",
+            "set.insert", "set.remove", "set.length",
+            "set.union", "set.intersection", "set.difference", "set.is_subset",
+            "set.map", "set.filter", "set.each", "set.fold",
+            "io.read_file", "io.write_file", "io.read_line", "io.args",
+            "fs.exists",
+            "test.assert", "test.assert_eq", "test.assert_ne",
+            "math.sqrt", "math.pow", "math.log", "math.log10",
+            "math.sin", "math.cos", "math.tan",
+            "math.asin", "math.acos", "math.atan", "math.atan2",
+        ];
+
+        for name in builtin_names {
+            self.globals.insert(name.into(), Value::BuiltinFn(name.into()));
         }
     }
 
@@ -198,7 +278,12 @@ impl Vm {
                     let slot = self.read_u16() as usize;
                     let base = self.current_frame().base_slot;
                     let value = self.peek().clone();
-                    self.stack[base + slot] = value;
+                    // Extend stack if needed (for first-time local assignment)
+                    let target = base + slot;
+                    while self.stack.len() <= target {
+                        self.stack.push(Value::Unit);
+                    }
+                    self.stack[target] = value;
                 }
                 Some(Op::GetGlobal) => {
                     let name_index = self.read_u16() as usize;
@@ -211,7 +296,7 @@ impl Vm {
                 Some(Op::SetGlobal) => {
                     let name_index = self.read_u16() as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let value = self.pop();
+                    let value = self.peek().clone();
                     self.globals.insert(name, value);
                 }
 
@@ -228,38 +313,33 @@ impl Vm {
                     // The function value sits below the arguments on the stack.
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
-                    match func_val {
-                        Value::Closure(_) => {
-                            // The tree-walking interpreter uses Closure; not callable in VM.
-                            return Err(VmError::new(
-                                "cannot call tree-walking Closure in VM".to_string(),
-                            ));
-                        }
-                        _ => {
-                            // Try to interpret the value as containing a VmClosure.
-                            // In Phase 1, closures on the stack are stored as constants
-                            // holding a Function Rc. The compiler will emit MakeClosure
-                            // or store VmClosures as constants.
-                            //
-                            // For now, we handle the case where the compiler pushes
-                            // a Function wrapped in a closure constant.
-                            return Err(VmError::new(format!(
-                                "cannot call value of type {}",
-                                self.type_name(&func_val)
-                            )));
-                        }
-                    }
+                    self.call_value(func_val, argc, func_slot)?;
                 }
                 Some(Op::TailCall) => {
                     let argc = self.read_u8() as usize;
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
                     match func_val {
+                        Value::VmClosure(closure) => {
+                            if argc != closure.function.arity as usize {
+                                return Err(VmError::new(format!(
+                                    "function '{}' expects {} arguments, got {}",
+                                    closure.function.name, closure.function.arity, argc
+                                )));
+                            }
+                            // Reuse current frame: move args to base_slot
+                            let base = self.current_frame().base_slot;
+                            for i in 0..argc {
+                                self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
+                            }
+                            self.stack.truncate(base + argc);
+                            let frame = self.current_frame_mut();
+                            frame.closure = closure;
+                            frame.ip = 0;
+                        }
                         _ => {
-                            return Err(VmError::new(format!(
-                                "cannot tail-call value of type {}",
-                                self.type_name(&func_val)
-                            )));
+                            // Fall back to normal call
+                            self.call_value(func_val, argc, func_slot)?;
                         }
                     }
                 }
@@ -270,8 +350,10 @@ impl Vm {
                     if self.frames.is_empty() {
                         return Ok(result);
                     }
-                    // Discard the callee's stack window (including the function slot).
-                    self.stack.truncate(finished_base);
+                    // Discard the callee's stack window including the function slot.
+                    // base_slot = func_slot + 1, so func_slot = base_slot - 1.
+                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                    self.stack.truncate(func_slot);
                     self.push(result);
                 }
                 Some(Op::CallBuiltin) => {
@@ -289,15 +371,36 @@ impl Vm {
                 Some(Op::MakeClosure) => {
                     let func_index = self.read_u16() as usize;
                     let upvalue_count = self.read_u8() as usize;
-                    // The constant pool may not directly hold Functions in Value form
-                    // yet. For Phase 1, we skip full closure support. Just consume the
-                    // upvalue descriptors and push Unit as a placeholder.
-                    let _constant = self.read_constant(func_index);
+                    let constant = self.read_constant(func_index);
+
+                    // Collect upvalue values from the descriptors
+                    let mut upvalues = Vec::with_capacity(upvalue_count);
                     for _ in 0..upvalue_count {
-                        let _is_local = self.read_u8();
-                        let _index = self.read_u8();
+                        let is_local = self.read_u8() != 0;
+                        let index = self.read_u8() as usize;
+                        let val = if is_local {
+                            let base = self.current_frame().base_slot;
+                            self.stack[base + index].clone()
+                        } else {
+                            self.current_frame().closure.upvalues[index].clone()
+                        };
+                        upvalues.push(val);
                     }
-                    self.push(Value::Unit);
+
+                    // The constant should be a VmClosure wrapping the function
+                    match constant {
+                        Value::VmClosure(existing) => {
+                            let closure = Rc::new(VmClosure {
+                                function: existing.function.clone(),
+                                upvalues,
+                            });
+                            self.push(Value::VmClosure(closure));
+                        }
+                        _ => {
+                            // Fallback: push Unit (shouldn't happen in Phase 2)
+                            self.push(Value::Unit);
+                        }
+                    }
                 }
 
                 // ── Data constructors ─────────────────────────
@@ -319,7 +422,7 @@ impl Vm {
                     let pair_count = self.read_u16() as usize;
                     let total = pair_count * 2;
                     let start = self.stack.len() - total;
-                    let mut map = std::collections::BTreeMap::new();
+                    let mut map = BTreeMap::new();
                     for i in (start..self.stack.len()).step_by(2) {
                         let key = self.stack[i].clone();
                         let val = self.stack[i + 1].clone();
@@ -331,7 +434,7 @@ impl Vm {
                 Some(Op::MakeSet) => {
                     let count = self.read_u16() as usize;
                     let start = self.stack.len() - count;
-                    let mut set = std::collections::BTreeSet::new();
+                    let mut set = BTreeSet::new();
                     for i in start..self.stack.len() {
                         set.insert(self.stack[i].clone());
                     }
@@ -348,7 +451,7 @@ impl Vm {
                     }
                     let type_name = self.read_constant_string(type_name_index)?;
                     let start = self.stack.len() - field_count;
-                    let mut fields = std::collections::BTreeMap::new();
+                    let mut fields = BTreeMap::new();
                     for (i, name) in field_names.into_iter().enumerate() {
                         fields.insert(name, self.stack[start + i].clone());
                     }
@@ -535,7 +638,6 @@ impl Vm {
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestIntRange) => {
-                    // Read lo and hi from the next two constant indices.
                     let lo_index = self.read_u16() as usize;
                     let hi_index = self.read_u16() as usize;
                     let lo = self.read_constant(lo_index);
@@ -661,9 +763,6 @@ impl Vm {
                         self.stack[base + i] = self.stack[start + i].clone();
                     }
                     self.stack.truncate(start);
-                    // Jump back to the loop body start. The compiler should emit
-                    // a JumpBack after Recur, or Recur itself resets ip.
-                    // For Phase 1 we assume the compiler emits a JumpBack separately.
                 }
 
                 // ── Error handling ────────────────────────────
@@ -711,7 +810,7 @@ impl Vm {
                     return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
                 }
 
-                // ── Concurrency (stubs for Phase 1) ───────────
+                // ── Concurrency (stubs for Phase 2) ───────────
                 Some(Op::ChanNew)
                 | Some(Op::ChanSend)
                 | Some(Op::ChanRecv)
@@ -733,6 +832,606 @@ impl Vm {
                 }
             }
         }
+    }
+
+    // ── Call a value ──────────────────────────────────────────────
+
+    fn call_value(&mut self, func_val: Value, argc: usize, func_slot: usize) -> Result<(), VmError> {
+        match func_val {
+            Value::VmClosure(closure) => {
+                if argc != closure.function.arity as usize {
+                    return Err(VmError::new(format!(
+                        "function '{}' expects {} arguments, got {}",
+                        closure.function.name, closure.function.arity, argc
+                    )));
+                }
+                // Push a new call frame. The arguments are already on the stack
+                // at positions [func_slot+1 .. func_slot+1+argc].
+                // The base_slot for the new frame is func_slot+1 so the args
+                // are at locals[0..argc].
+                self.frames.push(CallFrame {
+                    closure,
+                    ip: 0,
+                    base_slot: func_slot + 1,
+                });
+                Ok(())
+            }
+            Value::BuiltinFn(name) => {
+                let start = func_slot + 1;
+                let args: Vec<Value> = self.stack[start..start + argc].to_vec();
+                // Pop everything including the function slot
+                self.stack.truncate(func_slot);
+                let result = self.dispatch_builtin(&name, &args)?;
+                self.push(result);
+                Ok(())
+            }
+            Value::VariantConstructor(name, arity) => {
+                if argc != arity {
+                    return Err(VmError::new(format!(
+                        "variant constructor '{name}' expects {arity} arguments, got {argc}"
+                    )));
+                }
+                let start = func_slot + 1;
+                let fields: Vec<Value> = self.stack[start..start + argc].to_vec();
+                self.stack.truncate(func_slot);
+                self.push(Value::Variant(name, fields));
+                Ok(())
+            }
+            Value::Closure(_) => {
+                Err(VmError::new(
+                    "cannot call tree-walking Closure in VM".to_string(),
+                ))
+            }
+            _ => {
+                Err(VmError::new(format!(
+                    "cannot call value of type {}",
+                    self.type_name(&func_val)
+                )))
+            }
+        }
+    }
+
+    /// Call a callable Value and return its result. Used for higher-order builtins.
+    fn invoke_callable(&mut self, func: &Value, args: &[Value]) -> Result<Value, VmError> {
+        match func {
+            Value::VmClosure(closure) => {
+                if args.len() != closure.function.arity as usize {
+                    return Err(VmError::new(format!(
+                        "function '{}' expects {} arguments, got {}",
+                        closure.function.name, closure.function.arity, args.len()
+                    )));
+                }
+                // Save state
+                let saved_frame_count = self.frames.len();
+                let func_slot = self.stack.len();
+                // Push a dummy for the function slot
+                self.push(Value::Unit);
+                for arg in args {
+                    self.push(arg.clone());
+                }
+                self.frames.push(CallFrame {
+                    closure: closure.clone(),
+                    ip: 0,
+                    base_slot: func_slot + 1,
+                });
+                // Run the execution loop until we return to the previous frame count
+                loop {
+                    let op_byte = self.read_byte();
+                    match Op::from_byte(op_byte) {
+                        Some(Op::Return) => {
+                            let result = self.pop();
+                            let finished_base = self.current_frame().base_slot;
+                            self.frames.pop();
+                            if self.frames.len() < saved_frame_count {
+                                // This shouldn't happen
+                                return Err(VmError::new("frame underflow in invoke_callable".into()));
+                            }
+                            if self.frames.len() == saved_frame_count {
+                                // We've returned from our closure
+                                self.stack.truncate(func_slot);
+                                return Ok(result);
+                            }
+                            // Otherwise, it's an inner return (nested calls)
+                            self.stack.truncate(finished_base);
+                            self.push(result);
+                        }
+                        Some(op) => {
+                            // Re-run the same dispatch logic. Since we can't easily
+                            // factor out the dispatch, let's use a helper.
+                            self.dispatch_op(op)?;
+                        }
+                        None => {
+                            return Err(VmError::new(format!("unknown opcode: {op_byte}")));
+                        }
+                    }
+                }
+            }
+            Value::BuiltinFn(name) => {
+                self.dispatch_builtin(name, args)
+            }
+            Value::VariantConstructor(name, arity) => {
+                if args.len() != *arity {
+                    return Err(VmError::new(format!(
+                        "variant constructor '{name}' expects {arity} arguments, got {}",
+                        args.len()
+                    )));
+                }
+                Ok(Value::Variant(name.clone(), args.to_vec()))
+            }
+            _ => {
+                Err(VmError::new(format!("cannot call value in invoke_callable")))
+            }
+        }
+    }
+
+    /// Dispatch a single opcode (factored out so invoke_callable can reuse it).
+    fn dispatch_op(&mut self, op: Op) -> Result<(), VmError> {
+        match op {
+            Op::Constant => {
+                let index = self.read_u16() as usize;
+                let value = self.read_constant(index);
+                self.push(value);
+            }
+            Op::Unit => self.push(Value::Unit),
+            Op::True => self.push(Value::Bool(true)),
+            Op::False => self.push(Value::Bool(false)),
+            Op::Add => self.binary_arithmetic(Op::Add)?,
+            Op::Sub => self.binary_arithmetic(Op::Sub)?,
+            Op::Mul => self.binary_arithmetic(Op::Mul)?,
+            Op::Div => self.binary_arithmetic(Op::Div)?,
+            Op::Mod => self.binary_arithmetic(Op::Mod)?,
+            Op::Eq => {
+                let b = self.pop();
+                let a = self.pop();
+                self.push(Value::Bool(a == b));
+            }
+            Op::Neq => {
+                let b = self.pop();
+                let a = self.pop();
+                self.push(Value::Bool(a != b));
+            }
+            Op::Lt => self.compare(|ord| ord.is_lt())?,
+            Op::Gt => self.compare(|ord| ord.is_gt())?,
+            Op::Leq => self.compare(|ord| ord.is_le())?,
+            Op::Geq => self.compare(|ord| ord.is_ge())?,
+            Op::Negate => {
+                let val = self.pop();
+                match val {
+                    Value::Int(n) => self.push(Value::Int(-n)),
+                    Value::Float(n) => self.push(Value::Float(-n)),
+                    other => return Err(VmError::new(format!("cannot negate {}", self.type_name(&other)))),
+                }
+            }
+            Op::Not => {
+                let val = self.pop();
+                match val {
+                    Value::Bool(b) => self.push(Value::Bool(!b)),
+                    other => return Err(VmError::new(format!("cannot apply 'not' to {}", self.type_name(&other)))),
+                }
+            }
+            Op::And => {
+                let b = self.pop();
+                let a = self.pop();
+                match (&a, &b) {
+                    (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val && *b_val)),
+                    _ => return Err(VmError::new("logical 'and' requires two booleans".into())),
+                }
+            }
+            Op::Or => {
+                let b = self.pop();
+                let a = self.pop();
+                match (&a, &b) {
+                    (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val || *b_val)),
+                    _ => return Err(VmError::new("logical 'or' requires two booleans".into())),
+                }
+            }
+            Op::DisplayValue => {
+                let val = self.pop();
+                let s = self.display_value(&val);
+                self.push(Value::String(s));
+            }
+            Op::StringConcat => {
+                let count = self.read_u8() as usize;
+                let start = self.stack.len() - count;
+                let mut result = String::new();
+                for i in start..self.stack.len() {
+                    if let Value::String(ref s) = self.stack[i] {
+                        result.push_str(s);
+                    } else {
+                        return Err(VmError::new("StringConcat: non-string value on stack".into()));
+                    }
+                }
+                self.stack.truncate(start);
+                self.push(Value::String(result));
+            }
+            Op::GetLocal => {
+                let slot = self.read_u16() as usize;
+                let base = self.current_frame().base_slot;
+                let value = self.stack[base + slot].clone();
+                self.push(value);
+            }
+            Op::SetLocal => {
+                let slot = self.read_u16() as usize;
+                let base = self.current_frame().base_slot;
+                let value = self.peek().clone();
+                let target = base + slot;
+                while self.stack.len() <= target {
+                    self.stack.push(Value::Unit);
+                }
+                self.stack[target] = value;
+            }
+            Op::GetGlobal => {
+                let name_index = self.read_u16() as usize;
+                let name = self.read_constant_string(name_index)?;
+                let value = self.globals.get(&name).cloned().ok_or_else(|| {
+                    VmError::new(format!("undefined global: {name}"))
+                })?;
+                self.push(value);
+            }
+            Op::SetGlobal => {
+                let name_index = self.read_u16() as usize;
+                let name = self.read_constant_string(name_index)?;
+                let value = self.peek().clone();
+                self.globals.insert(name, value);
+            }
+            Op::GetUpvalue => {
+                let index = self.read_u8() as usize;
+                let value = self.current_frame().closure.upvalues[index].clone();
+                self.push(value);
+            }
+            Op::Call => {
+                let argc = self.read_u8() as usize;
+                let func_slot = self.stack.len() - 1 - argc;
+                let func_val = self.stack[func_slot].clone();
+                self.call_value(func_val, argc, func_slot)?;
+            }
+            Op::TailCall => {
+                let argc = self.read_u8() as usize;
+                let func_slot = self.stack.len() - 1 - argc;
+                let func_val = self.stack[func_slot].clone();
+                if let Value::VmClosure(closure) = func_val {
+                    let base = self.current_frame().base_slot;
+                    for i in 0..argc {
+                        self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
+                    }
+                    self.stack.truncate(base + argc);
+                    let frame = self.current_frame_mut();
+                    frame.closure = closure;
+                    frame.ip = 0;
+                } else {
+                    self.call_value(func_val, argc, func_slot)?;
+                }
+            }
+            // Return is handled specially in invoke_callable, not here.
+            Op::Return => {
+                unreachable!("Return should be handled by caller");
+            }
+            Op::CallBuiltin => {
+                let name_index = self.read_u16() as usize;
+                let argc = self.read_u8() as usize;
+                let name = self.read_constant_string(name_index)?;
+                let start = self.stack.len() - argc;
+                let args: Vec<Value> = self.stack[start..].to_vec();
+                self.stack.truncate(start);
+                let result = self.dispatch_builtin(&name, &args)?;
+                self.push(result);
+            }
+            Op::MakeClosure => {
+                let func_index = self.read_u16() as usize;
+                let upvalue_count = self.read_u8() as usize;
+                let constant = self.read_constant(func_index);
+                let mut upvalues = Vec::with_capacity(upvalue_count);
+                for _ in 0..upvalue_count {
+                    let is_local = self.read_u8() != 0;
+                    let index = self.read_u8() as usize;
+                    let val = if is_local {
+                        let base = self.current_frame().base_slot;
+                        self.stack[base + index].clone()
+                    } else {
+                        self.current_frame().closure.upvalues[index].clone()
+                    };
+                    upvalues.push(val);
+                }
+                if let Value::VmClosure(existing) = constant {
+                    let closure = Rc::new(VmClosure {
+                        function: existing.function.clone(),
+                        upvalues,
+                    });
+                    self.push(Value::VmClosure(closure));
+                } else {
+                    self.push(Value::Unit);
+                }
+            }
+            Op::MakeTuple => {
+                let count = self.read_u8() as usize;
+                let start = self.stack.len() - count;
+                let elements: Vec<Value> = self.stack[start..].to_vec();
+                self.stack.truncate(start);
+                self.push(Value::Tuple(elements));
+            }
+            Op::MakeList => {
+                let count = self.read_u16() as usize;
+                let start = self.stack.len() - count;
+                let elements: Vec<Value> = self.stack[start..].to_vec();
+                self.stack.truncate(start);
+                self.push(Value::List(Rc::new(elements)));
+            }
+            Op::MakeMap => {
+                let pair_count = self.read_u16() as usize;
+                let total = pair_count * 2;
+                let start = self.stack.len() - total;
+                let mut map = BTreeMap::new();
+                for i in (start..self.stack.len()).step_by(2) {
+                    map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
+                }
+                self.stack.truncate(start);
+                self.push(Value::Map(Rc::new(map)));
+            }
+            Op::MakeSet => {
+                let count = self.read_u16() as usize;
+                let start = self.stack.len() - count;
+                let mut set = BTreeSet::new();
+                for i in start..self.stack.len() {
+                    set.insert(self.stack[i].clone());
+                }
+                self.stack.truncate(start);
+                self.push(Value::Set(Rc::new(set)));
+            }
+            Op::MakeRecord => {
+                let type_name_index = self.read_u16() as usize;
+                let field_count = self.read_u8() as usize;
+                let mut field_names = Vec::with_capacity(field_count);
+                for _ in 0..field_count {
+                    let name_index = self.read_u16() as usize;
+                    field_names.push(self.read_constant_string(name_index)?);
+                }
+                let type_name = self.read_constant_string(type_name_index)?;
+                let start = self.stack.len() - field_count;
+                let mut fields = BTreeMap::new();
+                for (i, name) in field_names.into_iter().enumerate() {
+                    fields.insert(name, self.stack[start + i].clone());
+                }
+                self.stack.truncate(start);
+                self.push(Value::Record(type_name, Rc::new(fields)));
+            }
+            Op::MakeVariant => {
+                let name_index = self.read_u16() as usize;
+                let field_count = self.read_u8() as usize;
+                let name = self.read_constant_string(name_index)?;
+                let start = self.stack.len() - field_count;
+                let fields: Vec<Value> = self.stack[start..].to_vec();
+                self.stack.truncate(start);
+                self.push(Value::Variant(name, fields));
+            }
+            Op::RecordUpdate => {
+                let field_count = self.read_u8() as usize;
+                let mut field_names = Vec::with_capacity(field_count);
+                for _ in 0..field_count {
+                    let ni = self.read_u16() as usize;
+                    field_names.push(self.read_constant_string(ni)?);
+                }
+                let start = self.stack.len() - field_count;
+                let new_values: Vec<Value> = self.stack[start..].to_vec();
+                self.stack.truncate(start);
+                let base = self.pop();
+                if let Value::Record(type_name, existing) = base {
+                    let mut fields = (*existing).clone();
+                    for (name, val) in field_names.into_iter().zip(new_values) {
+                        fields.insert(name, val);
+                    }
+                    self.push(Value::Record(type_name, Rc::new(fields)));
+                } else {
+                    return Err(VmError::new("record update on non-record".into()));
+                }
+            }
+            Op::MakeRange => {
+                let end = self.pop();
+                let start = self.pop();
+                if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
+                    let items: Vec<Value> = (*a..=*b).map(Value::Int).collect();
+                    self.push(Value::List(Rc::new(items)));
+                } else {
+                    return Err(VmError::new("range requires two integers".into()));
+                }
+            }
+            Op::GetField => {
+                let name_index = self.read_u16() as usize;
+                let name = self.read_constant_string(name_index)?;
+                let target = self.pop();
+                match target {
+                    Value::Record(_, ref fields) => {
+                        let val = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                        self.push(val);
+                    }
+                    Value::Map(ref map) => {
+                        let val = map.get(&Value::String(name.clone())).cloned().ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
+                        self.push(val);
+                    }
+                    other => return Err(VmError::new(format!("cannot access field '{}' on {}", name, self.type_name(&other)))),
+                }
+            }
+            Op::GetIndex => {
+                let index = self.read_u8() as usize;
+                let target = self.pop();
+                if let Value::Tuple(ref elems) = target {
+                    let val = elems.get(index).cloned().ok_or_else(|| VmError::new(format!("tuple index out of bounds")))?;
+                    self.push(val);
+                } else {
+                    return Err(VmError::new(format!("cannot index into {}", self.type_name(&target))));
+                }
+            }
+            Op::Jump => {
+                let offset = self.read_u16() as usize;
+                self.current_frame_mut().ip += offset;
+            }
+            Op::JumpBack => {
+                let offset = self.read_u16() as usize;
+                self.current_frame_mut().ip -= offset;
+            }
+            Op::JumpIfFalse => {
+                let offset = self.read_u16() as usize;
+                let val = self.pop();
+                if self.is_falsy(&val) {
+                    self.current_frame_mut().ip += offset;
+                }
+            }
+            Op::JumpIfTrue => {
+                let offset = self.read_u16() as usize;
+                let val = self.pop();
+                if self.is_truthy(&val) {
+                    self.current_frame_mut().ip += offset;
+                }
+            }
+            Op::Pop => { self.pop(); }
+            Op::PopN => {
+                let count = self.read_u8() as usize;
+                let new_len = self.stack.len().saturating_sub(count);
+                self.stack.truncate(new_len);
+            }
+            Op::Dup => {
+                let val = self.peek().clone();
+                self.push(val);
+            }
+            Op::TestTag => {
+                let ni = self.read_u16() as usize;
+                let name = self.read_constant_string(ni)?;
+                let val = self.peek();
+                let result = matches!(val, Value::Variant(tag, _) if *tag == name);
+                self.push(Value::Bool(result));
+            }
+            Op::TestEqual => {
+                let ci = self.read_u16() as usize;
+                let constant = self.read_constant(ci);
+                let val = self.peek();
+                let result = *val == constant;
+                self.push(Value::Bool(result));
+            }
+            Op::TestTupleLen => {
+                let len = self.read_u8() as usize;
+                let val = self.peek();
+                let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
+                self.push(Value::Bool(result));
+            }
+            Op::TestListMin => {
+                let min_len = self.read_u8() as usize;
+                let val = self.peek();
+                let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
+                self.push(Value::Bool(result));
+            }
+            Op::TestListExact => {
+                let len = self.read_u8() as usize;
+                let val = self.peek();
+                let result = matches!(val, Value::List(xs) if xs.len() == len);
+                self.push(Value::Bool(result));
+            }
+            Op::TestIntRange => {
+                let lo_index = self.read_u16() as usize;
+                let hi_index = self.read_u16() as usize;
+                let lo = self.read_constant(lo_index);
+                let hi = self.read_constant(hi_index);
+                let val = self.peek();
+                let result = match (val, &lo, &hi) {
+                    (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
+                    _ => false,
+                };
+                self.push(Value::Bool(result));
+            }
+            Op::TestFloatRange => {
+                let lo_index = self.read_u16() as usize;
+                let hi_index = self.read_u16() as usize;
+                let lo = self.read_constant(lo_index);
+                let hi = self.read_constant(hi_index);
+                let val = self.peek();
+                let result = match (val, &lo, &hi) {
+                    (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
+                    _ => false,
+                };
+                self.push(Value::Bool(result));
+            }
+            Op::TestBool => {
+                let expected = self.read_u8() != 0;
+                let val = self.peek();
+                let result = matches!(val, Value::Bool(b) if *b == expected);
+                self.push(Value::Bool(result));
+            }
+            Op::DestructTuple => {
+                let index = self.read_u8() as usize;
+                let val = self.peek().clone();
+                if let Value::Tuple(elems) = val { self.push(elems[index].clone()); }
+                else { return Err(VmError::new("DestructTuple on non-tuple".into())); }
+            }
+            Op::DestructVariant => {
+                let index = self.read_u8() as usize;
+                let val = self.peek().clone();
+                if let Value::Variant(_, fields) = val { self.push(fields[index].clone()); }
+                else { return Err(VmError::new("DestructVariant on non-variant".into())); }
+            }
+            Op::DestructList => {
+                let index = self.read_u8() as usize;
+                let val = self.peek().clone();
+                if let Value::List(xs) = val { self.push(xs[index].clone()); }
+                else { return Err(VmError::new("DestructList on non-list".into())); }
+            }
+            Op::DestructListRest => {
+                let start = self.read_u8() as usize;
+                let val = self.peek().clone();
+                if let Value::List(xs) = val { self.push(Value::List(Rc::new(xs[start..].to_vec()))); }
+                else { return Err(VmError::new("DestructListRest on non-list".into())); }
+            }
+            Op::DestructRecordField => {
+                let ni = self.read_u16() as usize;
+                let name = self.read_constant_string(ni)?;
+                let val = self.peek().clone();
+                if let Value::Record(_, fields) = val {
+                    let field = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                    self.push(field);
+                } else { return Err(VmError::new("DestructRecordField on non-record".into())); }
+            }
+            Op::LoopSetup => { let _ = self.read_u8(); }
+            Op::Recur => {
+                let arg_count = self.read_u8() as usize;
+                let base = self.current_frame().base_slot;
+                let start = self.stack.len() - arg_count;
+                for i in 0..arg_count {
+                    self.stack[base + i] = self.stack[start + i].clone();
+                }
+                self.stack.truncate(start);
+            }
+            Op::QuestionMark => {
+                let val = self.peek().clone();
+                match val {
+                    Value::Variant(ref tag, ref fields) => match tag.as_str() {
+                        "Ok" | "Some" => {
+                            self.pop();
+                            self.push(if fields.len() == 1 { fields[0].clone() } else { Value::Unit });
+                        }
+                        "Err" | "None" => {
+                            let result = self.pop();
+                            let finished_base = self.current_frame().base_slot;
+                            self.frames.pop();
+                            if self.frames.is_empty() {
+                                self.push(result);
+                                return Ok(());
+                            }
+                            self.stack.truncate(finished_base);
+                            self.push(result);
+                        }
+                        _ => return Err(VmError::new(format!("? on non-Result/Option: {tag}"))),
+                    },
+                    _ => return Err(VmError::new(format!("? on non-variant: {}", self.type_name(&val)))),
+                }
+            }
+            Op::Panic => {
+                let msg = self.pop();
+                return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
+            }
+            Op::ChanNew | Op::ChanSend | Op::ChanRecv | Op::ChanClose
+            | Op::ChanTrySend | Op::ChanTryRecv | Op::ChanSelect
+            | Op::TaskSpawn | Op::TaskJoin | Op::TaskCancel | Op::Yield => {
+                return Err(VmError::new("concurrency opcodes not yet implemented".into()));
+            }
+        }
+        Ok(())
     }
 
     // ── Stack operations ──────────────────────────────────────────
@@ -908,6 +1607,7 @@ impl Vm {
             Value::Record(..) => "Record",
             Value::Variant(..) => "Variant",
             Value::Closure(_) => "Closure",
+            Value::VmClosure(_) => "Function",
             Value::BuiltinFn(_) => "BuiltinFn",
             Value::VariantConstructor(..) => "VariantConstructor",
             Value::RecordDescriptor(_) => "RecordDescriptor",
@@ -925,49 +1625,931 @@ impl Vm {
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
-        match name {
-            "println" => {
-                match args.len() {
-                    0 => println!(),
-                    1 => println!("{}", self.display_value(&args[0])),
-                    _ => {
-                        // Print all args space-separated.
-                        let parts: Vec<String> =
-                            args.iter().map(|v| self.display_value(v)).collect();
-                        println!("{}", parts.join(" "));
+        if let Some((module, func)) = name.split_once('.') {
+            match module {
+                "list" => self.dispatch_list(func, args),
+                "string" => self.dispatch_string(func, args),
+                "int" => self.dispatch_int(func, args),
+                "float" => self.dispatch_float(func, args),
+                "map" => self.dispatch_map(func, args),
+                "set" => self.dispatch_set(func, args),
+                "result" => self.dispatch_result(func, args),
+                "option" => self.dispatch_option(func, args),
+                "io" => self.dispatch_io(func, args),
+                "fs" => self.dispatch_fs(func, args),
+                "test" => self.dispatch_test(func, args),
+                "math" => self.dispatch_math(func, args),
+                _ => Err(VmError::new(format!("unknown module: {module}"))),
+            }
+        } else {
+            match name {
+                "println" => {
+                    match args.len() {
+                        0 => println!(),
+                        1 => println!("{}", self.display_value(&args[0])),
+                        _ => {
+                            let parts: Vec<String> =
+                                args.iter().map(|v| self.display_value(v)).collect();
+                            println!("{}", parts.join(" "));
+                        }
                     }
+                    Ok(Value::Unit)
+                }
+                "print" => {
+                    match args.len() {
+                        0 => {}
+                        1 => print!("{}", self.display_value(&args[0])),
+                        _ => {
+                            let parts: Vec<String> =
+                                args.iter().map(|v| self.display_value(v)).collect();
+                            print!("{}", parts.join(" "));
+                        }
+                    }
+                    Ok(Value::Unit)
+                }
+                "panic" => {
+                    let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
+                    Err(VmError::new(format!("panic: {msg}")))
+                }
+                "to_string" => {
+                    if args.len() != 1 {
+                        return Err(VmError::new("to_string expects 1 argument".into()));
+                    }
+                    Ok(Value::String(self.display_value(&args[0])))
+                }
+                "type_of" => {
+                    if args.len() != 1 {
+                        return Err(VmError::new("type_of expects 1 argument".into()));
+                    }
+                    Ok(Value::String(self.type_name(&args[0]).to_string()))
+                }
+                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
+            }
+        }
+    }
+
+    // ── List builtins ─────────────────────────────────────────────
+
+    fn dispatch_list(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "map" => {
+                if args.len() != 2 { return Err(VmError::new("list.map takes 2 arguments (list, fn)".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.map requires a list".into())); };
+                let func = &args[1];
+                let mut result = Vec::with_capacity(xs.len());
+                for item in xs.iter() {
+                    let val = self.invoke_callable(func, &[item.clone()])?;
+                    result.push(val);
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "filter" => {
+                if args.len() != 2 { return Err(VmError::new("list.filter takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.filter requires a list".into())); };
+                let func = &args[1];
+                let mut result = Vec::new();
+                for item in xs.iter() {
+                    let keep = self.invoke_callable(func, &[item.clone()])?;
+                    if self.is_truthy(&keep) {
+                        result.push(item.clone());
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "each" => {
+                if args.len() != 2 { return Err(VmError::new("list.each takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.each requires a list".into())); };
+                let func = &args[1];
+                for item in xs.iter() {
+                    self.invoke_callable(func, &[item.clone()])?;
                 }
                 Ok(Value::Unit)
             }
-            "print" => {
-                match args.len() {
-                    0 => {}
-                    1 => print!("{}", self.display_value(&args[0])),
-                    _ => {
-                        let parts: Vec<String> =
-                            args.iter().map(|v| self.display_value(v)).collect();
-                        print!("{}", parts.join(" "));
+            "fold" => {
+                if args.len() != 3 { return Err(VmError::new("list.fold takes 3 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.fold requires a list".into())); };
+                let func = &args[2];
+                let mut acc = args[1].clone();
+                for item in xs.iter() {
+                    acc = self.invoke_callable(func, &[acc, item.clone()])?;
+                }
+                Ok(acc)
+            }
+            "find" => {
+                if args.len() != 2 { return Err(VmError::new("list.find takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.find requires a list".into())); };
+                let func = &args[1];
+                for item in xs.iter() {
+                    let result = self.invoke_callable(func, &[item.clone()])?;
+                    if self.is_truthy(&result) {
+                        return Ok(Value::Variant("Some".into(), vec![item.clone()]));
                     }
                 }
-                Ok(Value::Unit)
+                Ok(Value::Variant("None".into(), Vec::new()))
+            }
+            "any" => {
+                if args.len() != 2 { return Err(VmError::new("list.any takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.any requires a list".into())); };
+                let func = &args[1];
+                for item in xs.iter() {
+                    let result = self.invoke_callable(func, &[item.clone()])?;
+                    if self.is_truthy(&result) { return Ok(Value::Bool(true)); }
+                }
+                Ok(Value::Bool(false))
+            }
+            "all" => {
+                if args.len() != 2 { return Err(VmError::new("list.all takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.all requires a list".into())); };
+                let func = &args[1];
+                for item in xs.iter() {
+                    let result = self.invoke_callable(func, &[item.clone()])?;
+                    if !self.is_truthy(&result) { return Ok(Value::Bool(false)); }
+                }
+                Ok(Value::Bool(true))
+            }
+            "flat_map" => {
+                if args.len() != 2 { return Err(VmError::new("list.flat_map takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.flat_map requires a list".into())); };
+                let func = &args[1];
+                let mut result = Vec::new();
+                for item in xs.iter() {
+                    let val = self.invoke_callable(func, &[item.clone()])?;
+                    if let Value::List(inner) = val {
+                        result.extend(inner.iter().cloned());
+                    } else {
+                        result.push(val);
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "filter_map" => {
+                if args.len() != 2 { return Err(VmError::new("list.filter_map takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.filter_map requires a list".into())); };
+                let func = &args[1];
+                let mut result = Vec::new();
+                for item in xs.iter() {
+                    let val = self.invoke_callable(func, &[item.clone()])?;
+                    match val {
+                        Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
+                            result.push(fields[0].clone());
+                        }
+                        Value::Variant(ref tag, _) if tag == "None" => {}
+                        _ => result.push(val),
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            // Non-closure list builtins
+            "zip" => {
+                if args.len() != 2 { return Err(VmError::new("list.zip takes 2 arguments".into())); }
+                let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else { return Err(VmError::new("list.zip requires two lists".into())); };
+                let pairs: Vec<Value> = a.iter().zip(b.iter()).map(|(x, y)| Value::Tuple(vec![x.clone(), y.clone()])).collect();
+                Ok(Value::List(Rc::new(pairs)))
+            }
+            "flatten" => {
+                if args.len() != 1 { return Err(VmError::new("list.flatten takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.flatten requires a list".into())); };
+                let mut result = Vec::new();
+                for item in xs.iter() {
+                    match item {
+                        Value::List(inner) => result.extend(inner.iter().cloned()),
+                        other => result.push(other.clone()),
+                    }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "head" => {
+                if args.len() != 1 { return Err(VmError::new("list.head takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.head requires a list".into())); };
+                match xs.first() {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "tail" => {
+                if args.len() != 1 { return Err(VmError::new("list.tail takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.tail requires a list".into())); };
+                if xs.is_empty() { Ok(Value::List(Rc::new(Vec::new()))) }
+                else { Ok(Value::List(Rc::new(xs[1..].to_vec()))) }
+            }
+            "last" => {
+                if args.len() != 1 { return Err(VmError::new("list.last takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.last requires a list".into())); };
+                match xs.last() {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "reverse" => {
+                if args.len() != 1 { return Err(VmError::new("list.reverse takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.reverse requires a list".into())); };
+                let mut v = (**xs).clone(); v.reverse();
+                Ok(Value::List(Rc::new(v)))
+            }
+            "sort" => {
+                if args.len() != 1 { return Err(VmError::new("list.sort takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.sort requires a list".into())); };
+                let mut v = (**xs).clone(); v.sort();
+                Ok(Value::List(Rc::new(v)))
+            }
+            "unique" => {
+                if args.len() != 1 { return Err(VmError::new("list.unique takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.unique requires a list".into())); };
+                let mut seen = Vec::new();
+                let mut result = Vec::new();
+                for x in xs.iter() {
+                    if !seen.contains(x) { seen.push(x.clone()); result.push(x.clone()); }
+                }
+                Ok(Value::List(Rc::new(result)))
+            }
+            "contains" => {
+                if args.len() != 2 { return Err(VmError::new("list.contains takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.contains requires a list".into())); };
+                Ok(Value::Bool(xs.contains(&args[1])))
+            }
+            "length" => {
+                if args.len() != 1 { return Err(VmError::new("list.length takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.length requires a list".into())); };
+                Ok(Value::Int(xs.len() as i64))
+            }
+            "append" => {
+                if args.len() != 2 { return Err(VmError::new("list.append takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.append requires a list".into())); };
+                let mut v = (**xs).clone(); v.push(args[1].clone());
+                Ok(Value::List(Rc::new(v)))
+            }
+            "prepend" => {
+                if args.len() != 2 { return Err(VmError::new("list.prepend takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.prepend requires a list".into())); };
+                let mut v = (**xs).clone(); v.insert(0, args[1].clone());
+                Ok(Value::List(Rc::new(v)))
+            }
+            "concat" => {
+                if args.len() != 2 { return Err(VmError::new("list.concat takes 2 arguments".into())); }
+                let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else { return Err(VmError::new("list.concat requires two lists".into())); };
+                let mut v = (**a).clone(); v.extend((**b).iter().cloned());
+                Ok(Value::List(Rc::new(v)))
+            }
+            "get" => {
+                if args.len() != 2 { return Err(VmError::new("list.get takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.get requires a list".into())); };
+                let Value::Int(n) = &args[1] else { return Err(VmError::new("list.get index must be int".into())); };
+                match xs.get(*n as usize) {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "set" => {
+                if args.len() != 3 { return Err(VmError::new("list.set takes 3 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.set requires a list".into())); };
+                let Value::Int(n) = &args[1] else { return Err(VmError::new("list.set index must be int".into())); };
+                let idx = *n as usize;
+                if idx >= xs.len() { return Err(VmError::new("list.set index out of bounds".into())); }
+                let mut v = (**xs).clone(); v[idx] = args[2].clone();
+                Ok(Value::List(Rc::new(v)))
+            }
+            "take" => {
+                if args.len() != 2 { return Err(VmError::new("list.take takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.take requires a list".into())); };
+                let Value::Int(n) = &args[1] else { return Err(VmError::new("list.take requires int".into())); };
+                let n = (*n as usize).min(xs.len());
+                Ok(Value::List(Rc::new(xs[..n].to_vec())))
+            }
+            "drop" => {
+                if args.len() != 2 { return Err(VmError::new("list.drop takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.drop requires a list".into())); };
+                let Value::Int(n) = &args[1] else { return Err(VmError::new("list.drop requires int".into())); };
+                let n = (*n as usize).min(xs.len());
+                Ok(Value::List(Rc::new(xs[n..].to_vec())))
+            }
+            "enumerate" => {
+                if args.len() != 1 { return Err(VmError::new("list.enumerate takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("list.enumerate requires a list".into())); };
+                let result: Vec<Value> = xs.iter().enumerate().map(|(i, v)| Value::Tuple(vec![Value::Int(i as i64), v.clone()])).collect();
+                Ok(Value::List(Rc::new(result)))
+            }
+            _ => Err(VmError::new(format!("unknown list function: {name}"))),
+        }
+    }
+
+    // ── String builtins ───────────────────────────────────────────
+
+    fn dispatch_string(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "split" => {
+                if args.len() != 2 { return Err(VmError::new("string.split takes 2 arguments".into())); }
+                let (Value::String(s), Value::String(sep)) = (&args[0], &args[1]) else { return Err(VmError::new("string.split requires strings".into())); };
+                let parts: Vec<Value> = s.split(sep.as_str()).map(|p| Value::String(p.to_string())).collect();
+                Ok(Value::List(Rc::new(parts)))
+            }
+            "trim" => {
+                if args.len() != 1 { return Err(VmError::new("string.trim takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.trim requires a string".into())); };
+                Ok(Value::String(s.trim().to_string()))
+            }
+            "trim_start" => {
+                if args.len() != 1 { return Err(VmError::new("string.trim_start takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.trim_start requires a string".into())); };
+                Ok(Value::String(s.trim_start().to_string()))
+            }
+            "trim_end" => {
+                if args.len() != 1 { return Err(VmError::new("string.trim_end takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.trim_end requires a string".into())); };
+                Ok(Value::String(s.trim_end().to_string()))
+            }
+            "contains" => {
+                if args.len() != 2 { return Err(VmError::new("string.contains takes 2 arguments".into())); }
+                let (Value::String(s), Value::String(sub)) = (&args[0], &args[1]) else { return Err(VmError::new("string.contains requires strings".into())); };
+                Ok(Value::Bool(s.contains(sub.as_str())))
+            }
+            "replace" => {
+                if args.len() != 3 { return Err(VmError::new("string.replace takes 3 arguments".into())); }
+                let (Value::String(s), Value::String(from), Value::String(to)) = (&args[0], &args[1], &args[2]) else { return Err(VmError::new("string.replace requires strings".into())); };
+                Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+            }
+            "join" => {
+                if args.len() != 2 { return Err(VmError::new("string.join takes 2 arguments".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("string.join requires a list".into())); };
+                let Value::String(sep) = &args[1] else { return Err(VmError::new("string.join separator must be a string".into())); };
+                let strs: Vec<String> = xs.iter().map(|v| v.to_string()).collect();
+                Ok(Value::String(strs.join(sep.as_str())))
+            }
+            "length" => {
+                if args.len() != 1 { return Err(VmError::new("string.length takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.length requires a string".into())); };
+                Ok(Value::Int(s.len() as i64))
+            }
+            "to_upper" => {
+                if args.len() != 1 { return Err(VmError::new("string.to_upper takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.to_upper requires a string".into())); };
+                Ok(Value::String(s.to_uppercase()))
+            }
+            "to_lower" => {
+                if args.len() != 1 { return Err(VmError::new("string.to_lower takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.to_lower requires a string".into())); };
+                Ok(Value::String(s.to_lowercase()))
+            }
+            "starts_with" => {
+                if args.len() != 2 { return Err(VmError::new("string.starts_with takes 2 arguments".into())); }
+                let (Value::String(s), Value::String(prefix)) = (&args[0], &args[1]) else { return Err(VmError::new("string.starts_with requires strings".into())); };
+                Ok(Value::Bool(s.starts_with(prefix.as_str())))
+            }
+            "ends_with" => {
+                if args.len() != 2 { return Err(VmError::new("string.ends_with takes 2 arguments".into())); }
+                let (Value::String(s), Value::String(suffix)) = (&args[0], &args[1]) else { return Err(VmError::new("string.ends_with requires strings".into())); };
+                Ok(Value::Bool(s.ends_with(suffix.as_str())))
+            }
+            "chars" => {
+                if args.len() != 1 { return Err(VmError::new("string.chars takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.chars requires a string".into())); };
+                let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+                Ok(Value::List(Rc::new(chars)))
+            }
+            "repeat" => {
+                if args.len() != 2 { return Err(VmError::new("string.repeat takes 2 arguments".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.repeat requires a string".into())); };
+                let Value::Int(n) = &args[1] else { return Err(VmError::new("string.repeat requires an int".into())); };
+                Ok(Value::String(s.repeat(*n as usize)))
+            }
+            "index_of" => {
+                if args.len() != 2 { return Err(VmError::new("string.index_of takes 2 arguments".into())); }
+                let (Value::String(s), Value::String(needle)) = (&args[0], &args[1]) else { return Err(VmError::new("string.index_of requires strings".into())); };
+                match s.find(needle.as_str()) {
+                    Some(idx) => Ok(Value::Variant("Some".into(), vec![Value::Int(idx as i64)])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "slice" => {
+                if args.len() != 3 { return Err(VmError::new("string.slice takes 3 arguments".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("first arg must be string".into())); };
+                let Value::Int(start) = &args[1] else { return Err(VmError::new("second arg must be int".into())); };
+                let Value::Int(end) = &args[2] else { return Err(VmError::new("third arg must be int".into())); };
+                let chars: Vec<char> = s.chars().collect();
+                let start = (*start as usize).min(chars.len());
+                let end = (*end as usize).min(chars.len());
+                if start > end { Ok(Value::String(String::new())) }
+                else { Ok(Value::String(chars[start..end].iter().collect())) }
+            }
+            "pad_left" => {
+                if args.len() != 3 { return Err(VmError::new("string.pad_left takes 3 arguments".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("first arg must be string".into())); };
+                let Value::Int(width) = &args[1] else { return Err(VmError::new("second arg must be int".into())); };
+                let Value::String(pad) = &args[2] else { return Err(VmError::new("third arg must be string".into())); };
+                let width = *width as usize;
+                let pad_char = pad.chars().next().unwrap_or(' ');
+                if s.len() >= width { Ok(Value::String(s.clone())) }
+                else { let padding: String = (0..width - s.len()).map(|_| pad_char).collect(); Ok(Value::String(format!("{padding}{s}"))) }
+            }
+            "pad_right" => {
+                if args.len() != 3 { return Err(VmError::new("string.pad_right takes 3 arguments".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("first arg must be string".into())); };
+                let Value::Int(width) = &args[1] else { return Err(VmError::new("second arg must be int".into())); };
+                let Value::String(pad) = &args[2] else { return Err(VmError::new("third arg must be string".into())); };
+                let width = *width as usize;
+                let pad_char = pad.chars().next().unwrap_or(' ');
+                if s.len() >= width { Ok(Value::String(s.clone())) }
+                else { let padding: String = (0..width - s.len()).map(|_| pad_char).collect(); Ok(Value::String(format!("{s}{padding}"))) }
+            }
+            "char_code" => {
+                if args.len() != 1 { return Err(VmError::new("string.char_code takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.char_code requires a string".into())); };
+                match s.chars().next() {
+                    Some(c) => Ok(Value::Int(c as i64)),
+                    None => Err(VmError::new("string.char_code: empty string".into())),
+                }
+            }
+            "from_char_code" => {
+                if args.len() != 1 { return Err(VmError::new("string.from_char_code takes 1 argument".into())); }
+                let Value::Int(n) = &args[0] else { return Err(VmError::new("string.from_char_code requires an int".into())); };
+                match char::from_u32(*n as u32) {
+                    Some(c) => Ok(Value::String(c.to_string())),
+                    None => Err(VmError::new(format!("invalid code point {n}"))),
+                }
+            }
+            "is_empty" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_empty takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_empty requires a string".into())); };
+                Ok(Value::Bool(s.is_empty()))
+            }
+            "is_alpha" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_alpha takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_alpha requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_alphabetic())))
+            }
+            "is_digit" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_digit takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_digit requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_ascii_digit())))
+            }
+            "is_upper" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_upper takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_upper requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_uppercase())))
+            }
+            "is_lower" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_lower takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_lower requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_lowercase())))
+            }
+            "is_alnum" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_alnum takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_alnum requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_alphanumeric())))
+            }
+            "is_whitespace" => {
+                if args.len() != 1 { return Err(VmError::new("string.is_whitespace takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("string.is_whitespace requires a string".into())); };
+                Ok(Value::Bool(s.chars().next().map_or(false, |c| c.is_whitespace())))
+            }
+            _ => Err(VmError::new(format!("unknown string function: {name}"))),
+        }
+    }
+
+    // ── Int builtins ──────────────────────────────────────────────
+
+    fn dispatch_int(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "parse" => {
+                if args.len() != 1 { return Err(VmError::new("int.parse takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("int.parse requires a string".into())); };
+                match s.trim().parse::<i64>() {
+                    Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Int(n)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                }
+            }
+            "abs" => {
+                if args.len() != 1 { return Err(VmError::new("int.abs takes 1 argument".into())); }
+                let Value::Int(n) = &args[0] else { return Err(VmError::new("int.abs requires an int".into())); };
+                Ok(Value::Int(n.abs()))
+            }
+            "min" => {
+                if args.len() != 2 { return Err(VmError::new("int.min takes 2 arguments".into())); }
+                let (Value::Int(a), Value::Int(b)) = (&args[0], &args[1]) else { return Err(VmError::new("int.min requires ints".into())); };
+                Ok(Value::Int(*a.min(b)))
+            }
+            "max" => {
+                if args.len() != 2 { return Err(VmError::new("int.max takes 2 arguments".into())); }
+                let (Value::Int(a), Value::Int(b)) = (&args[0], &args[1]) else { return Err(VmError::new("int.max requires ints".into())); };
+                Ok(Value::Int(*a.max(b)))
+            }
+            "to_float" => {
+                if args.len() != 1 { return Err(VmError::new("int.to_float takes 1 argument".into())); }
+                let Value::Int(n) = &args[0] else { return Err(VmError::new("int.to_float requires an int".into())); };
+                Ok(Value::Float(*n as f64))
             }
             "to_string" => {
-                if args.len() != 1 {
-                    return Err(VmError::new(
-                        "to_string expects exactly 1 argument".to_string(),
-                    ));
-                }
-                Ok(Value::String(self.display_value(&args[0])))
+                if args.len() != 1 { return Err(VmError::new("int.to_string takes 1 argument".into())); }
+                let Value::Int(n) = &args[0] else { return Err(VmError::new("int.to_string requires an int".into())); };
+                Ok(Value::String(n.to_string()))
             }
-            "type_of" => {
-                if args.len() != 1 {
-                    return Err(VmError::new(
-                        "type_of expects exactly 1 argument".to_string(),
-                    ));
+            _ => Err(VmError::new(format!("unknown int function: {name}"))),
+        }
+    }
+
+    // ── Float builtins ────────────────────────────────────────────
+
+    fn dispatch_float(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "parse" => {
+                if args.len() != 1 { return Err(VmError::new("float.parse takes 1 argument".into())); }
+                let Value::String(s) = &args[0] else { return Err(VmError::new("float.parse requires a string".into())); };
+                match s.trim().parse::<f64>() {
+                    Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Float(n)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
                 }
-                Ok(Value::String(self.type_name(&args[0]).to_string()))
             }
-            _ => Err(VmError::new(format!("unknown builtin: {name}"))),
+            "round" => {
+                if args.len() != 1 { return Err(VmError::new("float.round takes 1 argument".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.round requires a float".into())); };
+                Ok(Value::Float(f.round()))
+            }
+            "ceil" => {
+                if args.len() != 1 { return Err(VmError::new("float.ceil takes 1 argument".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.ceil requires a float".into())); };
+                Ok(Value::Float(f.ceil()))
+            }
+            "floor" => {
+                if args.len() != 1 { return Err(VmError::new("float.floor takes 1 argument".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.floor requires a float".into())); };
+                Ok(Value::Float(f.floor()))
+            }
+            "abs" => {
+                if args.len() != 1 { return Err(VmError::new("float.abs takes 1 argument".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.abs requires a float".into())); };
+                Ok(Value::Float(f.abs()))
+            }
+            "to_string" => {
+                if args.len() != 2 { return Err(VmError::new("float.to_string takes 2 arguments".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.to_string requires a float".into())); };
+                let Value::Int(decimals) = &args[1] else { return Err(VmError::new("float.to_string requires an int for decimals".into())); };
+                Ok(Value::String(format!("{:.prec$}", f, prec = *decimals as usize)))
+            }
+            "to_int" => {
+                if args.len() != 1 { return Err(VmError::new("float.to_int takes 1 argument".into())); }
+                let Value::Float(f) = &args[0] else { return Err(VmError::new("float.to_int requires a float".into())); };
+                Ok(Value::Int(*f as i64))
+            }
+            "min" => {
+                if args.len() != 2 { return Err(VmError::new("float.min takes 2 arguments".into())); }
+                let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else { return Err(VmError::new("float.min requires floats".into())); };
+                Ok(Value::Float(a.min(*b)))
+            }
+            "max" => {
+                if args.len() != 2 { return Err(VmError::new("float.max takes 2 arguments".into())); }
+                let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else { return Err(VmError::new("float.max requires floats".into())); };
+                Ok(Value::Float(a.max(*b)))
+            }
+            _ => Err(VmError::new(format!("unknown float function: {name}"))),
+        }
+    }
+
+    // ── Map builtins ──────────────────────────────────────────────
+
+    fn dispatch_map(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "get" => {
+                if args.len() != 2 { return Err(VmError::new("map.get takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.get requires a map".into())); };
+                match m.get(&args[1]) {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                }
+            }
+            "set" => {
+                if args.len() != 3 { return Err(VmError::new("map.set takes 3 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.set requires a map".into())); };
+                let mut new_map = (**m).clone();
+                new_map.insert(args[1].clone(), args[2].clone());
+                Ok(Value::Map(Rc::new(new_map)))
+            }
+            "delete" => {
+                if args.len() != 2 { return Err(VmError::new("map.delete takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.delete requires a map".into())); };
+                let mut new_map = (**m).clone();
+                new_map.remove(&args[1]);
+                Ok(Value::Map(Rc::new(new_map)))
+            }
+            "contains" => {
+                if args.len() != 2 { return Err(VmError::new("map.contains takes 2 arguments".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.contains requires a map".into())); };
+                Ok(Value::Bool(m.contains_key(&args[1])))
+            }
+            "keys" => {
+                if args.len() != 1 { return Err(VmError::new("map.keys takes 1 argument".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.keys requires a map".into())); };
+                Ok(Value::List(Rc::new(m.keys().cloned().collect())))
+            }
+            "values" => {
+                if args.len() != 1 { return Err(VmError::new("map.values takes 1 argument".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.values requires a map".into())); };
+                Ok(Value::List(Rc::new(m.values().cloned().collect())))
+            }
+            "length" => {
+                if args.len() != 1 { return Err(VmError::new("map.length takes 1 argument".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.length requires a map".into())); };
+                Ok(Value::Int(m.len() as i64))
+            }
+            "merge" => {
+                if args.len() != 2 { return Err(VmError::new("map.merge takes 2 arguments".into())); }
+                let (Value::Map(m1), Value::Map(m2)) = (&args[0], &args[1]) else { return Err(VmError::new("map.merge requires maps".into())); };
+                let mut result = (**m1).clone();
+                for (k, v) in m2.iter() { result.insert(k.clone(), v.clone()); }
+                Ok(Value::Map(Rc::new(result)))
+            }
+            "entries" => {
+                if args.len() != 1 { return Err(VmError::new("map.entries takes 1 argument".into())); }
+                let Value::Map(m) = &args[0] else { return Err(VmError::new("map.entries requires a map".into())); };
+                let entries: Vec<Value> = m.iter().map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()])).collect();
+                Ok(Value::List(Rc::new(entries)))
+            }
+            "from_entries" => {
+                if args.len() != 1 { return Err(VmError::new("map.from_entries takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("map.from_entries requires a list".into())); };
+                let mut result = BTreeMap::new();
+                for item in xs.iter() {
+                    if let Value::Tuple(pair) = item { if pair.len() == 2 { result.insert(pair[0].clone(), pair[1].clone()); continue; } }
+                    return Err(VmError::new("map.from_entries requires (key, value) tuples".into()));
+                }
+                Ok(Value::Map(Rc::new(result)))
+            }
+            "filter" | "map" | "each" | "update" => {
+                // These require closures -- handled via invoke_callable
+                Err(VmError::new(format!("map.{name} with closures not yet supported in VM")))
+            }
+            _ => Err(VmError::new(format!("unknown map function: {name}"))),
+        }
+    }
+
+    // ── Set builtins ──────────────────────────────────────────────
+
+    fn dispatch_set(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "new" => Ok(Value::Set(Rc::new(BTreeSet::new()))),
+            "from_list" => {
+                if args.len() != 1 { return Err(VmError::new("set.from_list takes 1 argument".into())); }
+                let Value::List(xs) = &args[0] else { return Err(VmError::new("set.from_list requires a list".into())); };
+                Ok(Value::Set(Rc::new(xs.iter().cloned().collect())))
+            }
+            "to_list" => {
+                if args.len() != 1 { return Err(VmError::new("set.to_list takes 1 argument".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.to_list requires a set".into())); };
+                Ok(Value::List(Rc::new(s.iter().cloned().collect())))
+            }
+            "contains" => {
+                if args.len() != 2 { return Err(VmError::new("set.contains takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.contains requires a set".into())); };
+                Ok(Value::Bool(s.contains(&args[1])))
+            }
+            "insert" => {
+                if args.len() != 2 { return Err(VmError::new("set.insert takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.insert requires a set".into())); };
+                let mut new_set = (**s).clone(); new_set.insert(args[1].clone());
+                Ok(Value::Set(Rc::new(new_set)))
+            }
+            "remove" => {
+                if args.len() != 2 { return Err(VmError::new("set.remove takes 2 arguments".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.remove requires a set".into())); };
+                let mut new_set = (**s).clone(); new_set.remove(&args[1]);
+                Ok(Value::Set(Rc::new(new_set)))
+            }
+            "length" => {
+                if args.len() != 1 { return Err(VmError::new("set.length takes 1 argument".into())); }
+                let Value::Set(s) = &args[0] else { return Err(VmError::new("set.length requires a set".into())); };
+                Ok(Value::Int(s.len() as i64))
+            }
+            "union" => {
+                if args.len() != 2 { return Err(VmError::new("set.union takes 2 arguments".into())); }
+                let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.union requires sets".into())); };
+                Ok(Value::Set(Rc::new(a.union(b).cloned().collect())))
+            }
+            "intersection" => {
+                if args.len() != 2 { return Err(VmError::new("set.intersection takes 2 arguments".into())); }
+                let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.intersection requires sets".into())); };
+                Ok(Value::Set(Rc::new(a.intersection(b).cloned().collect())))
+            }
+            "difference" => {
+                if args.len() != 2 { return Err(VmError::new("set.difference takes 2 arguments".into())); }
+                let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.difference requires sets".into())); };
+                Ok(Value::Set(Rc::new(a.difference(b).cloned().collect())))
+            }
+            "is_subset" => {
+                if args.len() != 2 { return Err(VmError::new("set.is_subset takes 2 arguments".into())); }
+                let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.is_subset requires sets".into())); };
+                Ok(Value::Bool(a.is_subset(b)))
+            }
+            _ => Err(VmError::new(format!("unknown set function: {name}"))),
+        }
+    }
+
+    // ── Result builtins ───────────────────────────────────────────
+
+    fn dispatch_result(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "unwrap_or" => {
+                if args.len() != 2 { return Err(VmError::new("result.unwrap_or takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Ok" => Ok(fields[0].clone()),
+                    Value::Variant(tag, _) if tag == "Err" => Ok(args[1].clone()),
+                    _ => Err(VmError::new("result.unwrap_or requires a Result".into())),
+                }
+            }
+            "is_ok" => {
+                if args.len() != 1 { return Err(VmError::new("result.is_ok takes 1 argument".into())); }
+                Ok(Value::Bool(matches!(&args[0], Value::Variant(tag, _) if tag == "Ok")))
+            }
+            "is_err" => {
+                if args.len() != 1 { return Err(VmError::new("result.is_err takes 1 argument".into())); }
+                Ok(Value::Bool(matches!(&args[0], Value::Variant(tag, _) if tag == "Err")))
+            }
+            _ => Err(VmError::new(format!("unknown result function: {name}"))),
+        }
+    }
+
+    // ── Option builtins ───────────────────────────────────────────
+
+    fn dispatch_option(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "unwrap_or" => {
+                if args.len() != 2 { return Err(VmError::new("option.unwrap_or takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Some" => Ok(fields[0].clone()),
+                    Value::Variant(tag, _) if tag == "None" => Ok(args[1].clone()),
+                    _ => Err(VmError::new("option.unwrap_or requires an Option".into())),
+                }
+            }
+            "is_some" => {
+                if args.len() != 1 { return Err(VmError::new("option.is_some takes 1 argument".into())); }
+                Ok(Value::Bool(matches!(&args[0], Value::Variant(tag, _) if tag == "Some")))
+            }
+            "is_none" => {
+                if args.len() != 1 { return Err(VmError::new("option.is_none takes 1 argument".into())); }
+                Ok(Value::Bool(matches!(&args[0], Value::Variant(tag, _) if tag == "None")))
+            }
+            "to_result" => {
+                if args.len() != 2 { return Err(VmError::new("option.to_result takes 2 arguments".into())); }
+                match &args[0] {
+                    Value::Variant(tag, fields) if tag == "Some" => Ok(Value::Variant("Ok".into(), vec![fields[0].clone()])),
+                    Value::Variant(tag, _) if tag == "None" => Ok(Value::Variant("Err".into(), vec![args[1].clone()])),
+                    _ => Err(VmError::new("option.to_result requires an Option".into())),
+                }
+            }
+            _ => Err(VmError::new(format!("unknown option function: {name}"))),
+        }
+    }
+
+    // ── IO builtins ───────────────────────────────────────────────
+
+    fn dispatch_io(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "inspect" => {
+                if args.len() != 1 { return Err(VmError::new("io.inspect takes 1 argument".into())); }
+                Ok(Value::String(args[0].format_silt()))
+            }
+            "read_file" => {
+                if args.len() != 1 { return Err(VmError::new("io.read_file takes 1 argument".into())); }
+                let Value::String(path) = &args[0] else { return Err(VmError::new("io.read_file requires a string path".into())); };
+                match std::fs::read_to_string(path) {
+                    Ok(content) => Ok(Value::Variant("Ok".into(), vec![Value::String(content)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                }
+            }
+            "write_file" => {
+                if args.len() != 2 { return Err(VmError::new("io.write_file takes 2 arguments".into())); }
+                let (Value::String(path), Value::String(content)) = (&args[0], &args[1]) else { return Err(VmError::new("io.write_file requires string arguments".into())); };
+                match std::fs::write(path, content) {
+                    Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                }
+            }
+            "read_line" => {
+                let mut line = String::new();
+                match std::io::stdin().read_line(&mut line) {
+                    Ok(_) => Ok(Value::Variant("Ok".into(), vec![Value::String(line.trim_end().to_string())])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.to_string())])),
+                }
+            }
+            "args" => {
+                let args_list: Vec<Value> = std::env::args().map(Value::String).collect();
+                Ok(Value::List(Rc::new(args_list)))
+            }
+            _ => Err(VmError::new(format!("unknown io function: {name}"))),
+        }
+    }
+
+    // ── FS builtins ───────────────────────────────────────────────
+
+    fn dispatch_fs(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "exists" => {
+                if args.len() != 1 { return Err(VmError::new("fs.exists takes 1 argument".into())); }
+                let Value::String(path) = &args[0] else { return Err(VmError::new("fs.exists requires a string path".into())); };
+                Ok(Value::Bool(std::path::Path::new(path).exists()))
+            }
+            _ => Err(VmError::new(format!("unknown fs function: {name}"))),
+        }
+    }
+
+    // ── Test builtins ─────────────────────────────────────────────
+
+    fn dispatch_test(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "assert" => {
+                if args.is_empty() || args.len() > 2 { return Err(VmError::new("test.assert takes 1-2 arguments".into())); }
+                if self.is_truthy(&args[0]) { Ok(Value::Unit) }
+                else {
+                    let msg = if args.len() == 2 { format!("assertion failed: {}", args[1]) }
+                    else { format!("assertion failed: {:?}", args[0]) };
+                    Err(VmError::new(msg))
+                }
+            }
+            "assert_eq" => {
+                if args.len() < 2 || args.len() > 3 { return Err(VmError::new("test.assert_eq takes 2-3 arguments".into())); }
+                if args[0] == args[1] { Ok(Value::Unit) }
+                else {
+                    let msg = if args.len() == 3 { format!("assertion failed: {}: {:?} != {:?}", args[2], args[0], args[1]) }
+                    else { format!("assertion failed: {:?} != {:?}", args[0], args[1]) };
+                    Err(VmError::new(msg))
+                }
+            }
+            "assert_ne" => {
+                if args.len() < 2 || args.len() > 3 { return Err(VmError::new("test.assert_ne takes 2-3 arguments".into())); }
+                if args[0] != args[1] { Ok(Value::Unit) }
+                else {
+                    let msg = if args.len() == 3 { format!("assertion failed: {}: {:?} == {:?}", args[2], args[0], args[1]) }
+                    else { format!("assertion failed: {:?} == {:?}", args[0], args[1]) };
+                    Err(VmError::new(msg))
+                }
+            }
+            _ => Err(VmError::new(format!("unknown test function: {name}"))),
+        }
+    }
+
+    // ── Math builtins ─────────────────────────────────────────────
+
+    fn dispatch_math(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "sqrt" => {
+                if args.len() != 1 { return Err(VmError::new("math.sqrt takes 1 argument".into())); }
+                let f = match &args[0] {
+                    Value::Float(f) => *f,
+                    Value::Int(n) => *n as f64,
+                    _ => return Err(VmError::new("math.sqrt requires a number".into())),
+                };
+                Ok(Value::Float(f.sqrt()))
+            }
+            "pow" => {
+                if args.len() != 2 { return Err(VmError::new("math.pow takes 2 arguments".into())); }
+                let base = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.pow requires numbers".into())) };
+                let exp = match &args[1] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.pow requires numbers".into())) };
+                Ok(Value::Float(base.powf(exp)))
+            }
+            "log" => {
+                if args.len() != 1 { return Err(VmError::new("math.log takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.log requires a number".into())) };
+                Ok(Value::Float(f.ln()))
+            }
+            "log10" => {
+                if args.len() != 1 { return Err(VmError::new("math.log10 takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.log10 requires a number".into())) };
+                Ok(Value::Float(f.log10()))
+            }
+            "sin" => {
+                if args.len() != 1 { return Err(VmError::new("math.sin takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.sin requires a number".into())) };
+                Ok(Value::Float(f.sin()))
+            }
+            "cos" => {
+                if args.len() != 1 { return Err(VmError::new("math.cos takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.cos requires a number".into())) };
+                Ok(Value::Float(f.cos()))
+            }
+            "tan" => {
+                if args.len() != 1 { return Err(VmError::new("math.tan takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.tan requires a number".into())) };
+                Ok(Value::Float(f.tan()))
+            }
+            "asin" => {
+                if args.len() != 1 { return Err(VmError::new("math.asin takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.asin requires a number".into())) };
+                Ok(Value::Float(f.asin()))
+            }
+            "acos" => {
+                if args.len() != 1 { return Err(VmError::new("math.acos takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.acos requires a number".into())) };
+                Ok(Value::Float(f.acos()))
+            }
+            "atan" => {
+                if args.len() != 1 { return Err(VmError::new("math.atan takes 1 argument".into())); }
+                let f = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.atan requires a number".into())) };
+                Ok(Value::Float(f.atan()))
+            }
+            "atan2" => {
+                if args.len() != 2 { return Err(VmError::new("math.atan2 takes 2 arguments".into())); }
+                let y = match &args[0] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.atan2 requires numbers".into())) };
+                let x = match &args[1] { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => return Err(VmError::new("math.atan2 requires numbers".into())) };
+                Ok(Value::Float(y.atan2(x)))
+            }
+            _ => Err(VmError::new(format!("unknown math function: {name}"))),
         }
     }
 }
@@ -978,7 +2560,9 @@ impl Vm {
 mod tests {
     use super::*;
     use crate::bytecode::{Chunk, Function, Op};
-    use crate::lexer::Span;
+    use crate::compiler::Compiler;
+    use crate::lexer::{Lexer, Span};
+    use crate::parser::Parser;
 
     /// Helper: build a Function from raw bytecode construction.
     fn make_function(
@@ -992,6 +2576,20 @@ mod tests {
     fn span() -> Span {
         Span::new(0, 0)
     }
+
+    /// Helper: compile and run a silt program through the VM pipeline.
+    fn run_vm(source: &str) -> Value {
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).unwrap();
+        let script = Rc::new(functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        vm.run(script).unwrap()
+    }
+
+
+    // ── Phase 1 bytecode-level tests ──────────────────────────────
 
     #[test]
     fn test_constant_and_return() {
@@ -1008,7 +2606,6 @@ mod tests {
 
     #[test]
     fn test_arithmetic_add_int() {
-        // 2 + 3 = 5
         let script = make_function(|chunk| {
             let a = chunk.add_constant(Value::Int(2));
             let b = chunk.add_constant(Value::Int(3));
@@ -1026,7 +2623,6 @@ mod tests {
 
     #[test]
     fn test_arithmetic_expression() {
-        // 2 + 3 * 4 = 14 (postfix: 2 3 4 * +)
         let script = make_function(|chunk| {
             let two = chunk.add_constant(Value::Int(2));
             let three = chunk.add_constant(Value::Int(3));
@@ -1048,7 +2644,6 @@ mod tests {
 
     #[test]
     fn test_float_arithmetic() {
-        // 1.5 + 2.5 = 4.0
         let script = make_function(|chunk| {
             let a = chunk.add_constant(Value::Float(1.5));
             let b = chunk.add_constant(Value::Float(2.5));
@@ -1080,7 +2675,6 @@ mod tests {
 
     #[test]
     fn test_comparison() {
-        // 3 < 5 = true
         let script = make_function(|chunk| {
             let a = chunk.add_constant(Value::Int(3));
             let b = chunk.add_constant(Value::Int(5));
@@ -1110,17 +2704,13 @@ mod tests {
 
     #[test]
     fn test_globals() {
-        // Set global "x" = 42, then get it back.
         let script = make_function(|chunk| {
             let name = chunk.add_constant(Value::String("x".to_string()));
             let val = chunk.add_constant(Value::Int(42));
-            // Push value
             chunk.emit_op(Op::Constant, span());
             chunk.emit_u16(val, span());
-            // SetGlobal pops TOS
             chunk.emit_op(Op::SetGlobal, span());
             chunk.emit_u16(name, span());
-            // GetGlobal pushes it back
             chunk.emit_op(Op::GetGlobal, span());
             chunk.emit_u16(name, span());
             chunk.emit_op(Op::Return, span());
@@ -1132,19 +2722,14 @@ mod tests {
 
     #[test]
     fn test_locals() {
-        // local slot 0 = 10, get it back
         let script = make_function(|chunk| {
             let val = chunk.add_constant(Value::Int(10));
-            // Push a placeholder to occupy slot 0
             chunk.emit_op(Op::Unit, span());
-            // Push the value and set it into slot 0
             chunk.emit_op(Op::Constant, span());
             chunk.emit_u16(val, span());
             chunk.emit_op(Op::SetLocal, span());
             chunk.emit_u16(0, span());
-            // Pop the SetLocal peek result
             chunk.emit_op(Op::Pop, span());
-            // Get local 0
             chunk.emit_op(Op::GetLocal, span());
             chunk.emit_u16(0, span());
             chunk.emit_op(Op::Return, span());
@@ -1156,7 +2741,6 @@ mod tests {
 
     #[test]
     fn test_string_concat() {
-        // "hello" + " " + "world"
         let script = make_function(|chunk| {
             let a = chunk.add_constant(Value::String("hello".to_string()));
             let b = chunk.add_constant(Value::String(" ".to_string()));
@@ -1178,7 +2762,6 @@ mod tests {
 
     #[test]
     fn test_display_value() {
-        // DisplayValue on Int(42) -> "42"
         let script = make_function(|chunk| {
             let val = chunk.add_constant(Value::Int(42));
             chunk.emit_op(Op::Constant, span());
@@ -1193,19 +2776,14 @@ mod tests {
 
     #[test]
     fn test_jump_if_false() {
-        // if false then 1 else 2 => 2
         let script = make_function(|chunk| {
             let one = chunk.add_constant(Value::Int(1));
             let two = chunk.add_constant(Value::Int(2));
-            // Push false
             chunk.emit_op(Op::False, span());
-            // JumpIfFalse -> skip the "then" branch
             let patch = chunk.emit_jump(Op::JumpIfFalse, span());
-            // Then: push 1, jump over else
             chunk.emit_op(Op::Constant, span());
             chunk.emit_u16(one, span());
             let skip_else = chunk.emit_jump(Op::Jump, span());
-            // Else: push 2
             chunk.patch_jump(patch);
             chunk.emit_op(Op::Constant, span());
             chunk.emit_u16(two, span());
@@ -1219,7 +2797,6 @@ mod tests {
 
     #[test]
     fn test_builtin_println() {
-        // CallBuiltin "println" with arg 42
         let script = make_function(|chunk| {
             let name = chunk.add_constant(Value::String("println".to_string()));
             let val = chunk.add_constant(Value::Int(42));
@@ -1294,7 +2871,6 @@ mod tests {
 
     #[test]
     fn test_unit_and_pop() {
-        // Push Unit, Pop it, push 99, return.
         let script = make_function(|chunk| {
             let val = chunk.add_constant(Value::Int(99));
             chunk.emit_op(Op::Unit, span());
@@ -1310,7 +2886,6 @@ mod tests {
 
     #[test]
     fn test_dup() {
-        // Push 5, dup, add => 10
         let script = make_function(|chunk| {
             let val = chunk.add_constant(Value::Int(5));
             chunk.emit_op(Op::Constant, span());
@@ -1326,7 +2901,6 @@ mod tests {
 
     #[test]
     fn test_eq_neq() {
-        // 5 == 5 => true
         let script = make_function(|chunk| {
             let val = chunk.add_constant(Value::Int(5));
             chunk.emit_op(Op::Constant, span());
@@ -1339,7 +2913,6 @@ mod tests {
         let mut vm = Vm::new();
         assert_eq!(vm.run(script).unwrap(), Value::Bool(true));
 
-        // 5 != 3 => true
         let script2 = make_function(|chunk| {
             let a = chunk.add_constant(Value::Int(5));
             let b = chunk.add_constant(Value::Int(3));
@@ -1356,7 +2929,6 @@ mod tests {
 
     #[test]
     fn test_popn() {
-        // Push 3 values, PopN 2, return the remaining one.
         let script = make_function(|chunk| {
             let a = chunk.add_constant(Value::Int(1));
             let b = chunk.add_constant(Value::Int(2));
@@ -1374,5 +2946,182 @@ mod tests {
         let mut vm = Vm::new();
         let result = vm.run(script).unwrap();
         assert_eq!(result, Value::Int(1));
+    }
+
+    // ── Phase 2 end-to-end tests ──────────────────────────────────
+
+    #[test]
+    fn test_e2e_hello_world() {
+        run_vm(r#"fn main() { println("hello") }"#);
+    }
+
+    #[test]
+    fn test_e2e_arithmetic() {
+        let result = run_vm(r#"fn main() { 2 + 3 * 4 }"#);
+        assert_eq!(result, Value::Int(14));
+    }
+
+    #[test]
+    fn test_e2e_function_call() {
+        let result = run_vm(r#"
+            fn add(a, b) { a + b }
+            fn main() { add(10, 20) }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_e2e_let_binding() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = 42
+                x
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_e2e_let_and_string_interp() {
+        run_vm(r#"
+            fn main() {
+                let x = 42
+                println("x = {x}")
+            }
+        "#);
+    }
+
+    #[test]
+    fn test_e2e_multiple_functions() {
+        let result = run_vm(r#"
+            fn double(n) { n * 2 }
+            fn add_one(n) { n + 1 }
+            fn main() { add_one(double(5)) }
+        "#);
+        assert_eq!(result, Value::Int(11));
+    }
+
+    #[test]
+    fn test_e2e_recursion() {
+        let result = run_vm(r#"
+            fn factorial(n) {
+                match n {
+                    0 -> 1
+                    _ -> n * factorial(n - 1)
+                }
+            }
+            fn main() { factorial(5) }
+        "#);
+        assert_eq!(result, Value::Int(120));
+    }
+
+    #[test]
+    fn test_e2e_string_operations() {
+        let result = run_vm(r#"
+            fn main() {
+                let s = "hello, world"
+                string.length(s)
+            }
+        "#);
+        assert_eq!(result, Value::Int(12));
+    }
+
+    #[test]
+    fn test_e2e_list_operations() {
+        let result = run_vm(r#"
+            fn main() {
+                let xs = [1, 2, 3, 4, 5]
+                list.length(xs)
+            }
+        "#);
+        assert_eq!(result, Value::Int(5));
+    }
+
+    #[test]
+    fn test_e2e_test_assert() {
+        run_vm(r#"
+            fn main() {
+                test.assert_eq(2 + 2, 4)
+            }
+        "#);
+    }
+
+    #[test]
+    fn test_e2e_nested_calls() {
+        let result = run_vm(r#"
+            fn f(x) { x + 1 }
+            fn g(x) { f(x) * 2 }
+            fn main() { g(10) }
+        "#);
+        assert_eq!(result, Value::Int(22));
+    }
+
+    #[test]
+    fn test_e2e_match_int() {
+        let result = run_vm(r#"
+            fn classify(n) {
+                match n {
+                    0 -> "zero"
+                    1 -> "one"
+                    _ -> "other"
+                }
+            }
+            fn main() { classify(1) }
+        "#);
+        assert_eq!(result, Value::String("one".into()));
+    }
+
+    #[test]
+    fn test_e2e_boolean_logic() {
+        let result = run_vm(r#"
+            fn main() {
+                let a = true
+                let b = false
+                a && !b
+            }
+        "#);
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_e2e_builtin_println_call() {
+        // Test that println works when called as a regular function via globals
+        run_vm(r#"
+            fn main() {
+                println("testing 1 2 3")
+            }
+        "#);
+    }
+
+    #[test]
+    fn test_e2e_variant_constructor() {
+        let result = run_vm(r#"
+            fn main() {
+                let x = Some(42)
+                x
+            }
+        "#);
+        assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
+    }
+
+    #[test]
+    fn test_e2e_int_to_string() {
+        let result = run_vm(r#"
+            fn main() {
+                int.to_string(42)
+            }
+        "#);
+        assert_eq!(result, Value::String("42".into()));
+    }
+
+    #[test]
+    fn test_e2e_list_append() {
+        let result = run_vm(r#"
+            fn main() {
+                let xs = [1, 2, 3]
+                list.append(xs, 4)
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
     }
 }

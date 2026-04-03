@@ -1,12 +1,15 @@
 //! AST-to-bytecode compiler for Silt.
 //!
 //! Walks the AST and emits stack-based bytecode into `Function` objects.
-//! Phase 1: arithmetic expressions, simple let/fn, function calls.
+//! Phase 2: full function calls, builtins, let bindings, string interpolation,
+//! match expressions, if/else via match, lambdas, and field access.
+
+use std::rc::Rc;
 
 use crate::ast::{
-    BinOp, Decl, Expr, ExprKind, Pattern, Program, Stmt, StringPart, UnaryOp,
+    BinOp, Decl, Expr, ExprKind, ListElem, MatchArm, Pattern, Program, Stmt, StringPart, UnaryOp,
 };
-use crate::bytecode::{Chunk, Function, Op};
+use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -118,13 +121,14 @@ impl Compiler {
                 // Pop the context, recovering the compiled function.
                 let ctx = self.contexts.pop().unwrap();
                 let func = ctx.function;
-                let func_index = self.functions.len();
-                self.functions.push(func);
 
-                // In the enclosing context, emit code to register the function
-                // as a global with its name.
-                let func_val = Value::Int(func_index as i64); // placeholder constant encoding
-                let fi = self.current_chunk().add_constant(func_val);
+                // Store the function as a VmClosure constant in the enclosing chunk.
+                let vm_closure = Rc::new(VmClosure {
+                    function: Rc::new(func),
+                    upvalues: vec![],
+                });
+                let closure_val = Value::VmClosure(vm_closure);
+                let fi = self.current_chunk().add_constant(closure_val);
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(fi, span);
 
@@ -164,7 +168,7 @@ impl Compiler {
             }
 
             Decl::Type(_) | Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Import(_) => {
-                // Phase 1: skip type/trait/import declarations silently.
+                // Skip type/trait/import declarations silently.
                 Ok(())
             }
         }
@@ -181,13 +185,16 @@ impl Compiler {
                     Pattern::Ident(name) => {
                         let slot = self.add_local(name.clone());
                         let span = value.span;
+                        // The compiled expression left the value on TOS, which IS
+                        // the local's stack slot. SetLocal copies TOS into the slot
+                        // (they're the same position for sequential allocation).
+                        // The value stays on the stack -- locals are stack-resident.
                         self.current_chunk().emit_op(Op::SetLocal, span);
                         self.current_chunk().emit_u16(slot, span);
-                        // Let statements produce Unit for the block value if they are last.
+                        // Don't pop: the value stays as the local slot.
+                        // If this is the last statement, push Unit as the block result.
                         if is_last {
                             self.current_chunk().emit_op(Op::Unit, span);
-                        } else {
-                            self.current_chunk().emit_op(Op::Pop, span);
                         }
                     }
                     _ => {
@@ -208,7 +215,6 @@ impl Compiler {
             }
 
             Stmt::When { .. } | Stmt::WhenBool { .. } => {
-                // Phase 1: not yet supported.
                 Err("when statements not yet supported in compiler".into())
             }
         }
@@ -312,13 +318,47 @@ impl Compiler {
             }
 
             ExprKind::Call(callee, args) => {
-                self.compile_expr(callee)?;
-                for arg in args {
-                    self.compile_expr(arg)?;
+                // Check if this is a module-qualified builtin call like list.map(...)
+                if let Some(builtin_name) = self.extract_builtin_name(callee) {
+                    // Emit arguments first
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
+                    let argc = args.len() as u8;
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(builtin_name));
+                    self.current_chunk().emit_op(Op::CallBuiltin, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                    self.current_chunk().emit_u8(argc, span);
+                } else {
+                    // Normal function call
+                    self.compile_expr(callee)?;
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
+                    let argc = args.len() as u8;
+                    self.current_chunk().emit_op(Op::Call, span);
+                    self.current_chunk().emit_u8(argc, span);
                 }
-                let argc = args.len() as u8;
-                self.current_chunk().emit_op(Op::Call, span);
-                self.current_chunk().emit_u8(argc, span);
+            }
+
+            ExprKind::FieldAccess(expr, field) => {
+                // Check if this is a module-qualified name like list.map
+                if let ExprKind::Ident(module) = &expr.kind {
+                    let qualified = format!("{module}.{field}");
+                    let name_idx =
+                        self.current_chunk().add_constant(Value::String(qualified));
+                    self.current_chunk().emit_op(Op::GetGlobal, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                } else {
+                    // Compile the expression and access field
+                    self.compile_expr(expr)?;
+                    let name_idx =
+                        self.current_chunk().add_constant(Value::String(field.clone()));
+                    self.current_chunk().emit_op(Op::GetField, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                }
             }
 
             ExprKind::StringInterp(parts) => {
@@ -352,16 +392,563 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
             }
 
-            // Phase 1: unsupported expression kinds produce errors.
-            _ => {
-                return Err(format!(
-                    "unsupported expression kind in compiler: {:?}",
-                    std::mem::discriminant(&expr.kind)
-                ));
+            ExprKind::Match { expr, arms } => {
+                self.compile_match(expr.as_deref(), arms, span)?;
             }
+
+            ExprKind::Lambda { params, body } => {
+                let arity = params.len() as u8;
+
+                // Push a new context for the lambda body.
+                self.contexts
+                    .push(CompileContext::new("<lambda>".into(), arity));
+
+                // Add parameters as locals.
+                for param in params {
+                    match &param.pattern {
+                        Pattern::Ident(name) => {
+                            self.add_local(name.clone());
+                        }
+                        _ => {
+                            return Err("unsupported parameter pattern in lambda".into());
+                        }
+                    }
+                }
+
+                // Compile the lambda body.
+                self.compile_expr(body)?;
+                self.current_chunk().emit_op(Op::Return, span);
+
+                let ctx = self.contexts.pop().unwrap();
+                let func = ctx.function;
+
+                let vm_closure = Rc::new(VmClosure {
+                    function: Rc::new(func),
+                    upvalues: vec![],
+                });
+                let closure_val = Value::VmClosure(vm_closure);
+                let fi = self.current_chunk().add_constant(closure_val);
+                self.current_chunk().emit_op(Op::Constant, span);
+                self.current_chunk().emit_u16(fi, span);
+            }
+
+            ExprKind::Tuple(elems) => {
+                for elem in elems {
+                    self.compile_expr(elem)?;
+                }
+                self.current_chunk().emit_op(Op::MakeTuple, span);
+                self.current_chunk().emit_u8(elems.len() as u8, span);
+            }
+
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) => self.compile_expr(e)?,
+                        ListElem::Spread(_) => {
+                            return Err("spread in list literals not yet supported in compiler".into());
+                        }
+                    }
+                }
+                let count = elems.len() as u16;
+                self.current_chunk().emit_op(Op::MakeList, span);
+                self.current_chunk().emit_u16(count, span);
+            }
+
+            ExprKind::Map(pairs) => {
+                for (k, v) in pairs {
+                    self.compile_expr(k)?;
+                    self.compile_expr(v)?;
+                }
+                let pair_count = pairs.len() as u16;
+                self.current_chunk().emit_op(Op::MakeMap, span);
+                self.current_chunk().emit_u16(pair_count, span);
+            }
+
+            ExprKind::SetLit(elems) => {
+                for elem in elems {
+                    self.compile_expr(elem)?;
+                }
+                let count = elems.len() as u16;
+                self.current_chunk().emit_op(Op::MakeSet, span);
+                self.current_chunk().emit_u16(count, span);
+            }
+
+            ExprKind::Range(start, end) => {
+                self.compile_expr(start)?;
+                self.compile_expr(end)?;
+                self.current_chunk().emit_op(Op::MakeRange, span);
+            }
+
+            ExprKind::Pipe(left, right) => {
+                // val |> f(args) --> f(val, args)
+                // val |> f       --> f(val)
+                self.compile_pipe(left, right, span)?;
+            }
+
+            ExprKind::QuestionMark(inner) => {
+                self.compile_expr(inner)?;
+                self.current_chunk().emit_op(Op::QuestionMark, span);
+            }
+
+            ExprKind::RecordCreate { name, fields } => {
+                // Push field values in order
+                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                for (_, val) in fields {
+                    self.compile_expr(val)?;
+                }
+                let type_name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                self.current_chunk().emit_op(Op::MakeRecord, span);
+                self.current_chunk().emit_u16(type_name_idx, span);
+                self.current_chunk().emit_u8(field_names.len() as u8, span);
+                for fname in &field_names {
+                    let field_idx = self.current_chunk().add_constant(Value::String(fname.clone()));
+                    self.current_chunk().emit_u16(field_idx, span);
+                }
+            }
+
+            ExprKind::RecordUpdate { expr, fields } => {
+                self.compile_expr(expr)?;
+                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                for (_, val) in fields {
+                    self.compile_expr(val)?;
+                }
+                self.current_chunk().emit_op(Op::RecordUpdate, span);
+                self.current_chunk().emit_u8(field_names.len() as u8, span);
+                for fname in &field_names {
+                    let field_idx = self.current_chunk().add_constant(Value::String(fname.clone()));
+                    self.current_chunk().emit_u16(field_idx, span);
+                }
+            }
+
+            ExprKind::Loop { bindings, body } => {
+                self.compile_loop(bindings, body, span)?;
+            }
+
+            ExprKind::Recur(args) => {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.current_chunk().emit_op(Op::Recur, span);
+                self.current_chunk().emit_u8(args.len() as u8, span);
+            }
+
+            // All expression kinds are handled above. If new ones are added,
+            // the match will become non-exhaustive and the compiler will error.
         }
 
         Ok(())
+    }
+
+    // ── Match compilation ────────────────────────────────────────
+
+    fn compile_match(
+        &mut self,
+        scrutinee: Option<&Expr>,
+        arms: &[MatchArm],
+        span: Span,
+    ) -> Result<(), String> {
+        // If there's a scrutinee, compile it and leave it on TOS.
+        if let Some(scrutinee_expr) = scrutinee {
+            self.compile_expr(scrutinee_expr)?;
+        }
+
+        // For each arm, we test the pattern, jump over if it doesn't match,
+        // compile the body, then jump to the end.
+        let mut end_jumps = Vec::new();
+
+        for arm in arms {
+            // For each arm:
+            //   1. Test the pattern against TOS (scrutinee is peeked, not consumed)
+            //   2. If no match, jump to next arm
+            //   3. Bind pattern variables
+            //   4. Pop scrutinee, compile body
+            //   5. Jump to end
+
+            let next_arm_jump = self.compile_pattern_test(&arm.pattern, span)?;
+
+            // Guard (if present)
+            let guard_jump = if let Some(guard) = &arm.guard {
+                self.compile_expr(guard)?;
+                let j = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Some(j)
+            } else {
+                None
+            };
+
+            // Begin a scope for pattern bindings
+            self.begin_scope();
+
+            // Bind pattern variables
+            if scrutinee.is_some() {
+                self.compile_pattern_bindings(&arm.pattern, span)?;
+            }
+
+            // Pop the scrutinee (it's been peeked during tests)
+            if scrutinee.is_some() {
+                self.current_chunk().emit_op(Op::Pop, span);
+            }
+
+            // Compile the arm body
+            self.compile_expr(&arm.body)?;
+
+            self.end_scope(span);
+
+            // Jump to end
+            let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
+            end_jumps.push(end_jump);
+
+            // Patch the jumps for no-match
+            if let Some(gj) = guard_jump {
+                self.current_chunk().patch_jump(gj);
+            }
+            for nj in next_arm_jump {
+                self.current_chunk().patch_jump(nj);
+            }
+        }
+
+        // If no arm matched, push Unit as default
+        if scrutinee.is_some() {
+            self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
+        }
+        self.current_chunk().emit_op(Op::Unit, span);
+
+        // Patch all end jumps
+        for ej in end_jumps {
+            self.current_chunk().patch_jump(ej);
+        }
+
+        Ok(())
+    }
+
+    /// Compile a pattern test. Returns a list of jump offsets to patch
+    /// (they should jump to the next arm if the test fails).
+    fn compile_pattern_test(
+        &mut self,
+        pattern: &Pattern,
+        span: Span,
+    ) -> Result<Vec<usize>, String> {
+        match pattern {
+            Pattern::Wildcard | Pattern::Ident(_) => {
+                // Always matches
+                Ok(vec![])
+            }
+            Pattern::Int(n) => {
+                let idx = self.current_chunk().add_constant(Value::Int(*n));
+                self.current_chunk().emit_op(Op::TestEqual, span);
+                self.current_chunk().emit_u16(idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Float(n) => {
+                let idx = self.current_chunk().add_constant(Value::Float(*n));
+                self.current_chunk().emit_op(Op::TestEqual, span);
+                self.current_chunk().emit_u16(idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Bool(b) => {
+                self.current_chunk().emit_op(Op::TestBool, span);
+                self.current_chunk().emit_u8(if *b { 1 } else { 0 }, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::StringLit(s) => {
+                let idx = self.current_chunk().add_constant(Value::String(s.clone()));
+                self.current_chunk().emit_op(Op::TestEqual, span);
+                self.current_chunk().emit_u16(idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Constructor(name, _) => {
+                let idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                self.current_chunk().emit_op(Op::TestTag, span);
+                self.current_chunk().emit_u16(idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Tuple(pats) => {
+                self.current_chunk().emit_op(Op::TestTupleLen, span);
+                self.current_chunk().emit_u8(pats.len() as u8, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Range(lo, hi) => {
+                let lo_idx = self.current_chunk().add_constant(Value::Int(*lo));
+                let hi_idx = self.current_chunk().add_constant(Value::Int(*hi));
+                self.current_chunk().emit_op(Op::TestIntRange, span);
+                self.current_chunk().emit_u16(lo_idx, span);
+                self.current_chunk().emit_u16(hi_idx, span);
+                let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                Ok(vec![jump])
+            }
+            Pattern::Or(pats) => {
+                // For or-patterns, we test each sub-pattern and jump to the body
+                // if ANY of them match.
+                let mut fail_jumps = Vec::new();
+                let mut success_jumps = Vec::new();
+                for (i, pat) in pats.iter().enumerate() {
+                    let sub_fails = self.compile_pattern_test(pat, span)?;
+                    if i < pats.len() - 1 {
+                        // If this sub-pattern matched, jump to success
+                        let success = self.current_chunk().emit_jump(Op::Jump, span);
+                        success_jumps.push(success);
+                        // Patch the failure jumps for this sub-pattern to try next
+                        for fj in sub_fails {
+                            self.current_chunk().patch_jump(fj);
+                        }
+                    } else {
+                        // Last sub-pattern: its failures are the overall failures
+                        fail_jumps = sub_fails;
+                    }
+                }
+                // Patch success jumps to here
+                for sj in success_jumps {
+                    self.current_chunk().patch_jump(sj);
+                }
+                Ok(fail_jumps)
+            }
+            _ => {
+                // For other patterns (List, Record, etc.) -- treat as always-match for now
+                // and let runtime handle it
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// Compile pattern bindings: destructure the value on TOS into local variables.
+    fn compile_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        span: Span,
+    ) -> Result<(), String> {
+        match pattern {
+            Pattern::Ident(name) => {
+                // Peek the scrutinee and bind it
+                let val = self.peek_tos(span);
+                let slot = self.add_local(name.clone());
+                self.current_chunk().emit_op(Op::SetLocal, span);
+                self.current_chunk().emit_u16(slot, span);
+                self.current_chunk().emit_op(Op::Pop, span);
+                let _ = val; // SetLocal peeks, so we pop the extra
+            }
+            Pattern::Constructor(_, fields) => {
+                for (i, field_pat) in fields.iter().enumerate() {
+                    if let Pattern::Ident(name) = field_pat {
+                        // Destructure variant field
+                        self.current_chunk().emit_op(Op::DestructVariant, span);
+                        self.current_chunk().emit_u8(i as u8, span);
+                        let slot = self.add_local(name.clone());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(slot, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    } else if let Pattern::Wildcard = field_pat {
+                        // skip
+                    } else {
+                        // For nested patterns, we'd need recursive destructuring
+                        // For now, skip
+                    }
+                }
+            }
+            Pattern::Tuple(pats) => {
+                for (i, pat) in pats.iter().enumerate() {
+                    if let Pattern::Ident(name) = pat {
+                        self.current_chunk().emit_op(Op::DestructTuple, span);
+                        self.current_chunk().emit_u8(i as u8, span);
+                        let slot = self.add_local(name.clone());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(slot, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+                }
+            }
+            Pattern::Wildcard
+            | Pattern::Int(_)
+            | Pattern::Float(_)
+            | Pattern::Bool(_)
+            | Pattern::StringLit(_)
+            | Pattern::Range(..)
+            | Pattern::Or(_) => {
+                // No bindings to create
+            }
+            _ => {
+                // Other patterns: skip bindings for now
+            }
+        }
+        Ok(())
+    }
+
+    /// Helper: emit a Dup to peek TOS (for pattern binding)
+    fn peek_tos(&mut self, span: Span) {
+        self.current_chunk().emit_op(Op::Dup, span);
+    }
+
+    // ── Pipe compilation ─────────────────────────────────────────
+
+    fn compile_pipe(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        span: Span,
+    ) -> Result<(), String> {
+        // Compile the left value first
+        self.compile_expr(left)?;
+
+        // val |> f(args) -> f(val, args)
+        // val |> f       -> f(val)
+        match &right.kind {
+            ExprKind::Call(callee, args) => {
+                // Check if callee is a module-qualified builtin
+                if let Some(builtin_name) = self.extract_builtin_name(callee) {
+                    // left is already on stack, compile remaining args
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
+                    let argc = (args.len() + 1) as u8;
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(builtin_name));
+                    self.current_chunk().emit_op(Op::CallBuiltin, span);
+                    self.current_chunk().emit_u16(name_idx, span);
+                    self.current_chunk().emit_u8(argc, span);
+                } else {
+                    // Compile callee, then rearrange: [val, func, arg1, ...] -> Call
+                    // We need func first, then val, then args.
+                    // Strategy: compile func to get [val, func], then swap.
+                    // We don't have a Swap op, so let's restructure:
+                    // Actually the stack is: [... val], compile callee -> [... val, func]
+                    // We need [... func, val, arg1, ...argN]
+                    // Use a temporary local? No, let's just reorder compilation:
+                    //   1. Save val in stack
+                    //   2. Compile callee
+                    //   3. Re-push val (from underneath)
+                    //   4. Compile args
+                    //   5. Call
+                    // But we can't easily re-order the stack without Swap.
+                    //
+                    // Simpler approach: compile callee first, then emit left under it.
+                    // Actually, left is already compiled. Let's just do callee then reorganize.
+                    //
+                    // The cleanest approach for now: compile it as GetGlobal("func"),
+                    // then rearrange. Since we don't have Swap, let's just pop val,
+                    // compile func + val + args, call.
+                    //
+                    // Actually, let's just store val in a temp. We can use the stack:
+                    // Stack: [... val]
+                    // Compile callee -> [... val, func]
+                    // We need: [... func, val, args]
+                    // Since we don't have Swap, let's just pop val to a temp global.
+                    // No, that's ugly.
+                    //
+                    // Best approach: restructure so we compile in the right order.
+                    // Pipe `a |> f(b)` compiles to: push f, push a, push b, Call 2
+                    // But we already pushed a. So let's pop it, compile f, push a, push args.
+
+                    // Pop the already-pushed left value to re-push later
+                    // Actually, the val is on the stack. Let's compile callee,
+                    // which will be on top of val. Then swap would help, but
+                    // let's use a different strategy:
+                    // Store val as a local, compile callee, get local, compile args, call.
+
+                    // Actually simplest for now: store in a hidden local
+                    let pipe_slot = self.add_local("__pipe_val__".into());
+                    self.current_chunk().emit_op(Op::SetLocal, span);
+                    self.current_chunk().emit_u16(pipe_slot, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
+
+                    // Now compile callee
+                    self.compile_expr(callee)?;
+                    // Push val back
+                    self.current_chunk().emit_op(Op::GetLocal, span);
+                    self.current_chunk().emit_u16(pipe_slot, span);
+                    // Push remaining args
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
+                    let argc = (args.len() + 1) as u8;
+                    self.current_chunk().emit_op(Op::Call, span);
+                    self.current_chunk().emit_u8(argc, span);
+                }
+            }
+            ExprKind::Ident(_) => {
+                // val |> f -> f(val)
+                // Stack: [... val]
+                // Need: [... func, val], Call 1
+                let pipe_slot = self.add_local("__pipe_val__".into());
+                self.current_chunk().emit_op(Op::SetLocal, span);
+                self.current_chunk().emit_u16(pipe_slot, span);
+                self.current_chunk().emit_op(Op::Pop, span);
+
+                self.compile_expr(right)?;
+                self.current_chunk().emit_op(Op::GetLocal, span);
+                self.current_chunk().emit_u16(pipe_slot, span);
+                self.current_chunk().emit_op(Op::Call, span);
+                self.current_chunk().emit_u8(1, span);
+            }
+            _ => {
+                // val |> expr -> expr(val)
+                let pipe_slot = self.add_local("__pipe_val__".into());
+                self.current_chunk().emit_op(Op::SetLocal, span);
+                self.current_chunk().emit_u16(pipe_slot, span);
+                self.current_chunk().emit_op(Op::Pop, span);
+
+                self.compile_expr(right)?;
+                self.current_chunk().emit_op(Op::GetLocal, span);
+                self.current_chunk().emit_u16(pipe_slot, span);
+                self.current_chunk().emit_op(Op::Call, span);
+                self.current_chunk().emit_u8(1, span);
+            }
+        }
+        Ok(())
+    }
+
+    // ── Loop compilation ─────────────────────────────────────────
+
+    fn compile_loop(
+        &mut self,
+        bindings: &[(String, Expr)],
+        body: &Expr,
+        span: Span,
+    ) -> Result<(), String> {
+        self.begin_scope();
+
+        // Compile initial values and store in locals
+        for (name, init) in bindings {
+            self.compile_expr(init)?;
+            let slot = self.add_local(name.clone());
+            self.current_chunk().emit_op(Op::SetLocal, span);
+            self.current_chunk().emit_u16(slot, span);
+            self.current_chunk().emit_op(Op::Pop, span);
+        }
+
+        // Record the loop start for JumpBack
+        let loop_start = self.current_chunk().len();
+
+        // Compile body
+        self.compile_expr(body)?;
+
+        // The body should either have used `recur` (which jumps back) or fallen through.
+        // If it fell through, the result is on the stack.
+
+        self.end_scope(span);
+        // After Recur, we need a JumpBack to loop_start. But Recur is compiled inline
+        // in the body. For now, the loop body's result is the final value.
+        // TODO: properly handle loop/recur with JumpBack
+        let _ = loop_start;
+
+        Ok(())
+    }
+
+    // ── Helper: extract builtin name ─────────────────────────────
+
+    /// If the callee is a module-qualified builtin (e.g., `list.map`),
+    /// return the qualified name.
+    fn extract_builtin_name(&self, callee: &Expr) -> Option<String> {
+        if let ExprKind::FieldAccess(expr, field) = &callee.kind {
+            if let ExprKind::Ident(module) = &expr.kind {
+                return Some(format!("{module}.{field}"));
+            }
+        }
+        None
     }
 
     // ── Context & scope helpers ───────────────────────────────────
@@ -395,29 +982,10 @@ impl Compiler {
             self.ctx_mut().locals.pop();
             pop_count += 1;
         }
-        // We need to keep the block's result value on TOS while discarding
-        // the locals beneath it. The result is already on TOS, and the
-        // locals are below it. We need to pop them out from under TOS.
-        //
-        // Strategy: for each local to discard, emit a swap-then-pop sequence.
-        // But we don't have Swap. Simpler: we pop them *before* the block
-        // result is computed. Actually, the block result *is* already on TOS.
-        // The locals sit below it in the stack. The VM uses frame-relative
-        // addressing, so those slots will simply be abandoned when the scope
-        // ends. But we still need the stack to be clean.
-        //
-        // The simplest Phase-1 approach: if there are locals to pop, emit
-        // PopN to remove them from under TOS. But PopN pops from TOS.
-        // We need to be careful: the block's result is on TOS, locals below.
-        //
-        // Actually, with a stack VM, the locals *are* on the stack below TOS.
-        // We can't directly pop them from under TOS without a special opcode.
-        // For Phase 1 let's not pop scope locals at all -- the VM's frame
-        // mechanism will reclaim them when the function returns. This is
-        // correct as long as we don't reuse local slots across scopes, which
-        // we don't in Phase 1.
-        //
-        // TODO(phase2): emit proper scope cleanup for nested scopes.
+        // The block's result is on TOS. The locals sit below it in the stack.
+        // With a stack VM, we can't pop them from under TOS without a Swap op.
+        // For now, the VM's frame mechanism reclaims them on function return.
+        // This is correct as long as we don't reuse local slots across scopes.
         let _ = pop_count;
         let _ = span;
 
@@ -443,7 +1011,7 @@ impl Compiler {
     }
 
     fn resolve_upvalue(&self, _name: &str) -> Option<u8> {
-        // Phase 1: upvalue resolution is a stub.
+        // Phase 2: upvalue resolution is still a stub.
         // A full implementation would walk enclosing contexts.
         None
     }

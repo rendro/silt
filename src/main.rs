@@ -3,11 +3,13 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
+use silt::compiler::Compiler;
 use silt::errors::SourceError;
 use silt::interpreter::Interpreter;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
+use silt::vm::Vm;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum OutputFormat {
@@ -76,6 +78,21 @@ fn main() {
                 process::exit(1);
             };
             check_file(&path, format);
+        }
+        "vm" => {
+            match args.get(2).map(|s| s.as_str()) {
+                Some("run") => {
+                    let file = args.get(3).unwrap_or_else(|| {
+                        eprintln!("Usage: silt vm run <file.silt>");
+                        process::exit(1);
+                    });
+                    vm_run_file(file);
+                }
+                _ => {
+                    eprintln!("Usage: silt vm run <file.silt>");
+                    process::exit(1);
+                }
+            }
         }
         "repl" => {
             silt::repl::run_repl();
@@ -184,6 +201,64 @@ fn run_file(path: &str) {
         if !stack.is_empty() {
             eprint!("{}", silt::errors::format_call_stack(&stack, &source, path));
         }
+        process::exit(1);
+    }
+}
+
+fn vm_run_file(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    let tokens = match Lexer::new(&source).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{path}:{e}");
+            process::exit(1);
+        }
+    };
+
+    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let source_err = SourceError::from_parse_error(e, &source, path);
+            eprintln!("{source_err}");
+        }
+        process::exit(1);
+    }
+
+    // Run the type checker
+    let type_errors = typechecker::check(&mut program);
+    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    for err in &type_errors {
+        let source_err = SourceError::from_type_error(err, &source, path);
+        eprintln!("{source_err}");
+    }
+    if has_hard_errors {
+        process::exit(1);
+    }
+
+    // Compile
+    let mut compiler = Compiler::new();
+    let functions = match compiler.compile_program(&program) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{path}: compile error: {e}");
+            process::exit(1);
+        }
+    };
+
+    let script = std::rc::Rc::new(functions.into_iter().next().unwrap());
+
+    // Run via VM
+    let mut vm = Vm::new();
+    if let Err(e) = vm.run(script) {
+        eprintln!("{path}: {e}");
         process::exit(1);
     }
 }
