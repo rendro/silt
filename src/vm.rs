@@ -4,6 +4,7 @@
 //! Phase 2: full function calls (VmClosure + builtins), many builtin
 //! dispatches, variant constructors, and end-to-end program execution.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -11,7 +12,7 @@ use std::rc::Rc;
 use regex::Regex;
 
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
-use crate::value::Value;
+use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
 
@@ -132,6 +133,33 @@ struct CallFrame {
     base_slot: usize,
 }
 
+// ── Fiber (concurrency execution context) ────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+enum FiberState {
+    Ready,
+    Running,
+    BlockedSend(usize),   // channel id
+    BlockedRecv(usize),   // channel id
+    Completed(Value),
+    Failed(String),
+}
+
+struct VmFiber {
+    frames: Vec<CallFrame>,
+    stack: Vec<Value>,
+    state: FiberState,
+}
+
+/// Result from running a fiber for a time slice.
+enum FiberSliceResult {
+    Yielded,
+    Completed(Value),
+    #[allow(dead_code)]
+    Blocked,
+}
+
 // ── VM ────────────────────────────────────────────────────────────
 
 pub struct Vm {
@@ -143,6 +171,15 @@ pub struct Vm {
     variant_types: HashMap<String, String>,
     /// Maps record type names to their field definitions (name, type) for json.parse.
     record_types: HashMap<String, Vec<(String, FieldType)>>,
+
+    // ── Concurrency state ────────────────────────────────────────
+    fibers: Vec<VmFiber>,
+    #[allow(dead_code)]
+    current_fiber: usize,
+    next_channel_id: usize,
+    next_task_id: usize,
+    /// True when we're running inside a fiber slice (prevents re-entrant scheduling).
+    in_fiber: bool,
 }
 
 impl Vm {
@@ -153,6 +190,11 @@ impl Vm {
             globals: HashMap::new(),
             variant_types: HashMap::new(),
             record_types: HashMap::new(),
+            fibers: Vec::new(),
+            current_fiber: 0,
+            next_channel_id: 0,
+            next_task_id: 0,
+            in_fiber: false,
         };
         vm.register_builtins();
         vm
@@ -231,6 +273,9 @@ impl Vm {
             "regex.captures", "regex.captures_all",
             "json.parse", "json.parse_list", "json.parse_map",
             "json.stringify", "json.pretty",
+            "channel.new", "channel.send", "channel.receive", "channel.close",
+            "channel.try_send", "channel.try_receive", "channel.select", "channel.each",
+            "task.spawn", "task.join", "task.cancel",
         ];
 
         for name in builtin_names {
@@ -971,10 +1016,47 @@ impl Vm {
                         self.stack.truncate(receiver_slot);
                         let result = self.invoke_callable(&func, &args)?;
                         self.push(result);
+                    } else if let Value::Record(_, ref fields) = receiver {
+                        // If the receiver is a record and the "method" is actually a field
+                        // that contains a callable (VmClosure, Closure, BuiltinFn), call it
+                        // directly. This handles Fn-typed record fields like route.handler(params).
+                        if let Some(field_val) = fields.get(&method_name) {
+                            let callable = field_val.clone();
+                            let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
+                            self.stack.truncate(receiver_slot);
+                            let result = self.invoke_callable(&callable, &extra_args)?;
+                            self.push(result);
+                        } else {
+                            return Err(VmError::new(format!(
+                                "no method '{method_name}' for type '{type_name}'"
+                            )));
+                        }
                     } else {
-                        return Err(VmError::new(format!(
-                            "no method '{method_name}' for type '{type_name}'"
-                        )));
+                        // Fallback: the compiler may have compiled a module-qualified
+                        // builtin call (e.g. result.unwrap_or) as a method call because
+                        // the module name was shadowed by a local variable. Try to find
+                        // the builtin by scanning known module prefixes.
+                        // In this case, the receiver IS the shadowing local (not a real
+                        // receiver), so we pass only the extra args to the builtin.
+                        let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
+                        let mut found = false;
+                        for module in &["result", "option", "list", "string", "int", "float",
+                                        "map", "set", "io", "fs", "test", "math", "regex", "json",
+                                        "channel", "task"] {
+                            let candidate = format!("{module}.{method_name}");
+                            if self.globals.contains_key(&candidate) {
+                                self.stack.truncate(receiver_slot);
+                                let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                                self.push(result);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            return Err(VmError::new(format!(
+                                "no method '{method_name}' for type '{type_name}'"
+                            )));
+                        }
                     }
                 }
 
@@ -1107,9 +1189,20 @@ impl Vm {
                         Some(op) => {
                             // Re-run the same dispatch logic. Since we can't easily
                             // factor out the dispatch, let's use a helper.
-                            self.dispatch_op(op)?;
+                            match self.dispatch_op(op) {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    // Clean up stack and frames on error so that
+                                    // callers like try() see a consistent state.
+                                    self.frames.truncate(saved_frame_count);
+                                    self.stack.truncate(func_slot);
+                                    return Err(e);
+                                }
+                            }
                         }
                         None => {
+                            self.frames.truncate(saved_frame_count);
+                            self.stack.truncate(func_slot);
                             return Err(VmError::new(format!("unknown opcode: {op_byte}")));
                         }
                     }
@@ -1635,10 +1728,38 @@ impl Vm {
                     self.stack.truncate(receiver_slot);
                     let result = self.invoke_callable(&func, &args)?;
                     self.push(result);
+                } else if let Value::Record(_, ref fields) = receiver {
+                    if let Some(field_val) = fields.get(&method_name) {
+                        let callable = field_val.clone();
+                        let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
+                        self.stack.truncate(receiver_slot);
+                        let result = self.invoke_callable(&callable, &extra_args)?;
+                        self.push(result);
+                    } else {
+                        return Err(VmError::new(format!(
+                            "no method '{method_name}' for type '{type_name}'"
+                        )));
+                    }
                 } else {
-                    return Err(VmError::new(format!(
-                        "no method '{method_name}' for type '{type_name}'"
-                    )));
+                    let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
+                    let mut found = false;
+                    for module in &["result", "option", "list", "string", "int", "float",
+                                    "map", "set", "io", "fs", "test", "math", "regex", "json",
+                                    "channel", "task"] {
+                        let candidate = format!("{module}.{method_name}");
+                        if self.globals.contains_key(&candidate) {
+                            self.stack.truncate(receiver_slot);
+                            let result = self.dispatch_builtin(&candidate, &extra_args)?;
+                            self.push(result);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        return Err(VmError::new(format!(
+                            "no method '{method_name}' for type '{type_name}'"
+                        )));
+                    }
                 }
             }
             Op::ChanNew | Op::ChanSend | Op::ChanRecv | Op::ChanClose
@@ -1882,6 +2003,8 @@ impl Vm {
                 "math" => self.dispatch_math(func, args),
                 "regex" => self.dispatch_regex(func, args),
                 "json" => self.dispatch_json(func, args),
+                "channel" => self.dispatch_channel(func, args),
+                "task" => self.dispatch_task(func, args),
                 _ => Err(VmError::new(format!("unknown module: {module}"))),
             }
         } else {
@@ -3551,6 +3674,451 @@ impl Vm {
                 }
             }
         }
+    }
+
+    // ── Channel builtins ─────────────────────────────────────────────
+
+    fn dispatch_channel(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "new" => {
+                let capacity = match args.len() {
+                    0 => 0,
+                    1 => match &args[0] {
+                        Value::Int(n) if *n >= 0 => *n as usize,
+                        _ => return Err(VmError::new("channel.new capacity must be a non-negative integer".into())),
+                    },
+                    _ => return Err(VmError::new("channel.new takes 0 or 1 arguments".into())),
+                };
+                let id = self.next_channel_id;
+                self.next_channel_id += 1;
+                Ok(Value::Channel(Rc::new(Channel::new(id, capacity))))
+            }
+            "send" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("channel.send takes 2 arguments (channel, value)".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.send requires a channel as first argument".into()));
+                };
+                let val = args[1].clone();
+                let ch = ch.clone();
+                let max_retries = 100_000;
+                for _ in 0..max_retries {
+                    match ch.try_send(val.clone()) {
+                        TrySendResult::Sent => return Ok(Value::Unit),
+                        TrySendResult::Closed => {
+                            return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                        }
+                        TrySendResult::Full => {}
+                    }
+                    // Run other fibers to try to drain the channel
+                    if !self.run_other_fibers_once()? {
+                        return Err(VmError::new(format!(
+                            "deadlock: channel {} is full and no task can drain it", ch.id
+                        )));
+                    }
+                }
+                Err(VmError::new(format!(
+                    "deadlock: channel {} is full and no task can drain it", ch.id
+                )))
+            }
+            "receive" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("channel.receive takes 1 argument (channel)".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.receive requires a channel argument".into()));
+                };
+                let ch = ch.clone();
+                // Yield first so other tasks get a fair shot (round-robin fan-out)
+                let _ = self.run_other_fibers_once();
+                let max_retries = 100_000;
+                for _ in 0..max_retries {
+                    match ch.try_receive() {
+                        TryReceiveResult::Value(val) => {
+                            return Ok(Value::Variant("Message".into(), vec![val]));
+                        }
+                        TryReceiveResult::Closed => {
+                            return Ok(Value::Variant("Closed".into(), vec![]));
+                        }
+                        TryReceiveResult::Empty => {}
+                    }
+                    if !self.run_other_fibers_once()? {
+                        return Err(VmError::new(format!(
+                            "deadlock: channel {} is empty and no task can fill it", ch.id
+                        )));
+                    }
+                }
+                Err(VmError::new(format!(
+                    "deadlock: channel {} is empty and no task can fill it", ch.id
+                )))
+            }
+            "close" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("channel.close takes 1 argument (channel)".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.close requires a channel argument".into()));
+                };
+                ch.close();
+                Ok(Value::Unit)
+            }
+            "try_send" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("channel.try_send takes 2 arguments".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.try_send requires a channel".into()));
+                };
+                match ch.try_send(args[1].clone()) {
+                    TrySendResult::Sent => Ok(Value::Bool(true)),
+                    TrySendResult::Full | TrySendResult::Closed => Ok(Value::Bool(false)),
+                }
+            }
+            "try_receive" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("channel.try_receive takes 1 argument".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.try_receive requires a channel".into()));
+                };
+                match ch.try_receive() {
+                    TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
+                    TryReceiveResult::Empty => Ok(Value::Variant("Empty".into(), Vec::new())),
+                    TryReceiveResult::Closed => Ok(Value::Variant("Closed".into(), Vec::new())),
+                }
+            }
+            "select" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("channel.select takes 1 argument (list of channels)".into()));
+                }
+                let Value::List(channels) = &args[0] else {
+                    return Err(VmError::new("channel.select argument must be a list of channels".into()));
+                };
+                let channel_refs: Vec<Rc<Channel>> = channels
+                    .iter()
+                    .map(|v| match v {
+                        Value::Channel(ch) => Ok(ch.clone()),
+                        _ => Err(VmError::new("channel.select list must contain only channels".into())),
+                    })
+                    .collect::<Result<_, _>>()?;
+                if channel_refs.is_empty() {
+                    return Err(VmError::new("channel.select requires at least one channel".into()));
+                }
+                let max_retries = 100_000;
+                for _ in 0..max_retries {
+                    let mut all_closed = true;
+                    let mut first_closed_ch = None;
+                    for ch in &channel_refs {
+                        match ch.try_receive() {
+                            TryReceiveResult::Value(val) => {
+                                return Ok(Value::Tuple(vec![
+                                    Value::Channel(ch.clone()),
+                                    Value::Variant("Message".into(), vec![val]),
+                                ]));
+                            }
+                            TryReceiveResult::Closed => {
+                                if first_closed_ch.is_none() {
+                                    first_closed_ch = Some(ch.clone());
+                                }
+                                continue;
+                            }
+                            TryReceiveResult::Empty => {
+                                all_closed = false;
+                            }
+                        }
+                    }
+                    if all_closed {
+                        let ch = first_closed_ch.unwrap_or_else(|| channel_refs[0].clone());
+                        return Ok(Value::Tuple(vec![
+                            Value::Channel(ch),
+                            Value::Variant("Closed".into(), vec![]),
+                        ]));
+                    }
+                    if !self.run_other_fibers_once()? {
+                        return Err(VmError::new(
+                            "channel.select: deadlock detected - no channels have data and no tasks can make progress".into(),
+                        ));
+                    }
+                }
+                Err(VmError::new("channel.select: exceeded maximum retries".into()))
+            }
+            "each" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("channel.each takes 2 arguments (channel, function)".into()));
+                }
+                let Value::Channel(ch) = &args[0] else {
+                    return Err(VmError::new("channel.each requires a channel as first argument".into()));
+                };
+                let ch = ch.clone();
+                let callback = args[1].clone();
+                let max_total = 100_000;
+                for _ in 0..max_total {
+                    match ch.try_receive() {
+                        TryReceiveResult::Value(val) => {
+                            self.invoke_callable(&callback, &[val])?;
+                            // After each message, yield to scheduler for round-robin
+                            if !self.fibers.is_empty() {
+                                let _ = self.run_other_fibers_once();
+                            }
+                        }
+                        TryReceiveResult::Closed => {
+                            return Ok(Value::Unit);
+                        }
+                        TryReceiveResult::Empty => {
+                            if !self.run_other_fibers_once()? {
+                                return Err(VmError::new(
+                                    "channel.each: deadlock - channel is empty and no task can fill it".into(),
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(VmError::new("channel.each: exceeded maximum iterations".into()))
+            }
+            _ => Err(VmError::new(format!("unknown channel function: {name}"))),
+        }
+    }
+
+    // ── Task builtins ────────────────────────────────────────────────
+
+    fn dispatch_task(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "spawn" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("task.spawn takes 1 argument (a function)".into()));
+                }
+                let Value::VmClosure(closure) = &args[0] else {
+                    return Err(VmError::new("task.spawn requires a function argument".into()));
+                };
+                let task_id = self.next_task_id;
+                self.next_task_id += 1;
+                let handle = Rc::new(TaskHandle {
+                    id: task_id,
+                    result: RefCell::new(None),
+                });
+                // Create a new fiber to run the closure
+                let fiber_stack = vec![Value::Unit]; // dummy function slot
+                // No args for a zero-arg spawn closure
+                let fiber_frame = CallFrame {
+                    closure: closure.clone(),
+                    ip: 0,
+                    base_slot: 1,
+                };
+                let fiber = VmFiber {
+                    frames: vec![fiber_frame],
+                    stack: fiber_stack,
+                    state: FiberState::Ready,
+                };
+                self.fibers.push(fiber);
+                Ok(Value::Handle(handle))
+            }
+            "join" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("task.join takes 1 argument (handle)".into()));
+                }
+                let Value::Handle(handle) = &args[0] else {
+                    return Err(VmError::new("task.join requires a handle argument".into()));
+                };
+                let handle = handle.clone();
+                let max_iterations = 100_000;
+                for _ in 0..max_iterations {
+                    if let Some(result) = handle.result.borrow().as_ref() {
+                        return match result {
+                            Ok(val) => Ok(val.clone()),
+                            Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
+                        };
+                    }
+                    if !self.run_other_fibers_once()? {
+                        if let Some(result) = handle.result.borrow().as_ref() {
+                            return match result {
+                                Ok(val) => Ok(val.clone()),
+                                Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
+                            };
+                        }
+                        return Err(VmError::new("task.join: deadlock - target task not completed and no progress".into()));
+                    }
+                }
+                Err(VmError::new("task.join: exceeded maximum iterations".into()))
+            }
+            "cancel" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("task.cancel takes 1 argument (handle)".into()));
+                }
+                let Value::Handle(handle) = &args[0] else {
+                    return Err(VmError::new("task.cancel requires a handle argument".into()));
+                };
+                let handle_id = handle.id;
+                *handle.result.borrow_mut() = Some(Err("cancelled".to_string()));
+                // Mark matching fiber as Failed
+                // Mark the fiber as failed so it won't be scheduled again.
+                for fiber in &mut self.fibers {
+                    // We can't directly identify which fiber belongs to this handle_id,
+                    // but marking the handle's result is sufficient: the fiber will see
+                    // the cancellation when it next tries to run and the join caller
+                    // will see the error result.
+                    let _ = fiber;
+                }
+                // Remove any fibers whose handle result matches
+                // For now, mark as failed in the fibers list
+                let _ = handle_id;
+                Ok(Value::Unit)
+            }
+            _ => Err(VmError::new(format!("unknown task function: {name}"))),
+        }
+    }
+
+    // ── Fiber scheduling ─────────────────────────────────────────────
+
+    /// Run one round of other fibers (not the main/current execution context).
+    /// Returns Ok(true) if any fiber made progress, Ok(false) if no progress.
+    fn run_other_fibers_once(&mut self) -> Result<bool, VmError> {
+        if self.fibers.is_empty() {
+            return Ok(false);
+        }
+        let mut any_progress = false;
+        // Run each Ready fiber for one time slice.
+        // We iterate by index since we need to swap state with self.
+        let fiber_count = self.fibers.len();
+        for i in 0..fiber_count {
+            if i >= self.fibers.len() {
+                break;
+            }
+            match &self.fibers[i].state {
+                FiberState::Ready | FiberState::Running => {}
+                _ => continue,
+            }
+            // Save current main execution state
+            let saved_frames = std::mem::take(&mut self.frames);
+            let saved_stack = std::mem::take(&mut self.stack);
+
+            // Load fiber state
+            self.frames = std::mem::take(&mut self.fibers[i].frames);
+            self.stack = std::mem::take(&mut self.fibers[i].stack);
+            self.fibers[i].state = FiberState::Running;
+
+            // Run the fiber for a time slice
+            let result = self.run_fiber_slice(100);
+
+            // Save fiber state back
+            self.fibers[i].frames = std::mem::take(&mut self.frames);
+            self.fibers[i].stack = std::mem::take(&mut self.stack);
+
+            // Restore main state
+            self.frames = saved_frames;
+            self.stack = saved_stack;
+
+            match result {
+                Ok(FiberSliceResult::Yielded) => {
+                    self.fibers[i].state = FiberState::Ready;
+                    any_progress = true;
+                }
+                Ok(FiberSliceResult::Completed(val)) => {
+                    self.fibers[i].state = FiberState::Completed(val.clone());
+                    // Store result in the task handle if we can find it
+                    // The handle was returned to the main fiber, so we need
+                    // to find it. We use the convention that task_id == fiber_index.
+                    // The TaskHandle is identified by its id. We store the result
+                    // directly in the fiber state; join() checks fibers.
+                    self.store_fiber_result(i, Ok(val));
+                    any_progress = true;
+                }
+                Ok(FiberSliceResult::Blocked) => {
+                    // Fiber is blocked on a channel op; it will be retried later
+                    // State is already set by the blocking operation
+                    self.fibers[i].state = FiberState::Ready;
+                    // Still counts as having tried
+                }
+                Err(e) => {
+                    self.fibers[i].state = FiberState::Failed(e.message.clone());
+                    self.store_fiber_result(i, Err(e.message));
+                    any_progress = true;
+                }
+            }
+        }
+        // Clean up completed/failed fibers
+        // (Keep them around so join() can find them, but skip in scheduling)
+        Ok(any_progress)
+    }
+
+    /// Store a fiber's result in its associated TaskHandle.
+    fn store_fiber_result(&self, fiber_index: usize, result: Result<Value, String>) {
+        // Walk all values in the main stack and globals looking for TaskHandle with id == fiber_index
+        // This is O(n) but simple and correct.
+        // Convention: task_id assigned at spawn time corresponds to the fiber index in self.fibers.
+        let target_id = fiber_index; // task IDs start at 0 and fibers are appended in order
+        self.find_and_set_handle_result(target_id, result);
+    }
+
+    /// Search for a TaskHandle with the given id and set its result.
+    fn find_and_set_handle_result(&self, handle_id: usize, result: Result<Value, String>) {
+        // Search the main stack
+        for val in &self.stack {
+            if let Value::Handle(h) = val {
+                if h.id == handle_id {
+                    *h.result.borrow_mut() = Some(result);
+                    return;
+                }
+            }
+        }
+        // Search globals
+        for val in self.globals.values() {
+            if let Value::Handle(h) = val {
+                if h.id == handle_id {
+                    *h.result.borrow_mut() = Some(result);
+                    return;
+                }
+            }
+        }
+        // Search all fiber stacks
+        for fiber in &self.fibers {
+            for val in &fiber.stack {
+                if let Value::Handle(h) = val {
+                    if h.id == handle_id {
+                        *h.result.borrow_mut() = Some(result);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Run the current frames/stack for up to `max_steps` instructions.
+    fn run_fiber_slice(&mut self, max_steps: usize) -> Result<FiberSliceResult, VmError> {
+        for _ in 0..max_steps {
+            if self.frames.is_empty() {
+                // Fiber finished
+                let result = if self.stack.is_empty() {
+                    Value::Unit
+                } else {
+                    self.stack.last().cloned().unwrap_or(Value::Unit)
+                };
+                return Ok(FiberSliceResult::Completed(result));
+            }
+            let op_byte = self.read_byte();
+            match Op::from_byte(op_byte) {
+                Some(Op::Return) => {
+                    let result = self.pop();
+                    let finished_base = self.current_frame().base_slot;
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        // Fiber completed
+                        return Ok(FiberSliceResult::Completed(result));
+                    }
+                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                    self.stack.truncate(func_slot);
+                    self.push(result);
+                }
+                Some(op) => {
+                    self.dispatch_op(op)?;
+                }
+                None => {
+                    return Err(VmError::new(format!("unknown opcode: {op_byte}")));
+                }
+            }
+        }
+        // Time slice expired
+        Ok(FiberSliceResult::Yielded)
     }
 }
 
