@@ -1761,10 +1761,10 @@ impl TypeChecker {
             Box::new(Type::Generic("Result".into(), vec![Type::Float, Type::String])),
         )));
 
-        // float.round: (Float) -> Int
+        // float.round: (Float) -> Float
         env.define("float.round".into(), Scheme::mono(Type::Fun(
             vec![Type::Float],
-            Box::new(Type::Int),
+            Box::new(Type::Float),
         )));
 
         // float.ceil: (Float) -> Float

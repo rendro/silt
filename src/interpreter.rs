@@ -1770,7 +1770,7 @@ impl Interpreter {
                 let Value::Float(f) = &args[0] else {
                     return Err(err("float.round requires a float"));
                 };
-                Ok(Value::Int(f.round() as i64))
+                Ok(Value::Float(f.round()))
             }
             "ceil" => {
                 if args.len() != 1 {
@@ -4633,7 +4633,7 @@ mod tests {
                 (a, b, c)
             }
         "#);
-        assert_eq!(result, Value::Tuple(vec![Value::Int(4), Value::Float(4.0), Value::Float(3.0)]));
+        assert_eq!(result, Value::Tuple(vec![Value::Float(4.0), Value::Float(4.0), Value::Float(3.0)]));
     }
 
     #[test]
@@ -4651,7 +4651,7 @@ mod tests {
         let result = run(r#"
             fn main() {
                 match float.parse("3.14") {
-                    Ok(n) -> float.round(n * 100.0)
+                    Ok(n) -> float.to_int(float.round(n * 100.0))
                     Err(_) -> -1
                 }
             }
