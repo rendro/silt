@@ -69,9 +69,9 @@ fn test_int_functions() {
 }
 
 fn test_float_functions() {
-  test.assert_eq(float.round(3.7), 4)
-  test.assert_eq(float.floor(3.9), 3)
-  test.assert_eq(float.ceil(3.2), 4)
+  test.assert_eq(float.round(3.7), 4.0)
+  test.assert_eq(float.floor(3.9), 3.0)
+  test.assert_eq(float.ceil(3.2), 4.0)
   test.assert_eq(float.to_int(3.7), 3)
   test.assert_eq(float.abs(-2.5), 2.5)
 }

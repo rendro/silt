@@ -29,7 +29,7 @@ type Employee {
 
 type DeptSummary {
   employee_count: Int,
-  avg_salary: Int,
+  avg_salary: Float,
   top_earner: String,
 }
 

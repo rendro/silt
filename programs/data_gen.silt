@@ -15,7 +15,7 @@
      - No ability to negate sort keys for sort_by descending without using -value
        (minor, since negation works fine for Int)
      - No list.sum / list.min / list.max utility; had to fold manually (very minor)
-     - float.floor returns Int (not Float) -- surprising, caused a type error on first attempt
+     - float.floor returns Float, need float.to_int to mix with Int arithmetic
    Missing:
      - list.sum / list.product (convenience reducers)
      - list.min / list.max (only int.min/int.max exist for pairs)
@@ -139,12 +139,12 @@ fn histogram(label, values, bucket_size) {
   let min_val = list.head(sorted) |> option.unwrap_or(0.0)
   let max_val = list.last(sorted) |> option.unwrap_or(0.0)
 
-  let min_bucket = float.floor(min_val / int.to_float(bucket_size)) * bucket_size
-  let max_bucket = float.floor(max_val / int.to_float(bucket_size)) * bucket_size
+  let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size))) * bucket_size
+  let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size))) * bucket_size
 
   -- Build frequency map: bucket_start -> count
   let counts = values |> list.fold(#{}) { acc, v ->
-    let bucket_key = float.floor(v / int.to_float(bucket_size)) * bucket_size
+    let bucket_key = float.to_int(float.floor(v / int.to_float(bucket_size))) * bucket_size
     map.update(acc, bucket_key, 0) { n -> n + 1 }
   }
 
