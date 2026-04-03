@@ -150,6 +150,7 @@ struct VmFiber {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
     state: FiberState,
+    handle: Rc<TaskHandle>,
 }
 
 /// Result from running a fiber for a time slice.
@@ -3909,6 +3910,7 @@ impl Vm {
                     frames: vec![fiber_frame],
                     stack: fiber_stack,
                     state: FiberState::Ready,
+                    handle: handle.clone(),
                 };
                 self.fibers.push(fiber);
                 Ok(Value::Handle(handle))
@@ -4015,12 +4017,9 @@ impl Vm {
                 }
                 Ok(FiberSliceResult::Completed(val)) => {
                     self.fibers[i].state = FiberState::Completed(val.clone());
-                    // Store result in the task handle if we can find it
-                    // The handle was returned to the main fiber, so we need
-                    // to find it. We use the convention that task_id == fiber_index.
-                    // The TaskHandle is identified by its id. We store the result
-                    // directly in the fiber state; join() checks fibers.
-                    self.store_fiber_result(i, Ok(val));
+                    // Store result directly in the fiber's handle (Rc-shared
+                    // with the Value::Handle the caller holds).
+                    *self.fibers[i].handle.result.borrow_mut() = Some(Ok(val));
                     any_progress = true;
                 }
                 Ok(FiberSliceResult::Blocked) => {
@@ -4031,7 +4030,7 @@ impl Vm {
                 }
                 Err(e) => {
                     self.fibers[i].state = FiberState::Failed(e.message.clone());
-                    self.store_fiber_result(i, Err(e.message));
+                    *self.fibers[i].handle.result.borrow_mut() = Some(Err(e.message));
                     any_progress = true;
                 }
             }
@@ -4039,48 +4038,6 @@ impl Vm {
         // Clean up completed/failed fibers
         // (Keep them around so join() can find them, but skip in scheduling)
         Ok(any_progress)
-    }
-
-    /// Store a fiber's result in its associated TaskHandle.
-    fn store_fiber_result(&self, fiber_index: usize, result: Result<Value, String>) {
-        // Walk all values in the main stack and globals looking for TaskHandle with id == fiber_index
-        // This is O(n) but simple and correct.
-        // Convention: task_id assigned at spawn time corresponds to the fiber index in self.fibers.
-        let target_id = fiber_index; // task IDs start at 0 and fibers are appended in order
-        self.find_and_set_handle_result(target_id, result);
-    }
-
-    /// Search for a TaskHandle with the given id and set its result.
-    fn find_and_set_handle_result(&self, handle_id: usize, result: Result<Value, String>) {
-        // Search the main stack
-        for val in &self.stack {
-            if let Value::Handle(h) = val {
-                if h.id == handle_id {
-                    *h.result.borrow_mut() = Some(result);
-                    return;
-                }
-            }
-        }
-        // Search globals
-        for val in self.globals.values() {
-            if let Value::Handle(h) = val {
-                if h.id == handle_id {
-                    *h.result.borrow_mut() = Some(result);
-                    return;
-                }
-            }
-        }
-        // Search all fiber stacks
-        for fiber in &self.fibers {
-            for val in &fiber.stack {
-                if let Value::Handle(h) = val {
-                    if h.id == handle_id {
-                        *h.result.borrow_mut() = Some(result);
-                        return;
-                    }
-                }
-            }
-        }
     }
 
     /// Run the current frames/stack for up to `max_steps` instructions.
@@ -5808,5 +5765,70 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::Int(5050));
+    }
+
+    // ── Concurrency tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_spawn_join() {
+        let result = run_vm(r#"
+            fn main() {
+                let t = task.spawn(fn() { 42 })
+                task.join(t)
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_spawn_join_already_completed() {
+        // Ensure task.join works when the fiber has already completed
+        // before join is called (the original deadlock scenario).
+        let result = run_vm(r#"
+            fn main() {
+                let ch = channel.new(1)
+                let t = task.spawn(fn() {
+                    channel.send(ch, "done")
+                    99
+                })
+                -- Wait for the message, ensuring the fiber runs to completion
+                let Message(msg) = channel.receive(ch)
+                -- Now the fiber should already be completed
+                task.join(t)
+            }
+        "#);
+        assert_eq!(result, Value::Int(99));
+    }
+
+    #[test]
+    fn test_spawn_join_multiple_completed() {
+        // Multiple fibers that complete before join is called
+        let result = run_vm(r#"
+            fn main() {
+                let ch = channel.new(10)
+                let t1 = task.spawn(fn() {
+                    channel.send(ch, 1)
+                    10
+                })
+                let t2 = task.spawn(fn() {
+                    channel.send(ch, 2)
+                    20
+                })
+                let t3 = task.spawn(fn() {
+                    channel.send(ch, 3)
+                    30
+                })
+                -- Drain all messages so fibers complete
+                let Message(_) = channel.receive(ch)
+                let Message(_) = channel.receive(ch)
+                let Message(_) = channel.receive(ch)
+                -- All fibers should be done; join should not deadlock
+                let a = task.join(t1)
+                let b = task.join(t2)
+                let c = task.join(t3)
+                a + b + c
+            }
+        "#);
+        assert_eq!(result, Value::Int(60));
     }
 }
