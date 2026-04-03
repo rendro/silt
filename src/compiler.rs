@@ -1,15 +1,16 @@
 //! AST-to-bytecode compiler for Silt.
 //!
 //! Walks the AST and emits stack-based bytecode into `Function` objects.
-//! Phase 2: full function calls, builtins, let bindings, string interpolation,
-//! match expressions, if/else via match, lambdas, and field access.
+//! Phase 3: closures with upvalue capture (value-copy semantics),
+//! let tuple destructuring, plus all Phase 2 features (function calls,
+//! builtins, let bindings, string interpolation, match, pipes, lambdas).
 
 use std::rc::Rc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ListElem, MatchArm, Pattern, Program, Stmt, StringPart, UnaryOp,
 };
-use crate::bytecode::{Chunk, Function, Op, VmClosure};
+use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
 use crate::lexer::Span;
 use crate::value::Value;
 
@@ -20,6 +21,8 @@ struct CompileContext {
     function: Function,
     locals: Vec<Local>,
     scope_depth: usize,
+    /// Upvalue descriptors for this function/closure.
+    upvalues: Vec<UpvalueDesc>,
 }
 
 impl CompileContext {
@@ -28,6 +31,7 @@ impl CompileContext {
             function: Function::new(name, arity),
             locals: Vec::new(),
             scope_depth: 0,
+            upvalues: Vec::new(),
         }
     }
 }
@@ -36,6 +40,9 @@ struct Local {
     name: String,
     depth: usize,
     slot: u16,
+    /// Whether this local is captured by a nested closure.
+    #[allow(dead_code)]
+    captured: bool,
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────
@@ -180,11 +187,11 @@ impl Compiler {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
                 self.compile_expr(value)?;
+                let span = value.span;
 
                 match pattern {
                     Pattern::Ident(name) => {
                         let slot = self.add_local(name.clone());
-                        let span = value.span;
                         // The compiled expression left the value on TOS, which IS
                         // the local's stack slot. SetLocal copies TOS into the slot
                         // (they're the same position for sequential allocation).
@@ -193,6 +200,44 @@ impl Compiler {
                         self.current_chunk().emit_u16(slot, span);
                         // Don't pop: the value stays as the local slot.
                         // If this is the last statement, push Unit as the block result.
+                        if is_last {
+                            self.current_chunk().emit_op(Op::Unit, span);
+                        }
+                    }
+                    Pattern::Tuple(pats) => {
+                        // let (a, b) = expr
+                        // Reserve a hidden local slot for the tuple so subsequent
+                        // locals get correct slot numbers.
+                        let tuple_slot = self.add_local("__tuple__".into());
+                        self.current_chunk().emit_op(Op::SetLocal, span);
+                        self.current_chunk().emit_u16(tuple_slot, span);
+
+                        // For each sub-pattern, push a copy of the tuple, destructure
+                        // the element, and bind it to a local. DestructTuple peeks
+                        // TOS, so after GetLocal + DestructTuple the stack has:
+                        //   [..., tuple(slot), tuple_copy, element]
+                        // We reserve a dummy slot for tuple_copy, then set the
+                        // named local to the element value.
+                        for (i, pat) in pats.iter().enumerate() {
+                            match pat {
+                                Pattern::Ident(name) => {
+                                    self.current_chunk().emit_op(Op::GetLocal, span);
+                                    self.current_chunk().emit_u16(tuple_slot, span);
+                                    self.current_chunk().emit_op(Op::DestructTuple, span);
+                                    self.current_chunk().emit_u8(i as u8, span);
+                                    let _copy_slot = self.add_local("__destruct_copy__".into());
+                                    let elem_slot = self.add_local(name.clone());
+                                    self.current_chunk().emit_op(Op::SetLocal, span);
+                                    self.current_chunk().emit_u16(elem_slot, span);
+                                }
+                                Pattern::Wildcard => {
+                                    // No binding needed.
+                                }
+                                _ => {
+                                    return Err("unsupported nested pattern in let tuple destructuring".into());
+                                }
+                            }
+                        }
                         if is_last {
                             self.current_chunk().emit_op(Op::Unit, span);
                         }
@@ -420,6 +465,7 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
 
                 let ctx = self.contexts.pop().unwrap();
+                let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
                 let vm_closure = Rc::new(VmClosure {
@@ -428,8 +474,21 @@ impl Compiler {
                 });
                 let closure_val = Value::VmClosure(vm_closure);
                 let fi = self.current_chunk().add_constant(closure_val);
-                self.current_chunk().emit_op(Op::Constant, span);
-                self.current_chunk().emit_u16(fi, span);
+
+                if upvalue_descs.is_empty() {
+                    // No upvalues: just push the constant directly.
+                    self.current_chunk().emit_op(Op::Constant, span);
+                    self.current_chunk().emit_u16(fi, span);
+                } else {
+                    // Has upvalues: emit MakeClosure with descriptors.
+                    self.current_chunk().emit_op(Op::MakeClosure, span);
+                    self.current_chunk().emit_u16(fi, span);
+                    self.current_chunk().emit_u8(upvalue_descs.len() as u8, span);
+                    for desc in &upvalue_descs {
+                        self.current_chunk().emit_u8(if desc.is_local { 1 } else { 0 }, span);
+                        self.current_chunk().emit_u8(desc.index, span);
+                    }
+                }
             }
 
             ExprKind::Tuple(elems) => {
@@ -995,7 +1054,7 @@ impl Compiler {
     fn add_local(&mut self, name: String) -> u16 {
         let depth = self.ctx().scope_depth;
         let slot = self.ctx().locals.len() as u16;
-        self.ctx_mut().locals.push(Local { name, depth, slot });
+        self.ctx_mut().locals.push(Local { name, depth, slot, captured: false });
         slot
     }
 
@@ -1010,9 +1069,71 @@ impl Compiler {
         None
     }
 
-    fn resolve_upvalue(&self, _name: &str) -> Option<u8> {
-        // Phase 2: upvalue resolution is still a stub.
-        // A full implementation would walk enclosing contexts.
+    /// Resolve a variable as an upvalue by walking enclosing compile contexts.
+    ///
+    /// If the variable is found as a local in an enclosing scope, it is captured
+    /// as an upvalue (is_local = true). If the enclosing scope already has it as
+    /// an upvalue, it is chained through (is_local = false, transitive capture).
+    fn resolve_upvalue(&mut self, name: &str) -> Option<u8> {
+        let current_idx = self.contexts.len() - 1;
+        if current_idx == 0 {
+            return None; // Top-level script has no enclosing scope.
+        }
+        self.resolve_upvalue_in(name, current_idx)
+    }
+
+    fn resolve_upvalue_in(&mut self, name: &str, context_index: usize) -> Option<u8> {
+        if context_index == 0 {
+            return None; // No more enclosing scopes.
+        }
+        let enclosing_idx = context_index - 1;
+
+        // Check if the variable is a local in the immediately enclosing context.
+        let local_slot = {
+            let enclosing = &self.contexts[enclosing_idx];
+            enclosing.locals.iter().rev().find_map(|l| {
+                if l.name == name { Some(l.slot) } else { None }
+            })
+        };
+
+        if let Some(slot) = local_slot {
+            // Mark the local as captured.
+            let enclosing = &mut self.contexts[enclosing_idx];
+            if let Some(local) = enclosing.locals.iter_mut().find(|l| l.name == name) {
+                local.captured = true;
+            }
+            // Add an upvalue descriptor to the current context.
+            return Some(self.add_upvalue(context_index, UpvalueDesc {
+                is_local: true,
+                index: slot as u8,
+            }));
+        }
+
+        // Not a local in the enclosing scope -- try recursively as an upvalue.
+        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx) {
+            // The enclosing scope has it as an upvalue. Chain it.
+            return Some(self.add_upvalue(context_index, UpvalueDesc {
+                is_local: false,
+                index: parent_upvalue_idx,
+            }));
+        }
+
         None
+    }
+
+    /// Add an upvalue descriptor to a context, deduplicating.
+    fn add_upvalue(&mut self, context_index: usize, desc: UpvalueDesc) -> u8 {
+        let ctx = &mut self.contexts[context_index];
+        // Check if we already have this exact upvalue.
+        for (i, existing) in ctx.upvalues.iter().enumerate() {
+            if existing.is_local == desc.is_local && existing.index == desc.index {
+                return i as u8;
+            }
+        }
+        let index = ctx.upvalues.len();
+        assert!(index <= u8::MAX as usize, "too many upvalues");
+        ctx.upvalues.push(desc);
+        ctx.function.upvalue_count = ctx.upvalues.len() as u8;
+        index as u8
     }
 }

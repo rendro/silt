@@ -3124,4 +3124,212 @@ mod tests {
         "#);
         assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
     }
+
+    // ── Phase 3: Closures and upvalue capture ────────────────────────
+
+    #[test]
+    fn test_closure_capture() {
+        let result = run_vm(r#"
+            fn make_adder(n) {
+                fn(x) { x + n }
+            }
+            fn main() {
+                let add5 = make_adder(5)
+                add5(10)
+            }
+        "#);
+        assert_eq!(result, Value::Int(15));
+    }
+
+    #[test]
+    fn test_closure_in_map() {
+        let result = run_vm(r#"
+            fn main() {
+                let factor = 10
+                [1, 2, 3] |> list.map(fn(x) { x * factor })
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+    }
+
+    #[test]
+    fn test_higher_order() {
+        let result = run_vm(r#"
+            fn apply_twice(f, x) {
+                f(f(x))
+            }
+            fn main() {
+                let double = fn(x) { x * 2 }
+                apply_twice(double, 3)
+            }
+        "#);
+        assert_eq!(result, Value::Int(12));
+    }
+
+    #[test]
+    fn test_closure_counter() {
+        // Tests that closures capture values, not references
+        let result = run_vm(r#"
+            fn main() {
+                let fns = [1, 2, 3] |> list.map(fn(n) {
+                    fn() { n * 10 }
+                })
+                fns |> list.map(fn(f) { f() })
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+    }
+
+    #[test]
+    fn test_closure_multiple_captures() {
+        let result = run_vm(r#"
+            fn make_linear(a, b) {
+                fn(x) { a * x + b }
+            }
+            fn main() {
+                let f = make_linear(3, 7)
+                f(10)
+            }
+        "#);
+        assert_eq!(result, Value::Int(37));
+    }
+
+    #[test]
+    fn test_closure_transitive_capture() {
+        // outer -> middle -> inner: transitive upvalue chaining
+        let result = run_vm(r#"
+            fn outer(x) {
+                let make_inner = fn() {
+                    fn() { x }
+                }
+                make_inner()
+            }
+            fn main() {
+                let f = outer(42)
+                f()
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_closure_no_capture() {
+        // Lambda that doesn't capture anything (no upvalues needed)
+        let result = run_vm(r#"
+            fn main() {
+                let f = fn(x) { x + 1 }
+                f(10)
+            }
+        "#);
+        assert_eq!(result, Value::Int(11));
+    }
+
+    #[test]
+    fn test_closure_with_filter() {
+        let result = run_vm(r#"
+            fn main() {
+                let threshold = 3
+                [1, 2, 3, 4, 5] |> list.filter(fn(x) { x > threshold })
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+    }
+
+    #[test]
+    fn test_closure_with_fold() {
+        let result = run_vm(r#"
+            fn main() {
+                let offset = 100
+                [1, 2, 3] |> list.fold(offset, fn(acc, x) { acc + x })
+            }
+        "#);
+        assert_eq!(result, Value::Int(106));
+    }
+
+    #[test]
+    fn test_let_tuple_destructure() {
+        let result = run_vm(r#"
+            fn main() {
+                let (a, b) = (10, 20)
+                a + b
+            }
+        "#);
+        assert_eq!(result, Value::Int(30));
+    }
+
+    #[test]
+    fn test_let_tuple_destructure_three() {
+        let result = run_vm(r#"
+            fn main() {
+                let (a, b, c) = (1, 2, 3)
+                a * 100 + b * 10 + c
+            }
+        "#);
+        assert_eq!(result, Value::Int(123));
+    }
+
+    #[test]
+    fn test_closure_returned_from_fn() {
+        // A named function returns a closure that captures a parameter
+        let result = run_vm(r#"
+            fn multiplier(factor) {
+                fn(x) { x * factor }
+            }
+            fn main() {
+                let times3 = multiplier(3)
+                let times7 = multiplier(7)
+                times3(10) + times7(5)
+            }
+        "#);
+        assert_eq!(result, Value::Int(65));
+    }
+
+    #[test]
+    fn test_closure_with_pipe_and_fn_syntax() {
+        // Pipe with explicit fn(x) { ... } closure
+        let result = run_vm(r#"
+            fn main() {
+                let base = 5
+                [1, 2, 3] |> list.map(fn(x) { x + base })
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)])));
+    }
+
+    #[test]
+    fn test_trailing_closure_with_capture() {
+        // Pipe with trailing closure syntax { x -> ... }
+        let result = run_vm(r#"
+            fn main() {
+                let factor = 10
+                [1, 2, 3] |> list.map { x -> x * factor }
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+    }
+
+    #[test]
+    fn test_trailing_closure_filter_with_capture() {
+        let result = run_vm(r#"
+            fn main() {
+                let limit = 3
+                [1, 2, 3, 4, 5] |> list.filter { x -> x > limit }
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+    }
+
+    #[test]
+    fn test_chained_pipes_with_closures() {
+        let result = run_vm(r#"
+            fn main() {
+                let offset = 10
+                let cutoff = 13
+                [1, 2, 3, 4, 5]
+                    |> list.map(fn(x) { x + offset })
+                    |> list.filter(fn(x) { x > cutoff })
+            }
+        "#);
+        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(14), Value::Int(15)])));
+    }
 }
