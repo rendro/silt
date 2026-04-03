@@ -428,7 +428,10 @@ fn main() {
 
   loop {
     match channel.receive(ch) {
-      Message(msg) -> { println(msg); loop() }
+      Message(msg) -> {
+        println(msg)
+        loop()
+      }
       Closed -> println("done")
     }
   }
