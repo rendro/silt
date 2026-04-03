@@ -1,0 +1,238 @@
+{- Friction Report (rewrite)
+   Attempts: 2 (first run had Float/Int type mismatch in histogram; float.floor returns Int)
+   Rating: 9/10 (very natural and expressive)
+   Highlights:
+     - Pipe operator and trailing closures make data pipelines very readable
+     - list.unfold is a great fit for PRNG-based sequence generation
+     - Pattern matching with tuple destructuring works smoothly throughout
+     - list.group_by, list.sort_by, list.enumerate, list.zip all work as expected
+     - string.repeat and string.pad_right make histogram formatting easy
+     - map.update simplifies histogram bucketing to a clean fold (was per-bucket list.filter)
+     - Range syntax (0..n) with list.map replaces list.unfold for bucket generation
+     - int.to_float and float.to_string(f, decimals) are convenient for statistics output
+     - Record types with dot access feel natural
+   Friction:
+     - No ability to negate sort keys for sort_by descending without using -value
+       (minor, since negation works fine for Int)
+     - No list.sum / list.min / list.max utility; had to fold manually (very minor)
+     - float.floor returns Int (not Float) -- surprising, caused a type error on first attempt
+   Missing:
+     - list.sum / list.product (convenience reducers)
+     - list.min / list.max (only int.min/int.max exist for pairs)
+     - float.from_int as an alias for int.to_float (minor ergonomic wish)
+   Bugs: None encountered
+-}
+
+-- Synthetic Data Generator
+-- Uses a linear congruential PRNG to generate random student records,
+-- then computes statistics and displays a histogram.
+
+-- Linear congruential PRNG
+-- Parameters from Numerical Recipes: a=1664525, c=1013904223, m=2^32
+fn next_random(seed) {
+  let a = 1664525
+  let c = 1013904223
+  let m = 4294967296
+  let new_seed = (a * seed + c) % m
+  (int.abs(new_seed), new_seed)
+}
+
+-- Generate a random number in [0, max) from a seed
+fn rand_range(seed, max) {
+  let (value, new_seed) = next_random(seed)
+  let result = value % max
+  (result, new_seed)
+}
+
+-- Name pools
+let first_names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank",
+                   "Grace", "Hank", "Ivy", "Jack", "Kate", "Leo",
+                   "Mona", "Nick", "Olga", "Paul", "Quinn", "Rose",
+                   "Sam", "Tina"]
+
+let last_names = ["Smith", "Jones", "Brown", "Davis", "Miller",
+                  "Wilson", "Moore", "Taylor", "Anderson", "Thomas",
+                  "Jackson", "White", "Harris", "Martin", "Garcia",
+                  "Clark", "Lewis", "Hall", "Young", "King"]
+
+-- Student record
+type Student {
+  name: String,
+  age: Int,
+  score: Int,
+}
+
+-- Pick a random element from a list
+fn pick_from(items, seed) {
+  let len = list.length(items)
+  let (idx, new_seed) = rand_range(seed, len)
+  let item = list.get(items, idx) |> option.unwrap_or("")
+  (item, new_seed)
+}
+
+-- Generate a single student from a seed
+fn gen_student(seed) {
+  let (first, seed1) = pick_from(first_names, seed)
+  let (last, seed2) = pick_from(last_names, seed1)
+  let name = "{first} {last}"
+  let (age, seed3) = rand_range(seed2, 10)
+  let age = age + 18
+  let (score, seed4) = rand_range(seed3, 61)
+  let score = score + 40
+  let student = Student { name: name, age: age, score: score }
+  (student, seed4)
+}
+
+-- Generate N students using list.unfold
+fn gen_students(n, seed) {
+  list.unfold((0, seed)) { state ->
+    let (count, s) = state
+    match count >= n {
+      true -> None
+      _ -> {
+        let (student, new_seed) = gen_student(s)
+        Some((student, (count + 1, new_seed)))
+      }
+    }
+  }
+}
+
+-- Statistics functions
+fn sum_list(nums) {
+  nums |> list.fold(0.0) { acc, x -> acc + x }
+}
+
+fn mean(nums) {
+  let n = list.length(nums)
+  let total = sum_list(nums)
+  total / int.to_float(n)
+}
+
+fn median(nums) {
+  let sorted = list.sort(nums)
+  let n = list.length(sorted)
+  let mid = n / 2
+  match n % 2 {
+    0 -> {
+      let a = list.get(sorted, mid - 1) |> option.unwrap_or(0.0)
+      let b = list.get(sorted, mid) |> option.unwrap_or(0.0)
+      (a + b) / 2.0
+    }
+    _ -> list.get(sorted, mid) |> option.unwrap_or(0.0)
+  }
+}
+
+fn std_deviation(nums) {
+  let avg = mean(nums)
+  let n = list.length(nums)
+  let sum_sq = nums |> list.fold(0.0) { acc, x ->
+    let diff = x - avg
+    acc + diff * diff
+  }
+  math.sqrt(sum_sq / int.to_float(n))
+}
+
+-- Histogram: bucket values into ranges and display bars
+-- Uses map.update for O(n) frequency counting instead of per-bucket filtering
+fn histogram(label, values, bucket_size) {
+  let sorted = list.sort(values)
+  let min_val = list.head(sorted) |> option.unwrap_or(0.0)
+  let max_val = list.last(sorted) |> option.unwrap_or(0.0)
+
+  let min_bucket = float.floor(min_val / int.to_float(bucket_size)) * bucket_size
+  let max_bucket = float.floor(max_val / int.to_float(bucket_size)) * bucket_size
+
+  -- Build frequency map: bucket_start -> count
+  let counts = values |> list.fold(#{}) { acc, v ->
+    let bucket_key = float.floor(v / int.to_float(bucket_size)) * bucket_size
+    map.update(acc, bucket_key, 0) { n -> n + 1 }
+  }
+
+  -- Generate bucket boundaries using range syntax
+  let num_buckets = (max_bucket - min_bucket) / bucket_size + 1
+  let bucket_starts = 0..num_buckets |> list.map { i ->
+    min_bucket + i * bucket_size
+  }
+
+  println("\n{label} Histogram:")
+  println(string.repeat("-", 40))
+
+  bucket_starts |> list.each { bucket_start ->
+    let bucket_end = bucket_start + bucket_size
+    let count = map.get(counts, bucket_start) |> option.unwrap_or(0)
+    let range_label = "{bucket_start}-{bucket_end}"
+      |> string.pad_right(10, " ")
+    let bar = string.repeat("#", count)
+    println("{range_label} | {bar} ({count})")
+  }
+}
+
+fn main() {
+  let seed = 42
+  let students = gen_students(20, seed)
+
+  -- Display all students
+  println("=== Generated Students ===")
+  students
+  |> list.enumerate
+  |> list.each { entry ->
+    let (i, s) = entry
+    println("{i + 1}. {s.name} | age: {s.age} | score: {s.score}")
+  }
+
+  -- Extract scores as floats for statistics
+  let scores = students |> list.map { s -> int.to_float(s.score) }
+  let ages = students |> list.map { s -> int.to_float(s.age) }
+
+  -- Compute statistics
+  println("\n=== Score Statistics ===")
+  let score_mean = mean(scores)
+  let score_median = median(scores)
+  let score_std = std_deviation(scores)
+  println("Mean:   {float.to_string(score_mean, 2)}")
+  println("Median: {float.to_string(score_median, 2)}")
+  println("StdDev: {float.to_string(score_std, 2)}")
+
+  println("\n=== Age Statistics ===")
+  let age_mean = mean(ages)
+  let age_median = median(ages)
+  let age_std = std_deviation(ages)
+  println("Mean:   {float.to_string(age_mean, 2)}")
+  println("Median: {float.to_string(age_median, 2)}")
+  println("StdDev: {float.to_string(age_std, 2)}")
+
+  -- Group students by score range using list.group_by
+  println("\n=== Students by Score Range ===")
+  let grouped = students |> list.group_by { s ->
+    let bucket = s.score / 10 * 10
+    "{bucket}-{bucket + 9}"
+  }
+  map.each(grouped) { range, group ->
+    let names = group |> list.map { s -> s.name } |> string.join(", ")
+    println("{range}: {names}")
+  }
+
+  -- Sort students by score descending using list.sort_by
+  println("\n=== Students Ranked by Score ===")
+  let ranked = students |> list.sort_by { s -> -s.score }
+  ranked
+  |> list.enumerate
+  |> list.each { entry ->
+    let (i, s) = entry
+    println("{i + 1}. {s.name}: {s.score}")
+  }
+
+  -- Zip names with scores
+  println("\n=== Name-Score Pairs (via list.zip) ===")
+  let names = students |> list.map { s -> s.name }
+  let score_list = students |> list.map { s -> s.score }
+  let pairs = list.zip(names, score_list)
+  pairs |> list.take(5) |> list.each { pair ->
+    let (name, score) = pair
+    println("{name} -> {score}")
+  }
+
+  -- Histograms
+  histogram("Score", scores, 10)
+  histogram("Age", ages, 2)
+}

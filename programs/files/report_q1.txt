@@ -1,0 +1,4 @@
+Revenue: 150000
+Expenses: 120000
+Employees: 45
+Department: Sales

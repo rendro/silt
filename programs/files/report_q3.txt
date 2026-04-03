@@ -1,0 +1,4 @@
+Revenue: 200000
+Expenses: 140000
+Employees: 52
+Department: Marketing

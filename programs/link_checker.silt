@@ -1,0 +1,98 @@
+{- Friction Report
+   Attempts: 1 (worked on first run)
+   Rating: 9/10 (very natural, felt immediately productive)
+   Highlights:
+     - regex.captures_all with triple-quoted strings for patterns is excellent
+     - match-without-scrutinee is a clean if/else replacement
+     - Pipe operator + trailing closures make data pipelines very readable
+     - Tuple destructuring in fold accumulator is ergonomic
+     - string.starts_with, string.is_empty -- all the expected string utils are present
+     - Type inference meant zero annotations needed
+   Friction:
+     - None. The noted fold_until same-type constraint is a general language observation
+       but caused zero friction in this program.
+   Missing:
+     - None identified. The stdlib had everything needed for this task.
+   Bugs:
+     - None encountered.
+-}
+
+fn classify_url(url) {
+  match {
+    string.is_empty(url) -> "invalid"
+    string.starts_with(url, "https://") -> "valid"
+    string.starts_with(url, "http://") -> "valid"
+    string.starts_with(url, "ftp://") -> "valid"
+    string.starts_with(url, "mailto:") -> "valid"
+    _ -> "invalid"
+  }
+}
+
+fn main() {
+  let file_path = "programs/test.md"
+  let content = match io.read_file(file_path) {
+    Ok(c) -> c
+    Err(e) -> {
+      println("Error reading file: {e}")
+      return panic("Cannot continue without file")
+    }
+  }
+
+  println("=== Markdown Link Checker ===")
+  println("File: {file_path}")
+  println("")
+
+  -- Extract all [text](url) links using regex capture groups
+  let pattern = """\[([^\]]*)\]\(([^)]*)\)"""
+  let matches = regex.captures_all(pattern, content)
+
+  let total = list.length(matches)
+  println("Found {total} links")
+  println("")
+
+  -- Classify each link and collect counts
+  let result = matches |> list.fold((0, 0)) { acc, capture ->
+    let (valid_count, invalid_count) = acc
+    let text = match list.get(capture, 1) {
+      Some(t) -> t
+      None -> ""
+    }
+    let url = match list.get(capture, 2) {
+      Some(u) -> u
+      None -> ""
+    }
+
+    let status = classify_url(url)
+
+    match status {
+      "valid" -> {
+        -- Determine scheme
+        let scheme = match {
+          string.starts_with(url, "https://") -> "HTTPS"
+          string.starts_with(url, "http://") -> "HTTP"
+          string.starts_with(url, "ftp://") -> "FTP"
+          string.starts_with(url, "mailto:") -> "MAILTO"
+          _ -> "UNKNOWN"
+        }
+        println("  [VALID]   [{text}]({url}) -- scheme: {scheme}")
+        (valid_count + 1, invalid_count)
+      }
+      _ -> {
+        let reason = match {
+          string.is_empty(url) -> "empty URL"
+          _ -> "unsupported scheme"
+        }
+        println("  [INVALID] [{text}]({url}) -- {reason}")
+        (valid_count, invalid_count + 1)
+      }
+    }
+  }
+
+  let (valid, invalid) = result
+
+  println("")
+  println("=== Summary ===")
+  println("  Total:   {total}")
+  println("  Valid:   {valid}")
+  println("  Invalid: {invalid}")
+}

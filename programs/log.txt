@@ -1,0 +1,20 @@
+2026-04-01 08:00:01 INFO  server started on port 8080
+2026-04-01 08:00:05 DEBUG loading configuration from /etc/app/config.yaml
+2026-04-01 08:01:12 INFO  connected to database at localhost:5432
+2026-04-01 08:01:15 WARN  connection pool size is below recommended minimum
+2026-04-01 08:02:30 ERROR failed to authenticate user admin: invalid credentials
+2026-04-01 08:03:00 INFO  health check passed
+2026-04-01 08:03:45 DEBUG cache miss for key session:abc123
+2026-04-01 08:04:10 ERROR timeout waiting for response from payment service
+2026-04-01 08:05:00 INFO  scheduled job cleanup_sessions started
+2026-04-01 08:05:22 WARN  disk usage at 85 percent on volume data
+2026-04-01 08:06:00 INFO  request processed in 234ms for endpoint /api/users
+2026-04-01 08:06:15 DEBUG query executed in 12ms: SELECT * FROM users WHERE active = true
+2026-04-01 08:07:00 ERROR connection refused to redis at localhost:6379
+2026-04-01 08:07:30 INFO  retrying redis connection attempt 1 of 3
+2026-04-01 08:08:00 INFO  redis connection established successfully
+2026-04-01 08:08:45 WARN  rate limit approaching for api key xyz789
+2026-04-01 08:09:00 DEBUG garbage collection completed in 45ms
+2026-04-01 08:10:00 INFO  deployment webhook received for version v2.4.1
+2026-04-01 08:10:30 ERROR failed to pull image registry.example.com/app:v2.4.1
+2026-04-01 08:11:00 INFO  rollback initiated to previous stable version

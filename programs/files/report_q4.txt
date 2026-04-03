@@ -1,0 +1,4 @@
+Revenue: 220000
+Expenses: 160000
+Employees: 55
+Department: Operations

@@ -1,0 +1,233 @@
+{- Friction Report
+   Attempts: 1 (rewrite from earlier version; fixed where-clause syntax)
+   Rating: 9/10 (very natural for a state machine with ADTs)
+   Highlights:
+   - ADT definition syntax is clean and intuitive, very ML-like
+   - Nested match expressions work exactly as expected for state/event dispatch
+   - Tuple returns from functions feel natural for multi-value results
+   - String interpolation with curly braces is convenient and reduces boilerplate
+   - Custom Display traits override the auto-derived versions seamlessly
+   - Maps with tuple values (inventory tracking qty+price) work well
+   - Pipe operator and trailing closures make list processing ergonomic
+   - Guardless match (match without scrutinee) is a nice if/else replacement
+   - where clauses with explicit type annotations read clearly now
+   Friction:
+   - Maps are homogeneous, so inventory items need tuples (qty, price) rather than
+     records with named fields. Not a real problem, but named fields would be clearer.
+   - No built-in way to do "match then fall through" or handle Dispensing as a
+     transient state that auto-resolves; had to manually handle it in the fold loop.
+   Missing:
+   - No map.map_values(m, fn) to transform just values while keeping keys (verified:
+     only map.map exists which takes (key, value) and returns (new_key, new_value))
+   Bugs: None encountered
+-}
+
+-- ADT for vending machine states
+type State {
+  Idle,
+  Accepting(Int),
+  Dispensing(String, Int),
+  OutOfStock,
+}
+
+-- ADT for events
+type Event {
+  InsertCoin(Int),
+  SelectItem(String),
+  Cancel,
+  Restock,
+}
+
+-- Custom display for State
+trait Display for State {
+  fn display(self) -> String {
+    match self {
+      Idle -> "Idle"
+      Accepting(amount) -> "Accepting({amount} cents)"
+      Dispensing(item, change) -> "Dispensing({item}, change: {change} cents)"
+      OutOfStock -> "OutOfStock"
+    }
+  }
+}
+
+-- Custom display for Event
+trait Display for Event {
+  fn display(self) -> String {
+    match self {
+      InsertCoin(amount) -> "InsertCoin({amount})"
+      SelectItem(item) -> "SelectItem({item})"
+      Cancel -> "Cancel"
+      Restock -> "Restock"
+    }
+  }
+}
+
+-- Print a labeled displayable value (uses where clause)
+fn print_labeled(label: String, value: a) where a: Display {
+  println("{label}: {value.display()}")
+}
+
+-- Print a list of displayable items with a header (uses where clause)
+fn print_items(header: String, items: List(a)) where a: Display {
+  println(header)
+  items |> list.each { item -> println("  - {item.display()}") }
+}
+
+-- Look up item info from inventory; returns (quantity, price) or None
+fn lookup_item(inventory, name) {
+  map.get(inventory, name)
+}
+
+-- Transition function: (State, Event, inventory) -> (State, String, inventory)
+-- Returns a tuple of (new_state, message, updated_inventory)
+fn transition(state, event, inventory) {
+  match state {
+    Idle -> match event {
+      InsertCoin(amount) -> (Accepting(amount), "Inserted {amount} cents", inventory)
+      SelectItem(_) -> (Idle, "Please insert coins first", inventory)
+      Cancel -> (Idle, "Nothing to cancel", inventory)
+      Restock -> {
+        let new_inv = #{ "Cola": (5, 100), "Chips": (3, 75), "Water": (10, 50), "Candy": (4, 60) }
+        (Idle, "Restocked all items", new_inv)
+      }
+    }
+    Accepting(balance) -> match event {
+      InsertCoin(amount) -> (Accepting(balance + amount), "Added {amount} cents, total: {balance + amount} cents", inventory)
+      SelectItem(item) -> {
+        match lookup_item(inventory, item) {
+          None -> (Accepting(balance), "Item '{item}' not found", inventory)
+          Some((qty, price)) -> match {
+            qty <= 0 -> (Accepting(balance), "'{item}' is out of stock", inventory)
+            balance < price -> (Accepting(balance), "Not enough money for '{item}' (need {price}, have {balance})", inventory)
+            _ -> {
+              let change = balance - price
+              let new_inv = map.set(inventory, item, (qty - 1, price))
+              (Dispensing(item, change), "Dispensing '{item}' (price: {price} cents)", new_inv)
+            }
+          }
+        }
+      }
+      Cancel -> (Idle, "Cancelled, returning {balance} cents", inventory)
+      Restock -> (Accepting(balance), "Cannot restock while accepting coins", inventory)
+    }
+    Dispensing(item, change) -> {
+      -- After dispensing, auto-transition back to Idle with the event
+      match {
+        change > 0 -> (Idle, "Dispensed '{item}', returned {change} cents change. Processing next event...", inventory)
+        _ -> (Idle, "Dispensed '{item}', no change due. Processing next event...", inventory)
+      }
+    }
+    OutOfStock -> match event {
+      Restock -> {
+        let new_inv = #{ "Cola": (5, 100), "Chips": (3, 75), "Water": (10, 50), "Candy": (4, 60) }
+        (Idle, "Machine restocked!", new_inv)
+      }
+      _ -> (OutOfStock, "Machine is out of stock, please restock", inventory)
+    }
+  }
+}
+
+-- Check if all items in inventory have zero quantity
+fn all_out_of_stock(inventory) {
+  let quantities = map.values(inventory) |> list.map { entry ->
+    let (qty, _price) = entry
+    qty
+  }
+  quantities |> list.all { q -> q <= 0 }
+}
+
+-- Run the state machine over a list of events
+fn run_machine(events, initial_state, initial_inventory) {
+  let result = events |> list.fold((initial_state, initial_inventory, 1, [])) { acc, event ->
+    let (state, inventory, step, log) = acc
+
+    -- If we're in Dispensing state, auto-resolve it first
+    let (state2, inventory2, step2, log2) = match state {
+      Dispensing(item, change) -> {
+        let msg = match {
+          change > 0 -> "Collected '{item}', returned {change} cents change"
+          _ -> "Collected '{item}', no change due"
+        }
+        let new_log = list.append(log, (step, "AutoCollect", state, Idle, msg))
+        (Idle, inventory, step + 1, new_log)
+      }
+      _ -> (state, inventory, step, log)
+    }
+
+    -- Check if we should be in OutOfStock state
+    let (state3, inventory3) = match state2 {
+      Idle -> match all_out_of_stock(inventory2) {
+        true -> (OutOfStock, inventory2)
+        _ -> (state2, inventory2)
+      }
+      _ -> (state2, inventory2)
+    }
+
+    let (new_state, message, new_inv) = transition(state3, event, inventory3)
+    let new_log = list.append(log2, (step2, event.display(), state3, new_state, message))
+    (new_state, new_inv, step2 + 1, new_log)
+  }
+
+  let (_final_state, _final_inv, _step, log) = result
+  log
+}
+
+fn main() {
+  println("========================================")
+  println("   VENDING MACHINE STATE MACHINE")
+  println("========================================")
+  println("")
+
+  -- Initial inventory: item -> (quantity, price_in_cents)
+  let inventory = #{ "Cola": (5, 100), "Chips": (3, 75), "Water": (10, 50), "Candy": (4, 60) }
+
+  -- Print the initial state using where-constrained function
+  print_labeled("Initial state", Idle)
+  println("")
+
+  -- Sequence of 17 events
+  let events = [
+    InsertCoin(25),
+    InsertCoin(25),
+    InsertCoin(25),
+    InsertCoin(25),
+    SelectItem("Cola"),
+    InsertCoin(50),
+    InsertCoin(50),
+    SelectItem("Chips"),
+    InsertCoin(10),
+    SelectItem("Water"),
+    Cancel,
+    InsertCoin(50),
+    SelectItem("Candy"),
+    Restock,
+    InsertCoin(100),
+    SelectItem("Cola"),
+    SelectItem("Water"),
+  ]
+
+  -- Print planned events using where-constrained function
+  print_items("Planned events:", events)
+  println("")
+  println("--- State Transitions ---")
+  println("")
+
+  let log = run_machine(events, Idle, inventory)
+
+  -- Print all transitions
+  log |> list.each { entry ->
+    let (step, event_str, old_state, new_state, message) = entry
+    let step_str = match step < 10 {
+      true -> " {step}"
+      _ -> "{step}"
+    }
+    println("[{step_str}] Event: {event_str}")
+    println("     {old_state.display()} -> {new_state.display()}")
+    println("     >> {message}")
+    println("")
+  }
+
+  println("========================================")
+  println("   SIMULATION COMPLETE")
+  println("========================================")
+}

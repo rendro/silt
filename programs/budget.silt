@@ -1,0 +1,386 @@
+{- Friction Report
+   Attempts: 1 (rewrite of working program, applying map.update for category aggregation)
+   Rating: 8.5/10 (improved from 8/10 — map.update eliminates the group_by-then-fold-each-group pattern)
+   Highlights:
+     - map.update(m, key, default, fn) is excellent for category aggregation — replaces the
+       three-step group_by / per-group fold / map.get lookup pattern with a single fold
+     - String interpolation covers all string building needs cleanly
+     - Pipe operator + trailing closures make data transformation pipelines readable
+     - Record types with named fields are pleasant to work with
+     - match-without-scrutinee for boolean branching is intuitive
+     - float.to_string(f, 2) for currency formatting is exactly what you need
+     - string.pad_left/pad_right make table alignment straightforward
+     - list.fold for running balance accumulation is clean and readable
+   Friction:
+     - No string concatenation operator (++ or +). You must use interpolation "{a}{b}"
+       for all string joining. This works well in practice but is not obvious to newcomers.
+     - Building formatted table rows requires many intermediate let-bindings since
+       interpolation cannot span multiple lines gracefully. A known trade-off.
+     - Maps are homogeneous in value type, so aggregating both totals (Float) and counts (Int)
+       requires two separate map.update folds. A minor inconvenience, correct by design.
+   Missing:
+     - Nothing truly missing for this task.
+   Bugs:
+     - None encountered.
+-}
+
+-- Transaction record type
+type Transaction {
+  date: String,
+  category: String,
+  amount: Float,
+  description: String,
+}
+
+-- ============================================================
+-- Sample Transactions (22 across 6 categories)
+-- ============================================================
+
+fn sample_transactions() {
+  [
+    Transaction { date: "2026-03-01", category: "income", amount: 4500.00, description: "Monthly salary" },
+    Transaction { date: "2026-03-15", category: "income", amount: 500.00, description: "Freelance project" },
+    Transaction { date: "2026-03-28", category: "income", amount: 150.00, description: "Dividend payment" },
+
+    Transaction { date: "2026-03-02", category: "food", amount: -45.50, description: "Grocery store" },
+    Transaction { date: "2026-03-05", category: "food", amount: -32.00, description: "Restaurant dinner" },
+    Transaction { date: "2026-03-10", category: "food", amount: -28.75, description: "Weekly groceries" },
+    Transaction { date: "2026-03-18", category: "food", amount: -15.00, description: "Coffee and snacks" },
+    Transaction { date: "2026-03-25", category: "food", amount: -62.30, description: "Grocery haul" },
+
+    Transaction { date: "2026-03-01", category: "transport", amount: -85.00, description: "Monthly bus pass" },
+    Transaction { date: "2026-03-08", category: "transport", amount: -35.00, description: "Uber ride" },
+    Transaction { date: "2026-03-20", category: "transport", amount: -50.00, description: "Gas fill-up" },
+
+    Transaction { date: "2026-03-03", category: "entertainment", amount: -15.99, description: "Streaming service" },
+    Transaction { date: "2026-03-12", category: "entertainment", amount: -45.00, description: "Concert tickets" },
+    Transaction { date: "2026-03-22", category: "entertainment", amount: -12.99, description: "Movie night" },
+    Transaction { date: "2026-03-27", category: "entertainment", amount: -30.00, description: "Board game" },
+
+    Transaction { date: "2026-03-01", category: "utilities", amount: -120.00, description: "Electricity bill" },
+    Transaction { date: "2026-03-01", category: "utilities", amount: -65.00, description: "Internet service" },
+    Transaction { date: "2026-03-01", category: "utilities", amount: -45.00, description: "Water bill" },
+    Transaction { date: "2026-03-15", category: "utilities", amount: -80.00, description: "Phone plan" },
+
+    Transaction { date: "2026-03-04", category: "health", amount: -40.00, description: "Gym membership" },
+    Transaction { date: "2026-03-14", category: "health", amount: -25.00, description: "Pharmacy" },
+    Transaction { date: "2026-03-21", category: "health", amount: -75.00, description: "Dentist copay" }
+  ]
+}
+
+-- ============================================================
+-- Budget limits per category
+-- ============================================================
+
+fn budget_limits() {
+  #{
+    "food": 200.00,
+    "transport": 150.00,
+    "entertainment": 80.00,
+    "utilities": 350.00,
+    "health": 150.00
+  }
+}
+
+-- ============================================================
+-- Validation
+-- ============================================================
+
+fn validate_transaction(t) {
+  match {
+    string.is_empty(t.date) -> Err("Transaction missing date")
+    string.is_empty(t.category) -> Err("Transaction missing category")
+    string.is_empty(t.description) -> Err("Transaction missing description")
+    _ -> Ok(t)
+  }
+}
+
+-- ============================================================
+-- Currency formatting helper
+-- ============================================================
+
+fn fmt_currency(amount) {
+  match {
+    amount >= 0.0 -> " ${float.to_string(amount, 2)}"
+    _ -> "-${float.to_string(float.abs(amount), 2)}"
+  }
+}
+
+-- ============================================================
+-- Separators
+-- ============================================================
+
+fn print_separator() {
+  println(string.repeat("=", 70))
+}
+
+fn print_thin_separator() {
+  println(string.repeat("-", 70))
+}
+
+-- ============================================================
+-- Category Totals Report
+-- Uses map.update to aggregate totals and counts in a single pass each
+-- ============================================================
+
+fn print_category_totals(transactions) {
+  println("")
+  print_separator()
+  println("  SPENDING BY CATEGORY")
+  print_separator()
+
+  let expenses = transactions |> list.filter { t -> t.amount < 0.0 }
+
+  -- Build totals and counts maps using map.update
+  let totals = expenses |> list.fold(#{}) { acc, t ->
+    map.update(acc, t.category, 0.0) { v -> v + t.amount }
+  }
+  let counts = expenses |> list.fold(#{}) { acc, t ->
+    map.update(acc, t.category, 0) { v -> v + 1 }
+  }
+
+  let category_keys = map.keys(totals) |> list.sort
+
+  let hdr_cat = string.pad_right("  Category", 20, " ")
+  let hdr_tot = string.pad_left("Total", 15, " ")
+  let hdr_cnt = string.pad_left("# Trans", 12, " ")
+  println("{hdr_cat}{hdr_tot}{hdr_cnt}")
+  print_thin_separator()
+
+  category_keys |> list.each { cat ->
+    let total = map.get(totals, cat) |> option.unwrap_or(0.0)
+    let count = map.get(counts, cat) |> option.unwrap_or(0)
+    let col1 = string.pad_right("  {cat}", 20, " ")
+    let col2 = string.pad_left(fmt_currency(total), 15, " ")
+    let col3 = string.pad_left(int.to_string(count), 12, " ")
+    println("{col1}{col2}{col3}")
+  }
+
+  let grand_total = expenses |> list.fold(0.0) { acc, t -> acc + t.amount }
+  print_thin_separator()
+  let gt_col1 = string.pad_right("  TOTAL", 20, " ")
+  let gt_col2 = string.pad_left(fmt_currency(grand_total), 15, " ")
+  let gt_col3 = string.pad_left(int.to_string(list.length(expenses)), 12, " ")
+  println("{gt_col1}{gt_col2}{gt_col3}")
+}
+
+-- ============================================================
+-- Monthly Summary
+-- ============================================================
+
+fn print_monthly_summary(transactions) {
+  println("")
+  print_separator()
+  println("  MONTHLY SUMMARY")
+  print_separator()
+
+  let income = transactions |> list.filter { t -> t.amount > 0.0 } |> list.fold(0.0) { acc, t -> acc + t.amount }
+  let expenses = transactions |> list.filter { t -> t.amount < 0.0 } |> list.fold(0.0) { acc, t -> acc + t.amount }
+  let net = income + expenses
+
+  let l1 = string.pad_right("  Total Income:", 25, " ")
+  let v1 = string.pad_left(fmt_currency(income), 15, " ")
+  println("{l1}{v1}")
+
+  let l2 = string.pad_right("  Total Expenses:", 25, " ")
+  let v2 = string.pad_left(fmt_currency(expenses), 15, " ")
+  println("{l2}{v2}")
+
+  print_thin_separator()
+
+  let l3 = string.pad_right("  Net Balance:", 25, " ")
+  let v3 = string.pad_left(fmt_currency(net), 15, " ")
+  println("{l3}{v3}")
+
+  let savings_rate = match {
+    income > 0.0 -> (net / income) * 100.0
+    _ -> 0.0
+  }
+  let l4 = string.pad_right("  Savings Rate:", 25, " ")
+  let v4 = string.pad_left("{float.to_string(savings_rate, 1)}%", 15, " ")
+  println("{l4}{v4}")
+}
+
+-- ============================================================
+-- Running Balance
+-- ============================================================
+
+fn print_running_balance(transactions) {
+  println("")
+  print_separator()
+  println("  RUNNING BALANCE")
+  print_separator()
+
+  let sorted = transactions |> list.sort_by { t -> t.date }
+
+  let h1 = string.pad_right("  Date", 14, " ")
+  let h2 = string.pad_right("Description", 25, " ")
+  let h3 = string.pad_left("Amount", 14, " ")
+  let h4 = string.pad_left("Balance", 14, " ")
+  println("{h1}{h2}{h3}{h4}")
+  print_thin_separator()
+
+  let _ = sorted |> list.fold(0.0) { bal, t ->
+    let new_bal = bal + t.amount
+    let c1 = string.pad_right("  {t.date}", 14, " ")
+    let desc = string.slice(t.description, 0, 23)
+    let c2 = string.pad_right(desc, 25, " ")
+    let c3 = string.pad_left(fmt_currency(t.amount), 14, " ")
+    let c4 = string.pad_left(fmt_currency(new_bal), 14, " ")
+    println("{c1}{c2}{c3}{c4}")
+    new_bal
+  }
+  ()
+}
+
+-- ============================================================
+-- Budget vs Actual Comparison
+-- Uses map.update to build per-category spending totals
+-- ============================================================
+
+fn print_budget_vs_actual(transactions) {
+  println("")
+  print_separator()
+  println("  BUDGET vs ACTUAL")
+  print_separator()
+
+  let budgets = budget_limits()
+  let expenses = transactions |> list.filter { t -> t.amount < 0.0 }
+
+  -- Build spending totals with map.update instead of group_by + per-group fold
+  let spending = expenses |> list.fold(#{}) { acc, t ->
+    map.update(acc, t.category, 0.0) { v -> v + t.amount }
+  }
+
+  let h1 = string.pad_right("  Category", 18, " ")
+  let h2 = string.pad_left("Budget", 12, " ")
+  let h3 = string.pad_left("Actual", 12, " ")
+  let h4 = string.pad_left("Remaining", 12, " ")
+  println("{h1}{h2}{h3}{h4}  Status")
+  print_thin_separator()
+
+  let budget_keys = map.keys(budgets) |> list.sort
+  budget_keys |> list.each { cat ->
+    let limit = map.get(budgets, cat) |> option.unwrap_or(0.0)
+    let actual = map.get(spending, cat) |> option.unwrap_or(0.0)
+    let actual_abs = float.abs(actual)
+    let remaining = limit - actual_abs
+
+    let status = match {
+      actual_abs > limit -> "!! OVER BUDGET"
+      actual_abs > limit * 0.9 -> "~~ WARNING"
+      _ -> "   OK"
+    }
+
+    let c1 = string.pad_right("  {cat}", 18, " ")
+    let c2 = string.pad_left(fmt_currency(limit), 12, " ")
+    let c3 = string.pad_left(fmt_currency(actual), 12, " ")
+    let c4 = string.pad_left(fmt_currency(remaining), 12, " ")
+    println("{c1}{c2}{c3}{c4}  {status}")
+  }
+}
+
+-- ============================================================
+-- Forecast
+-- Uses map.update to build per-category spending totals
+-- ============================================================
+
+fn print_forecast(transactions) {
+  println("")
+  print_separator()
+  println("  SPENDING FORECAST (30-day projection)")
+  print_separator()
+
+  let days_elapsed = 28.0
+  let days_in_month = 30.0
+
+  let budgets = budget_limits()
+  let expenses = transactions |> list.filter { t -> t.amount < 0.0 }
+
+  -- Build spending totals with map.update instead of group_by + per-group fold
+  let spending = expenses |> list.fold(#{}) { acc, t ->
+    map.update(acc, t.category, 0.0) { v -> v + t.amount }
+  }
+
+  let h1 = string.pad_right("  Category", 18, " ")
+  let h2 = string.pad_left("Spent", 12, " ")
+  let h3 = string.pad_left("Projected", 12, " ")
+  let h4 = string.pad_left("Budget", 12, " ")
+  println("{h1}{h2}{h3}{h4}  Forecast")
+  print_thin_separator()
+
+  let budget_keys = map.keys(budgets) |> list.sort
+  budget_keys |> list.each { cat ->
+    let limit = map.get(budgets, cat) |> option.unwrap_or(0.0)
+    let spent = float.abs(map.get(spending, cat) |> option.unwrap_or(0.0))
+    let daily_rate = spent / days_elapsed
+    let projected = daily_rate * days_in_month
+
+    let forecast = match {
+      projected > limit -> "OVER by {fmt_currency(projected - limit)}"
+      _ -> "UNDER by {fmt_currency(limit - projected)}"
+    }
+
+    let c1 = string.pad_right("  {cat}", 18, " ")
+    let c2 = string.pad_left(fmt_currency(spent), 12, " ")
+    let c3 = string.pad_left(fmt_currency(projected), 12, " ")
+    let c4 = string.pad_left(fmt_currency(limit), 12, " ")
+    println("{c1}{c2}{c3}{c4}  {forecast}")
+  }
+}
+
+-- ============================================================
+-- Validate all transactions
+-- ============================================================
+
+fn print_validation(transactions) {
+  println("")
+  print_separator()
+  println("  TRANSACTION VALIDATION")
+  print_separator()
+
+  let results = transactions |> list.map { t -> (t, validate_transaction(t)) }
+  let errors = results |> list.filter { pair ->
+    let (_, r) = pair
+    result.is_err(r)
+  }
+
+  match list.length(errors) {
+    0 -> println("  All {list.length(transactions)} transactions passed validation.")
+    n -> {
+      println("  Found {n} invalid transactions:")
+      errors |> list.each { pair ->
+        let (t, r) = pair
+        let msg = match r {
+          Err(e) -> e
+          _ -> "unknown"
+        }
+        println("    - {t.date} {t.description}: {msg}")
+      }
+    }
+  }
+}
+
+-- ============================================================
+-- Main
+-- ============================================================
+
+fn main() {
+  let transactions = sample_transactions()
+
+  print_separator()
+  println("  PERSONAL BUDGET TRACKER - March 2026")
+  print_separator()
+
+  print_validation(transactions)
+  print_category_totals(transactions)
+  print_monthly_summary(transactions)
+  print_running_balance(transactions)
+  print_budget_vs_actual(transactions)
+  print_forecast(transactions)
+
+  println("")
+  print_separator()
+  println("  Report complete.")
+  print_separator()
+}
