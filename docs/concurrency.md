@@ -3,8 +3,9 @@
 Silt provides built-in concurrency based on CSP (Communicating Sequential
 Processes). Tasks communicate through channels. There is no shared mutable
 state -- every value in silt is immutable, so sending a value through a channel
-is always safe. The v1 runtime is single-threaded and cooperatively scheduled;
-the CSP API is forward-compatible with a future preemptive runtime.
+is always safe. The current runtime is single-threaded and cooperatively
+scheduled; the CSP API is designed to be forward-compatible with a future
+preemptive runtime.
 
 All concurrency primitives live in two modules: `channel` and `task`. There are
 no concurrency keywords.
@@ -51,10 +52,10 @@ fit:
 | **Threads + locks** | Shared memory protected by mutexes | Deadlocks, data races, hard to reason about |
 | **Async/await** | Cooperative futures on an event loop | Colored functions, viral `async`, complex lifetimes |
 | **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
-| **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), cooperative scheduling in v1 |
+| **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), cooperative scheduling |
 
 Unlike Go's goroutines, which are multiplexed onto OS threads by a preemptive
-runtime, silt v1 tasks are coroutines on a single thread. They yield at channel
+runtime, silt tasks are currently coroutines on a single thread. They yield at channel
 operations and `task.join`. The CSP API is forward-compatible with a future
 preemptive runtime -- user code would not need to change.
 
@@ -183,9 +184,9 @@ After processing each message, `channel.each` yields to the scheduler so that
 other tasks blocked on the same channel get a fair turn. This is the mechanism
 behind round-robin fan-out (see Section 5).
 
-### Unbuffered channels in v1
+### Unbuffered channel implementation
 
-`channel.new()` creates a channel with capacity 0, but the v1 runtime promotes
+`channel.new()` creates a channel with capacity 0, but the runtime promotes
 this to capacity 1 internally. Because the cooperative scheduler cannot park a
 sender mid-expression, a truly zero-capacity rendezvous is not possible. In
 practice, a send on an "unbuffered" channel succeeds immediately if the
@@ -636,15 +637,15 @@ fn main() {
 
 -----
 
-## 6. The v1 Runtime
+## 6. The Runtime
 
 ### Single-threaded, cooperative scheduling
 
-Silt v1 runs all tasks on a single OS thread. There is no parallelism. Tasks
+Silt runs all tasks on a single OS thread. There is no parallelism. Tasks
 are coroutines that yield control at specific points and the scheduler rotates
 between them.
 
-This is a deliberate choice for v1: it prioritizes determinism, simplicity, and
+This is a deliberate choice: it prioritizes determinism, simplicity, and
 debuggability over raw performance. The same inputs always produce the same
 task interleaving.
 
@@ -755,7 +756,7 @@ channel.select: deadlock detected - no channels have data and no tasks can make 
 
 ## 7. Limitations and Future Work
 
-### Current limitations (v1)
+### Current limitations
 
 - **No true parallelism.** Tasks interleave on a single OS thread. CPU-bound
   work gets no speedup from spawning tasks.
@@ -825,5 +826,5 @@ the scheduler implementation would change.
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization
-barrier. In v1, all of this runs cooperatively on a single thread -- tasks
+barrier. Currently, all of this runs cooperatively on a single thread -- tasks
 interleave at channel operations but never execute in parallel.

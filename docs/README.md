@@ -7,7 +7,7 @@ Silt is a statically-typed, expression-based language with 14 keywords, full imm
 - **[Getting Started](getting-started.md)** — Installation, hello world, language tour with runnable examples
 - **[Language Guide](language-guide.md)** — Complete reference: every feature, its design rationale, and trade-offs
 - **[Standard Library Reference](stdlib-reference.md)** — Every builtin function with signatures and examples (160+ functions across 17 modules)
-- **[Concurrency](concurrency.md)** — CSP model, channels, tasks, select, patterns, the v1 runtime
+- **[Concurrency](concurrency.md)** — CSP model, channels, tasks, select, patterns, runtime internals
 
 ## Quick Reference
 

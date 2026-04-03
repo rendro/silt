@@ -2,7 +2,7 @@
 
 Silt is a statically-typed, expression-based programming language with full
 immutability, pattern matching as the sole branching construct, and CSP-style
-concurrency. It compiles to a tree-walk interpreter (v1) written in Rust.
+concurrency. It runs on a tree-walk interpreter written in Rust.
 File extension: `.silt`.
 
 This document is the complete language reference and design deep-dive. It
@@ -34,10 +34,9 @@ answer was almost always yes.
 - `try`/`catch` does not exist because errors are values (`try` is a global
   builtin function, not a keyword).
 
-We originally had `chan`, `send`, `receive`, `spawn`, and `select` as
-keywords (17 total). They were demoted to module-qualified functions
-(`channel.new`, `channel.send`, `task.spawn`, etc.) to keep the global
-namespace clean.
+Concurrency primitives live in modules (`channel.new`, `channel.send`,
+`task.spawn`, etc.) rather than as keywords — this keeps the global
+namespace clean and avoids the PHP problem of too many bare globals.
 
 The global namespace has only 13 names: `print`, `println`, `panic`, `try`,
 `Ok`, `Err`, `Some`, `None`, `Stop`, `Continue`, `Message`, `Closed`,
@@ -769,7 +768,7 @@ let config = #{ "host": "localhost", "port": "8080" }
 let grid = #{ (0, 0): "start", (1, 2): "end" }
 ```
 
-Use `map.contains` (not `has_key`) to check membership.
+Use `map.contains` to check key membership.
 
 **Maps are homogeneous** -- all values must be the same type. This is
 enforced by the type system. For heterogeneous data, use records:

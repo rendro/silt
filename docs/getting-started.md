@@ -382,7 +382,7 @@ fn main() {
 }
 ```
 
-Use `map.contains` (not `has_key`) for key membership.
+Use `map.contains` to check key membership.
 
 **Sets** -- unique values with `#[]` syntax:
 
