@@ -1116,7 +1116,7 @@ Functions for working with maps. Keys can be any hashable type (Int, Float, Stri
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `map.get` | `map.get(m, key) -> Option` | Look up a key, return `Some(value)` or `None` |
-| `map.has_key` | `map.has_key(m, key) -> Bool` | Check if a key exists in the map |
+| `map.contains` | `map.contains(m, key) -> Bool` | Check if a key exists in the map |
 | `map.set` | `map.set(m, key, value) -> Map` | Return a new map with the key set |
 | `map.delete` | `map.delete(m, key) -> Map` | Return a new map with the key removed |
 | `map.keys` | `map.keys(m) -> List(String)` | Return all keys as a list |
@@ -1128,6 +1128,7 @@ Functions for working with maps. Keys can be any hashable type (Int, Float, Stri
 | `map.entries` | `map.entries(m) -> List(Tuple)` | Convert map to list of `(key, value)` tuples |
 | `map.from_entries` | `map.from_entries(list) -> Map` | Convert list of `(key, value)` tuples to a map |
 | `map.each` | `map.each(map, fn) -> ()` | Iterate over entries, calling fn(key, value) |
+| `map.update` | `map.update(m, key, default, fn) -> Map` | Update a key by applying fn to its current value (or default) |
 
 ### `map.get`
 
@@ -1145,10 +1146,10 @@ fn main() {
 }
 ```
 
-### `map.has_key`
+### `map.contains`
 
 ```
-map.has_key(m, key) -> Bool
+map.contains(m, key) -> Bool
 ```
 
 Returns `true` if the map contains `key`, `false` otherwise.
@@ -1156,8 +1157,8 @@ Returns `true` if the map contains `key`, `false` otherwise.
 ```silt
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
-  map.has_key(m, "name")    -- true
-  map.has_key(m, "email")   -- false
+  map.contains(m, "name")    -- true
+  map.contains(m, "email")   -- false
 }
 ```
 
@@ -1336,6 +1337,20 @@ Iterates over all entries in the map, calling `fn(key, value)` for each. Returns
   -- Alice: 95
   -- Bob: 87
   -- Carol: 92
+```
+
+### `map.update`
+
+```
+map.update(m, key, default, fn) -> Map
+```
+
+Updates a key in the map. If the key exists, applies `fn` to the current value. If the key doesn't exist, applies `fn` to `default`. Returns a new map with the updated value.
+
+```silt
+let freq = #{ "a": 1, "b": 2 }
+let updated = map.update(freq, "a", 0) { n -> n + 1 }   -- #{ "a": 2, "b": 2 }
+let new_key = map.update(freq, "c", 0) { n -> n + 1 }    -- #{ "a": 1, "b": 2, "c": 1 }
 ```
 
 -----
@@ -1866,6 +1881,7 @@ Functions for working with `Result` values (`Ok(value)` or `Err(error)`).
 | `result.map_ok` | `result.map_ok(result, fn) -> Result` | Transform the Ok value, pass Err through |
 | `result.map_err` | `result.map_err(result, fn) -> Result` | Transform the Err value, pass Ok through |
 | `result.unwrap_or` | `result.unwrap_or(result, default) -> T` | Extract the Ok value, or return default |
+| `result.flat_map` | `result.flat_map(result, fn) -> Result` | Apply fn to the Ok value (fn returns Result), pass Err through |
 | `result.flatten` | `result.flatten(result) -> Result` | Flatten a nested `Ok(Ok(v))` into `Ok(v)` |
 | `result.is_ok` | `result.is_ok(result) -> Bool` | Check if the result is Ok |
 | `result.is_err` | `result.is_err(result) -> Bool` | Check if the result is Err |
@@ -1915,6 +1931,29 @@ If the value is `Ok(v)` or `Some(v)`, returns `v`. Otherwise returns `default`.
 fn main() {
   result.unwrap_or(Ok(42), 0)       -- 42
   result.unwrap_or(Err("nope"), 0)  -- 0
+}
+```
+
+### `result.flat_map`
+
+```
+result.flat_map(result, fn) -> Result
+```
+
+If the value is `Ok(v)`, applies `fn` to `v` (which must return a `Result`). If `Err`, passes it through unchanged. This is like `result.map_ok` but avoids nested `Ok(Ok(...))` when the function itself returns a `Result`.
+
+```silt
+fn parse_and_double(s) {
+  match int.parse(s) {
+    Ok(n) -> Ok(n * 2)
+    Err(e) -> Err(e)
+  }
+}
+
+fn main() {
+  result.flat_map(Ok("21"), fn(s) { parse_and_double(s) })  -- Ok(42)
+  result.flat_map(Ok("abc"), fn(s) { parse_and_double(s) })  -- Err("invalid digit found in string")
+  result.flat_map(Err("no input"), fn(s) { parse_and_double(s) })  -- Err("no input")
 }
 ```
 
@@ -2558,6 +2597,7 @@ is a keyword.
 | `regex.captures` | `regex.captures(pattern, text) -> Option(List(String))` | Return capture groups from the first match |
 | `regex.captures_all` | `regex.captures_all(pattern, text) -> List(List(String))` | Return capture groups from all matches |
 | `regex.replace_all` | `regex.replace_all(pattern, text, replacement) -> String` | Replace all matches |
+| `regex.replace_all_with` | `regex.replace_all_with(pattern, text, fn) -> String` | Replace all matches using a callback function |
 
 ### `regex.is_match`
 
@@ -2654,6 +2694,19 @@ fn main() {
   regex.replace_all("\\d+", "order 42 and 99", "N")
   -- "order N and N"
 }
+```
+
+### `regex.replace_all_with`
+
+```
+regex.replace_all_with(pattern, text, fn) -> String
+```
+
+Like `regex.replace_all`, but calls `fn` with each match string and uses the return value as the replacement.
+
+```silt
+regex.replace_all_with("[a-z]+", "hello world", fn(m) { string.to_upper(m) })
+-- "HELLO WORLD"
 ```
 
 ### `regex.captures`

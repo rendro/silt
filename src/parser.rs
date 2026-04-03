@@ -1603,7 +1603,30 @@ impl Parser {
             }
             Token::Float(n) => {
                 self.advance();
-                Ok(Pattern::Float(n))
+                if self.at(&Token::DotDot) {
+                    self.advance();
+                    let end = if self.at(&Token::Minus) {
+                        self.advance();
+                        match self.peek().clone() {
+                            Token::Float(m) => { self.advance(); -m }
+                            _ => return Err(ParseError {
+                                message: "expected float after - in range pattern".into(),
+                                span: self.span(),
+                            }),
+                        }
+                    } else {
+                        match self.peek().clone() {
+                            Token::Float(m) => { self.advance(); m }
+                            _ => return Err(ParseError {
+                                message: "expected float end for range pattern".into(),
+                                span: self.span(),
+                            }),
+                        }
+                    };
+                    Ok(Pattern::FloatRange(n, end))
+                } else {
+                    Ok(Pattern::Float(n))
+                }
             }
             Token::Bool(b) => {
                 self.advance();
@@ -1750,7 +1773,34 @@ impl Parser {
                     }
                     Token::Float(n) => {
                         self.advance();
-                        Ok(Pattern::Float(-n))
+                        if self.at(&Token::DotDot) {
+                            self.advance();
+                            match self.peek().clone() {
+                                Token::Float(m) => {
+                                    self.advance();
+                                    Ok(Pattern::FloatRange(-n, m))
+                                }
+                                Token::Minus => {
+                                    self.advance();
+                                    match self.peek().clone() {
+                                        Token::Float(m) => {
+                                            self.advance();
+                                            Ok(Pattern::FloatRange(-n, -m))
+                                        }
+                                        _ => Err(ParseError {
+                                            message: "expected float after - in range pattern".into(),
+                                            span: self.span(),
+                                        }),
+                                    }
+                                }
+                                _ => Err(ParseError {
+                                    message: "expected float end for range pattern".into(),
+                                    span: self.span(),
+                                }),
+                            }
+                        } else {
+                            Ok(Pattern::Float(-n))
+                        }
                     }
                     _ => Err(ParseError {
                         message: "expected number after -".into(),

@@ -178,7 +178,7 @@ fn builtin_names() -> Vec<String> {
         "map.length", "map.merge", "map.filter", "map.map", "map.entries", "map.from_entries",
         "map.each", "map.update",
         "result.unwrap_or", "result.map_ok", "result.map_err", "result.flatten",
-        "result.is_ok", "result.is_err",
+        "result.flat_map", "result.is_ok", "result.is_err",
         "option.map", "option.unwrap_or", "option.to_result", "option.is_some", "option.is_none",
         "io.read_file", "io.write_file", "io.read_line", "io.inspect", "io.args",
         "math.sqrt", "math.pow", "math.log", "math.log10",

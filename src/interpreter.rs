@@ -1864,12 +1864,12 @@ impl Interpreter {
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 }
             }
-            "has_key" => {
+            "contains" => {
                 if args.len() != 2 {
-                    return Err(err("map.has_key takes 2 arguments (map, key)"));
+                    return Err(err("map.contains takes 2 arguments (map, key)"));
                 }
                 let Value::Map(m) = &args[0] else {
-                    return Err(err("map.has_key requires a map as first argument"));
+                    return Err(err("map.contains requires a map as first argument"));
                 };
                 Ok(Value::Bool(m.contains_key(&args[1])))
             }
@@ -2275,6 +2275,20 @@ impl Interpreter {
                     }
                     Value::Variant(name, _) if name == "Err" => Ok(args[0].clone()),
                     _ => Err(err("result.flatten requires a Result value")),
+                }
+            }
+            "flat_map" => {
+                if args.len() != 2 {
+                    return Err(err("result.flat_map takes 2 arguments (result, fn)"));
+                }
+                match &args[0] {
+                    Value::Variant(name, fields) if name == "Ok" && fields.len() == 1 => {
+                        self.call_value(&args[1], &[fields[0].clone()])
+                    }
+                    Value::Variant(name, _) if name == "Err" => {
+                        Ok(args[0].clone())
+                    }
+                    _ => Err(err("result.flat_map requires a Result as first argument")),
                 }
             }
             "is_ok" => {
@@ -3999,6 +4013,9 @@ impl Interpreter {
             (Pattern::Range(start, end), Value::Int(n)) => {
                 *n >= *start && *n <= *end
             }
+            (Pattern::FloatRange(lo, hi), Value::Float(v)) => {
+                *v >= *lo && *v <= *hi
+            }
             (Pattern::Map(entries), Value::Map(map)) => {
                 for (key, pat) in entries {
                     let key_val = Value::String(key.clone());
@@ -4092,16 +4109,19 @@ fn eval_binary(left: Value, op: BinOp, right: Value, span: Span) -> Result<Value
         | (Value::Map(_), BinOp::Eq, Value::Map(_))
         | (Value::Record(..), BinOp::Eq, Value::Record(..))
         | (Value::Variant(..), BinOp::Eq, Value::Variant(..))
+        | (Value::Set(_), BinOp::Eq, Value::Set(_))
         | (Value::Channel(_), BinOp::Eq, Value::Channel(_)) => Ok(Value::Bool(left == right)),
         (Value::List(_), BinOp::Neq, Value::List(_))
         | (Value::Tuple(_), BinOp::Neq, Value::Tuple(_))
         | (Value::Map(_), BinOp::Neq, Value::Map(_))
         | (Value::Record(..), BinOp::Neq, Value::Record(..))
         | (Value::Variant(..), BinOp::Neq, Value::Variant(..))
+        | (Value::Set(_), BinOp::Neq, Value::Set(_))
         | (Value::Channel(_), BinOp::Neq, Value::Channel(_)) => Ok(Value::Bool(left != right)),
         // Ordering for compound types
         (Value::List(_), BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq, Value::List(_))
         | (Value::Tuple(_), BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq, Value::Tuple(_))
+        | (Value::Set(_), BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq, Value::Set(_))
         | (Value::Variant(..), BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq, Value::Variant(..)) => {
             match op {
                 BinOp::Lt => Ok(Value::Bool(left < right)),
@@ -4254,6 +4274,7 @@ fn register_builtins(env: &Env) {
         "result.map_ok",
         "result.map_err",
         "result.flatten",
+        "result.flat_map",
         "result.is_ok",
         "result.is_err",
         "option.map",
@@ -4307,7 +4328,7 @@ fn register_builtins(env: &Env) {
         "map.get",
         "map.set",
         "map.delete",
-        "map.has_key",
+        "map.contains",
         "map.keys",
         "map.values",
         "map.length",

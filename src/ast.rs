@@ -179,6 +179,8 @@ pub enum Pattern {
     Or(Vec<Pattern>),
     /// Range pattern: 1..10 (inclusive on both ends)
     Range(i64, i64),
+    /// Float range pattern: 1.0..10.0 (inclusive on both ends)
+    FloatRange(f64, f64),
     /// Map pattern: #{ "key": value }
     Map(Vec<(String, Pattern)>),
     /// Pin pattern: ^name -- matches against the existing variable's value

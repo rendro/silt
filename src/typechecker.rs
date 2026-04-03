@@ -7,7 +7,7 @@
 //! - Type narrowing after `when` guard statements
 //! - Trait constraint checking
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::ast::*;
 use crate::lexer::Span;
@@ -1797,9 +1797,13 @@ impl TypeChecker {
             Box::new(Type::Float),
         )));
 
-        // float.to_string: (Float) -> String  (also accepts (Float, Int) at runtime)
+        // float.to_string: (Float, Int) -> String
+        // The second argument (decimal places) is optional at runtime;
+        // registering the 2-arg form lets the typechecker validate both
+        // arguments.  The 1-arg call still passes the arity check because
+        // module-qualified calls go through FieldAccess which permits ±1.
         env.define("float.to_string".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
+            vec![Type::Float, Type::Int],
             Box::new(Type::String),
         )));
 
@@ -1863,11 +1867,11 @@ impl TypeChecker {
             });
         }
 
-        // map.has_key: (Map(k, v), k) -> Bool  where k: Hash
+        // map.contains: (Map(k, v), k) -> Bool  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.has_key".into(), Scheme {
+            env.define("map.contains".into(), Scheme {
                 vars: vec![kv, vv],
                 ty: Type::Fun(
                     vec![
@@ -2332,6 +2336,24 @@ impl TypeChecker {
             });
         }
 
+        // result.flat_map: (Result(a, e), (a) -> Result(b, e)) -> Result(b, e)
+        {
+            let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
+            let (e, ev) = self.fresh_tv();
+            env.define("result.flat_map".into(), Scheme {
+                vars: vec![av, bv, ev],
+                ty: Type::Fun(
+                    vec![
+                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                        Type::Fun(vec![a], Box::new(Type::Generic("Result".into(), vec![b.clone(), e.clone()]))),
+                    ],
+                    Box::new(Type::Generic("Result".into(), vec![b, e])),
+                ),
+                constraints: vec![],
+            });
+        }
+
         // result.is_ok: (Result(a,e)) -> Bool
         {
             let (a, av) = self.fresh_tv();
@@ -2501,28 +2523,33 @@ impl TypeChecker {
     }
 
     fn register_test_builtins(&mut self, env: &mut TypeEnv) {
-        // test.assert: Bool -> ()
+        // test.assert: (Bool, String) -> ()
+        // The message parameter is optional at runtime; registering the full
+        // arity lets the typechecker validate the message type while the
+        // is_method_call arity tolerance still allows the 1-arg form.
         env.define(
             "test.assert".into(),
-            Scheme::mono(Type::Fun(vec![Type::Bool], Box::new(Type::Unit))),
+            Scheme::mono(Type::Fun(vec![Type::Bool, Type::String], Box::new(Type::Unit))),
         );
 
-        // test.assert_eq: (a, a) -> ()
+        // test.assert_eq: (a, a, String) -> ()
+        // The message parameter is optional at runtime.
         {
             let (a, av) = self.fresh_tv();
             env.define("test.assert_eq".into(), Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+                ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
             });
         }
 
-        // test.assert_ne: (a, a) -> ()
+        // test.assert_ne: (a, a, String) -> ()
+        // The message parameter is optional at runtime.
         {
             let (a, av) = self.fresh_tv();
             env.define("test.assert_ne".into(), Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![a.clone(), a], Box::new(Type::Unit)),
+                ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
                 constraints: vec![],
             });
         }
@@ -3213,6 +3240,9 @@ impl TypeChecker {
             }
             Pattern::Range(_, _) => {
                 self.unify(ty, &Type::Int, Span { line: 0, col: 0, offset: 0 });
+            }
+            Pattern::FloatRange(_, _) => {
+                self.unify(ty, &Type::Float, Span { line: 0, col: 0, offset: 0 });
             }
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
@@ -4143,12 +4173,36 @@ impl TypeChecker {
                 }
             }
             Pattern::Or(alts) => {
+                // Validate that all alternatives bind the same set of variables.
+                if alts.len() >= 2 {
+                    let first_vars: BTreeSet<String> =
+                        collect_pattern_vars(&alts[0]).into_iter().collect();
+                    for (i, alt) in alts.iter().enumerate().skip(1) {
+                        let alt_vars: BTreeSet<String> =
+                            collect_pattern_vars(alt).into_iter().collect();
+                        if first_vars != alt_vars {
+                            self.error(
+                                format!(
+                                    "or-pattern alternatives must bind the same variables; \
+                                     first alternative binds {:?}, alternative {} binds {:?}",
+                                    first_vars,
+                                    i + 1,
+                                    alt_vars
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
                 for alt in alts {
                     self.check_pattern(alt, expected, env, span);
                 }
             }
             Pattern::Range(_, _) => {
                 self.unify(expected, &Type::Int, span);
+            }
+            Pattern::FloatRange(_, _) => {
+                self.unify(expected, &Type::Float, span);
             }
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
@@ -4376,7 +4430,7 @@ impl TypeChecker {
             }
             // Literal patterns — useful iff no wildcard covers them.
             Pattern::Int(_) | Pattern::Float(_) | Pattern::StringLit(_)
-            | Pattern::Range(..) | Pattern::Pin(_) => {
+            | Pattern::Range(..) | Pattern::FloatRange(..) | Pattern::Pin(_) => {
                 !matrix.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)))
             }
             _ => false,
@@ -4731,6 +4785,44 @@ impl TypeChecker {
 }
 
 // ── Helper functions ────────────────────────────────────────────────
+
+/// Collect the set of variable names bound by a pattern.
+fn collect_pattern_vars(pat: &Pattern) -> Vec<String> {
+    match pat {
+        Pattern::Ident(name) => vec![name.clone()],
+        Pattern::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        Pattern::List(pats, rest) => {
+            let mut vars: Vec<String> = pats.iter().flat_map(collect_pattern_vars).collect();
+            if let Some(rest_pat) = rest {
+                vars.extend(collect_pattern_vars(rest_pat));
+            }
+            vars
+        }
+        Pattern::Constructor(_, pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        Pattern::Record { fields, .. } => {
+            let mut vars: Vec<String> = Vec::new();
+            for (field_name, sub_pat) in fields {
+                if let Some(p) = sub_pat {
+                    vars.extend(collect_pattern_vars(p));
+                } else {
+                    // Shorthand field `{ x }` binds `x`
+                    vars.push(field_name.clone());
+                }
+            }
+            vars
+        }
+        Pattern::Or(alts) => {
+            // Return vars from first alt (they should all be the same after validation)
+            alts.first().map(|a| collect_pattern_vars(a)).unwrap_or_default()
+        }
+        Pattern::Map(entries) => {
+            entries.iter().flat_map(|(_, p)| collect_pattern_vars(p)).collect()
+        }
+        Pattern::Wildcard | Pattern::Int(_) | Pattern::Float(_)
+        | Pattern::Bool(_) | Pattern::StringLit(_)
+        | Pattern::Range(_, _) | Pattern::FloatRange(_, _) | Pattern::Pin(_) => vec![],
+    }
+}
 
 /// Check if a type variable occurs in a type (occurs check for unification).
 fn occurs_in(var: TyVar, ty: &Type) -> bool {

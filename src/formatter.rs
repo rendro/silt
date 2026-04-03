@@ -855,6 +855,7 @@ fn format_pattern(pattern: &Pattern) -> String {
             items.join(" | ")
         }
         Pattern::Range(start, end) => format!("{start}..{end}"),
+        Pattern::FloatRange(start, end) => format!("{start}..{end}"),
         Pattern::Map(entries) => {
             let items: Vec<String> = entries
                 .iter()

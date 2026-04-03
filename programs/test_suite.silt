@@ -162,8 +162,8 @@ fn test_map_basics() {
   test.assert_eq(map.length(m), 3)
   test.assert_eq(map.get(m, "a"), Some(1))
   test.assert_eq(map.get(m, "z"), None)
-  test.assert(map.has_key(m, "b"))
-  test.assert(!map.has_key(m, "z"))
+  test.assert(map.contains(m, "b"))
+  test.assert(!map.contains(m, "z"))
 }
 
 fn test_map_operations() {
@@ -190,7 +190,7 @@ fn test_map_transform() {
   let m = #{ "a": 1, "b": 2, "c": 3 }
   let filtered = map.filter(m, fn(k, v) { v > 1 })
   test.assert_eq(map.length(filtered), 2)
-  test.assert(!map.has_key(filtered, "a"))
+  test.assert(!map.contains(filtered, "a"))
 
   let entries = map.entries(m)
   test.assert_eq(list.length(entries), 3)

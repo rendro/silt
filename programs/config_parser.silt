@@ -6,7 +6,7 @@
      - Pipe operator and trailing closures make data transformation very readable
      - list.fold with tuple state works well for stateful accumulation
      - Tuple destructuring in closure params works: { (idx, raw) -> ... }
-     - map module is complete and ergonomic (get, set, has_key, each, keys)
+     - map module is complete and ergonomic (get, set, contains, each, keys)
      - string module has everything needed (trim, starts_with, index_of, slice, split)
      - list.filter_map is great for collecting validation errors
      - list.flat_map for combining multiple validation results
@@ -86,7 +86,7 @@ fn parse_config(text) {
       Comment(_) -> state
       Section(name) -> {
         -- Ensure the section exists in the map
-        let new_config = match map.has_key(config, name) {
+        let new_config = match map.contains(config, name) {
           true -> config
           _ -> map.set(config, name, #{})
         }
@@ -125,7 +125,7 @@ fn parse_config(text) {
 fn validate_required(config, section, required_keys) {
   required_keys |> list.filter_map { key ->
     let section_map = map.get(config, section) |> option.unwrap_or(#{})
-    match map.has_key(section_map, key) {
+    match map.contains(section_map, key) {
       true -> None
       _ -> Some("Missing required key '{key}' in section [{section}]")
     }
