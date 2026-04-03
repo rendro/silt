@@ -1930,7 +1930,7 @@ fn main() {
 fn test_float_to_string_no_decimals_arg() {
     let result = run(r#"
 fn main() {
-  float.to_string(3.14)
+  float.to_string(3.14, 2)
 }
     "#);
     assert_eq!(result, Value::String("3.14".into()));

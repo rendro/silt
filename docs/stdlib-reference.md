@@ -1729,7 +1729,6 @@ Functions for working with floating-point numbers.
 | `float.abs` | `float.abs(f) -> Float` | Absolute value |
 | `float.min` | `float.min(a, b) -> Float` | Return the smaller of two floats |
 | `float.max` | `float.max(a, b) -> Float` | Return the larger of two floats |
-| `float.to_string` | `float.to_string(f) -> String` | Convert a float to a string |
 | `float.to_string` | `float.to_string(f, decimals) -> String` | Format a float to N decimal places |
 | `float.to_int` | `float.to_int(f) -> Int` | Truncate a float to an integer |
 
@@ -1840,15 +1839,13 @@ fn main() {
 ### `float.to_string`
 
 ```
-float.to_string(f) -> String
 float.to_string(f, decimals) -> String
 ```
 
-Converts a float to a string. With one argument, uses default formatting. With two arguments, formats to exactly N decimal places (padding with zeros or truncating as needed).
+Formats a float to exactly N decimal places (padding with zeros or truncating as needed).
 
 ```silt
 fn main() {
-  float.to_string(3.14)        -- "3.14"
   float.to_string(3.14159, 2)  -- "3.14"
   float.to_string(3.1, 4)      -- "3.1000"
   float.to_string(3.7, 0)      -- "4"

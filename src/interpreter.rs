@@ -1800,27 +1800,19 @@ impl Interpreter {
                 Ok(Value::Float(f.abs()))
             }
             "to_string" => {
-                match args.len() {
-                    1 => {
-                        let Value::Float(f) = &args[0] else {
-                            return Err(err("float.to_string requires a float"));
-                        };
-                        Ok(Value::String(f.to_string()))
-                    }
-                    2 => {
-                        let Value::Float(f) = &args[0] else {
-                            return Err(err("float.to_string requires a float as first argument"));
-                        };
-                        let Value::Int(decimals) = &args[1] else {
-                            return Err(err("float.to_string requires an int for decimal places"));
-                        };
-                        if *decimals < 0 {
-                            return Err(err("decimal places must be non-negative"));
-                        }
-                        Ok(Value::String(format!("{:.prec$}", f, prec = *decimals as usize)))
-                    }
-                    _ => Err(err("float.to_string takes 1 or 2 arguments (float) or (float, decimals)")),
+                if args.len() != 2 {
+                    return Err(err("float.to_string takes 2 arguments (float, decimals)"));
                 }
+                let Value::Float(f) = &args[0] else {
+                    return Err(err("float.to_string requires a float as first argument"));
+                };
+                let Value::Int(decimals) = &args[1] else {
+                    return Err(err("float.to_string requires an int for decimal places"));
+                };
+                if *decimals < 0 {
+                    return Err(err("decimal places must be non-negative"));
+                }
+                Ok(Value::String(format!("{:.prec$}", f, prec = *decimals as usize)))
             }
             "to_int" => {
                 if args.len() != 1 {

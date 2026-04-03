@@ -3739,9 +3739,6 @@ impl TypeChecker {
                         // Check arity. For method calls (obj.method(...)),
                         // the type signature includes `self` but the call
                         // site does not, so allow a difference of exactly 1.
-                        // Also allow one extra argument for module-qualified
-                        // calls to support overloaded builtins like
-                        // float.to_string(f) and float.to_string(f, decimals).
                         let arity_ok = if is_method_call {
                             arg_types.len() == params.len()
                                 || arg_types.len() + 1 == params.len()
