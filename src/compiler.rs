@@ -111,6 +111,8 @@ pub struct Compiler {
     project_root: Option<PathBuf>,
     /// Modules already compiled in this compilation unit (avoids double-compile).
     compiled_modules: HashSet<String>,
+    /// Modules currently being compiled (for circular import detection).
+    compiling_modules: HashSet<String>,
 }
 
 impl Compiler {
@@ -120,6 +122,7 @@ impl Compiler {
             functions: Vec::new(),
             project_root: None,
             compiled_modules: HashSet::new(),
+            compiling_modules: HashSet::new(),
         }
     }
 
@@ -130,6 +133,7 @@ impl Compiler {
             functions: Vec::new(),
             project_root: Some(root),
             compiled_modules: HashSet::new(),
+            compiling_modules: HashSet::new(),
         }
     }
 
@@ -464,24 +468,38 @@ impl Compiler {
                 }
                 Ok(())
             }
-            ImportTarget::Alias(module_name, _alias) => {
+            ImportTarget::Alias(module_name, alias) => {
                 if module::is_builtin_module(module_name) {
-                    // Builtin alias: nothing to compile, the VM resolves
-                    // "alias.func" at runtime via field access. We don't need
-                    // to emit anything because GetField on module.func globals
-                    // already works. However, for completeness we could copy
-                    // all "module.*" globals to "alias.*", but that is not
-                    // necessary since the tree-walk interpreter doesn't either.
+                    // Builtin alias: copy all "module.func" globals to "alias.func".
+                    let span = Span::new(0, 0);
+                    for func in module::builtin_module_functions(module_name) {
+                        let qualified = format!("{module_name}.{func}");
+                        let qi = self.current_chunk().add_constant(Value::String(qualified));
+                        self.current_chunk().emit_op(Op::GetGlobal, span);
+                        self.current_chunk().emit_u16(qi, span);
+                        let alias_name = format!("{alias}.{func}");
+                        let ai = self.current_chunk().add_constant(Value::String(alias_name));
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(ai, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
                     return Ok(());
                 }
                 // File module with alias: compile under original name, then
-                // for each public declaration re-register under alias prefix.
-                // This requires knowing public names, which we track during
-                // compile_file_module.
-                self.compile_file_module(module_name)?;
-                // Aliasing for file modules is not yet supported in the VM.
-                // The module's functions are available as "module_name.func".
-                // TODO: add alias remapping if needed.
+                // re-register each public declaration under the alias prefix.
+                let public_names = self.compile_file_module(module_name)?;
+                let span = Span::new(0, 0);
+                for name in &public_names {
+                    let original = format!("{module_name}.{name}");
+                    let qi = self.current_chunk().add_constant(Value::String(original));
+                    self.current_chunk().emit_op(Op::GetGlobal, span);
+                    self.current_chunk().emit_u16(qi, span);
+                    let alias_name = format!("{alias}.{name}");
+                    let ai = self.current_chunk().add_constant(Value::String(alias_name));
+                    self.current_chunk().emit_op(Op::SetGlobal, span);
+                    self.current_chunk().emit_u16(ai, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
+                }
                 Ok(())
             }
         }
@@ -489,14 +507,32 @@ impl Compiler {
 
     /// Compile a file-based module's declarations into the current compilation
     /// unit. Each public declaration is registered as a global named
-    /// `"module_name.decl_name"`.
-    fn compile_file_module(&mut self, module_name: &str) -> Result<(), String> {
+    /// `"module_name.decl_name"`. Returns the list of public names exported by
+    /// this module.
+    fn compile_file_module(&mut self, module_name: &str) -> Result<Vec<String>, String> {
         // Guard against double-compilation.
         if self.compiled_modules.contains(module_name) {
-            return Ok(());
+            return Ok(vec![]);
         }
-        self.compiled_modules.insert(module_name.to_string());
 
+        // Detect circular imports.
+        if self.compiling_modules.contains(module_name) {
+            return Err(format!("circular import detected: module '{module_name}' imports itself (directly or indirectly)"));
+        }
+        self.compiling_modules.insert(module_name.to_string());
+
+        let result = self.compile_file_module_inner(module_name);
+
+        self.compiling_modules.remove(module_name);
+        if result.is_ok() {
+            self.compiled_modules.insert(module_name.to_string());
+        }
+        result
+    }
+
+    /// Inner implementation of file module compilation, separated so that
+    /// the circular-import guard can wrap it cleanly.
+    fn compile_file_module_inner(&mut self, module_name: &str) -> Result<Vec<String>, String> {
         let project_root = self.project_root.as_ref().ok_or_else(|| {
             format!(
                 "cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"
@@ -531,6 +567,9 @@ impl Compiler {
                 _ => {}
             }
         }
+
+        // Track all exported names (functions + types + variants) for alias support.
+        let mut exported_names: Vec<String> = Vec::new();
 
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
@@ -594,6 +633,7 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
+                        exported_names.push(fn_decl.name.clone());
                     } else {
                         // Internal function — still register so closures / calls work,
                         // but under a mangled private name.
@@ -607,13 +647,58 @@ impl Compiler {
                     }
                 }
                 Decl::Type(type_decl) if public_types.contains(&type_decl.name) => {
-                    // Compile the type declaration and register variants/records
-                    // under "module_name.VariantName" globals.
+                    // Compile the type declaration — registers variants under bare names.
                     self.compile_decl(decl)?;
-                    // The base compile_decl already registered them under their
-                    // bare names. For module imports, we additionally want them
-                    // under the qualified name. (The bare names are fine too —
-                    // they match tree-walk behavior.)
+                    // Also register type name and variants under qualified names.
+                    exported_names.push(type_decl.name.clone());
+                    match &type_decl.body {
+                        crate::ast::TypeBody::Enum(variants) => {
+                            for variant in variants {
+                                // Copy bare "VariantName" -> "module.VariantName"
+                                let bare_idx = self.current_chunk().add_constant(
+                                    Value::String(variant.name.clone()),
+                                );
+                                self.current_chunk().emit_op(Op::GetGlobal, span);
+                                self.current_chunk().emit_u16(bare_idx, span);
+                                let qual = format!("{module_name}.{}", variant.name);
+                                let qual_idx = self.current_chunk().add_constant(
+                                    Value::String(qual),
+                                );
+                                self.current_chunk().emit_op(Op::SetGlobal, span);
+                                self.current_chunk().emit_u16(qual_idx, span);
+                                self.current_chunk().emit_op(Op::Pop, span);
+                                exported_names.push(variant.name.clone());
+                            }
+                            // Register the type name itself as a qualified global
+                            // (pointing to the type name string for use in `import mod.{ Type }`).
+                            let type_val = Value::String(type_decl.name.clone());
+                            let type_val_idx = self.current_chunk().add_constant(type_val);
+                            self.current_chunk().emit_op(Op::Constant, span);
+                            self.current_chunk().emit_u16(type_val_idx, span);
+                            let qual_type = format!("{module_name}.{}", type_decl.name);
+                            let qual_type_idx = self.current_chunk().add_constant(
+                                Value::String(qual_type),
+                            );
+                            self.current_chunk().emit_op(Op::SetGlobal, span);
+                            self.current_chunk().emit_u16(qual_type_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+                        }
+                        crate::ast::TypeBody::Record(_) => {
+                            // Copy bare type name -> "module.TypeName"
+                            let bare_idx = self.current_chunk().add_constant(
+                                Value::String(type_decl.name.clone()),
+                            );
+                            self.current_chunk().emit_op(Op::GetGlobal, span);
+                            self.current_chunk().emit_u16(bare_idx, span);
+                            let qual = format!("{module_name}.{}", type_decl.name);
+                            let qual_idx = self.current_chunk().add_constant(
+                                Value::String(qual),
+                            );
+                            self.current_chunk().emit_op(Op::SetGlobal, span);
+                            self.current_chunk().emit_u16(qual_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+                        }
+                    }
                 }
                 Decl::Type(_) => {
                     // Private type — compile it anyway (might be referenced).
@@ -634,7 +719,7 @@ impl Compiler {
                 }
             }
         }
-        Ok(())
+        Ok(exported_names)
     }
 
     // ── Statements ────────────────────────────────────────────────
@@ -1158,6 +1243,13 @@ impl Compiler {
                     .ok_or_else(|| "recur outside of loop".to_string())?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
+                let expected = loop_info.binding_count as usize;
+                if args.len() != expected {
+                    return Err(format!(
+                        "loop() expects {} argument(s), got {}",
+                        expected, args.len()
+                    ));
+                }
 
                 for arg in args {
                     self.compile_expr(arg)?;

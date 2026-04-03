@@ -32,7 +32,10 @@ fn run_err(input: &str) -> String {
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
-    let functions = compiler.compile_program(&program).expect("compile error");
+    let functions = match compiler.compile_program(&program) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
     let script = Rc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let err = vm.run(script).expect_err("expected runtime error");
@@ -1227,7 +1230,7 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("panic: panic: boom".into()));
+    assert_eq!(result, Value::String("panic: boom".into()));
 }
 
 #[test]

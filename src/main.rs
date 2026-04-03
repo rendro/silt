@@ -220,7 +220,23 @@ fn vm_run_file(path: &str) {
     // Run via VM
     let mut vm = Vm::new();
     if let Err(e) = vm.run(script) {
-        eprintln!("{path}: {e}");
+        if let Some(span) = e.span {
+            let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+            eprintln!("{source_err}");
+            // Print call stack if there are meaningful frames beyond the error site.
+            // Filter out synthetic frames like <script> and <call:...>.
+            let meaningful: Vec<_> = e.call_stack.iter()
+                .filter(|(name, span)| span.line > 0 && !name.starts_with('<'))
+                .collect();
+            if meaningful.len() > 1 {
+                eprintln!("\ncall stack:");
+                for (name, frame_span) in &meaningful {
+                    eprintln!("  -> {}  at {}:{}:{}", name, path, frame_span.line, frame_span.col);
+                }
+            }
+        } else {
+            eprintln!("{path}: {e}");
+        }
         process::exit(1);
     }
 }
@@ -481,7 +497,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                         }
                         Err(e) => {
                             println!("  FAIL {path}::{}", f.name);
-                            println!("    Error: {e}");
+                            if let Some(span) = e.span {
+                                let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+                                println!("    {source_err}");
+                            } else {
+                                println!("    Error: {e}");
+                            }
                             failed += 1;
                         }
                     }

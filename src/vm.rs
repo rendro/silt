@@ -12,6 +12,7 @@ use std::rc::Rc;
 use regex::Regex;
 
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
+use crate::lexer::Span;
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -111,15 +112,19 @@ pub struct VmError {
     pub message: String,
     /// If true, this error signals a cooperative yield, not a real error.
     pub is_yield: bool,
+    /// Source span where the error occurred (if available).
+    pub span: Option<Span>,
+    /// Call stack at the time of the error: (function_name, span).
+    pub call_stack: Vec<(String, Span)>,
 }
 
 impl VmError {
     pub fn new(message: String) -> Self {
-        VmError { message, is_yield: false }
+        VmError { message, is_yield: false, span: None, call_stack: Vec::new() }
     }
 
     fn yield_signal() -> Self {
-        VmError { message: String::new(), is_yield: true }
+        VmError { message: String::new(), is_yield: true, span: None, call_stack: Vec::new() }
     }
 }
 
@@ -301,7 +306,7 @@ impl Vm {
             ip: 0,
             base_slot: 0,
         });
-        self.execute()
+        self.execute().map_err(|e| self.enrich_error(e))
     }
 
     // ── Main execution loop ───────────────────────────────────────
@@ -1843,6 +1848,34 @@ impl Vm {
         &self.current_frame().closure.function.chunk
     }
 
+    // ── Error enrichment ─────────────────────────────────────────
+
+    /// Enrich a VmError with the current instruction's source span and the
+    /// call stack derived from the VM's frame list.
+    fn enrich_error(&self, mut err: VmError) -> VmError {
+        if err.is_yield || err.span.is_some() {
+            return err;
+        }
+        // Capture span from current frame's IP position.
+        if let Some(frame) = self.frames.last() {
+            let ip = frame.ip.saturating_sub(1);
+            let span = frame.closure.function.chunk.span_at(ip);
+            if span.line > 0 {
+                err.span = Some(span);
+            }
+        }
+        // Build call stack from all frames (skip the top frame since that's the error site).
+        let mut stack = Vec::new();
+        for frame in self.frames.iter().rev() {
+            let func_name = frame.closure.function.name.clone();
+            let ip = frame.ip.saturating_sub(1);
+            let span = frame.closure.function.chunk.span_at(ip);
+            stack.push((func_name, span));
+        }
+        err.call_stack = stack;
+        err
+    }
+
     // ── Arithmetic helpers ────────────────────────────────────────
 
     fn binary_arithmetic(&mut self, op: Op) -> Result<(), VmError> {
@@ -2139,7 +2172,7 @@ impl Vm {
                 }
                 "panic" => {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
-                    Err(VmError::new(format!("panic: panic: {msg}")))
+                    Err(VmError::new(format!("panic: {msg}")))
                 }
                 "to_string" => {
                     if args.len() != 1 {
