@@ -2,8 +2,10 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
+use std::rc::Rc;
 
 use silt::compiler::Compiler;
+use silt::disassemble::disassemble_function;
 use silt::errors::SourceError;
 use silt::interpreter::Interpreter;
 use silt::lexer::Lexer;
@@ -22,8 +24,10 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("Usage: silt run <file.silt>");
+        eprintln!("       silt interp run <file.silt>  (tree-walk interpreter)");
         eprintln!("       silt check <file.silt>");
         eprintln!("       silt test [file.silt]");
+        eprintln!("       silt disasm <file.silt>");
         process::exit(1);
     }
 
@@ -33,7 +37,56 @@ fn main() {
                 eprintln!("Usage: silt run <file.silt>");
                 process::exit(1);
             }
-            run_file(&args[2]);
+            let disasm = args.iter().any(|a| a == "--disassemble");
+            let file = args.iter().skip(2).find(|a| !a.starts_with("--")).cloned();
+            let Some(file) = file else {
+                eprintln!("Usage: silt run <file.silt>");
+                process::exit(1);
+            };
+            if disasm {
+                disasm_file(&file);
+            } else {
+                vm_run_file(&file);
+            }
+        }
+        "vm" => {
+            // Legacy alias: `silt vm run <file>` -> same as `silt run <file>`
+            match args.get(2).map(|s| s.as_str()) {
+                Some("run") => {
+                    let file = args.get(3).unwrap_or_else(|| {
+                        eprintln!("Usage: silt vm run <file.silt>");
+                        process::exit(1);
+                    });
+                    vm_run_file(file);
+                }
+                _ => {
+                    eprintln!("Usage: silt vm run <file.silt>");
+                    process::exit(1);
+                }
+            }
+        }
+        "interp" => {
+            // Legacy tree-walk interpreter path.
+            match args.get(2).map(|s| s.as_str()) {
+                Some("run") => {
+                    let file = args.get(3).unwrap_or_else(|| {
+                        eprintln!("Usage: silt interp run <file.silt>");
+                        process::exit(1);
+                    });
+                    interp_run_file(file);
+                }
+                _ => {
+                    eprintln!("Usage: silt interp run <file.silt>");
+                    process::exit(1);
+                }
+            }
+        }
+        "disasm" => {
+            if args.len() < 3 {
+                eprintln!("Usage: silt disasm <file.silt>");
+                process::exit(1);
+            }
+            disasm_file(&args[2]);
         }
         "test" => {
             let mut file: Option<String> = None;
@@ -79,21 +132,6 @@ fn main() {
             };
             check_file(&path, format);
         }
-        "vm" => {
-            match args.get(2).map(|s| s.as_str()) {
-                Some("run") => {
-                    let file = args.get(3).unwrap_or_else(|| {
-                        eprintln!("Usage: silt vm run <file.silt>");
-                        process::exit(1);
-                    });
-                    vm_run_file(file);
-                }
-                _ => {
-                    eprintln!("Usage: silt vm run <file.silt>");
-                    process::exit(1);
-                }
-            }
-        }
         "repl" => {
             silt::repl::run_repl();
         }
@@ -106,7 +144,7 @@ fn main() {
         }
         // If the argument looks like a file, run it directly
         arg if arg.ends_with(".silt") => {
-            run_file(arg);
+            vm_run_file(arg);
         }
         other => {
             eprintln!("Unknown command: {other}");
@@ -138,7 +176,8 @@ fn format_file(path: &str) {
     }
 }
 
-fn run_file(path: &str) {
+/// Run a file using the tree-walk interpreter (legacy path).
+fn interp_run_file(path: &str) {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -205,6 +244,7 @@ fn run_file(path: &str) {
     }
 }
 
+/// Run a file using the bytecode VM (default path).
 fn vm_run_file(path: &str) {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
@@ -243,8 +283,16 @@ fn vm_run_file(path: &str) {
         process::exit(1);
     }
 
+    // Derive project root from the input file's directory
+    let project_root = Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
     // Compile
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler::with_project_root(project_root);
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
@@ -253,13 +301,77 @@ fn vm_run_file(path: &str) {
         }
     };
 
-    let script = std::rc::Rc::new(functions.into_iter().next().unwrap());
+    let script = Rc::new(functions.into_iter().next().unwrap());
 
     // Run via VM
     let mut vm = Vm::new();
     if let Err(e) = vm.run(script) {
         eprintln!("{path}: {e}");
         process::exit(1);
+    }
+}
+
+/// Disassemble a file's bytecode without running it.
+fn disasm_file(path: &str) {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    let tokens = match Lexer::new(&source).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{path}:{e}");
+            process::exit(1);
+        }
+    };
+
+    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+
+    if !parse_errors.is_empty() {
+        for e in &parse_errors {
+            let source_err = SourceError::from_parse_error(e, &source, path);
+            eprintln!("{source_err}");
+        }
+        process::exit(1);
+    }
+
+    // Run the type checker
+    let type_errors = typechecker::check(&mut program);
+    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    for err in &type_errors {
+        let source_err = SourceError::from_type_error(err, &source, path);
+        eprintln!("{source_err}");
+    }
+    if has_hard_errors {
+        process::exit(1);
+    }
+
+    // Derive project root
+    let project_root = Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
+    // Compile
+    let mut compiler = Compiler::with_project_root(project_root);
+    let functions = match compiler.compile_program(&program) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{path}: compile error: {e}");
+            process::exit(1);
+        }
+    };
+
+    // Print disassembly of each function
+    for func in &functions {
+        print!("{}", disassemble_function(func));
+        println!();
     }
 }
 

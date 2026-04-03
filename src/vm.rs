@@ -179,8 +179,6 @@ pub struct Vm {
     current_fiber: usize,
     next_channel_id: usize,
     next_task_id: usize,
-    /// True when we're running inside a fiber slice (prevents re-entrant scheduling).
-    in_fiber: bool,
 }
 
 impl Vm {
@@ -195,7 +193,6 @@ impl Vm {
             current_fiber: 0,
             next_channel_id: 0,
             next_task_id: 0,
-            in_fiber: false,
         };
         vm.register_builtins();
         vm

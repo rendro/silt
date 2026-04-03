@@ -6,13 +6,18 @@
 //! list/tuple/record/map destructuring, pin patterns, when/else,
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::ast::{
-    BinOp, Decl, Expr, ExprKind, ListElem, MatchArm, Pattern, Program, Stmt, StringPart, TypeExpr, UnaryOp,
+    BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Pattern, Program, Stmt,
+    StringPart, TypeExpr, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
-use crate::lexer::Span;
+use crate::lexer::{Lexer, Span};
+use crate::module::ModuleLoader;
+use crate::parser::Parser;
 use crate::value::Value;
 
 // ── Type encoding for record field metadata ─────────────────────────
@@ -102,6 +107,10 @@ pub struct Compiler {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
+    /// Project root directory for resolving file-based modules.
+    project_root: Option<PathBuf>,
+    /// Modules already compiled in this compilation unit (avoids double-compile).
+    compiled_modules: HashSet<String>,
 }
 
 impl Compiler {
@@ -109,6 +118,18 @@ impl Compiler {
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
+            project_root: None,
+            compiled_modules: HashSet::new(),
+        }
+    }
+
+    /// Create a compiler that can resolve file-based imports relative to `root`.
+    pub fn with_project_root(root: PathBuf) -> Self {
+        Self {
+            contexts: Vec::new(),
+            functions: Vec::new(),
+            project_root: Some(root),
+            compiled_modules: HashSet::new(),
         }
     }
 
@@ -364,11 +385,233 @@ impl Compiler {
                 Ok(())
             }
 
-            Decl::Trait(_) | Decl::Import(_) => {
-                // Skip trait declarations and imports silently.
+            Decl::Trait(_) => {
+                // Trait declarations just define the interface; nothing to emit.
+                Ok(())
+            }
+
+            Decl::Import(target) => {
+                self.compile_import(target)
+            }
+        }
+    }
+
+    // ── Import compilation ─────────────────────────────────────────
+
+    fn compile_import(&mut self, target: &ImportTarget) -> Result<(), String> {
+        match target {
+            ImportTarget::Module(name) => {
+                // Builtin modules (io, string, list, ...) are already registered
+                // in the VM's global table. Nothing to compile.
+                if ModuleLoader::is_builtin_module(name) {
+                    return Ok(());
+                }
+                self.compile_file_module(name)?;
+                Ok(())
+            }
+            ImportTarget::Items(module_name, items) => {
+                if ModuleLoader::is_builtin_module(module_name) {
+                    // For builtin modules, create aliases: bare "item" -> "module.item"
+                    let span = Span::new(0, 0);
+                    for item in items {
+                        let qualified = format!("{module_name}.{item}");
+                        let qi = self.current_chunk().add_constant(Value::String(qualified));
+                        self.current_chunk().emit_op(Op::GetGlobal, span);
+                        self.current_chunk().emit_u16(qi, span);
+                        let bare_i = self.current_chunk().add_constant(Value::String(item.clone()));
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(bare_i, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+                    return Ok(());
+                }
+                // File-based selective import: compile the module, then alias
+                // "module.item" -> bare "item" for each selected name.
+                self.compile_file_module(module_name)?;
+                let span = Span::new(0, 0);
+                for item in items {
+                    let qualified = format!("{module_name}.{item}");
+                    let qi = self.current_chunk().add_constant(Value::String(qualified));
+                    self.current_chunk().emit_op(Op::GetGlobal, span);
+                    self.current_chunk().emit_u16(qi, span);
+                    let bare_i = self.current_chunk().add_constant(Value::String(item.clone()));
+                    self.current_chunk().emit_op(Op::SetGlobal, span);
+                    self.current_chunk().emit_u16(bare_i, span);
+                    self.current_chunk().emit_op(Op::Pop, span);
+                }
+                Ok(())
+            }
+            ImportTarget::Alias(module_name, _alias) => {
+                if ModuleLoader::is_builtin_module(module_name) {
+                    // Builtin alias: nothing to compile, the VM resolves
+                    // "alias.func" at runtime via field access. We don't need
+                    // to emit anything because GetField on module.func globals
+                    // already works. However, for completeness we could copy
+                    // all "module.*" globals to "alias.*", but that is not
+                    // necessary since the tree-walk interpreter doesn't either.
+                    return Ok(());
+                }
+                // File module with alias: compile under original name, then
+                // for each public declaration re-register under alias prefix.
+                // This requires knowing public names, which we track during
+                // compile_file_module.
+                self.compile_file_module(module_name)?;
+                // Aliasing for file modules is not yet supported in the VM.
+                // The module's functions are available as "module_name.func".
+                // TODO: add alias remapping if needed.
                 Ok(())
             }
         }
+    }
+
+    /// Compile a file-based module's declarations into the current compilation
+    /// unit. Each public declaration is registered as a global named
+    /// `"module_name.decl_name"`.
+    fn compile_file_module(&mut self, module_name: &str) -> Result<(), String> {
+        // Guard against double-compilation.
+        if self.compiled_modules.contains(module_name) {
+            return Ok(());
+        }
+        self.compiled_modules.insert(module_name.to_string());
+
+        let project_root = self.project_root.as_ref().ok_or_else(|| {
+            format!(
+                "cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"
+            )
+        })?;
+
+        // Resolve, read, lex, parse the module file.
+        let file_path = project_root.join(format!("{module_name}.silt"));
+        let source = std::fs::read_to_string(&file_path).map_err(|e| {
+            format!("cannot load module '{module_name}': {e}")
+        })?;
+
+        let tokens = Lexer::new(&source)
+            .tokenize()
+            .map_err(|e| format!("module '{module_name}': lex error: {e}"))?;
+
+        let program = Parser::new(tokens)
+            .parse_program()
+            .map_err(|e| format!("module '{module_name}': parse error: {e}"))?;
+
+        // Collect public names so we know which to export.
+        let mut public_fns = HashSet::new();
+        let mut public_types = HashSet::new();
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) if f.is_pub => {
+                    public_fns.insert(f.name.clone());
+                }
+                Decl::Type(t) if t.is_pub => {
+                    public_types.insert(t.name.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Compile each declaration. Functions get registered as
+        // "module_name.fn_name" for public ones, or just compiled (for
+        // internal helpers that closures might reference).
+        let span = Span::new(0, 0);
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(fn_decl) => {
+                    let arity = fn_decl.params.len() as u8;
+                    let fn_span = fn_decl.span;
+
+                    self.contexts
+                        .push(CompileContext::new(fn_decl.name.clone(), arity));
+
+                    // Add parameters as locals.
+                    let mut param_slots = Vec::new();
+                    for (i, param) in fn_decl.params.iter().enumerate() {
+                        match &param.pattern {
+                            Pattern::Ident(name) => {
+                                self.add_local(name.clone());
+                                param_slots.push((i, None));
+                            }
+                            _ => {
+                                let slot = self.add_local(format!("__param_{i}__"));
+                                param_slots.push((i, Some((slot, param.pattern.clone()))));
+                            }
+                        }
+                    }
+                    for (_i, maybe_destruct) in &param_slots {
+                        if let Some((slot, pattern)) = maybe_destruct {
+                            self.current_chunk().emit_op(Op::GetLocal, fn_span);
+                            self.current_chunk().emit_u16(*slot, fn_span);
+                            let _hidden = self.add_local("__param_copy__".into());
+                            self.current_chunk().emit_op(Op::SetLocal, fn_span);
+                            self.current_chunk().emit_u16(_hidden, fn_span);
+                            self.compile_pattern_bind(pattern, fn_span)?;
+                        }
+                    }
+
+                    self.compile_expr(&fn_decl.body)?;
+                    self.current_chunk().emit_op(Op::Return, fn_span);
+
+                    let ctx = self.contexts.pop().unwrap();
+                    let func = ctx.function;
+
+                    let vm_closure = Rc::new(VmClosure {
+                        function: Rc::new(func),
+                        upvalues: vec![],
+                    });
+                    let closure_val = Value::VmClosure(vm_closure);
+                    let fi = self.current_chunk().add_constant(closure_val);
+                    self.current_chunk().emit_op(Op::Constant, span);
+                    self.current_chunk().emit_u16(fi, span);
+
+                    if public_fns.contains(&fn_decl.name) {
+                        // Register as "module_name.fn_name"
+                        let qualified = format!("{module_name}.{}", fn_decl.name);
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(qualified));
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    } else {
+                        // Internal function — still register so closures / calls work,
+                        // but under a mangled private name.
+                        let private_name = format!("__{module_name}__{}", fn_decl.name);
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(private_name));
+                        self.current_chunk().emit_op(Op::SetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        self.current_chunk().emit_op(Op::Pop, span);
+                    }
+                }
+                Decl::Type(type_decl) if public_types.contains(&type_decl.name) => {
+                    // Compile the type declaration and register variants/records
+                    // under "module_name.VariantName" globals.
+                    self.compile_decl(decl)?;
+                    // The base compile_decl already registered them under their
+                    // bare names. For module imports, we additionally want them
+                    // under the qualified name. (The bare names are fine too —
+                    // they match tree-walk behavior.)
+                }
+                Decl::Type(_) => {
+                    // Private type — compile it anyway (might be referenced).
+                    self.compile_decl(decl)?;
+                }
+                Decl::Import(_) => {
+                    // Nested imports from within a module.
+                    self.compile_decl(decl)?;
+                }
+                Decl::TraitImpl(_) => {
+                    self.compile_decl(decl)?;
+                }
+                Decl::Trait(_) => {
+                    // Skip.
+                }
+                Decl::Let { .. } => {
+                    self.compile_decl(decl)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     // ── Statements ────────────────────────────────────────────────
@@ -1642,12 +1885,16 @@ impl Compiler {
     // ── Helper: extract builtin name ─────────────────────────────
 
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
-    /// return the qualified name. Only returns Some if the ident is NOT a local/upvalue.
+    /// return the qualified name. Only returns Some if the ident is NOT a
+    /// local/upvalue AND belongs to a known builtin module.
     fn extract_builtin_name(&self, callee: &Expr) -> Option<String> {
         if let ExprKind::FieldAccess(expr, field) = &callee.kind {
             if let ExprKind::Ident(module) = &expr.kind {
                 // Check if it's a local or upvalue first
-                if self.resolve_local(module).is_none() && self.resolve_upvalue_peek(module).is_none() {
+                if self.resolve_local(module).is_none()
+                    && self.resolve_upvalue_peek(module).is_none()
+                    && ModuleLoader::is_builtin_module(module)
+                {
                     return Some(format!("{module}.{field}"));
                 }
             }
