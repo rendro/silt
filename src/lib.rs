@@ -1,4 +1,7 @@
 pub mod ast;
+pub mod bytecode;
+pub mod compiler;
+pub mod disassemble;
 pub mod env;
 pub mod errors;
 pub mod formatter;
@@ -11,3 +14,4 @@ pub mod scheduler;
 pub mod types;
 pub mod typechecker;
 pub mod value;
+pub mod vm;
