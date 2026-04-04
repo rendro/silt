@@ -22,10 +22,17 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: silt run <file.silt>");
-        eprintln!("       silt check <file.silt>");
-        eprintln!("       silt test [file.silt]");
-        eprintln!("       silt disasm <file.silt>");
+        eprintln!("silt — a statically-typed, expression-based language");
+        eprintln!();
+        eprintln!("Usage:");
+        eprintln!("  silt run <file.silt>       Run a program");
+        eprintln!("  silt check <file.silt>     Type-check without running");
+        eprintln!("  silt test [path]           Run test functions");
+        eprintln!("  silt fmt <file.silt>       Format source code");
+        eprintln!("  silt repl                  Interactive REPL");
+        eprintln!("  silt init                  Create a new main.silt");
+        eprintln!("  silt lsp                   Start the language server");
+        eprintln!("  silt disasm <file.silt>    Show bytecode disassembly");
         process::exit(1);
     }
 
@@ -127,16 +134,38 @@ fn main() {
             }
             format_file(&args[2]);
         }
+        "init" => {
+            init_project();
+        }
         // If the argument looks like a file, run it directly
         arg if arg.ends_with(".silt") => {
             vm_run_file(arg);
         }
         other => {
             eprintln!("Unknown command: {other}");
-            eprintln!("Usage: silt run <file.silt>");
+            eprintln!("Run 'silt' with no arguments to see available commands.");
             process::exit(1);
         }
     }
+}
+
+fn init_project() {
+    let path = "main.silt";
+    if Path::new(path).exists() {
+        eprintln!("main.silt already exists");
+        process::exit(1);
+    }
+    let content = r#"fn main() {
+  println("hello, silt!")
+}
+"#;
+    if let Err(e) = fs::write(path, content) {
+        eprintln!("error writing {path}: {e}");
+        process::exit(1);
+    }
+    println!("created {path}");
+    println!("  run:   silt run main.silt");
+    println!("  test:  silt test");
 }
 
 fn format_file(path: &str) {
