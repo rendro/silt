@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use regex::Regex;
 
@@ -139,7 +139,7 @@ impl std::error::Error for VmError {}
 // ── Call frame ────────────────────────────────────────────────────
 
 struct CallFrame {
-    closure: Rc<VmClosure>,
+    closure: Arc<VmClosure>,
     ip: usize,
     base_slot: usize,
 }
@@ -161,7 +161,7 @@ struct VmFiber {
     frames: Vec<CallFrame>,
     stack: Vec<Value>,
     state: FiberState,
-    handle: Rc<TaskHandle>,
+    handle: Arc<TaskHandle>,
 }
 
 /// Result from running a fiber for a time slice.
@@ -194,7 +194,7 @@ pub struct Vm {
     scheduling_fibers: bool,
 
     // ── Foreign function interface ──────────────────────────────
-    foreign_fns: HashMap<String, Rc<dyn Fn(&[Value]) -> Result<Value, VmError>>>,
+    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError>>>,
 }
 
 impl Vm {
@@ -228,7 +228,7 @@ impl Vm {
         func: impl Fn(&[Value]) -> Result<Value, VmError> + 'static,
     ) {
         let name = name.into();
-        self.foreign_fns.insert(name.clone(), Rc::new(func));
+        self.foreign_fns.insert(name.clone(), Arc::new(func));
         self.globals.insert(name.clone(), Value::BuiltinFn(name));
     }
 
@@ -378,8 +378,8 @@ impl Vm {
     }
 
     /// Load a compiled top-level function and execute it.
-    pub fn run(&mut self, script: Rc<Function>) -> Result<Value, VmError> {
-        let closure = Rc::new(VmClosure {
+    pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
+        let closure = Arc::new(VmClosure {
             function: script,
             upvalues: vec![],
         });
@@ -635,7 +635,7 @@ impl Vm {
                     // The constant should be a VmClosure wrapping the function
                     match constant {
                         Value::VmClosure(existing) => {
-                            let closure = Rc::new(VmClosure {
+                            let closure = Arc::new(VmClosure {
                                 function: existing.function.clone(),
                                 upvalues,
                             });
@@ -661,7 +661,7 @@ impl Vm {
                     let start = self.stack.len() - count;
                     let elements: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
-                    self.push(Value::List(Rc::new(elements)));
+                    self.push(Value::List(Arc::new(elements)));
                 }
                 Some(Op::MakeMap) => {
                     let pair_count = self.read_u16() as usize;
@@ -674,7 +674,7 @@ impl Vm {
                         map.insert(key, val);
                     }
                     self.stack.truncate(start);
-                    self.push(Value::Map(Rc::new(map)));
+                    self.push(Value::Map(Arc::new(map)));
                 }
                 Some(Op::MakeSet) => {
                     let count = self.read_u16() as usize;
@@ -684,7 +684,7 @@ impl Vm {
                         set.insert(self.stack[i].clone());
                     }
                     self.stack.truncate(start);
-                    self.push(Value::Set(Rc::new(set)));
+                    self.push(Value::Set(Arc::new(set)));
                 }
                 Some(Op::MakeRecord) => {
                     let type_name_index = self.read_u16() as usize;
@@ -701,7 +701,7 @@ impl Vm {
                         fields.insert(name, self.stack[start + i].clone());
                     }
                     self.stack.truncate(start);
-                    self.push(Value::Record(type_name, Rc::new(fields)));
+                    self.push(Value::Record(type_name, Arc::new(fields)));
                 }
                 Some(Op::MakeVariant) => {
                     let name_index = self.read_u16() as usize;
@@ -732,7 +732,7 @@ impl Vm {
                             {
                                 fields.insert(name, val);
                             }
-                            self.push(Value::Record(type_name, Rc::new(fields)));
+                            self.push(Value::Record(type_name, Arc::new(fields)));
                         }
                         other => {
                             return Err(VmError::new(format!(
@@ -749,7 +749,7 @@ impl Vm {
                         (Value::Int(a), Value::Int(b)) => {
                             let items: Vec<Value> =
                                 (*a..*b).map(Value::Int).collect();
-                            self.push(Value::List(Rc::new(items)));
+                            self.push(Value::List(Arc::new(items)));
                         }
                         _ => {
                             return Err(VmError::new(
@@ -964,7 +964,7 @@ impl Vm {
                     match val {
                         Value::List(xs) => {
                             let rest: Vec<Value> = xs[start..].to_vec();
-                            self.push(Value::List(Rc::new(rest)));
+                            self.push(Value::List(Arc::new(rest)));
                         }
                         _ => {
                             return Err(VmError::new(
@@ -1484,7 +1484,7 @@ impl Vm {
                     upvalues.push(val);
                 }
                 if let Value::VmClosure(existing) = constant {
-                    let closure = Rc::new(VmClosure {
+                    let closure = Arc::new(VmClosure {
                         function: existing.function.clone(),
                         upvalues,
                     });
@@ -1505,7 +1505,7 @@ impl Vm {
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
-                self.push(Value::List(Rc::new(elements)));
+                self.push(Value::List(Arc::new(elements)));
             }
             Op::MakeMap => {
                 let pair_count = self.read_u16() as usize;
@@ -1516,7 +1516,7 @@ impl Vm {
                     map.insert(self.stack[i].clone(), self.stack[i + 1].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Map(Rc::new(map)));
+                self.push(Value::Map(Arc::new(map)));
             }
             Op::MakeSet => {
                 let count = self.read_u16() as usize;
@@ -1526,7 +1526,7 @@ impl Vm {
                     set.insert(self.stack[i].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Set(Rc::new(set)));
+                self.push(Value::Set(Arc::new(set)));
             }
             Op::MakeRecord => {
                 let type_name_index = self.read_u16() as usize;
@@ -1543,7 +1543,7 @@ impl Vm {
                     fields.insert(name, self.stack[start + i].clone());
                 }
                 self.stack.truncate(start);
-                self.push(Value::Record(type_name, Rc::new(fields)));
+                self.push(Value::Record(type_name, Arc::new(fields)));
             }
             Op::MakeVariant => {
                 let name_index = self.read_u16() as usize;
@@ -1570,7 +1570,7 @@ impl Vm {
                     for (name, val) in field_names.into_iter().zip(new_values) {
                         fields.insert(name, val);
                     }
-                    self.push(Value::Record(type_name, Rc::new(fields)));
+                    self.push(Value::Record(type_name, Arc::new(fields)));
                 } else {
                     return Err(VmError::new("record update on non-record".into()));
                 }
@@ -1580,7 +1580,7 @@ impl Vm {
                 let start = self.pop();
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
                     let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
-                    self.push(Value::List(Rc::new(items)));
+                    self.push(Value::List(Arc::new(items)));
                 } else {
                     return Err(VmError::new("range requires two integers".into()));
                 }
@@ -1726,7 +1726,7 @@ impl Vm {
             Op::DestructListRest => {
                 let start = self.read_u8() as usize;
                 let val = self.peek().clone();
-                if let Value::List(xs) = val { self.push(Value::List(Rc::new(xs[start..].to_vec()))); }
+                if let Value::List(xs) = val { self.push(Value::List(Arc::new(xs[start..].to_vec()))); }
                 else { return Err(VmError::new("DestructListRest on non-list".into())); }
             }
             Op::DestructRecordField => {
@@ -2297,7 +2297,7 @@ impl Vm {
                     let val = self.invoke_callable(func, &[item.clone()])?;
                     result.push(val);
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "filter" => {
                 if args.len() != 2 { return Err(VmError::new("list.filter takes 2 arguments".into())); }
@@ -2310,7 +2310,7 @@ impl Vm {
                         result.push(item.clone());
                     }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "each" => {
                 if args.len() != 2 { return Err(VmError::new("list.each takes 2 arguments".into())); }
@@ -2376,7 +2376,7 @@ impl Vm {
                         result.push(val);
                     }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "filter_map" => {
                 if args.len() != 2 { return Err(VmError::new("list.filter_map takes 2 arguments".into())); }
@@ -2393,14 +2393,14 @@ impl Vm {
                         _ => result.push(val),
                     }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             // Non-closure list builtins
             "zip" => {
                 if args.len() != 2 { return Err(VmError::new("list.zip takes 2 arguments".into())); }
                 let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else { return Err(VmError::new("list.zip requires two lists".into())); };
                 let pairs: Vec<Value> = a.iter().zip(b.iter()).map(|(x, y)| Value::Tuple(vec![x.clone(), y.clone()])).collect();
-                Ok(Value::List(Rc::new(pairs)))
+                Ok(Value::List(Arc::new(pairs)))
             }
             "flatten" => {
                 if args.len() != 1 { return Err(VmError::new("list.flatten takes 1 argument".into())); }
@@ -2412,7 +2412,7 @@ impl Vm {
                         other => result.push(other.clone()),
                     }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "head" => {
                 if args.len() != 1 { return Err(VmError::new("list.head takes 1 argument".into())); }
@@ -2425,8 +2425,8 @@ impl Vm {
             "tail" => {
                 if args.len() != 1 { return Err(VmError::new("list.tail takes 1 argument".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.tail requires a list".into())); };
-                if xs.is_empty() { Ok(Value::List(Rc::new(Vec::new()))) }
-                else { Ok(Value::List(Rc::new(xs[1..].to_vec()))) }
+                if xs.is_empty() { Ok(Value::List(Arc::new(Vec::new()))) }
+                else { Ok(Value::List(Arc::new(xs[1..].to_vec()))) }
             }
             "last" => {
                 if args.len() != 1 { return Err(VmError::new("list.last takes 1 argument".into())); }
@@ -2440,13 +2440,13 @@ impl Vm {
                 if args.len() != 1 { return Err(VmError::new("list.reverse takes 1 argument".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.reverse requires a list".into())); };
                 let mut v = (**xs).clone(); v.reverse();
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "sort" => {
                 if args.len() != 1 { return Err(VmError::new("list.sort takes 1 argument".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.sort requires a list".into())); };
                 let mut v = (**xs).clone(); v.sort();
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "unique" => {
                 if args.len() != 1 { return Err(VmError::new("list.unique takes 1 argument".into())); }
@@ -2456,7 +2456,7 @@ impl Vm {
                 for x in xs.iter() {
                     if !seen.contains(x) { seen.push(x.clone()); result.push(x.clone()); }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "contains" => {
                 if args.len() != 2 { return Err(VmError::new("list.contains takes 2 arguments".into())); }
@@ -2472,19 +2472,19 @@ impl Vm {
                 if args.len() != 2 { return Err(VmError::new("list.append takes 2 arguments".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.append requires a list".into())); };
                 let mut v = (**xs).clone(); v.push(args[1].clone());
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "prepend" => {
                 if args.len() != 2 { return Err(VmError::new("list.prepend takes 2 arguments".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.prepend requires a list".into())); };
                 let mut v = (**xs).clone(); v.insert(0, args[1].clone());
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "concat" => {
                 if args.len() != 2 { return Err(VmError::new("list.concat takes 2 arguments".into())); }
                 let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else { return Err(VmError::new("list.concat requires two lists".into())); };
                 let mut v = (**a).clone(); v.extend((**b).iter().cloned());
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "get" => {
                 if args.len() != 2 { return Err(VmError::new("list.get takes 2 arguments".into())); }
@@ -2502,27 +2502,27 @@ impl Vm {
                 let idx = *n as usize;
                 if idx >= xs.len() { return Err(VmError::new("list.set index out of bounds".into())); }
                 let mut v = (**xs).clone(); v[idx] = args[2].clone();
-                Ok(Value::List(Rc::new(v)))
+                Ok(Value::List(Arc::new(v)))
             }
             "take" => {
                 if args.len() != 2 { return Err(VmError::new("list.take takes 2 arguments".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.take requires a list".into())); };
                 let Value::Int(n) = &args[1] else { return Err(VmError::new("list.take requires int".into())); };
                 let n = (*n as usize).min(xs.len());
-                Ok(Value::List(Rc::new(xs[..n].to_vec())))
+                Ok(Value::List(Arc::new(xs[..n].to_vec())))
             }
             "drop" => {
                 if args.len() != 2 { return Err(VmError::new("list.drop takes 2 arguments".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.drop requires a list".into())); };
                 let Value::Int(n) = &args[1] else { return Err(VmError::new("list.drop requires int".into())); };
                 let n = (*n as usize).min(xs.len());
-                Ok(Value::List(Rc::new(xs[n..].to_vec())))
+                Ok(Value::List(Arc::new(xs[n..].to_vec())))
             }
             "enumerate" => {
                 if args.len() != 1 { return Err(VmError::new("list.enumerate takes 1 argument".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("list.enumerate requires a list".into())); };
                 let result: Vec<Value> = xs.iter().enumerate().map(|(i, v)| Value::Tuple(vec![Value::Int(i as i64), v.clone()])).collect();
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "sort_by" => {
                 if args.len() != 2 { return Err(VmError::new("list.sort_by takes 2 arguments".into())); }
@@ -2536,7 +2536,7 @@ impl Vm {
                 }
                 pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
-                Ok(Value::List(Rc::new(sorted)))
+                Ok(Value::List(Arc::new(sorted)))
             }
             "fold_until" => {
                 if args.len() != 3 { return Err(VmError::new("list.fold_until takes 3 arguments".into())); }
@@ -2580,7 +2580,7 @@ impl Vm {
                         _ => { result.push(val); break; }
                     }
                 }
-                Ok(Value::List(Rc::new(result)))
+                Ok(Value::List(Arc::new(result)))
             }
             "group_by" => {
                 if args.len() != 2 { return Err(VmError::new("list.group_by takes 2 arguments".into())); }
@@ -2592,9 +2592,9 @@ impl Vm {
                     groups.entry(key).or_default().push(item.clone());
                 }
                 let result: BTreeMap<Value, Value> = groups.into_iter()
-                    .map(|(k, v)| (k, Value::List(Rc::new(v))))
+                    .map(|(k, v)| (k, Value::List(Arc::new(v))))
                     .collect();
-                Ok(Value::Map(Rc::new(result)))
+                Ok(Value::Map(Arc::new(result)))
             }
             _ => Err(VmError::new(format!("unknown list function: {name}"))),
         }
@@ -2608,7 +2608,7 @@ impl Vm {
                 if args.len() != 2 { return Err(VmError::new("string.split takes 2 arguments".into())); }
                 let (Value::String(s), Value::String(sep)) = (&args[0], &args[1]) else { return Err(VmError::new("string.split requires strings".into())); };
                 let parts: Vec<Value> = s.split(sep.as_str()).map(|p| Value::String(p.to_string())).collect();
-                Ok(Value::List(Rc::new(parts)))
+                Ok(Value::List(Arc::new(parts)))
             }
             "trim" => {
                 if args.len() != 1 { return Err(VmError::new("string.trim takes 1 argument".into())); }
@@ -2671,7 +2671,7 @@ impl Vm {
                 if args.len() != 1 { return Err(VmError::new("string.chars takes 1 argument".into())); }
                 let Value::String(s) = &args[0] else { return Err(VmError::new("string.chars requires a string".into())); };
                 let chars: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-                Ok(Value::List(Rc::new(chars)))
+                Ok(Value::List(Arc::new(chars)))
             }
             "repeat" => {
                 if args.len() != 2 { return Err(VmError::new("string.repeat takes 2 arguments".into())); }
@@ -2888,14 +2888,14 @@ impl Vm {
                 let Value::Map(m) = &args[0] else { return Err(VmError::new("map.set requires a map".into())); };
                 let mut new_map = (**m).clone();
                 new_map.insert(args[1].clone(), args[2].clone());
-                Ok(Value::Map(Rc::new(new_map)))
+                Ok(Value::Map(Arc::new(new_map)))
             }
             "delete" => {
                 if args.len() != 2 { return Err(VmError::new("map.delete takes 2 arguments".into())); }
                 let Value::Map(m) = &args[0] else { return Err(VmError::new("map.delete requires a map".into())); };
                 let mut new_map = (**m).clone();
                 new_map.remove(&args[1]);
-                Ok(Value::Map(Rc::new(new_map)))
+                Ok(Value::Map(Arc::new(new_map)))
             }
             "contains" => {
                 if args.len() != 2 { return Err(VmError::new("map.contains takes 2 arguments".into())); }
@@ -2905,12 +2905,12 @@ impl Vm {
             "keys" => {
                 if args.len() != 1 { return Err(VmError::new("map.keys takes 1 argument".into())); }
                 let Value::Map(m) = &args[0] else { return Err(VmError::new("map.keys requires a map".into())); };
-                Ok(Value::List(Rc::new(m.keys().cloned().collect())))
+                Ok(Value::List(Arc::new(m.keys().cloned().collect())))
             }
             "values" => {
                 if args.len() != 1 { return Err(VmError::new("map.values takes 1 argument".into())); }
                 let Value::Map(m) = &args[0] else { return Err(VmError::new("map.values requires a map".into())); };
-                Ok(Value::List(Rc::new(m.values().cloned().collect())))
+                Ok(Value::List(Arc::new(m.values().cloned().collect())))
             }
             "length" => {
                 if args.len() != 1 { return Err(VmError::new("map.length takes 1 argument".into())); }
@@ -2922,13 +2922,13 @@ impl Vm {
                 let (Value::Map(m1), Value::Map(m2)) = (&args[0], &args[1]) else { return Err(VmError::new("map.merge requires maps".into())); };
                 let mut result = (**m1).clone();
                 for (k, v) in m2.iter() { result.insert(k.clone(), v.clone()); }
-                Ok(Value::Map(Rc::new(result)))
+                Ok(Value::Map(Arc::new(result)))
             }
             "entries" => {
                 if args.len() != 1 { return Err(VmError::new("map.entries takes 1 argument".into())); }
                 let Value::Map(m) = &args[0] else { return Err(VmError::new("map.entries requires a map".into())); };
                 let entries: Vec<Value> = m.iter().map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()])).collect();
-                Ok(Value::List(Rc::new(entries)))
+                Ok(Value::List(Arc::new(entries)))
             }
             "from_entries" => {
                 if args.len() != 1 { return Err(VmError::new("map.from_entries takes 1 argument".into())); }
@@ -2938,7 +2938,7 @@ impl Vm {
                     if let Value::Tuple(pair) = item { if pair.len() == 2 { result.insert(pair[0].clone(), pair[1].clone()); continue; } }
                     return Err(VmError::new("map.from_entries requires (key, value) tuples".into()));
                 }
-                Ok(Value::Map(Rc::new(result)))
+                Ok(Value::Map(Arc::new(result)))
             }
             "filter" => {
                 if args.len() != 2 { return Err(VmError::new("map.filter takes 2 arguments".into())); }
@@ -2951,7 +2951,7 @@ impl Vm {
                         result.insert(k.clone(), v.clone());
                     }
                 }
-                Ok(Value::Map(Rc::new(result)))
+                Ok(Value::Map(Arc::new(result)))
             }
             "map" => {
                 if args.len() != 2 { return Err(VmError::new("map.map takes 2 arguments".into())); }
@@ -2967,7 +2967,7 @@ impl Vm {
                         _ => return Err(VmError::new("map.map callback must return a (key, value) tuple".into())),
                     }
                 }
-                Ok(Value::Map(Rc::new(result)))
+                Ok(Value::Map(Arc::new(result)))
             }
             "each" => {
                 if args.len() != 2 { return Err(VmError::new("map.each takes 2 arguments".into())); }
@@ -2988,7 +2988,7 @@ impl Vm {
                 let new_val = self.invoke_callable(func, &[current])?;
                 let mut new_map = (**m).clone();
                 new_map.insert(key.clone(), new_val);
-                Ok(Value::Map(Rc::new(new_map)))
+                Ok(Value::Map(Arc::new(new_map)))
             }
             _ => Err(VmError::new(format!("unknown map function: {name}"))),
         }
@@ -2998,16 +2998,16 @@ impl Vm {
 
     fn dispatch_set(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         match name {
-            "new" => Ok(Value::Set(Rc::new(BTreeSet::new()))),
+            "new" => Ok(Value::Set(Arc::new(BTreeSet::new()))),
             "from_list" => {
                 if args.len() != 1 { return Err(VmError::new("set.from_list takes 1 argument".into())); }
                 let Value::List(xs) = &args[0] else { return Err(VmError::new("set.from_list requires a list".into())); };
-                Ok(Value::Set(Rc::new(xs.iter().cloned().collect())))
+                Ok(Value::Set(Arc::new(xs.iter().cloned().collect())))
             }
             "to_list" => {
                 if args.len() != 1 { return Err(VmError::new("set.to_list takes 1 argument".into())); }
                 let Value::Set(s) = &args[0] else { return Err(VmError::new("set.to_list requires a set".into())); };
-                Ok(Value::List(Rc::new(s.iter().cloned().collect())))
+                Ok(Value::List(Arc::new(s.iter().cloned().collect())))
             }
             "contains" => {
                 if args.len() != 2 { return Err(VmError::new("set.contains takes 2 arguments".into())); }
@@ -3018,13 +3018,13 @@ impl Vm {
                 if args.len() != 2 { return Err(VmError::new("set.insert takes 2 arguments".into())); }
                 let Value::Set(s) = &args[0] else { return Err(VmError::new("set.insert requires a set".into())); };
                 let mut new_set = (**s).clone(); new_set.insert(args[1].clone());
-                Ok(Value::Set(Rc::new(new_set)))
+                Ok(Value::Set(Arc::new(new_set)))
             }
             "remove" => {
                 if args.len() != 2 { return Err(VmError::new("set.remove takes 2 arguments".into())); }
                 let Value::Set(s) = &args[0] else { return Err(VmError::new("set.remove requires a set".into())); };
                 let mut new_set = (**s).clone(); new_set.remove(&args[1]);
-                Ok(Value::Set(Rc::new(new_set)))
+                Ok(Value::Set(Arc::new(new_set)))
             }
             "length" => {
                 if args.len() != 1 { return Err(VmError::new("set.length takes 1 argument".into())); }
@@ -3034,17 +3034,17 @@ impl Vm {
             "union" => {
                 if args.len() != 2 { return Err(VmError::new("set.union takes 2 arguments".into())); }
                 let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.union requires sets".into())); };
-                Ok(Value::Set(Rc::new(a.union(b).cloned().collect())))
+                Ok(Value::Set(Arc::new(a.union(b).cloned().collect())))
             }
             "intersection" => {
                 if args.len() != 2 { return Err(VmError::new("set.intersection takes 2 arguments".into())); }
                 let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.intersection requires sets".into())); };
-                Ok(Value::Set(Rc::new(a.intersection(b).cloned().collect())))
+                Ok(Value::Set(Arc::new(a.intersection(b).cloned().collect())))
             }
             "difference" => {
                 if args.len() != 2 { return Err(VmError::new("set.difference takes 2 arguments".into())); }
                 let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else { return Err(VmError::new("set.difference requires sets".into())); };
-                Ok(Value::Set(Rc::new(a.difference(b).cloned().collect())))
+                Ok(Value::Set(Arc::new(a.difference(b).cloned().collect())))
             }
             "is_subset" => {
                 if args.len() != 2 { return Err(VmError::new("set.is_subset takes 2 arguments".into())); }
@@ -3060,7 +3060,7 @@ impl Vm {
                     let val = self.invoke_callable(func, &[item.clone()])?;
                     result.insert(val);
                 }
-                Ok(Value::Set(Rc::new(result)))
+                Ok(Value::Set(Arc::new(result)))
             }
             "filter" => {
                 if args.len() != 2 { return Err(VmError::new("set.filter takes 2 arguments".into())); }
@@ -3073,7 +3073,7 @@ impl Vm {
                         result.insert(item.clone());
                     }
                 }
-                Ok(Value::Set(Rc::new(result)))
+                Ok(Value::Set(Arc::new(result)))
             }
             "each" => {
                 if args.len() != 2 { return Err(VmError::new("set.each takes 2 arguments".into())); }
@@ -3253,7 +3253,7 @@ impl Vm {
             }
             "args" => {
                 let args_list: Vec<Value> = std::env::args().map(Value::String).collect();
-                Ok(Value::List(Rc::new(args_list)))
+                Ok(Value::List(Arc::new(args_list)))
             }
             _ => Err(VmError::new(format!("unknown io function: {name}"))),
         }
@@ -3414,7 +3414,7 @@ impl Vm {
                 let matches: Vec<Value> = re.find_iter(text)
                     .map(|m| Value::String(m.as_str().to_string()))
                     .collect();
-                Ok(Value::List(Rc::new(matches)))
+                Ok(Value::List(Arc::new(matches)))
             }
             "split" => {
                 if args.len() != 2 {
@@ -3425,7 +3425,7 @@ impl Vm {
                 };
                 let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
                 let parts: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
-                Ok(Value::List(Rc::new(parts)))
+                Ok(Value::List(Arc::new(parts)))
             }
             "replace" => {
                 if args.len() != 3 {
@@ -3489,7 +3489,7 @@ impl Vm {
                                 None => Value::String(std::string::String::new()),
                             })
                             .collect();
-                        Ok(Value::Variant("Some".into(), vec![Value::List(Rc::new(groups))]))
+                        Ok(Value::Variant("Some".into(), vec![Value::List(Arc::new(groups))]))
                     }
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 }
@@ -3510,10 +3510,10 @@ impl Vm {
                                 None => Value::String(std::string::String::new()),
                             })
                             .collect();
-                        Value::List(Rc::new(groups))
+                        Value::List(Arc::new(groups))
                     })
                     .collect();
-                Ok(Value::List(Rc::new(all_captures)))
+                Ok(Value::List(Arc::new(all_captures)))
             }
             _ => Err(VmError::new(format!("unknown regex function: {name}"))),
         }
@@ -3684,7 +3684,7 @@ impl Vm {
         }
         Ok(Value::Variant(
             "Ok".into(),
-            vec![Value::Record(type_name.to_string(), Rc::new(record_fields))],
+            vec![Value::Record(type_name.to_string(), Arc::new(record_fields))],
         ))
     }
 
@@ -3738,7 +3738,7 @@ impl Vm {
         }
         Ok(Value::Variant(
             "Ok".into(),
-            vec![Value::List(Rc::new(records))],
+            vec![Value::List(Arc::new(records))],
         ))
     }
 
@@ -3792,7 +3792,7 @@ impl Vm {
         }
         Ok(Value::Variant(
             "Ok".into(),
-            vec![Value::Map(Rc::new(map))],
+            vec![Value::Map(Arc::new(map))],
         ))
     }
 
@@ -3860,7 +3860,7 @@ impl Vm {
                             Err(e) => return Err(e),
                         }
                     }
-                    Ok(Value::List(Rc::new(values)))
+                    Ok(Value::List(Arc::new(values)))
                 }
                 _ => Err(VmError::new(format!(
                     "json.parse({parent_type}): field '{field_name}': expected List, got {}",
@@ -3917,7 +3917,7 @@ impl Vm {
                 };
                 let id = self.next_channel_id;
                 self.next_channel_id += 1;
-                Ok(Value::Channel(Rc::new(Channel::new(id, capacity))))
+                Ok(Value::Channel(Arc::new(Channel::new(id, capacity))))
             }
             "send" => {
                 if args.len() != 2 {
@@ -4021,7 +4021,7 @@ impl Vm {
                 let Value::List(channels) = &args[0] else {
                     return Err(VmError::new("channel.select argument must be a list of channels".into()));
                 };
-                let channel_refs: Vec<Rc<Channel>> = channels
+                let channel_refs: Vec<Arc<Channel>> = channels
                     .iter()
                     .map(|v| match v {
                         Value::Channel(ch) => Ok(ch.clone()),
@@ -4136,7 +4136,7 @@ impl Vm {
                 };
                 let task_id = self.next_task_id;
                 self.next_task_id += 1;
-                let handle = Rc::new(TaskHandle {
+                let handle = Arc::new(TaskHandle {
                     id: task_id,
                     result: RefCell::new(None),
                 });
@@ -4349,10 +4349,10 @@ mod tests {
     /// Helper: build a Function from raw bytecode construction.
     fn make_function(
         build: impl FnOnce(&mut Chunk),
-    ) -> Rc<Function> {
+    ) -> Arc<Function> {
         let mut func = Function::new("<test>".to_string(), 0);
         build(&mut func.chunk);
-        Rc::new(func)
+        Arc::new(func)
     }
 
     fn span() -> Span {
@@ -4365,7 +4365,7 @@ mod tests {
         let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         let functions = compiler.compile_program(&program).unwrap();
-        let script = Rc::new(functions.into_iter().next().unwrap());
+        let script = Arc::new(functions.into_iter().next().unwrap());
         let mut vm = Vm::new();
         vm.run(script).unwrap()
     }
@@ -4629,7 +4629,7 @@ mod tests {
         let result = vm.run(script).unwrap();
         assert_eq!(
             result,
-            Value::List(Rc::new(vec![Value::Int(10), Value::Int(20)]))
+            Value::List(Arc::new(vec![Value::Int(10), Value::Int(20)]))
         );
     }
 
@@ -4904,7 +4904,7 @@ mod tests {
                 list.append(xs, 4)
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
     }
 
     // ── Phase 3: Closures and upvalue capture ────────────────────────
@@ -4931,7 +4931,7 @@ mod tests {
                 [1, 2, 3] |> list.map(fn(x) { x * factor })
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
     }
 
     #[test]
@@ -4959,7 +4959,7 @@ mod tests {
                 fns |> list.map(fn(f) { f() })
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
     }
 
     #[test]
@@ -5014,7 +5014,7 @@ mod tests {
                 [1, 2, 3, 4, 5] |> list.filter(fn(x) { x > threshold })
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
     }
 
     #[test]
@@ -5075,7 +5075,7 @@ mod tests {
                 [1, 2, 3] |> list.map(fn(x) { x + base })
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)])));
     }
 
     #[test]
@@ -5087,7 +5087,7 @@ mod tests {
                 [1, 2, 3] |> list.map { x -> x * factor }
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
     }
 
     #[test]
@@ -5098,7 +5098,7 @@ mod tests {
                 [1, 2, 3, 4, 5] |> list.filter { x -> x > limit }
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
     }
 
     #[test]
@@ -5112,7 +5112,7 @@ mod tests {
                     |> list.filter(fn(x) { x > cutoff })
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(14), Value::Int(15)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(14), Value::Int(15)])));
     }
 
     // ── Phase 4: Full pattern matching ──────────────────────────────
@@ -5224,7 +5224,7 @@ mod tests {
                 match [10, 20, 30] { [_, ..t] -> t  _ -> [] }
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![Value::Int(20), Value::Int(30)])));
+        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(20), Value::Int(30)])));
     }
 
     #[test]
@@ -5234,7 +5234,7 @@ mod tests {
                 match [10] { [h, ..t] -> t  _ -> [99] }
             }
         "#);
-        assert_eq!(result, Value::List(Rc::new(vec![])));
+        assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
@@ -6097,7 +6097,7 @@ mod tests {
         let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         let functions = compiler.compile_program(&program).unwrap();
-        let script = Rc::new(functions.into_iter().next().unwrap());
+        let script = Arc::new(functions.into_iter().next().unwrap());
         vm.run(script).unwrap()
     }
 
@@ -6175,7 +6175,7 @@ mod tests {
         let mut vm = Vm::new();
         vm.register_fn1("square", |x: i64| -> i64 { x * x });
         let result = run_vm_with(&mut vm, "fn main() { [1, 2, 3] |> list.map(square) }");
-        assert_eq!(result, Value::List(Rc::new(vec![
+        assert_eq!(result, Value::List(Arc::new(vec![
             Value::Int(1), Value::Int(4), Value::Int(9),
         ])));
     }
@@ -6202,7 +6202,7 @@ mod tests {
         let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         let functions = compiler.compile_program(&program).unwrap();
-        let script = Rc::new(functions.into_iter().next().unwrap());
+        let script = Arc::new(functions.into_iter().next().unwrap());
         let err = vm.run(script).unwrap_err();
         assert!(err.message.contains("expected Int"), "got: {}", err.message);
     }

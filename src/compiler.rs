@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::ast::{
     BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Pattern, Program, Stmt,
@@ -248,8 +248,8 @@ impl Compiler {
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
-                let vm_closure = Rc::new(VmClosure {
-                    function: Rc::new(func),
+                let vm_closure = Arc::new(VmClosure {
+                    function: Arc::new(func),
                     upvalues: vec![],
                 });
                 let closure_val = Value::VmClosure(vm_closure);
@@ -395,8 +395,8 @@ impl Compiler {
 
                     let ctx = self.contexts.pop().unwrap();
                     let func = ctx.function;
-                    let vm_closure = Rc::new(VmClosure {
-                        function: Rc::new(func),
+                    let vm_closure = Arc::new(VmClosure {
+                        function: Arc::new(func),
                         upvalues: vec![],
                     });
                     let closure_val = Value::VmClosure(vm_closure);
@@ -615,8 +615,8 @@ impl Compiler {
                     let ctx = self.contexts.pop().unwrap();
                     let func = ctx.function;
 
-                    let vm_closure = Rc::new(VmClosure {
-                        function: Rc::new(func),
+                    let vm_closure = Arc::new(VmClosure {
+                        function: Arc::new(func),
                         upvalues: vec![],
                     });
                     let closure_val = Value::VmClosure(vm_closure);
@@ -1123,8 +1123,8 @@ impl Compiler {
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
-                let vm_closure = Rc::new(VmClosure {
-                    function: Rc::new(func),
+                let vm_closure = Arc::new(VmClosure {
+                    function: Arc::new(func),
                     upvalues: vec![],
                 });
                 let closure_val = Value::VmClosure(vm_closure);

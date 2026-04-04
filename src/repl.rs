@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -20,7 +20,7 @@ const HISTORY_FILE: &str = ".silt_history";
 // ── Tab completion helper ───────────────────────────────────────────
 
 struct SiltHelper {
-    names: Rc<RefCell<Vec<String>>>,
+    names: Arc<RefCell<Vec<String>>>,
 }
 
 impl Completer for SiltHelper {
@@ -67,7 +67,7 @@ impl Helper for SiltHelper {}
 // ── REPL ────────────────────────────────────────────────────────────
 
 pub fn run_repl() {
-    let names = Rc::new(RefCell::new(builtin_names()));
+    let names = Arc::new(RefCell::new(builtin_names()));
     let helper = SiltHelper { names: names.clone() };
 
     let mut rl: Editor<SiltHelper, DefaultHistory> = Editor::new().expect("failed to create editor");
@@ -271,7 +271,7 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
         }
     };
 
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     if let Err(e) = vm.run(script) {
         eprintln!("{e}");
     }
@@ -305,7 +305,7 @@ fn eval_expression(vm: &mut Vm, input: &str) {
         }
     };
 
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     match vm.run(script) {
         Ok(val) => {
             if !matches!(val, Value::Unit) {

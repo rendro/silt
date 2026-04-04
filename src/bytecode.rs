@@ -3,7 +3,7 @@
 //! A `Function` is the compilation unit — it holds a `Chunk` of bytecode,
 //! a constant pool, and source span mappings for error reporting.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::lexer::Span;
 use crate::value::Value;
@@ -443,7 +443,7 @@ pub fn call_global_script(name: &str) -> Function {
 /// captured at closure creation time. No open/closed distinction needed.
 #[derive(Debug, Clone)]
 pub struct VmClosure {
-    pub function: Rc<Function>,
+    pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
 }
 

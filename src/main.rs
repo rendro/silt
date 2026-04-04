@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use silt::compiler::Compiler;
 use silt::disassemble::disassemble_function;
@@ -247,7 +247,7 @@ fn vm_run_file(path: &str) {
         }
     };
 
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
 
     // Run via VM
     let mut vm = Vm::new();
@@ -497,7 +497,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         };
 
         // Run the setup script to register all globals in the VM
-        let script = Rc::new(functions.into_iter().next().unwrap());
+        let script = Arc::new(functions.into_iter().next().unwrap());
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
             eprintln!("{path}: setup error: {e}");
@@ -522,7 +522,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     }
                     total += 1;
                     let caller = silt::bytecode::call_global_script(&f.name);
-                    match vm.run(Rc::new(caller)) {
+                    match vm.run(Arc::new(caller)) {
                         Ok(_) => {
                             println!("  PASS {path}::{}", f.name);
                             passed += 1;

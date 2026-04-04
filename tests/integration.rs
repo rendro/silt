@@ -3,7 +3,7 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::value::Value;
 use silt::vm::Vm;
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
@@ -11,7 +11,7 @@ fn run(input: &str) -> Value {
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")
 }
@@ -22,7 +22,7 @@ fn run_ok(input: &str) {
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error");
 }
@@ -36,7 +36,7 @@ fn run_err(input: &str) -> String {
         Ok(f) => f,
         Err(e) => return e,
     };
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let err = vm.run(script).expect_err("expected runtime error");
     format!("{err}")
@@ -79,7 +79,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::String("1".into()),
             Value::String("Fizz".into()),
             Value::String("Buzz".into()),
@@ -274,7 +274,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::String("hello".into()),
             Value::String("world".into()),
         ]))
@@ -337,7 +337,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::String("negative".into()),
             Value::String("zero".into()),
             Value::String("positive".into()),
@@ -656,7 +656,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3),
@@ -912,7 +912,7 @@ fn main() {
   [classify(0), classify(3), classify(9)]
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::String("binary".into()),
         Value::String("small prime".into()),
         Value::String("other".into()),
@@ -952,7 +952,7 @@ fn main() {
   [classify(5), classify(42), classify(100)]
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::String("single digit".into()),
         Value::String("double digit".into()),
         Value::String("big".into()),
@@ -1036,7 +1036,7 @@ fn main() {
   list.append([1, 2, 3], 4)
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
 }
 
 #[test]
@@ -1046,7 +1046,7 @@ fn main() {
   list.concat([1, 2], [3, 4])
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
 }
 
 // ── Stdlib: list.get, string.index_of, string.slice, etc. ──────────
@@ -1084,19 +1084,19 @@ fn test_string_slice() {
 #[test]
 fn test_list_take() {
     let result = run(r#"fn main() { list.take([1, 2, 3, 4, 5], 3) }"#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
 }
 
 #[test]
 fn test_list_drop() {
     let result = run(r#"fn main() { list.drop([1, 2, 3, 4, 5], 2) }"#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)])));
 }
 
 #[test]
 fn test_list_enumerate() {
     let result = run(r#"fn main() { list.enumerate(["a", "b"]) }"#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::Tuple(vec![Value::Int(0), Value::String("a".into())]),
         Value::Tuple(vec![Value::Int(1), Value::String("b".into())]),
     ])));
@@ -1118,7 +1118,7 @@ fn main() {
   words |> list.sort_by { w -> string.length(w) }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::String("apple".into()),
         Value::String("banana".into()),
         Value::String("cherry".into()),
@@ -1226,7 +1226,7 @@ fn main() {
   [1, 2, 3] |> list.flat_map { n -> [n, n * 10] }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::Int(1), Value::Int(10),
         Value::Int(2), Value::Int(20),
         Value::Int(3), Value::Int(30),
@@ -1247,7 +1247,7 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::Int(20), Value::Int(40),
     ])));
 }
@@ -1259,7 +1259,7 @@ fn main() {
   [1, 2, 3] |> list.filter_map { _ -> None }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![])));
+    assert_eq!(result, Value::List(Arc::new(vec![])));
 }
 
 #[test]
@@ -1269,7 +1269,7 @@ fn main() {
   [1, 2, 3] |> list.filter_map { n -> Some(n + 100) }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::Int(101), Value::Int(102), Value::Int(103),
     ])));
 }
@@ -1560,7 +1560,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::Int(0),
             Value::Int(1),
             Value::Int(4),
@@ -1688,7 +1688,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![Value::Int(2), Value::Int(4)]))
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(4)]))
     );
 }
 
@@ -1767,7 +1767,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(3),
@@ -1792,7 +1792,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::Int(0),
             Value::Int(1),
             Value::Int(1),
@@ -1812,7 +1812,7 @@ fn main() {
   list.unfold(0) { n -> None }
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![])));
+    assert_eq!(result, Value::List(Arc::new(vec![])));
 }
 
 #[test]
@@ -1829,7 +1829,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::Int(1),
             Value::Int(2),
             Value::Int(4),
@@ -1980,7 +1980,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]))
     );
 }
 
@@ -2421,7 +2421,7 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Variant("Some".into(), vec![
-        Value::List(Rc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
     ]));
 }
 
@@ -2464,7 +2464,7 @@ fn main() {
   regex.find_all("\\d+", "abc 123 def 456")
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::String("123".into()),
         Value::String("456".into()),
     ])));
@@ -2477,7 +2477,7 @@ fn main() {
   regex.split("\\s+", "hello   world   foo")
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![
+    assert_eq!(result, Value::List(Arc::new(vec![
         Value::String("hello".into()),
         Value::String("world".into()),
         Value::String("foo".into()),
@@ -2825,7 +2825,7 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Variant("Some".into(), vec![
-        Value::List(Rc::new(vec![
+        Value::List(Arc::new(vec![
             Value::String("user@host".into()),
             Value::String("user".into()),
             Value::String("host".into()),
@@ -2954,7 +2954,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![Value::Int(0), Value::Int(0), Value::Int(0)]))
+        Value::List(Arc::new(vec![Value::Int(0), Value::Int(0), Value::Int(0)]))
     );
 }
 
@@ -2980,7 +2980,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2)]))
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]))
     );
 }
 
@@ -3693,7 +3693,7 @@ fn main() {
   set.to_list(c)
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(3), Value::Int(4)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(3), Value::Int(4)])));
 }
 
 #[test]
@@ -3705,7 +3705,7 @@ fn main() {
   set.to_list(set.difference(a, b))
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1)])));
 }
 
 #[test]
@@ -3731,7 +3731,7 @@ fn main() {
     "#);
     assert_eq!(result, Value::Tuple(vec![
         Value::Int(3),
-        Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
     ]));
 }
 
@@ -3742,7 +3742,7 @@ fn main() {
   set.to_list(#[3, 1, 2])
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
 }
 
 #[test]
@@ -3753,7 +3753,7 @@ fn main() {
   set.to_list(set.map(s) { x -> x * 10 })
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
 }
 
 #[test]
@@ -3764,7 +3764,7 @@ fn main() {
   set.to_list(set.filter(s) { x -> x > 3 })
 }
     "#);
-    assert_eq!(result, Value::List(Rc::new(vec![Value::Int(4), Value::Int(5)])));
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
 }
 
 #[test]

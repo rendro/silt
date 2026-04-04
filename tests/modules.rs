@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
@@ -24,7 +24,7 @@ fn run_module_test(files: &[(&str, &str)], main_source: &str) -> Value {
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::with_project_root(dir.clone());
     let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")
 }
@@ -43,7 +43,7 @@ fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
     let mut compiler = Compiler::with_project_root(dir.clone());
     match compiler.compile_program(&program) {
         Ok(functions) => {
-            let script = Rc::new(functions.into_iter().next().unwrap());
+            let script = Arc::new(functions.into_iter().next().unwrap());
             let mut vm = Vm::new();
             match vm.run(script) {
                 Err(e) => e.to_string(),
@@ -61,7 +61,7 @@ fn run_vm(source: &str) -> Value {
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
-    let script = Rc::new(functions.into_iter().next().unwrap());
+    let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")
 }
@@ -300,7 +300,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(std::rc::Rc::new(vec![
+        Value::List(std::sync::Arc::new(vec![
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
@@ -320,7 +320,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(std::rc::Rc::new(vec![
+        Value::List(std::sync::Arc::new(vec![
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
@@ -340,7 +340,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(std::rc::Rc::new(vec![
+        Value::List(std::sync::Arc::new(vec![
             Value::String("hello".into()),
             Value::String("world".into()),
         ]))

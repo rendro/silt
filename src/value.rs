@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::bytecode;
 
@@ -13,19 +13,19 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     String(String),
-    List(Rc<Vec<Value>>),
-    Map(Rc<BTreeMap<Value, Value>>),
-    Set(Rc<BTreeSet<Value>>),
+    List(Arc<Vec<Value>>),
+    Map(Arc<BTreeMap<Value, Value>>),
+    Set(Arc<BTreeSet<Value>>),
     Tuple(Vec<Value>),
-    Record(String, Rc<BTreeMap<String, Value>>),
+    Record(String, Arc<BTreeMap<String, Value>>),
     Variant(String, Vec<Value>),
-    VmClosure(Rc<bytecode::VmClosure>),
+    VmClosure(Arc<bytecode::VmClosure>),
     BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
     RecordDescriptor(String),          // record type name
     PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
-    Channel(Rc<Channel>),
-    Handle(Rc<TaskHandle>),
+    Channel(Arc<Channel>),
+    Handle(Arc<TaskHandle>),
     Unit,
 }
 
@@ -517,7 +517,7 @@ impl FromValue for Vec<Value> {
 }
 
 impl IntoValue for Vec<Value> {
-    fn into_value(self) -> Value { Value::List(Rc::new(self)) }
+    fn into_value(self) -> Value { Value::List(Arc::new(self)) }
 }
 
 impl<T: IntoValue> IntoValue for Option<T> {
