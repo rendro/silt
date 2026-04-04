@@ -10,12 +10,17 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
-use lsp_types::request::{Completion, Formatting, GotoDefinition, HoverRequest, Request as _};
+use lsp_types::request::{
+    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
+    SignatureHelpRequest, Request as _,
+};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse,
-    Diagnostic, DiagnosticSeverity, GotoDefinitionResponse, Hover, HoverContents,
-    HoverProviderCapability, Location, MarkupContent, MarkupKind,
-    OneOf, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
+    Diagnostic, DiagnosticSeverity, DocumentSymbol, DocumentSymbolResponse,
+    GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability,
+    Location, MarkupContent, MarkupKind, OneOf, ParameterInformation, ParameterLabel,
+    Position, PublishDiagnosticsParams, Range, ServerCapabilities,
+    SignatureHelp, SignatureHelpOptions, SignatureInformation, SymbolKind,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
 };
 
@@ -30,6 +35,7 @@ use crate::types::Type;
 struct DefInfo {
     span: Span,
     ty: Option<Type>,
+    params: Vec<String>,
 }
 
 struct Document {
@@ -154,6 +160,18 @@ impl Server {
             Completion::METHOD => {
                 let (id, params) = extract_request::<Completion>(req);
                 let result = self.completion(params);
+                let resp = Response::new_ok(id, result);
+                self.connection.sender.send(Message::Response(resp)).ok();
+            }
+            SignatureHelpRequest::METHOD => {
+                let (id, params) = extract_request::<SignatureHelpRequest>(req);
+                let result = self.signature_help(params);
+                let resp = Response::new_ok(id, result);
+                self.connection.sender.send(Message::Response(resp)).ok();
+            }
+            DocumentSymbolRequest::METHOD => {
+                let (id, params) = extract_request::<DocumentSymbolRequest>(req);
+                let result = self.document_symbols(params);
                 let resp = Response::new_ok(id, result);
                 self.connection.sender.send(Message::Response(resp)).ok();
             }
@@ -351,6 +369,181 @@ impl Server {
             new_text: formatted,
         }])
     }
+
+    // ── Signature help ────────────────────────────────────────────
+
+    fn signature_help(&self, params: lsp_types::SignatureHelpParams) -> Option<SignatureHelp> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let doc = self.documents.get(uri)?;
+
+        // Walk backwards from cursor to find the function name before `(`.
+        let cursor = position_to_offset(&doc.source, &pos);
+        let before = &doc.source[..cursor];
+
+        // Count commas at the current nesting level to determine active param.
+        let mut active_param = 0u32;
+        let mut depth = 0i32;
+        for ch in before.chars().rev() {
+            match ch {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' | '{' => {
+                    if depth == 0 { break; }
+                    depth -= 1;
+                }
+                ',' if depth == 0 => active_param += 1,
+                _ => {}
+            }
+        }
+
+        // Find the function name: scan back past the `(` to the ident.
+        let paren_pos = before.rfind('(')?;
+        let before_paren = before[..paren_pos].trim_end();
+        let fn_name: String = before_paren.chars().rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+            .collect::<String>()
+            .chars().rev().collect();
+
+        if fn_name.is_empty() {
+            return None;
+        }
+
+        // Look up in definitions first, then builtins.
+        let (label, params_info) = if let Some(def) = doc.definitions.get(&fn_name) {
+            build_signature_from_def(&fn_name, def)
+        } else {
+            // For builtins, just show the name — no param info.
+            return None;
+        };
+
+        Some(SignatureHelp {
+            signatures: vec![SignatureInformation {
+                label,
+                documentation: None,
+                parameters: Some(params_info),
+                active_parameter: Some(active_param),
+            }],
+            active_signature: Some(0),
+            active_parameter: Some(active_param),
+        })
+    }
+
+    // ── Document symbols ──────────────────────────────────────────
+
+    #[allow(deprecated)] // DocumentSymbol::deprecated field
+    fn document_symbols(&self, params: lsp_types::DocumentSymbolParams) -> Option<DocumentSymbolResponse> {
+        let uri = &params.text_document.uri;
+        let doc = self.documents.get(uri)?;
+        let program = doc.program.as_ref()?;
+
+        let mut symbols = Vec::new();
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) => {
+                    let detail = doc.definitions.get(&f.name)
+                        .and_then(|d| d.ty.as_ref())
+                        .map(|t| format!("{t}"));
+                    symbols.push(DocumentSymbol {
+                        name: f.name.clone(),
+                        detail,
+                        kind: SymbolKind::FUNCTION,
+                        range: span_to_range(&f.span),
+                        selection_range: span_to_range(&f.span),
+                        tags: None,
+                        deprecated: None,
+                        children: None,
+                    });
+                }
+                Decl::Type(t) => {
+                    let kind = match &t.body {
+                        TypeBody::Enum(_) => SymbolKind::ENUM,
+                        TypeBody::Record(_) => SymbolKind::STRUCT,
+                    };
+                    symbols.push(DocumentSymbol {
+                        name: t.name.clone(),
+                        detail: None,
+                        kind,
+                        range: span_to_range(&t.span),
+                        selection_range: span_to_range(&t.span),
+                        tags: None,
+                        deprecated: None,
+                        children: None,
+                    });
+                }
+                Decl::Trait(t) => {
+                    symbols.push(DocumentSymbol {
+                        name: t.name.clone(),
+                        detail: None,
+                        kind: SymbolKind::INTERFACE,
+                        range: span_to_range(&t.span),
+                        selection_range: span_to_range(&t.span),
+                        tags: None,
+                        deprecated: None,
+                        children: None,
+                    });
+                }
+                Decl::Let { pattern, span, value, .. } => {
+                    if let Pattern::Ident(name) = pattern {
+                        let detail = value.ty.as_ref().map(|t| format!("{t}"));
+                        symbols.push(DocumentSymbol {
+                            name: name.clone(),
+                            detail,
+                            kind: SymbolKind::VARIABLE,
+                            range: span_to_range(span),
+                            selection_range: span_to_range(span),
+                            tags: None,
+                            deprecated: None,
+                            children: None,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Some(DocumentSymbolResponse::Nested(symbols))
+    }
+}
+
+// ── Signature help helpers ─────────────────────────────────────────
+
+fn build_signature_from_def(name: &str, def: &DefInfo) -> (String, Vec<ParameterInformation>) {
+    let mut label = format!("fn {name}(");
+    let mut params_info = Vec::new();
+
+    if let Some(Type::Fun(param_types, ret)) = &def.ty {
+        for (i, pty) in param_types.iter().enumerate() {
+            let pname = def.params.get(i).map(|s| s.as_str()).unwrap_or("_");
+            let param_label = format!("{pname}: {pty}");
+            let start = label.len() as u32;
+            label.push_str(&param_label);
+            let end = label.len() as u32;
+            if i + 1 < param_types.len() {
+                label.push_str(", ");
+            }
+            params_info.push(ParameterInformation {
+                label: ParameterLabel::LabelOffsets([start, end]),
+                documentation: None,
+            });
+        }
+        label.push_str(&format!(") -> {ret}"));
+    } else {
+        for (i, pname) in def.params.iter().enumerate() {
+            let start = label.len() as u32;
+            label.push_str(pname);
+            let end = label.len() as u32;
+            if i + 1 < def.params.len() {
+                label.push_str(", ");
+            }
+            params_info.push(ParameterInformation {
+                label: ParameterLabel::LabelOffsets([start, end]),
+                documentation: None,
+            });
+        }
+        label.push(')');
+    }
+
+    (label, params_info)
 }
 
 // ── Type display helpers ───────────────────────────────────────────
@@ -387,30 +580,37 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
-                // Build the function type from param types and return type.
                 let fn_ty = build_fn_type(f);
-                defs.insert(f.name.clone(), DefInfo { span: f.span, ty: fn_ty });
+                let params = fn_param_names(f);
+                defs.insert(f.name.clone(), DefInfo { span: f.span, ty: fn_ty, params });
             }
             Decl::Type(t) => {
-                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None });
+                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
                 if let TypeBody::Enum(variants) = &t.body {
                     for v in variants {
-                        defs.insert(v.name.clone(), DefInfo { span: t.span, ty: None });
+                        defs.insert(v.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
                     }
                 }
             }
             Decl::Trait(t) => {
-                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None });
+                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
             }
             Decl::Let { pattern, span, value, .. } => {
                 if let Pattern::Ident(name) = pattern {
-                    defs.insert(name.clone(), DefInfo { span: *span, ty: value.ty.clone() });
+                    defs.insert(name.clone(), DefInfo { span: *span, ty: value.ty.clone(), params: vec![] });
                 }
             }
             _ => {}
         }
     }
     defs
+}
+
+fn fn_param_names(f: &FnDecl) -> Vec<String> {
+    f.params.iter().map(|p| match &p.pattern {
+        Pattern::Ident(name) => name.clone(),
+        _ => "_".to_string(),
+    }).collect()
 }
 
 /// Build a function's type signature from its typed body.
@@ -859,6 +1059,12 @@ pub fn run() {
             trigger_characters: Some(vec![".".to_string()]),
             ..CompletionOptions::default()
         }),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
+        document_symbol_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         ..ServerCapabilities::default()
     };
