@@ -10,13 +10,13 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest, Request as _};
+use lsp_types::request::{Completion, Formatting, GotoDefinition, HoverRequest, Request as _};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse,
     Diagnostic, DiagnosticSeverity, GotoDefinitionResponse, Hover, HoverContents,
     HoverProviderCapability, Location, MarkupContent, MarkupKind,
     OneOf, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
 };
 
 use crate::ast::*;
@@ -145,6 +145,12 @@ impl Server {
             GotoDefinition::METHOD => {
                 let (id, params) = extract_request::<GotoDefinition>(req);
                 let result = self.goto_definition(params);
+                let resp = Response::new_ok(id, result);
+                self.connection.sender.send(Message::Response(resp)).ok();
+            }
+            Formatting::METHOD => {
+                let (id, params) = extract_request::<Formatting>(req);
+                let result = self.format(params);
                 let resp = Response::new_ok(id, result);
                 self.connection.sender.send(Message::Response(resp)).ok();
             }
@@ -324,6 +330,29 @@ impl Server {
         }
 
         Some(CompletionResponse::Array(items))
+    }
+
+    // ── Formatting ────────────────────────────────────────────────
+
+    fn format(&self, params: lsp_types::DocumentFormattingParams) -> Option<Vec<TextEdit>> {
+        let uri = &params.text_document.uri;
+        let doc = self.documents.get(uri)?;
+        let formatted = crate::formatter::format(&doc.source).ok()?;
+
+        if formatted == doc.source {
+            return Some(vec![]);
+        }
+
+        // Replace the entire document.
+        let line_count = doc.source.lines().count() as u32;
+        let last_line_len = doc.source.lines().last().map_or(0, |l| l.len()) as u32;
+        Some(vec![TextEdit {
+            range: Range::new(
+                Position::new(0, 0),
+                Position::new(line_count, last_line_len),
+            ),
+            new_text: formatted,
+        }])
     }
 }
 
@@ -835,6 +864,7 @@ pub fn run() {
             trigger_characters: Some(vec![".".to_string()]),
             ..CompletionOptions::default()
         }),
+        document_formatting_provider: Some(OneOf::Left(true)),
         ..ServerCapabilities::default()
     };
 
