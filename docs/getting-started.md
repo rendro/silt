@@ -342,9 +342,6 @@ fn main() {
 }
 ```
 
-**`try()`** catches panics into a Result: `let r = try(fn() { panic("boom") })`
-returns `Err("boom")`.
-
 **`when`/`else`** provides flat error handling without nesting (see Pattern
 Matching section above).
 

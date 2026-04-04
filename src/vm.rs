@@ -237,7 +237,7 @@ impl Vm {
 
         // All builtin function names
         let builtin_names = [
-            "print", "println", "io.inspect", "panic", "try", "to_string", "type_of",
+            "print", "println", "io.inspect", "panic", "to_string", "type_of",
             "list.map", "list.filter", "list.each", "list.fold",
             "list.find", "list.zip", "list.flatten", "list.sort_by",
             "list.flat_map", "list.filter_map", "list.any", "list.all",
@@ -1198,8 +1198,7 @@ impl Vm {
                             match self.dispatch_op(op) {
                                 Ok(()) => {}
                                 Err(e) => {
-                                    // Clean up stack and frames on error so that
-                                    // callers like try() see a consistent state.
+                                    // Clean up stack and frames on error.
                                     self.frames.truncate(saved_frame_count);
                                     self.stack.truncate(func_slot);
                                     return Err(e);
@@ -2185,15 +2184,6 @@ impl Vm {
                         return Err(VmError::new("type_of expects 1 argument".into()));
                     }
                     Ok(Value::String(self.type_name(&args[0]).to_string()))
-                }
-                "try" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new("try takes 1 argument (a zero-argument function)".into()));
-                    }
-                    match self.invoke_callable(&args[0], &[]) {
-                        Ok(val) => Ok(Value::Variant("Ok".into(), vec![val])),
-                        Err(e) => Ok(Value::Variant("Err".into(), vec![Value::String(e.message)])),
-                    }
                 }
                 _ => Err(VmError::new(format!("unknown builtin: {name}"))),
             }

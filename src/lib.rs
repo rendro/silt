@@ -5,6 +5,7 @@ pub mod disassemble;
 pub mod errors;
 pub mod formatter;
 pub mod lexer;
+pub mod lsp;
 pub mod module;
 pub mod parser;
 pub mod repl;

@@ -865,20 +865,6 @@ impl TypeChecker {
             });
         }
 
-        // ── try ────────────────────────────────────────────────────────
-
-        // try: (() -> a) -> Result(a, String)
-        {
-            let (a, av) = self.fresh_tv();
-            env.define("try".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Fun(vec![], Box::new(a.clone()))],
-                    Box::new(Type::Generic("Result".into(), vec![a, Type::String])),
-                ),
-                constraints: vec![],
-            });
-        }
 
         // ── task module ────────────────────────────────────────────────
 
@@ -5972,16 +5958,6 @@ fn main() {
 fn main() {
   let h = task.spawn(fn() { 42 })
   let result = task.join(h)
-  result
-}
-        "#);
-    }
-
-    #[test]
-    fn test_try_no_type_error() {
-        assert_no_errors(r#"
-fn main() {
-  let result = try(fn() { 1 + 2 })
   result
 }
         "#);

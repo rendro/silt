@@ -143,7 +143,7 @@ fn builtin_names() -> Vec<String> {
         "fn", "let", "type", "trait", "match", "when", "return",
         "import", "loop", "true", "false",
         // Globals
-        "print", "println", "panic", "try",
+        "print", "println", "panic",
         "Ok", "Err", "Some", "None", "Stop", "Continue",
         "Message", "Closed", "Empty",
         // Modules

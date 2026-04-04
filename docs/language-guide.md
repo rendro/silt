@@ -695,15 +695,6 @@ fn process(input) {
 }
 ```
 
-### The `try()` Builtin
-
-A global function (not a keyword) that catches panics:
-
-```silt
-let result = try(fn() { dangerous_operation() })
--- Ok(value) on success, Err(message) on panic
-```
-
 ### Never Type
 
 `return` and `panic()` produce the `Never` type, which unifies with any

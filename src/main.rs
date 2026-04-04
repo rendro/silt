@@ -114,6 +114,9 @@ fn main() {
             };
             check_file(&path, format);
         }
+        "lsp" => {
+            silt::lsp::run();
+        }
         "repl" => {
             silt::repl::run_repl();
         }
