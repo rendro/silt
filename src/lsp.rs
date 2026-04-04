@@ -42,12 +42,9 @@ struct Document {
 // ── Span ↔ LSP conversion ─────────────────────────────────────────
 
 fn span_to_position(span: &Span) -> Position {
-    // The lexer captures span AFTER advancing past the first char of a token,
-    // so col is 1 past the actual start. Subtract 2: one for 1-based→0-based,
-    // one for the lexer's off-by-one.
     Position::new(
         span.line.saturating_sub(1) as u32,
-        span.col.saturating_sub(2) as u32,
+        span.col.saturating_sub(1) as u32,
     )
 }
 
@@ -462,10 +459,8 @@ fn find_param_type(expr: &Expr, name: &str) -> Option<Type> {
 
 // ── AST walkers (offset-based) ─────────────────────────────────────
 
-/// The lexer records span.offset AFTER consuming the first character of a token,
-/// so the actual start byte of a token is `span.offset - 1`.
 fn token_start(span: &Span) -> usize {
-    span.offset.saturating_sub(1)
+    span.offset
 }
 
 /// Find the inferred type of the deepest expression at the cursor byte offset.

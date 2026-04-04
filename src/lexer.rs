@@ -294,10 +294,7 @@ impl Lexer {
         Ok(())
     }
 
-    fn scan_string(&mut self, is_continuation: bool) -> Result<SpannedToken, LexError> {
-        // For a new string, we've already consumed the opening `"`.
-        // For a continuation (after `}`), we start scanning immediately.
-        let start = self.span();
+    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Result<SpannedToken, LexError> {
         let mut text = String::new();
 
         loop {
@@ -447,8 +444,7 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char) -> SpannedToken {
-        let start = self.span();
+    fn scan_number(&mut self, first: char, start: Span) -> SpannedToken {
         let mut num = String::new();
         num.push(first);
 
@@ -485,8 +481,7 @@ impl Lexer {
         }
     }
 
-    fn scan_ident_or_keyword(&mut self, first: char) -> SpannedToken {
-        let start = self.span();
+    fn scan_ident_or_keyword(&mut self, first: char, start: Span) -> SpannedToken {
         let mut name = String::new();
         name.push(first);
 
@@ -567,15 +562,15 @@ impl Lexer {
                     self.advance_char(); // consume third "
                     self.scan_triple_string(start)
                 } else {
-                    self.scan_string(false)
+                    self.scan_string(false, start)
                 }
             }
 
             // Numbers
-            '0'..='9' => Ok(self.scan_number(ch)),
+            '0'..='9' => Ok(self.scan_number(ch, start)),
 
             // Identifiers and keywords
-            'a'..='z' | 'A'..='Z' | '_' => Ok(self.scan_ident_or_keyword(ch)),
+            'a'..='z' | 'A'..='Z' | '_' => Ok(self.scan_ident_or_keyword(ch, start)),
 
             // Operators and punctuation
             '+' => Ok((Token::Plus, start)),
@@ -613,7 +608,8 @@ impl Lexer {
                         self.interp_stack.pop();
                         self.brace_depth -= 1;
                         // Resume scanning the string
-                        return self.scan_string(true);
+                        let cont_start = self.span();
+                        return self.scan_string(true, cont_start);
                     }
                 }
                 self.brace_depth = self.brace_depth.saturating_sub(1);
