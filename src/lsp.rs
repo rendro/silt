@@ -10,8 +10,9 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
 };
-use lsp_types::request::{GotoDefinition, HoverRequest, Request as _};
+use lsp_types::request::{Completion, GotoDefinition, HoverRequest, Request as _};
 use lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse,
     Diagnostic, DiagnosticSeverity, GotoDefinitionResponse, Hover, HoverContents,
     HoverProviderCapability, Location, MarkupContent, MarkupKind,
     OneOf, Position, PublishDiagnosticsParams, Range, ServerCapabilities,
@@ -147,6 +148,12 @@ impl Server {
                 let resp = Response::new_ok(id, result);
                 self.connection.sender.send(Message::Response(resp)).ok();
             }
+            Completion::METHOD => {
+                let (id, params) = extract_request::<Completion>(req);
+                let result = self.completion(params);
+                let resp = Response::new_ok(id, result);
+                self.connection.sender.send(Message::Response(resp)).ok();
+            }
             _ => {}
         }
     }
@@ -272,6 +279,51 @@ impl Server {
             uri.clone(),
             span_to_range(&def.span),
         )))
+    }
+
+    // ── Completion ─────────────────────────────────────────────────
+
+    fn completion(&self, params: lsp_types::CompletionParams) -> Option<CompletionResponse> {
+        let uri = &params.text_document_position.text_document.uri;
+
+        let mut items: Vec<CompletionItem> = Vec::new();
+
+        // Keywords
+        for kw in KEYWORDS {
+            items.push(CompletionItem {
+                label: kw.to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..CompletionItem::default()
+            });
+        }
+
+        // Builtins (globals + stdlib)
+        for (name, kind) in BUILTINS {
+            items.push(CompletionItem {
+                label: name.to_string(),
+                kind: Some(*kind),
+                ..CompletionItem::default()
+            });
+        }
+
+        // User-defined names from the current document
+        if let Some(doc) = self.documents.get(uri) {
+            for (name, def) in &doc.definitions {
+                let kind = match &def.ty {
+                    Some(Type::Fun(..)) => CompletionItemKind::FUNCTION,
+                    _ => CompletionItemKind::VARIABLE,
+                };
+                let detail = def.ty.as_ref().map(|t| format!("{t}"));
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(kind),
+                    detail,
+                    ..CompletionItem::default()
+                });
+            }
+        }
+
+        Some(CompletionResponse::Array(items))
     }
 }
 
@@ -572,6 +624,194 @@ fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
     }
 }
 
+// ── Completion data ────────────────────────────────────────────────
+
+const KEYWORDS: &[&str] = &[
+    "as", "else", "fn", "import", "let", "loop", "match",
+    "mod", "pub", "return", "trait", "type", "when", "where",
+];
+
+const BUILTINS: &[(&str, CompletionItemKind)] = &[
+    // Globals
+    ("print", CompletionItemKind::FUNCTION),
+    ("println", CompletionItemKind::FUNCTION),
+    ("panic", CompletionItemKind::FUNCTION),
+    ("Ok", CompletionItemKind::CONSTRUCTOR),
+    ("Err", CompletionItemKind::CONSTRUCTOR),
+    ("Some", CompletionItemKind::CONSTRUCTOR),
+    ("None", CompletionItemKind::CONSTRUCTOR),
+    ("Stop", CompletionItemKind::CONSTRUCTOR),
+    ("Continue", CompletionItemKind::CONSTRUCTOR),
+    ("Message", CompletionItemKind::CONSTRUCTOR),
+    ("Closed", CompletionItemKind::CONSTRUCTOR),
+    ("Empty", CompletionItemKind::CONSTRUCTOR),
+    ("true", CompletionItemKind::CONSTANT),
+    ("false", CompletionItemKind::CONSTANT),
+    // list
+    ("list.map", CompletionItemKind::FUNCTION),
+    ("list.filter", CompletionItemKind::FUNCTION),
+    ("list.fold", CompletionItemKind::FUNCTION),
+    ("list.each", CompletionItemKind::FUNCTION),
+    ("list.find", CompletionItemKind::FUNCTION),
+    ("list.sort", CompletionItemKind::FUNCTION),
+    ("list.sort_by", CompletionItemKind::FUNCTION),
+    ("list.reverse", CompletionItemKind::FUNCTION),
+    ("list.head", CompletionItemKind::FUNCTION),
+    ("list.tail", CompletionItemKind::FUNCTION),
+    ("list.last", CompletionItemKind::FUNCTION),
+    ("list.length", CompletionItemKind::FUNCTION),
+    ("list.contains", CompletionItemKind::FUNCTION),
+    ("list.append", CompletionItemKind::FUNCTION),
+    ("list.concat", CompletionItemKind::FUNCTION),
+    ("list.zip", CompletionItemKind::FUNCTION),
+    ("list.flatten", CompletionItemKind::FUNCTION),
+    ("list.flat_map", CompletionItemKind::FUNCTION),
+    ("list.filter_map", CompletionItemKind::FUNCTION),
+    ("list.any", CompletionItemKind::FUNCTION),
+    ("list.all", CompletionItemKind::FUNCTION),
+    ("list.get", CompletionItemKind::FUNCTION),
+    ("list.take", CompletionItemKind::FUNCTION),
+    ("list.drop", CompletionItemKind::FUNCTION),
+    ("list.enumerate", CompletionItemKind::FUNCTION),
+    ("list.group_by", CompletionItemKind::FUNCTION),
+    ("list.fold_until", CompletionItemKind::FUNCTION),
+    ("list.unfold", CompletionItemKind::FUNCTION),
+    // string
+    ("string.split", CompletionItemKind::FUNCTION),
+    ("string.trim", CompletionItemKind::FUNCTION),
+    ("string.join", CompletionItemKind::FUNCTION),
+    ("string.length", CompletionItemKind::FUNCTION),
+    ("string.contains", CompletionItemKind::FUNCTION),
+    ("string.replace", CompletionItemKind::FUNCTION),
+    ("string.to_upper", CompletionItemKind::FUNCTION),
+    ("string.to_lower", CompletionItemKind::FUNCTION),
+    ("string.starts_with", CompletionItemKind::FUNCTION),
+    ("string.ends_with", CompletionItemKind::FUNCTION),
+    ("string.chars", CompletionItemKind::FUNCTION),
+    ("string.repeat", CompletionItemKind::FUNCTION),
+    ("string.index_of", CompletionItemKind::FUNCTION),
+    ("string.slice", CompletionItemKind::FUNCTION),
+    ("string.pad_left", CompletionItemKind::FUNCTION),
+    ("string.pad_right", CompletionItemKind::FUNCTION),
+    ("string.is_empty", CompletionItemKind::FUNCTION),
+    ("string.is_alpha", CompletionItemKind::FUNCTION),
+    ("string.is_digit", CompletionItemKind::FUNCTION),
+    ("string.is_upper", CompletionItemKind::FUNCTION),
+    ("string.is_lower", CompletionItemKind::FUNCTION),
+    ("string.is_alnum", CompletionItemKind::FUNCTION),
+    ("string.is_whitespace", CompletionItemKind::FUNCTION),
+    // int
+    ("int.parse", CompletionItemKind::FUNCTION),
+    ("int.abs", CompletionItemKind::FUNCTION),
+    ("int.min", CompletionItemKind::FUNCTION),
+    ("int.max", CompletionItemKind::FUNCTION),
+    ("int.to_float", CompletionItemKind::FUNCTION),
+    ("int.to_string", CompletionItemKind::FUNCTION),
+    // float
+    ("float.parse", CompletionItemKind::FUNCTION),
+    ("float.round", CompletionItemKind::FUNCTION),
+    ("float.ceil", CompletionItemKind::FUNCTION),
+    ("float.floor", CompletionItemKind::FUNCTION),
+    ("float.abs", CompletionItemKind::FUNCTION),
+    ("float.to_string", CompletionItemKind::FUNCTION),
+    ("float.to_int", CompletionItemKind::FUNCTION),
+    ("float.min", CompletionItemKind::FUNCTION),
+    ("float.max", CompletionItemKind::FUNCTION),
+    // map
+    ("map.get", CompletionItemKind::FUNCTION),
+    ("map.set", CompletionItemKind::FUNCTION),
+    ("map.delete", CompletionItemKind::FUNCTION),
+    ("map.keys", CompletionItemKind::FUNCTION),
+    ("map.values", CompletionItemKind::FUNCTION),
+    ("map.length", CompletionItemKind::FUNCTION),
+    ("map.merge", CompletionItemKind::FUNCTION),
+    ("map.filter", CompletionItemKind::FUNCTION),
+    ("map.map", CompletionItemKind::FUNCTION),
+    ("map.entries", CompletionItemKind::FUNCTION),
+    ("map.from_entries", CompletionItemKind::FUNCTION),
+    ("map.each", CompletionItemKind::FUNCTION),
+    ("map.update", CompletionItemKind::FUNCTION),
+    // set
+    ("set.new", CompletionItemKind::FUNCTION),
+    ("set.add", CompletionItemKind::FUNCTION),
+    ("set.remove", CompletionItemKind::FUNCTION),
+    ("set.contains", CompletionItemKind::FUNCTION),
+    ("set.union", CompletionItemKind::FUNCTION),
+    ("set.intersection", CompletionItemKind::FUNCTION),
+    ("set.difference", CompletionItemKind::FUNCTION),
+    ("set.size", CompletionItemKind::FUNCTION),
+    ("set.to_list", CompletionItemKind::FUNCTION),
+    ("set.from_list", CompletionItemKind::FUNCTION),
+    ("set.filter", CompletionItemKind::FUNCTION),
+    ("set.map", CompletionItemKind::FUNCTION),
+    ("set.fold", CompletionItemKind::FUNCTION),
+    ("set.each", CompletionItemKind::FUNCTION),
+    ("set.is_subset", CompletionItemKind::FUNCTION),
+    // result
+    ("result.unwrap_or", CompletionItemKind::FUNCTION),
+    ("result.map_ok", CompletionItemKind::FUNCTION),
+    ("result.map_err", CompletionItemKind::FUNCTION),
+    ("result.flatten", CompletionItemKind::FUNCTION),
+    ("result.flat_map", CompletionItemKind::FUNCTION),
+    ("result.is_ok", CompletionItemKind::FUNCTION),
+    ("result.is_err", CompletionItemKind::FUNCTION),
+    // option
+    ("option.map", CompletionItemKind::FUNCTION),
+    ("option.unwrap_or", CompletionItemKind::FUNCTION),
+    ("option.to_result", CompletionItemKind::FUNCTION),
+    ("option.is_some", CompletionItemKind::FUNCTION),
+    ("option.is_none", CompletionItemKind::FUNCTION),
+    // io
+    ("io.read_file", CompletionItemKind::FUNCTION),
+    ("io.write_file", CompletionItemKind::FUNCTION),
+    ("io.read_line", CompletionItemKind::FUNCTION),
+    ("io.inspect", CompletionItemKind::FUNCTION),
+    ("io.args", CompletionItemKind::FUNCTION),
+    // math
+    ("math.sqrt", CompletionItemKind::FUNCTION),
+    ("math.pow", CompletionItemKind::FUNCTION),
+    ("math.log", CompletionItemKind::FUNCTION),
+    ("math.log10", CompletionItemKind::FUNCTION),
+    ("math.sin", CompletionItemKind::FUNCTION),
+    ("math.cos", CompletionItemKind::FUNCTION),
+    ("math.tan", CompletionItemKind::FUNCTION),
+    ("math.asin", CompletionItemKind::FUNCTION),
+    ("math.acos", CompletionItemKind::FUNCTION),
+    ("math.atan", CompletionItemKind::FUNCTION),
+    ("math.atan2", CompletionItemKind::FUNCTION),
+    ("math.pi", CompletionItemKind::CONSTANT),
+    ("math.e", CompletionItemKind::CONSTANT),
+    // channel
+    ("channel.new", CompletionItemKind::FUNCTION),
+    ("channel.send", CompletionItemKind::FUNCTION),
+    ("channel.receive", CompletionItemKind::FUNCTION),
+    ("channel.close", CompletionItemKind::FUNCTION),
+    ("channel.try_send", CompletionItemKind::FUNCTION),
+    ("channel.try_receive", CompletionItemKind::FUNCTION),
+    ("channel.select", CompletionItemKind::FUNCTION),
+    // task
+    ("task.spawn", CompletionItemKind::FUNCTION),
+    ("task.join", CompletionItemKind::FUNCTION),
+    ("task.cancel", CompletionItemKind::FUNCTION),
+    // regex
+    ("regex.is_match", CompletionItemKind::FUNCTION),
+    ("regex.find", CompletionItemKind::FUNCTION),
+    ("regex.find_all", CompletionItemKind::FUNCTION),
+    ("regex.split", CompletionItemKind::FUNCTION),
+    ("regex.replace", CompletionItemKind::FUNCTION),
+    ("regex.replace_all", CompletionItemKind::FUNCTION),
+    ("regex.replace_all_with", CompletionItemKind::FUNCTION),
+    ("regex.captures", CompletionItemKind::FUNCTION),
+    // json
+    ("json.parse", CompletionItemKind::FUNCTION),
+    ("json.stringify", CompletionItemKind::FUNCTION),
+    ("json.pretty", CompletionItemKind::FUNCTION),
+    // test
+    ("test.assert", CompletionItemKind::FUNCTION),
+    ("test.assert_eq", CompletionItemKind::FUNCTION),
+    ("test.assert_ne", CompletionItemKind::FUNCTION),
+];
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 fn extract_request<R: lsp_types::request::Request>(
@@ -591,6 +831,10 @@ pub fn run() {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            ..CompletionOptions::default()
+        }),
         ..ServerCapabilities::default()
     };
 
