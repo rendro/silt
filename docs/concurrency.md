@@ -3,9 +3,7 @@
 Silt provides built-in concurrency based on CSP (Communicating Sequential
 Processes). Tasks communicate through channels. There is no shared mutable
 state -- every value in silt is immutable, so sending a value through a channel
-is always safe. The current runtime is single-threaded and cooperatively
-scheduled; the CSP API is designed to be forward-compatible with a future
-preemptive runtime.
+is always safe. Tasks run on real OS threads with true parallelism.
 
 All concurrency primitives live in two modules: `channel` and `task`. There are
 no concurrency keywords.
@@ -52,12 +50,11 @@ fit:
 | **Threads + locks** | Shared memory protected by mutexes | Deadlocks, data races, hard to reason about |
 | **Async/await** | Cooperative futures on an event loop | Colored functions, viral `async`, complex lifetimes |
 | **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
-| **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), cooperative scheduling |
+| **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), real parallelism |
 
-Unlike Go's goroutines, which are multiplexed onto OS threads by a preemptive
-runtime, silt tasks are currently coroutines on a single thread. They yield at channel
-operations and `task.join`. The CSP API is forward-compatible with a future
-preemptive runtime -- user code would not need to change.
+Like Go's goroutines, `task.spawn` creates a real OS thread. Channels use
+mutex-based synchronization internally. Since all silt values are immutable,
+there are no data races -- channels are the sole communication mechanism.
 
 -----
 
@@ -187,16 +184,10 @@ behind round-robin fan-out (see Section 5).
 ### Unbuffered channel implementation
 
 `channel.new()` creates a channel with capacity 0, but the runtime promotes
-this to capacity 1 internally. Because the cooperative scheduler cannot park a
-sender mid-expression, a truly zero-capacity rendezvous is not possible. In
-practice, a send on an "unbuffered" channel succeeds immediately if the
-single-slot buffer is empty. The sender blocks only if that slot is already
-occupied.
-
-This means `channel.new()` gives you "at most one value in flight" rather than
-true rendezvous semantics where the sender blocks until a receiver is ready.
-For most patterns (producer/consumer, fan-out, pipelines) the difference is
-transparent. A future preemptive runtime could implement genuine rendezvous.
+this to capacity 1 internally. This gives "at most one value in flight"
+rather than true rendezvous semantics where the sender blocks until a receiver
+is ready. For most patterns (producer/consumer, fan-out, pipelines) the
+difference is transparent.
 
 -----
 
@@ -639,118 +630,44 @@ fn main() {
 
 ## 6. The Runtime
 
-### Single-threaded, cooperative scheduling
+### Thread-per-task parallelism
 
-Silt runs all tasks on a single OS thread. There is no parallelism. Tasks
-are coroutines that yield control at specific points and the scheduler rotates
-between them.
-
-This is a deliberate choice: it prioritizes determinism, simplicity, and
-debuggability over raw performance. The same inputs always produce the same
-task interleaving.
-
-### Yield points
-
-Tasks yield control at these operations:
-
-| Operation | Yields when |
-|---|---|
-| `channel.send(ch, val)` | Buffer is full -- scheduler runs other tasks to drain it |
-| `channel.receive(ch)` | Buffer is empty -- scheduler runs other tasks to fill it |
-| `channel.select([...])` | No channel has data -- scheduler runs other tasks |
-| `task.join(handle)` | Target task not yet complete -- scheduler runs other tasks |
-| `channel.each(ch) { ... }` | After each message -- yields so other tasks get a turn |
-
-Between yield points, a task runs without interruption. There is no preemption
-and no time-slicing.
-
-### Task states
-
-Each task is in one of five states:
+Each `task.spawn` call creates a real OS thread. The spawned task gets its own
+VM execution context (stack, call frames) but shares globals, type metadata,
+and foreign functions with the parent. Channels use mutex-based synchronization
+for safe cross-thread communication.
 
 ```
-Ready  ---------> Running ---------> Completed
-  ^                  |
-  |                  v
-  +---- BlockedSend (channel buffer full)
-  |
-  +---- BlockedReceive (channel buffer empty)
-  |
-  +---- Cancelled
+main thread                   spawned thread 1         spawned thread 2
+    |                              |                        |
+    |-- task.spawn(fn() {...}) --> |                        |
+    |-- task.spawn(fn() {...}) ------------------>          |
+    |                              |  (runs in parallel)    |  (runs in parallel)
+    |-- channel.receive(ch) ----> blocks until value arrives
+    |                              |-- channel.send(ch, v) -|
+    |<-- Message(v) --------------|                         |
+    |-- task.join(t1) ----------> blocks until t1 completes
 ```
 
-- **Ready** -- eligible to run. The scheduler picks ready tasks in FIFO order.
-- **BlockedSend** -- tried to send but the channel buffer is full. Becomes
-  Ready when space opens up.
-- **BlockedReceive** -- tried to receive but the channel is empty. Becomes
-  Ready when a value arrives or the channel closes.
-- **Completed** -- finished executing. Its return value is stored in the
-  handle.
-- **Cancelled** -- cancelled via `task.cancel`. Will not run again.
+### Blocking operations
 
-### How scheduling works
+| Operation | Blocks when | Mechanism |
+|---|---|---|
+| `channel.send(ch, val)` | Buffer is full | Spin-yields to OS until space opens |
+| `channel.receive(ch)` | Buffer is empty | Mutex + Condvar (OS-level wait) |
+| `task.join(handle)` | Task not yet complete | Mutex + Condvar (OS-level wait) |
+| `channel.select([...])` | No channel has data | Polling with OS yield |
 
-When a blocking operation (send, receive, select, join) cannot proceed:
+### Implications of real parallelism
 
-1. The scheduler takes all Ready tasks from the queue (FIFO order).
-2. It evaluates each task's body expression.
-3. If a task completes, its result is stored in its handle and it is marked
-   Completed.
-4. If a task yields (from `channel.each`), it is re-enqueued at the end of the
-   ready queue with its updated state.
-5. Any still-blocked tasks are returned to the queue.
-6. The original operation retries.
-
-This loop repeats until the operation succeeds or the scheduler determines
-that no task made progress (deadlock).
-
-### Round-robin fan-out
-
-When multiple tasks compete for the same channel, the scheduler distributes
-messages fairly. Two mechanisms make this work:
-
-1. **`channel.receive` yields before attempting to read.** Before trying to
-   take a value from the buffer, `channel.receive` runs one round of pending
-   tasks. This gives other tasks a chance to receive first.
-
-2. **`channel.each` yields after each message.** After calling the callback
-   with a received value, `channel.each` yields the current task back to the
-   scheduler. The next task in the queue gets a turn.
-
-The result is round-robin distribution. If three workers loop on
-`channel.each(jobs)` and six messages are sent, each worker gets exactly two
-messages: worker 1 gets messages 1 and 4, worker 2 gets 2 and 5, worker 3
-gets 3 and 6.
-
-### Deadlock detection
-
-The scheduler detects deadlocks when no task can make progress:
-
-- `channel.send` finds the buffer full, but no tasks can drain it.
-- `channel.receive` finds the buffer empty, but no tasks can fill it.
-- `task.join` is waiting for a task that is not making progress.
-- `channel.select` finds all channels empty and no tasks can produce data.
-
-In each case, silt reports a clear error message rather than hanging:
-
-```
-deadlock: channel 0 is full and no task can drain it
-deadlock: channel 0 is empty and no task can fill it
-join: deadlock detected - target task not completed and no progress
-channel.select: deadlock detected - no channels have data and no tasks can make progress
-```
-
-### Implications of cooperative scheduling
-
-- **No parallelism.** Only one task executes at a time. Multiple CPU cores are
-  not utilized. Spawning tasks does not speed up CPU-bound work.
-- **CPU-bound tasks block everything.** A task that does a long computation
-  without touching a channel will not yield, starving all other tasks.
-- **Deterministic ordering.** The same inputs produce the same interleaving
-  every time. This makes concurrent programs reproducible and easy to test.
+- **True parallelism.** Multiple tasks execute simultaneously on different CPU
+  cores. CPU-bound work benefits from spawning tasks.
+- **Non-deterministic ordering.** Thread scheduling is up to the OS. The same
+  inputs may produce different interleavings across runs.
+- **No data races.** All silt values are immutable. Sending a value through a
+  channel is a safe clone. There is no shared mutable state.
 - **No colored functions.** Unlike async/await, there is no function coloring.
-  Any function can be called from any context. `channel.send` and
-  `channel.receive` look and act like normal function calls.
+  `channel.send` and `channel.receive` look and act like normal function calls.
 
 -----
 
@@ -758,17 +675,12 @@ channel.select: deadlock detected - no channels have data and no tasks can make 
 
 ### Current limitations
 
-- **No true parallelism.** Tasks interleave on a single OS thread. CPU-bound
-  work gets no speedup from spawning tasks.
-
 - **Unbuffered channels are capacity-1.** `channel.new()` is internally
   promoted to a single-slot buffer. A send succeeds immediately if the slot
-  is empty, which differs from true rendezvous semantics where the sender
-  blocks until a receiver is ready.
+  is empty, which differs from true rendezvous semantics.
 
 - **No timeouts or timers.** There is no way to say "receive from this channel
-  but give up after 5 seconds." A `channel.receive` on an empty channel with
-  no producer will deadlock (detected and reported, but not recoverable).
+  but give up after 5 seconds."
 
 - **Select only supports receive.** `channel.select` polls channels for
   incoming data. You cannot select on send operations.
@@ -776,35 +688,20 @@ channel.select: deadlock detected - no channels have data and no tasks can make 
 - **No buffered channel resizing.** A channel's capacity is fixed at creation
   time.
 
-- **CPU-bound tasks starve the scheduler.** A task in a tight loop that never
-  touches a channel will hold the thread indefinitely. Other tasks cannot
-  make progress until it yields.
-
-### Forward compatibility
-
-The CSP API (`channel.new`, `channel.send`, `channel.receive`, `task.spawn`,
-`channel.select`) is designed to be runtime-agnostic. Code written against this
-API today will work without modification on a future preemptive runtime. Only
-the scheduler implementation would change.
+- **Thread-per-task overhead.** Each spawned task creates an OS thread.
+  Programs with thousands of concurrent tasks may want a thread pool or
+  work-stealing scheduler instead.
 
 ### Future work
 
-- **Preemptive runtime.** Running tasks on a real async runtime or OS threads
-  would enable true parallelism. Silt's full immutability makes this safe by
-  default -- no data races, no locking needed.
-
-- **True unbuffered channels.** A preemptive scheduler would allow genuine
-  rendezvous semantics where the sender parks until a receiver is ready.
+- **Thread pool / work-stealing scheduler.** Replace thread-per-task with a
+  fixed pool of worker threads for better scalability with many tasks.
 
 - **Timeouts and deadlines.** Adding a timeout parameter to `channel.select`
-  or a `channel.receive_timeout` would enable patterns like "wait for a
-  response, but give up after 100ms."
+  or a `channel.receive_timeout`.
 
 - **Buffered send in select.** Extending `channel.select` to support send
   operations alongside receive.
-
-- **Work-stealing scheduler.** A multi-threaded scheduler where idle threads
-  steal tasks from busy threads, enabling better utilization of CPU cores.
 
 -----
 

@@ -490,9 +490,13 @@ fn main() {
 
 ```sh
 silt run <file.silt>       -- run a program
-silt test [file.silt]      -- run test functions
-silt repl                  -- interactive read-eval-print loop
+silt check <file.silt>     -- type-check without running
+silt test [path]           -- run test functions
 silt fmt <file.silt>       -- format a source file
+silt repl                  -- interactive read-eval-print loop
+silt init                  -- create a new main.silt starter file
+silt lsp                   -- start the language server
+silt disasm <file.silt>    -- show bytecode disassembly
 ```
 
 During development, you can also run with cargo:
@@ -503,8 +507,38 @@ cargo run -- run file.silt
 
 ---
 
+## Editor Setup
+
+Silt ships with an LSP server and Vim syntax highlighting.
+
+**LSP features:** diagnostics, hover (inferred types), go-to-definition, completion, signature help, document symbols, formatting.
+
+**Neovim** (built-in LSP client):
+
+```lua
+vim.filetype.add({ extension = { silt = 'silt' } })
+vim.opt.runtimepath:append('/path/to/silt/editors/vim')
+
+vim.api.nvim_create_autocmd('FileType', {
+  pattern = 'silt',
+  callback = function()
+    vim.lsp.start({
+      name = 'silt',
+      cmd = { 'silt', 'lsp' },
+    })
+  end,
+})
+```
+
+**VS Code:** use any generic LSP client extension with `silt lsp` as the server command.
+
+See **[Editor Setup](editor-setup.md)** for detailed configuration.
+
+---
+
 ## What's Next
 
 - **[Language Guide](language-guide.md)** -- complete coverage of every feature
 - **[Standard Library Reference](stdlib-reference.md)** -- all modules and functions
+- **[FFI Guide](ffi.md)** -- embed silt in Rust applications
 - **[Concurrency Guide](concurrency.md)** -- channels, tasks, select, and scheduling

@@ -1049,10 +1049,9 @@ fn main() {
 }
 ```
 
-The model is cooperative and single-threaded. Tasks yield at explicit points
-(`send`, `receive`, `select`, `join`). Scheduling is deterministic and
-round-robin. Any function can spawn, send, or receive -- there is no
-function coloring.
+Tasks run on real OS threads with true parallelism. Channels use mutex-based
+synchronization for safe cross-thread communication. Any function can spawn,
+send, or receive -- there is no function coloring.
 
 For the full treatment, see [concurrency.md](concurrency.md).
 
