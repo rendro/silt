@@ -1,9 +1,9 @@
-use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Condvar};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::bytecode;
 
@@ -29,93 +29,132 @@ pub enum Value {
     Unit,
 }
 
-/// A cooperative channel implemented as a bounded queue.
+/// A thread-safe bounded channel.
 ///
-/// In a cooperative (non-preemptive) concurrency model, true rendezvous semantics
-/// (where both sender and receiver must be simultaneously ready) are impractical
-/// because tasks cannot be suspended mid-execution. Instead, `chan()` (capacity 0)
-/// is treated as buffered-1: the sender can deposit one value without a receiver
-/// being ready, and the receiver picks it up on its next turn. This provides
-/// a reasonable approximation of unbuffered channel behaviour for cooperative tasks.
+/// Uses Mutex+Condvar for cross-thread synchronization. Capacity 0 is
+/// promoted to buffered-1 for compatibility with cooperative scheduling.
 pub struct Channel {
     pub id: usize,
-    pub buffer: RefCell<VecDeque<Value>>,
+    buffer: Mutex<VecDeque<Value>>,
     pub capacity: usize,
-    pub closed: Cell<bool>,
+    closed: AtomicBool,
+    /// Notified when a value is sent or the channel is closed.
+    condvar: Condvar,
 }
 
 /// Result of attempting to send on a channel.
 pub enum TrySendResult {
-    /// Value was accepted into the buffer.
     Sent,
-    /// Buffer is full; caller should retry later.
     Full,
-    /// Channel has been closed; sending is not allowed.
     Closed,
 }
 
 /// Result of attempting to receive from a channel.
 pub enum TryReceiveResult {
-    /// A value was available.
     Value(Value),
-    /// Buffer is empty but channel is still open; caller should retry later.
     Empty,
-    /// Buffer is empty AND channel is closed; no more values will arrive.
     Closed,
 }
 
 impl Channel {
     pub fn new(id: usize, capacity: usize) -> Self {
-        // Capacity 0 (rendezvous) is promoted to buffered-1. With preemptive
-        // yielding, the sender's retry loop interleaves with other tasks,
-        // giving a close approximation of rendezvous semantics: the sender
-        // deposits one value and yields until a receiver consumes it.
         let effective_capacity = if capacity == 0 { 1 } else { capacity };
         Self {
             id,
-            buffer: RefCell::new(VecDeque::new()),
+            buffer: Mutex::new(VecDeque::new()),
             capacity: effective_capacity,
-            closed: Cell::new(false),
+            closed: AtomicBool::new(false),
+            condvar: Condvar::new(),
         }
     }
 
-    /// Try to send a value.
     pub fn try_send(&self, val: Value) -> TrySendResult {
-        if self.closed.get() {
+        if self.closed.load(AtomicOrdering::Acquire) {
             return TrySendResult::Closed;
         }
-        let mut buf = self.buffer.borrow_mut();
+        let mut buf = self.buffer.lock().unwrap();
         if buf.len() < self.capacity {
             buf.push_back(val);
+            self.condvar.notify_one();
             TrySendResult::Sent
         } else {
             TrySendResult::Full
         }
     }
 
-    /// Try to receive a value.
     pub fn try_receive(&self) -> TryReceiveResult {
-        let mut buf = self.buffer.borrow_mut();
+        let mut buf = self.buffer.lock().unwrap();
         if let Some(val) = buf.pop_front() {
             TryReceiveResult::Value(val)
-        } else if self.closed.get() {
+        } else if self.closed.load(AtomicOrdering::Acquire) {
             TryReceiveResult::Closed
         } else {
             TryReceiveResult::Empty
         }
     }
 
-    /// Close the channel. Future sends will fail; receives drain remaining
-    /// buffered values and then return `Closed`.
+    /// Blocking receive — waits until a value is available or the channel closes.
+    pub fn receive_blocking(&self) -> TryReceiveResult {
+        let mut buf = self.buffer.lock().unwrap();
+        loop {
+            if let Some(val) = buf.pop_front() {
+                return TryReceiveResult::Value(val);
+            }
+            if self.closed.load(AtomicOrdering::Acquire) {
+                return TryReceiveResult::Closed;
+            }
+            buf = self.condvar.wait(buf).unwrap();
+        }
+    }
+
     pub fn close(&self) {
-        self.closed.set(true);
+        self.closed.store(true, AtomicOrdering::Release);
+        self.condvar.notify_all();
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(AtomicOrdering::Acquire)
     }
 }
 
-/// Handle to a spawned task.
+/// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
-    pub result: RefCell<Option<Result<Value, String>>>,
+    result: Mutex<Option<Result<Value, String>>>,
+    condvar: Condvar,
+}
+
+impl TaskHandle {
+    pub fn new(id: usize) -> Self {
+        Self {
+            id,
+            result: Mutex::new(None),
+            condvar: Condvar::new(),
+        }
+    }
+
+    /// Store the task result and notify any joiners.
+    pub fn complete(&self, result: Result<Value, String>) {
+        let mut guard = self.result.lock().unwrap();
+        *guard = Some(result);
+        self.condvar.notify_all();
+    }
+
+    /// Block until the task produces a result.
+    pub fn join(&self) -> Result<Value, String> {
+        let mut guard = self.result.lock().unwrap();
+        loop {
+            if let Some(result) = guard.take() {
+                return result;
+            }
+            guard = self.condvar.wait(guard).unwrap();
+        }
+    }
+
+    /// Non-blocking poll.
+    pub fn try_get(&self) -> Option<Result<Value, String>> {
+        self.result.lock().unwrap().clone()
+    }
 }
 
 impl fmt::Debug for Value {

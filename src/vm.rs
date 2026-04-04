@@ -4,7 +4,6 @@
 //! Phase 2: full function calls (VmClosure + builtins), many builtin
 //! dispatches, variant constructors, and end-to-end program execution.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -4136,10 +4135,7 @@ impl Vm {
                 };
                 let task_id = self.next_task_id;
                 self.next_task_id += 1;
-                let handle = Arc::new(TaskHandle {
-                    id: task_id,
-                    result: RefCell::new(None),
-                });
+                let handle = Arc::new(TaskHandle::new(task_id));
                 // Create a new fiber to run the closure
                 let fiber_stack = vec![Value::Unit]; // dummy function slot
                 // No args for a zero-arg spawn closure
@@ -4165,18 +4161,19 @@ impl Vm {
                     return Err(VmError::new("task.join requires a handle argument".into()));
                 };
                 let handle = handle.clone();
+                // Cooperative join: run other fibers until the handle has a result.
                 let max_iterations = 100_000;
                 for _ in 0..max_iterations {
-                    if let Some(result) = handle.result.borrow().as_ref() {
+                    if let Some(result) = handle.try_get() {
                         return match result {
-                            Ok(val) => Ok(val.clone()),
+                            Ok(val) => Ok(val),
                             Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
                         };
                     }
                     if !self.run_other_fibers_once()? {
-                        if let Some(result) = handle.result.borrow().as_ref() {
+                        if let Some(result) = handle.try_get() {
                             return match result {
-                                Ok(val) => Ok(val.clone()),
+                                Ok(val) => Ok(val),
                                 Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
                             };
                         }
@@ -4193,7 +4190,7 @@ impl Vm {
                     return Err(VmError::new("task.cancel requires a handle argument".into()));
                 };
                 let handle_id = handle.id;
-                *handle.result.borrow_mut() = Some(Err("cancelled".to_string()));
+                handle.complete(Err("cancelled".to_string()));
                 // Mark matching fiber as Failed
                 // Mark the fiber as failed so it won't be scheduled again.
                 for fiber in &mut self.fibers {
@@ -4260,9 +4257,7 @@ impl Vm {
                 }
                 Ok(FiberSliceResult::Completed(val)) => {
                     self.fibers[i].state = FiberState::Completed(val.clone());
-                    // Store result directly in the fiber's handle (Rc-shared
-                    // with the Value::Handle the caller holds).
-                    *self.fibers[i].handle.result.borrow_mut() = Some(Ok(val));
+                    self.fibers[i].handle.complete(Ok(val));
                     any_progress = true;
                 }
                 Ok(FiberSliceResult::Blocked) => {
@@ -4273,7 +4268,7 @@ impl Vm {
                 }
                 Err(e) => {
                     self.fibers[i].state = FiberState::Failed(e.message.clone());
-                    *self.fibers[i].handle.result.borrow_mut() = Some(Err(e.message));
+                    self.fibers[i].handle.complete(Err(e.message));
                     any_progress = true;
                 }
             }
