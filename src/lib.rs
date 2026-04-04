@@ -13,3 +13,7 @@ pub mod types;
 pub mod typechecker;
 pub mod value;
 pub mod vm;
+
+// Re-export FFI types for embedders.
+pub use value::{FromValue, IntoValue, Value};
+pub use vm::{Vm, VmError};

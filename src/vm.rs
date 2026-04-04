@@ -13,7 +13,7 @@ use regex::Regex;
 
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
-use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
+use crate::value::{Channel, FromValue, IntoValue, TaskHandle, TryReceiveResult, TrySendResult, Value};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
 
@@ -192,6 +192,9 @@ pub struct Vm {
     next_task_id: usize,
     /// Prevents nested `run_other_fibers_once()` calls during channel.each
     scheduling_fibers: bool,
+
+    // ── Foreign function interface ──────────────────────────────
+    foreign_fns: HashMap<String, Rc<dyn Fn(&[Value]) -> Result<Value, VmError>>>,
 }
 
 impl Vm {
@@ -207,9 +210,88 @@ impl Vm {
             next_channel_id: 0,
             next_task_id: 0,
             scheduling_fibers: false,
+            foreign_fns: HashMap::new(),
         };
         vm.register_builtins();
         vm
+    }
+
+    // ── Foreign function registration ───────────────────────────
+
+    /// Register a foreign function callable from Silt.
+    ///
+    /// The function receives `&[Value]` and returns `Result<Value, VmError>`.
+    /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
+    pub fn register_fn(
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(&[Value]) -> Result<Value, VmError> + 'static,
+    ) {
+        let name = name.into();
+        self.foreign_fns.insert(name.clone(), Rc::new(func));
+        self.globals.insert(name.clone(), Value::BuiltinFn(name));
+    }
+
+    /// Register a 0-argument foreign function with automatic marshalling.
+    pub fn register_fn0<R: IntoValue>(
+        &mut self, name: impl Into<String>, func: impl Fn() -> R + 'static,
+    ) {
+        let n = name.into();
+        let n2 = n.clone();
+        self.register_fn(n, move |args: &[Value]| {
+            if !args.is_empty() {
+                return Err(VmError::new(format!("{n2} expects 0 arguments, got {}", args.len())));
+            }
+            Ok(func().into_value())
+        });
+    }
+
+    /// Register a 1-argument foreign function with automatic marshalling.
+    pub fn register_fn1<A: FromValue, R: IntoValue>(
+        &mut self, name: impl Into<String>, func: impl Fn(A) -> R + 'static,
+    ) {
+        let n = name.into();
+        let n2 = n.clone();
+        self.register_fn(n, move |args: &[Value]| {
+            if args.len() != 1 {
+                return Err(VmError::new(format!("{n2} expects 1 argument, got {}", args.len())));
+            }
+            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
+            Ok(func(a).into_value())
+        });
+    }
+
+    /// Register a 2-argument foreign function with automatic marshalling.
+    pub fn register_fn2<A: FromValue, B: FromValue, R: IntoValue>(
+        &mut self, name: impl Into<String>, func: impl Fn(A, B) -> R + 'static,
+    ) {
+        let n = name.into();
+        let n2 = n.clone();
+        self.register_fn(n, move |args: &[Value]| {
+            if args.len() != 2 {
+                return Err(VmError::new(format!("{n2} expects 2 arguments, got {}", args.len())));
+            }
+            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
+            let b = B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
+            Ok(func(a, b).into_value())
+        });
+    }
+
+    /// Register a 3-argument foreign function with automatic marshalling.
+    pub fn register_fn3<A: FromValue, B: FromValue, C: FromValue, R: IntoValue>(
+        &mut self, name: impl Into<String>, func: impl Fn(A, B, C) -> R + 'static,
+    ) {
+        let n = name.into();
+        let n2 = n.clone();
+        self.register_fn(n, move |args: &[Value]| {
+            if args.len() != 3 {
+                return Err(VmError::new(format!("{n2} expects 3 arguments, got {}", args.len())));
+            }
+            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
+            let b = B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
+            let c = C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
+            Ok(func(a, b, c).into_value())
+        });
     }
 
     /// Register all builtin functions and variant constructors in globals.
@@ -2141,7 +2223,13 @@ impl Vm {
                 "json" => self.dispatch_json(func, args),
                 "channel" => self.dispatch_channel(func, args),
                 "task" => self.dispatch_task(func, args),
-                _ => Err(VmError::new(format!("unknown module: {module}"))),
+                _ => {
+                    if let Some(f) = self.foreign_fns.get(name).cloned() {
+                        f(args)
+                    } else {
+                        Err(VmError::new(format!("unknown module: {module}")))
+                    }
+                }
             }
         } else {
             match name {
@@ -2185,7 +2273,13 @@ impl Vm {
                     }
                     Ok(Value::String(self.type_name(&args[0]).to_string()))
                 }
-                _ => Err(VmError::new(format!("unknown builtin: {name}"))),
+                _ => {
+                    if let Some(f) = self.foreign_fns.get(name).cloned() {
+                        f(args)
+                    } else {
+                        Err(VmError::new(format!("unknown builtin: {name}")))
+                    }
+                }
             }
         }
     }
@@ -5993,5 +6087,123 @@ mod tests {
             }
         "#);
         assert_eq!(result, Value::Int(60));
+    }
+
+    // ── FFI tests ──────────────────────────────────────────────────
+
+    /// Helper: compile and run silt code on a pre-configured VM (for FFI tests).
+    fn run_vm_with(vm: &mut Vm, source: &str) -> Value {
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).unwrap();
+        let script = Rc::new(functions.into_iter().next().unwrap());
+        vm.run(script).unwrap()
+    }
+
+    #[test]
+    fn test_foreign_fn_raw() {
+        let mut vm = Vm::new();
+        vm.register_fn("double", |args: &[Value]| {
+            let Value::Int(n) = &args[0] else {
+                return Err(VmError::new("expected Int".into()));
+            };
+            Ok(Value::Int(n * 2))
+        });
+        let result = run_vm_with(&mut vm, "fn main() { double(21) }");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_foreign_fn1_typed() {
+        let mut vm = Vm::new();
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
+        let result = run_vm_with(&mut vm, "fn main() { double(21) }");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_foreign_fn2_typed() {
+        let mut vm = Vm::new();
+        vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b });
+        let result = run_vm_with(&mut vm, "fn main() { add(10, 32) }");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_foreign_fn0_typed() {
+        let mut vm = Vm::new();
+        vm.register_fn0("answer", || -> i64 { 42 });
+        let result = run_vm_with(&mut vm, "fn main() { answer() }");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_foreign_fn_string() {
+        let mut vm = Vm::new();
+        vm.register_fn1("shout", |s: String| -> String { s.to_uppercase() });
+        let result = run_vm_with(&mut vm, r#"fn main() { shout("hello") }"#);
+        assert_eq!(result, Value::String("HELLO".into()));
+    }
+
+    #[test]
+    fn test_foreign_fn_returns_option() {
+        let mut vm = Vm::new();
+        vm.register_fn1("maybe", |x: i64| -> Option<i64> {
+            if x > 0 { Some(x) } else { None }
+        });
+        let result = run_vm_with(&mut vm, "fn main() { maybe(5) }");
+        assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(5)]));
+        let result = run_vm_with(&mut vm, "fn main() { maybe(-1) }");
+        assert_eq!(result, Value::Variant("None".into(), vec![]));
+    }
+
+    #[test]
+    fn test_foreign_fn_returns_result() {
+        let mut vm = Vm::new();
+        vm.register_fn1("safe_div", |x: i64| -> Result<i64, String> {
+            if x != 0 { Ok(100 / x) } else { Err("division by zero".into()) }
+        });
+        let result = run_vm_with(&mut vm, "fn main() { safe_div(5) }");
+        assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(20)]));
+        let result = run_vm_with(&mut vm, "fn main() { safe_div(0) }");
+        assert_eq!(result, Value::Variant("Err".into(), vec![Value::String("division by zero".into())]));
+    }
+
+    #[test]
+    fn test_foreign_fn_higher_order() {
+        let mut vm = Vm::new();
+        vm.register_fn1("square", |x: i64| -> i64 { x * x });
+        let result = run_vm_with(&mut vm, "fn main() { [1, 2, 3] |> list.map(square) }");
+        assert_eq!(result, Value::List(Rc::new(vec![
+            Value::Int(1), Value::Int(4), Value::Int(9),
+        ])));
+    }
+
+    #[test]
+    fn test_foreign_fn_module_qualified() {
+        let mut vm = Vm::new();
+        vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 });
+        // Module-qualified names go through GetGlobal + Call, not CallBuiltin
+        let result = run_vm_with(&mut vm, r#"
+            fn main() {
+                let f = mylib.double
+                f(21)
+            }
+        "#);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_foreign_fn_type_error() {
+        let mut vm = Vm::new();
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
+        let tokens = Lexer::new(r#"fn main() { double("hello") }"#).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).unwrap();
+        let script = Rc::new(functions.into_iter().next().unwrap());
+        let err = vm.run(script).unwrap_err();
+        assert!(err.message.contains("expected Int"), "got: {}", err.message);
     }
 }

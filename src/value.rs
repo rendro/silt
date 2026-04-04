@@ -417,6 +417,148 @@ impl Ord for Value {
     }
 }
 
+// ── FFI conversion traits ──────────────────────────────────────────
+
+/// Convert a `Value` into a Rust type.
+pub trait FromValue: Sized {
+    fn from_value(value: &Value) -> Result<Self, String>;
+}
+
+/// Convert a Rust type into a `Value`.
+pub trait IntoValue {
+    fn into_value(self) -> Value;
+}
+
+impl FromValue for Value {
+    fn from_value(value: &Value) -> Result<Self, String> { Ok(value.clone()) }
+}
+
+impl IntoValue for Value {
+    fn into_value(self) -> Value { self }
+}
+
+impl FromValue for i64 {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Int(n) => Ok(*n),
+            other => Err(format!("expected Int, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for i64 {
+    fn into_value(self) -> Value { Value::Int(self) }
+}
+
+impl FromValue for f64 {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Float(n) => Ok(*n),
+            Value::Int(n) => Ok(*n as f64),
+            other => Err(format!("expected Float, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for f64 {
+    fn into_value(self) -> Value { Value::Float(self) }
+}
+
+impl FromValue for bool {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Bool(b) => Ok(*b),
+            other => Err(format!("expected Bool, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for bool {
+    fn into_value(self) -> Value { Value::Bool(self) }
+}
+
+impl FromValue for String {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::String(s) => Ok(s.clone()),
+            other => Err(format!("expected String, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for String {
+    fn into_value(self) -> Value { Value::String(self) }
+}
+
+impl IntoValue for &str {
+    fn into_value(self) -> Value { Value::String(self.to_string()) }
+}
+
+impl FromValue for () {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Unit => Ok(()),
+            other => Err(format!("expected Unit, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for () {
+    fn into_value(self) -> Value { Value::Unit }
+}
+
+impl FromValue for Vec<Value> {
+    fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::List(xs) => Ok(xs.as_ref().clone()),
+            other => Err(format!("expected List, got {}", value_type_name(other))),
+        }
+    }
+}
+
+impl IntoValue for Vec<Value> {
+    fn into_value(self) -> Value { Value::List(Rc::new(self)) }
+}
+
+impl<T: IntoValue> IntoValue for Option<T> {
+    fn into_value(self) -> Value {
+        match self {
+            Some(v) => Value::Variant("Some".into(), vec![v.into_value()]),
+            None => Value::Variant("None".into(), vec![]),
+        }
+    }
+}
+
+impl<T: IntoValue> IntoValue for Result<T, String> {
+    fn into_value(self) -> Value {
+        match self {
+            Ok(v) => Value::Variant("Ok".into(), vec![v.into_value()]),
+            Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+        }
+    }
+}
+
+fn value_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Int(_) => "Int",
+        Value::Float(_) => "Float",
+        Value::Bool(_) => "Bool",
+        Value::String(_) => "String",
+        Value::List(_) => "List",
+        Value::Map(_) => "Map",
+        Value::Set(_) => "Set",
+        Value::Tuple(_) => "Tuple",
+        Value::Record(..) => "Record",
+        Value::Variant(..) => "Variant",
+        Value::VmClosure(_) | Value::BuiltinFn(_) => "Function",
+        Value::VariantConstructor(..) => "Constructor",
+        Value::RecordDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
+        Value::Channel(_) => "Channel",
+        Value::Handle(_) => "Handle",
+        Value::Unit => "Unit",
+    }
+}
+
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
