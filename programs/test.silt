@@ -1,0 +1,5 @@
+fn main() {
+    let foo = "hello"
+    let bar = 5
+    println("{foo} world! {bar}")
+}
