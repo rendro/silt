@@ -193,7 +193,7 @@ pub struct Vm {
     scheduling_fibers: bool,
 
     // ── Foreign function interface ──────────────────────────────
-    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError>>>,
+    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>>,
 }
 
 impl Vm {
@@ -224,7 +224,7 @@ impl Vm {
     pub fn register_fn(
         &mut self,
         name: impl Into<String>,
-        func: impl Fn(&[Value]) -> Result<Value, VmError> + 'static,
+        func: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
     ) {
         let name = name.into();
         self.foreign_fns.insert(name.clone(), Arc::new(func));
@@ -233,7 +233,7 @@ impl Vm {
 
     /// Register a 0-argument foreign function with automatic marshalling.
     pub fn register_fn0<R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn() -> R + 'static,
+        &mut self, name: impl Into<String>, func: impl Fn() -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
@@ -247,7 +247,7 @@ impl Vm {
 
     /// Register a 1-argument foreign function with automatic marshalling.
     pub fn register_fn1<A: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A) -> R + 'static,
+        &mut self, name: impl Into<String>, func: impl Fn(A) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
@@ -262,7 +262,7 @@ impl Vm {
 
     /// Register a 2-argument foreign function with automatic marshalling.
     pub fn register_fn2<A: FromValue, B: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A, B) -> R + 'static,
+        &mut self, name: impl Into<String>, func: impl Fn(A, B) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
@@ -278,7 +278,7 @@ impl Vm {
 
     /// Register a 3-argument foreign function with automatic marshalling.
     pub fn register_fn3<A: FromValue, B: FromValue, C: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A, B, C) -> R + 'static,
+        &mut self, name: impl Into<String>, func: impl Fn(A, B, C) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
@@ -291,6 +291,24 @@ impl Vm {
             let c = C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
             Ok(func(a, b, c).into_value())
         });
+    }
+
+    /// Create a child VM that shares globals, type metadata, and foreign functions.
+    /// Used for thread-per-task spawning.
+    fn spawn_child(&self) -> Self {
+        Vm {
+            frames: Vec::new(),
+            stack: Vec::new(),
+            globals: self.globals.clone(),
+            variant_types: self.variant_types.clone(),
+            record_types: self.record_types.clone(),
+            fibers: Vec::new(),
+            current_fiber: 0,
+            next_channel_id: self.next_channel_id,
+            next_task_id: self.next_task_id,
+            scheduling_fibers: false,
+            foreign_fns: self.foreign_fns.clone(),
+        }
     }
 
     /// Register all builtin functions and variant constructors in globals.
@@ -3927,8 +3945,9 @@ impl Vm {
                 };
                 let val = args[1].clone();
                 let ch = ch.clone();
-                let max_retries = 100_000;
-                for _ in 0..max_retries {
+                // Try non-blocking first, then spin briefly with fiber scheduling,
+                // and finally fall back to a short sleep loop for cross-thread sends.
+                loop {
                     match ch.try_send(val.clone()) {
                         TrySendResult::Sent => return Ok(Value::Unit),
                         TrySendResult::Closed => {
@@ -3936,16 +3955,11 @@ impl Vm {
                         }
                         TrySendResult::Full => {}
                     }
-                    // Run other fibers to try to drain the channel
+                    // Try to advance local fibers; if none, yield to OS.
                     if !self.run_other_fibers_once()? {
-                        return Err(VmError::new(format!(
-                            "deadlock: channel {} is full and no task can drain it", ch.id
-                        )));
+                        std::thread::yield_now();
                     }
                 }
-                Err(VmError::new(format!(
-                    "deadlock: channel {} is full and no task can drain it", ch.id
-                )))
             }
             "receive" => {
                 if args.len() != 1 {
@@ -3955,28 +3969,28 @@ impl Vm {
                     return Err(VmError::new("channel.receive requires a channel argument".into()));
                 };
                 let ch = ch.clone();
-                // Yield first so other tasks get a fair shot (round-robin fan-out)
-                let _ = self.run_other_fibers_once();
-                let max_retries = 100_000;
-                for _ in 0..max_retries {
-                    match ch.try_receive() {
-                        TryReceiveResult::Value(val) => {
-                            return Ok(Value::Variant("Message".into(), vec![val]));
-                        }
-                        TryReceiveResult::Closed => {
-                            return Ok(Value::Variant("Closed".into(), vec![]));
-                        }
-                        TryReceiveResult::Empty => {}
+                // Try non-blocking first, then fall back to blocking receive.
+                match ch.try_receive() {
+                    TryReceiveResult::Value(val) => {
+                        return Ok(Value::Variant("Message".into(), vec![val]));
                     }
-                    if !self.run_other_fibers_once()? {
-                        return Err(VmError::new(format!(
-                            "deadlock: channel {} is empty and no task can fill it", ch.id
-                        )));
+                    TryReceiveResult::Closed => {
+                        return Ok(Value::Variant("Closed".into(), vec![]));
+                    }
+                    TryReceiveResult::Empty => {}
+                }
+                // No immediate value — block until one arrives.
+                match ch.receive_blocking() {
+                    TryReceiveResult::Value(val) => {
+                        Ok(Value::Variant("Message".into(), vec![val]))
+                    }
+                    TryReceiveResult::Closed => {
+                        Ok(Value::Variant("Closed".into(), vec![]))
+                    }
+                    TryReceiveResult::Empty => {
+                        unreachable!("receive_blocking should not return Empty")
                     }
                 }
-                Err(VmError::new(format!(
-                    "deadlock: channel {} is empty and no task can fill it", ch.id
-                )))
             }
             "close" => {
                 if args.len() != 1 {
@@ -4136,21 +4150,26 @@ impl Vm {
                 let task_id = self.next_task_id;
                 self.next_task_id += 1;
                 let handle = Arc::new(TaskHandle::new(task_id));
-                // Create a new fiber to run the closure
-                let fiber_stack = vec![Value::Unit]; // dummy function slot
-                // No args for a zero-arg spawn closure
-                let fiber_frame = CallFrame {
-                    closure: closure.clone(),
-                    ip: 0,
-                    base_slot: 1,
-                };
-                let fiber = VmFiber {
-                    frames: vec![fiber_frame],
-                    stack: fiber_stack,
-                    state: FiberState::Ready,
-                    handle: handle.clone(),
-                };
-                self.fibers.push(fiber);
+
+                // Spawn on a real OS thread.
+                let child_handle = handle.clone();
+                let child_closure = closure.clone();
+                let mut child_vm = self.spawn_child();
+
+                std::thread::spawn(move || {
+                    // Set up the child VM to execute the closure.
+                    child_vm.stack = vec![Value::Unit]; // dummy function slot
+                    child_vm.frames = vec![CallFrame {
+                        closure: child_closure,
+                        ip: 0,
+                        base_slot: 1,
+                    }];
+                    match child_vm.execute() {
+                        Ok(val) => child_handle.complete(Ok(val)),
+                        Err(e) => child_handle.complete(Err(e.message)),
+                    }
+                });
+
                 Ok(Value::Handle(handle))
             }
             "join" => {
@@ -4161,26 +4180,11 @@ impl Vm {
                     return Err(VmError::new("task.join requires a handle argument".into()));
                 };
                 let handle = handle.clone();
-                // Cooperative join: run other fibers until the handle has a result.
-                let max_iterations = 100_000;
-                for _ in 0..max_iterations {
-                    if let Some(result) = handle.try_get() {
-                        return match result {
-                            Ok(val) => Ok(val),
-                            Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
-                        };
-                    }
-                    if !self.run_other_fibers_once()? {
-                        if let Some(result) = handle.try_get() {
-                            return match result {
-                                Ok(val) => Ok(val),
-                                Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
-                            };
-                        }
-                        return Err(VmError::new("task.join: deadlock - target task not completed and no progress".into()));
-                    }
+                // Block until the spawned thread completes.
+                match handle.join() {
+                    Ok(val) => Ok(val),
+                    Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
                 }
-                Err(VmError::new("task.join: exceeded maximum iterations".into()))
             }
             "cancel" => {
                 if args.len() != 1 {
