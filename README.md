@@ -104,10 +104,20 @@ fn main() {
 ## Install
 
 ```sh
+curl -fsSL https://silt-lang.com/install.sh | sh
+```
+
+Or build from source:
+
+```sh
 git clone https://github.com/rendro/silt.git
 cd silt && cargo build --release
 cp target/release/silt ~/.local/bin/
+```
 
+Then:
+
+```sh
 silt init
 silt run main.silt
 ```
