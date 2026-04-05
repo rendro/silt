@@ -2222,6 +2222,10 @@ impl Vm {
         name: &str,
         args: &[Value],
     ) -> Result<Value, VmError> {
+        // Foreign functions take priority — lets embedders override builtins.
+        if let Some(f) = self.foreign_fns.get(name).cloned() {
+            return f(args);
+        }
         if let Some((module, func)) = name.split_once('.') {
             match module {
                 "list" => self.dispatch_list(func, args),
