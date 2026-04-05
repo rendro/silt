@@ -142,7 +142,7 @@ LSP server with diagnostics, hover types, go-to-definition, completion, signatur
 
 ## Documentation
 
-Full documentation and an interactive playground are at [siltlang.dev](https://siltlang.dev).
+Full documentation and an interactive playground are at [silt-lang.com](https://silt-lang.com).
 
 ## License
 
