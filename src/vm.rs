@@ -4155,14 +4155,28 @@ impl Vm {
                 self.next_task_id += 1;
                 let handle = Arc::new(TaskHandle::new(task_id));
 
-                // Spawn on a real OS thread.
                 let child_handle = handle.clone();
                 let child_closure = closure.clone();
                 let mut child_vm = self.spawn_child();
 
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // WASM: run synchronously (no threads available).
+                    child_vm.stack = vec![Value::Unit];
+                    child_vm.frames = vec![CallFrame {
+                        closure: child_closure,
+                        ip: 0,
+                        base_slot: 1,
+                    }];
+                    match child_vm.execute() {
+                        Ok(val) => child_handle.complete(Ok(val)),
+                        Err(e) => child_handle.complete(Err(e.message)),
+                    }
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
                 std::thread::spawn(move || {
-                    // Set up the child VM to execute the closure.
-                    child_vm.stack = vec![Value::Unit]; // dummy function slot
+                    child_vm.stack = vec![Value::Unit];
                     child_vm.frames = vec![CallFrame {
                         closure: child_closure,
                         ip: 0,

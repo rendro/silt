@@ -121,9 +121,11 @@ fn main() {
             };
             check_file(&path, format);
         }
+        #[cfg(feature = "lsp")]
         "lsp" => {
             silt::lsp::run();
         }
+        #[cfg(feature = "repl")]
         "repl" => {
             silt::repl::run_repl();
         }

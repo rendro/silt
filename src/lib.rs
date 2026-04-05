@@ -5,9 +5,11 @@ pub mod disassemble;
 pub mod errors;
 pub mod formatter;
 pub mod lexer;
+#[cfg(feature = "lsp")]
 pub mod lsp;
 pub mod module;
 pub mod parser;
+#[cfg(feature = "repl")]
 pub mod repl;
 pub mod types;
 pub mod typechecker;
