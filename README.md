@@ -1,6 +1,6 @@
 # silt
 
-A statically-typed, expression-based language with 14 keywords, full immutability, and real parallelism.
+A delightful language for programmers who've suffered enough. Types without annotations. Threads without locks. Errors without surprises.
 
 ```silt
 fn fizzbuzz(n) {
@@ -13,42 +13,20 @@ fn fizzbuzz(n) {
 }
 
 fn main() {
-  1..21 |> list.each { n -> println(fizzbuzz(n)) }
+  1..21
+  |> list.each { n -> println(fizzbuzz(n)) }
 }
 ```
 
-## Features
+## Pattern matching
 
-**Minimal by design.** 14 keywords. Pattern matching is the only branching construct. No `if`, no `while`, no `for`. Types are inferred via Hindley-Milner — you rarely write them.
-
-**Fully immutable.** No `mut`, no reassignment. Every value is immutable. Collections return new copies. This makes concurrency safe by default.
-
-**Real parallelism.** `task.spawn` runs on OS threads. Channels synchronize across threads. No locks, no data races, no async/await coloring.
-
-```silt
-fn main() {
-  let ch = channel.new(10)
-
-  let worker = task.spawn(fn() {
-    channel.each(ch) { msg ->
-      println("got: {msg}")
-    }
-  })
-
-  channel.send(ch, "hello")
-  channel.send(ch, "world")
-  channel.close(ch)
-  task.join(worker)
-}
-```
-
-**Pattern matching everywhere.** Constructors, tuples, lists, records, maps, ranges, or-patterns, guards, pin patterns.
+The only way to branch. Define your types, then match on their shape. The compiler verifies every case is handled.
 
 ```silt
 type Expr {
   Num(Int),
   Add(Expr, Expr),
-  Mul(Expr, Expr),
+  Mul(Expr, Expr)
 }
 
 fn eval(expr) {
@@ -60,7 +38,32 @@ fn eval(expr) {
 }
 ```
 
-**Errors are values.** `Result` and `Option` types with `?` for propagation. No exceptions.
+## Parallelism
+
+Spawn tasks that run in parallel. Communicate through channels. Every value is immutable, so there are no data races to debug.
+
+```silt
+fn main() {
+  let ch = channel.new(10)
+
+  let w1 = task.spawn(fn() {
+    channel.each(ch) { msg -> println("w1: {msg}") }
+  })
+  let w2 = task.spawn(fn() {
+    channel.each(ch) { msg -> println("w2: {msg}") }
+  })
+
+  list.each(1..100) { n -> channel.send(ch, n) }
+  channel.close(ch)
+
+  task.join(w1)
+  task.join(w2)
+}
+```
+
+## Errors as values
+
+Every function that can fail returns a Result. The `?` operator propagates errors without nesting. Nothing is thrown or caught.
 
 ```silt
 fn read_config(path) {
@@ -68,19 +71,43 @@ fn read_config(path) {
   let config = json.parse(Config, content)?
   Ok(config)
 }
+
+fn main() {
+  match read_config("settings.json") {
+    Ok(cfg) -> println("loaded: {cfg.name}")
+    Err(e) -> println("error: {e}")
+  }
+}
 ```
 
-**160+ stdlib functions** across 17 modules: list, string, int, float, map, set, result, option, io, math, channel, task, regex, json, test, fs.
+## Type inference
 
-## Getting Started
+The type checker infers everything. You get static type safety without writing annotations. Define records, enums, and traits when you need structure.
+
+```silt
+type User {
+  name: String,
+  age: Int,
+}
+
+fn greet(user) {
+  "hello, {user.name} ({user.age})"
+}
+
+fn main() {
+  let u = User { name: "alice", age: 30 }
+  println(greet(u))
+  println(greet(u.{ age: 31 }))  -- record update
+}
+```
+
+## Install
 
 ```sh
-# Build from source
-git clone https://github.com/your-user/silt.git
+git clone https://github.com/rendro/silt.git
 cd silt && cargo build --release
 cp target/release/silt ~/.local/bin/
 
-# Create a new project
 silt init
 silt run main.silt
 ```
@@ -97,45 +124,25 @@ silt init                  Create a new main.silt
 silt lsp                   Start the language server
 ```
 
-**LSP server** with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. Works with any editor — Neovim, VS Code, etc.
+LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. Vim/Neovim syntax highlighting ships in `editors/vim/`.
 
-**Vim/Neovim syntax highlighting** ships in `editors/vim/`.
-
-## Embedding in Rust
-
-Silt can be embedded as a scripting language. Register Rust functions callable from silt:
-
-```rust
-use silt::{Vm, Value};
-
-let mut vm = Vm::new();
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
-// silt code can now call: double(21)  -- returns 42
-```
-
-See [docs/ffi.md](docs/ffi.md) for the full FFI guide.
-
-## Documentation
-
-- [Getting Started](docs/getting-started.md) — installation, hello world, language tour
-- [Language Guide](docs/language-guide.md) — complete reference for every feature
-- [Standard Library](docs/stdlib-reference.md) — 160+ functions across 17 modules
-- [Concurrency](docs/concurrency.md) — CSP model, channels, tasks, real parallelism
-- [FFI Guide](docs/ffi.md) — embed silt in Rust, register foreign functions
-- [Editor Setup](docs/editor-setup.md) — LSP, Neovim, VS Code, syntax highlighting
-
-## Design
+## Reference
 
 | | |
 |---|---|
-| **Keywords** | `as else fn import let loop match mod pub return trait type when where` |
-| **Types** | Hindley-Milner inference, ADTs, records, traits |
-| **Branching** | `match` only — with guards, or-patterns, ranges, destructuring |
-| **Mutability** | None. Shadowing only. |
-| **Errors** | `Result`/`Option` values, `?` operator |
-| **Concurrency** | CSP: OS threads, typed channels, `channel.select` |
-| **Collections** | `[]` list, `#{}` map, `#[]` set — all immutable |
-| **FFI** | Register Rust functions with auto-marshalling |
+| **keywords** | `as else fn import let loop match mod pub return trait type when where` |
+| **types** | inferred, with ADTs, records, and traits |
+| **branching** | match only |
+| **mutability** | none |
+| **errors** | Result / Option / ? |
+| **concurrency** | CSP with real parallelism |
+| **collections** | `[1, 2, 3]` list, `#{"k": "v"}` map, `#[1, 2]` set |
+| **stdlib** | small but exhaustive |
+| **tools** | REPL, formatter, test runner, LSP |
+
+## Documentation
+
+Full documentation and an interactive playground are at [siltlang.dev](https://siltlang.dev).
 
 ## License
 
