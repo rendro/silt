@@ -4562,11 +4562,22 @@ impl Vm {
                 let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
                     return Err(VmError::new("time.parse_date requires String arguments".into()));
                 };
-                match NaiveDate::parse_from_str(s, pattern) {
-                    Ok(d) => Ok(Value::Variant("Ok".into(), vec![Self::make_date(d)])),
-                    Err(e) => Ok(Value::Variant("Err".into(), vec![
-                        Value::String(format!("parse error: {e}")),
-                    ])),
+                // Parse as NaiveDateTime with a dummy time appended, then extract the date.
+                // NaiveDate::parse_from_str can fail in WASM with "not enough for unique date
+                // and time" because chrono internally needs a full datetime for disambiguation.
+                let padded = format!("{s}T00:00:00");
+                let padded_fmt = format!("{pattern}T%H:%M:%S");
+                match NaiveDateTime::parse_from_str(&padded, &padded_fmt) {
+                    Ok(dt) => Ok(Value::Variant("Ok".into(), vec![Self::make_date(dt.date())])),
+                    Err(_) => {
+                        // Fallback: try direct NaiveDate parse (works on native)
+                        match NaiveDate::parse_from_str(s, pattern) {
+                            Ok(d) => Ok(Value::Variant("Ok".into(), vec![Self::make_date(d)])),
+                            Err(e) => Ok(Value::Variant("Err".into(), vec![
+                                Value::String(format!("parse error: {e}")),
+                            ])),
+                        }
+                    }
                 }
             }
 
