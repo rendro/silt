@@ -3,6 +3,9 @@ name = "silt"
 version = "0.1.0"
 edition = "2024"
 description = "A minimal, statically-typed, expression-based language with CSP concurrency"
+license = "MIT"
+repository = "https://github.com/rendro/silt"
+homepage = "https://silt-lang.com"
 
 [[bin]]
 name = "silt"

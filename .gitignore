@@ -1,4 +1,4 @@
 /target
 .sediment
-
-~/
+.DS_Store
+.env
