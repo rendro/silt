@@ -11,6 +11,7 @@ pub enum ErrorKind {
     Lex,
     Parse,
     Type,
+    Compile,
     Runtime,
 }
 
@@ -20,6 +21,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Lex => write!(f, "lex"),
             ErrorKind::Parse => write!(f, "parse"),
             ErrorKind::Type => write!(f, "type"),
+            ErrorKind::Compile => write!(f, "compile"),
             ErrorKind::Runtime => write!(f, "runtime"),
         }
     }
@@ -72,6 +74,18 @@ impl SourceError {
             source_line,
             file: Some(file.into()),
             is_warning,
+        }
+    }
+
+    pub fn compile_warning(message: impl Into<String>, span: Span, source: &str, file: impl Into<String>) -> Self {
+        let source_line = get_source_line(source, span.line);
+        Self {
+            kind: ErrorKind::Compile,
+            message: message.into(),
+            span,
+            source_line,
+            file: Some(file.into()),
+            is_warning: true,
         }
     }
 

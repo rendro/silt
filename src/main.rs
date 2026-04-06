@@ -25,15 +25,48 @@ fn main() {
         eprintln!("silt — a statically-typed, expression-based language");
         eprintln!();
         eprintln!("Usage:");
-        eprintln!("  silt run <file.silt>       Run a program");
-        eprintln!("  silt check <file.silt>     Type-check without running");
-        eprintln!("  silt test [path]           Run test functions");
-        eprintln!("  silt fmt <file.silt>       Format source code");
-        eprintln!("  silt repl                  Interactive REPL");
-        eprintln!("  silt init                  Create a new main.silt");
-        eprintln!("  silt lsp                   Start the language server");
-        eprintln!("  silt disasm <file.silt>    Show bytecode disassembly");
+        eprintln!("  silt run [--watch] <file.silt>    Run a program");
+        eprintln!("  silt check [--watch] <file.silt>  Type-check without running");
+        eprintln!("  silt test [--watch] [path]        Run test functions");
+        eprintln!("  silt fmt <file.silt>              Format source code");
+        eprintln!("  silt repl                         Interactive REPL");
+        eprintln!("  silt init                         Create a new main.silt");
+        eprintln!("  silt lsp                          Start the language server");
+        eprintln!("  silt disasm <file.silt>           Show bytecode disassembly");
         process::exit(1);
+    }
+
+    // Handle --watch / -w flag: re-invoke without the flag on file changes
+    #[cfg(feature = "watch")]
+    if args.iter().any(|a| a == "--watch" || a == "-w") {
+        let filtered: Vec<String> = args[1..]
+            .iter()
+            .filter(|a| *a != "--watch" && *a != "-w")
+            .cloned()
+            .collect();
+
+        let watch_dir = filtered
+            .iter()
+            .filter_map(|a| {
+                let path = Path::new(a.as_str());
+                if a.ends_with(".silt") {
+                    let parent = path.parent().unwrap_or(Path::new("."));
+                    Some(if parent.as_os_str().is_empty() {
+                        Path::new(".").to_path_buf()
+                    } else {
+                        parent.to_path_buf()
+                    })
+                } else if path.is_dir() {
+                    Some(path.to_path_buf())
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| ".".into()));
+
+        silt::watch::watch_and_rerun(&watch_dir, &filtered);
+        return;
     }
 
     match args[1].as_str() {
@@ -249,6 +282,12 @@ fn vm_run_file(path: &str) {
         }
     };
 
+    // Print compiler warnings
+    for w in compiler.warnings() {
+        let source_err = SourceError::compile_warning(&w.message, w.span, &source, path);
+        eprintln!("{source_err}");
+    }
+
     let script = Arc::new(functions.into_iter().next().unwrap());
 
     // Run via VM
@@ -331,6 +370,11 @@ fn disasm_file(path: &str) {
             process::exit(1);
         }
     };
+
+    for w in compiler.warnings() {
+        let source_err = SourceError::compile_warning(&w.message, w.span, &source, path);
+        eprintln!("{source_err}");
+    }
 
     // Print disassembly of each function
     for func in &functions {

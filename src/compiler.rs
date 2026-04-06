@@ -101,6 +101,13 @@ struct Local {
     captured: bool,
 }
 
+// ── Compiler warnings ────────────────────────────────────────────────
+
+pub struct CompileWarning {
+    pub message: String,
+    pub span: Span,
+}
+
 // ── Compiler ──────────────────────────────────────────────────────────
 
 pub struct Compiler {
@@ -113,6 +120,8 @@ pub struct Compiler {
     compiled_modules: HashSet<String>,
     /// Modules currently being compiled (for circular import detection).
     compiling_modules: HashSet<String>,
+    /// Warnings emitted during compilation.
+    warnings: Vec<CompileWarning>,
 }
 
 impl Compiler {
@@ -123,6 +132,7 @@ impl Compiler {
             project_root: None,
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -134,7 +144,13 @@ impl Compiler {
             project_root: Some(root),
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
+            warnings: Vec::new(),
         }
+    }
+
+    /// Returns warnings emitted during compilation.
+    pub fn warnings(&self) -> &[CompileWarning] {
+        &self.warnings
     }
 
     // ── Public entry point ────────────────────────────────────────
@@ -209,6 +225,7 @@ impl Compiler {
                 for (i, param) in fn_decl.params.iter().enumerate() {
                     match &param.pattern {
                         Pattern::Ident(name) => {
+                            self.warn_if_shadows_module(name, span);
                             self.add_local(name.clone());
                             param_slots.push((i, None)); // no destructuring needed
                         }
@@ -376,6 +393,7 @@ impl Compiler {
                     for (i, param) in method.params.iter().enumerate() {
                         match &param.pattern {
                             Pattern::Ident(name) => {
+                                self.warn_if_shadows_module(name, span);
                                 self.add_local(name.clone());
                             }
                             _ => {
@@ -589,6 +607,7 @@ impl Compiler {
                     for (i, param) in fn_decl.params.iter().enumerate() {
                         match &param.pattern {
                             Pattern::Ident(name) => {
+                                self.warn_if_shadows_module(name, fn_span);
                                 self.add_local(name.clone());
                                 param_slots.push((i, None));
                             }
@@ -732,6 +751,7 @@ impl Compiler {
 
                 match pattern {
                     Pattern::Ident(name) => {
+                        self.warn_if_shadows_module(name, span);
                         let slot = self.add_local(name.clone());
                         self.current_chunk().emit_op(Op::SetLocal, span);
                         self.current_chunk().emit_u16(slot, span);
@@ -1093,6 +1113,7 @@ impl Compiler {
                 for (i, param) in params.iter().enumerate() {
                     match &param.pattern {
                         Pattern::Ident(name) => {
+                            self.warn_if_shadows_module(name, span);
                             self.add_local(name.clone());
                             lambda_param_slots.push(None);
                         }
@@ -1700,6 +1721,7 @@ impl Compiler {
             Pattern::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
                 self.current_chunk().emit_op(Op::Dup, span);
+                self.warn_if_shadows_module(name, span);
                 let slot = self.add_local(name.clone());
                 self.current_chunk().emit_op(Op::SetLocal, span);
                 self.current_chunk().emit_u16(slot, span);
@@ -1990,6 +2012,7 @@ impl Compiler {
         let mut first_slot = 0u16;
         for (i, (name, init)) in bindings.iter().enumerate() {
             self.compile_expr(init)?;
+            self.warn_if_shadows_module(name, span);
             let slot = self.add_local(name.clone());
             if i == 0 {
                 first_slot = slot;
@@ -2088,6 +2111,19 @@ impl Compiler {
         let slot = self.ctx().locals.len() as u16;
         self.ctx_mut().locals.push(Local { name, depth, slot, captured: false });
         slot
+    }
+
+    /// Emit a warning if `name` shadows a builtin module like `json`, `int`, etc.
+    fn warn_if_shadows_module(&mut self, name: &str, span: Span) {
+        if module::is_builtin_module(name) {
+            self.warnings.push(CompileWarning {
+                message: format!(
+                    "variable '{name}' shadows the builtin '{name}' module; \
+                     use a different name to access '{name}.* functions"
+                ),
+                span,
+            });
+        }
     }
 
     fn resolve_local(&self, name: &str) -> Option<u16> {

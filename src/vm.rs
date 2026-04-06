@@ -1147,25 +1147,9 @@ impl Vm {
                                 )));
                             }
                         } else {
-                            // Fallback: try module-qualified builtin
-                            let mut found = false;
-                            for module in &["result", "option", "list", "string", "int", "float",
-                                            "map", "set", "io", "fs", "test", "math", "regex", "json",
-                                            "channel", "task"] {
-                                let candidate = format!("{module}.{method_name}");
-                                if self.globals.contains_key(&candidate) {
-                                    self.stack.truncate(receiver_slot);
-                                    let result = self.dispatch_builtin(&candidate, &extra_args)?;
-                                    self.push(result);
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if !found {
-                                return Err(VmError::new(format!(
-                                    "no method '{method_name}' for type '{type_name}'"
-                                )));
-                            }
+                            return Err(VmError::new(format!(
+                                "no method '{method_name}' for type '{type_name}'"
+                            )));
                         }
                     }
                 }
@@ -1852,24 +1836,9 @@ impl Vm {
                             )));
                         }
                     } else {
-                        let mut found = false;
-                        for module in &["result", "option", "list", "string", "int", "float",
-                                        "map", "set", "io", "fs", "test", "math", "regex", "json",
-                                        "channel", "task"] {
-                            let candidate = format!("{module}.{method_name}");
-                            if self.globals.contains_key(&candidate) {
-                                self.stack.truncate(receiver_slot);
-                                let result = self.dispatch_builtin(&candidate, &extra_args)?;
-                                self.push(result);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if !found {
-                            return Err(VmError::new(format!(
-                                "no method '{method_name}' for type '{type_name}'"
-                            )));
-                        }
+                        return Err(VmError::new(format!(
+                            "no method '{method_name}' for type '{type_name}'"
+                        )));
                     }
                 }
             }

@@ -961,15 +961,13 @@ impl TypeChecker {
 
         // ── json module ─────────────────────────────────────────────────
 
-        // json.parse: (RecordType, String) -> Result(a, String)
-        // The first arg is a record type descriptor; the return type
-        // is resolved via context (field access, type annotations, etc.).
+        // json.parse: (T, String) -> Result(T, String)
+        // The first arg is a type descriptor; the same type flows into the Result.
         {
             let (a, av) = self.fresh_tv();
-            let (b, bv) = self.fresh_tv();
-            let result_ty = Type::Generic("Result".into(), vec![b, Type::String]);
+            let result_ty = Type::Generic("Result".into(), vec![a.clone(), Type::String]);
             env.define("json.parse".into(), Scheme {
-                vars: vec![av, bv],
+                vars: vec![av],
                 ty: Type::Fun(
                     vec![a, Type::String],
                     Box::new(result_ty),
@@ -978,16 +976,15 @@ impl TypeChecker {
             });
         }
 
-        // json.parse_list: (RecordType, String) -> Result(List(T), String)
+        // json.parse_list: (T, String) -> Result(List(T), String)
         {
             let (a, av) = self.fresh_tv();
-            let (b, bv) = self.fresh_tv();
             let result_ty = Type::Generic("Result".into(), vec![
-                Type::List(Box::new(b)),
+                Type::List(Box::new(a.clone())),
                 Type::String,
             ]);
             env.define("json.parse_list".into(), Scheme {
-                vars: vec![av, bv],
+                vars: vec![av],
                 ty: Type::Fun(
                     vec![a, Type::String],
                     Box::new(result_ty),
@@ -996,16 +993,15 @@ impl TypeChecker {
             });
         }
 
-        // json.parse_map: (ValueType, String) -> Result(Map(String, v), String)
+        // json.parse_map: (V, String) -> Result(Map(String, V), String)
         {
             let (a, av) = self.fresh_tv();
-            let (v, vv) = self.fresh_tv();
             let result_ty = Type::Generic("Result".into(), vec![
-                Type::Map(Box::new(Type::String), Box::new(v)),
+                Type::Map(Box::new(Type::String), Box::new(a.clone())),
                 Type::String,
             ]);
             env.define("json.parse_map".into(), Scheme {
-                vars: vec![av, vv],
+                vars: vec![av],
                 ty: Type::Fun(
                     vec![a, Type::String],
                     Box::new(result_ty),
@@ -1041,13 +1037,19 @@ impl TypeChecker {
         }
 
         // ── Primitive type descriptors (for json.parse_map etc.) ──────
-        // These are opaque values at the type level — used as arguments to
-        // functions that dispatch on types at runtime.
+        // These carry the actual type so json.parse can propagate it
+        // into the return type.
         for name in &["Int", "Float", "String", "Bool"] {
-            let (a, av) = self.fresh_tv();
+            let ty = match *name {
+                "Int" => Type::Int,
+                "Float" => Type::Float,
+                "String" => Type::String,
+                "Bool" => Type::Bool,
+                _ => unreachable!(),
+            };
             env.define(name.to_string(), Scheme {
-                vars: vec![av],
-                ty: a,
+                vars: vec![],
+                ty,
                 constraints: vec![],
             });
         }
@@ -2771,16 +2773,18 @@ impl TypeChecker {
                     RecordInfo {
                         _name: td.name.clone(),
                         _params: td.params.clone(),
-                        fields: field_types,
+                        fields: field_types.clone(),
                     },
                 );
 
                 // Register the record type name as a value so it can be
                 // passed to json.parse: `json.parse(Employee, str)`
-                let tv = self.fresh_var();
+                // The type is the record type itself, so json.parse can
+                // propagate it into the return type.
+                let record_ty = Type::Record(td.name.clone(), field_types);
                 env.define(td.name.clone(), Scheme {
                     vars: vec![],
-                    ty: tv,
+                    ty: record_ty,
                     constraints: vec![],
                 });
             }
