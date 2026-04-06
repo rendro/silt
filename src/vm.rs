@@ -4419,16 +4419,29 @@ impl Vm {
         }
     }
 
+    /// Get current epoch milliseconds. Uses `__wasm_epoch_ms` foreign function
+    /// if registered (WASM), otherwise falls back to `SystemTime`.
+    fn epoch_ms(&self) -> Result<i64, VmError> {
+        if let Some(f) = self.foreign_fns.get("__wasm_epoch_ms") {
+            match f(&[])? {
+                Value::Int(ms) => Ok(ms),
+                _ => Err(VmError::new("__wasm_epoch_ms returned non-Int".into())),
+            }
+        } else {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let dur = SystemTime::now().duration_since(UNIX_EPOCH)
+                .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
+            Ok(dur.as_millis() as i64)
+        }
+    }
+
     fn dispatch_time(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         match name {
             "now" => {
                 if !args.is_empty() {
                     return Err(VmError::new("time.now takes 0 arguments".into()));
                 }
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let dur = SystemTime::now().duration_since(UNIX_EPOCH)
-                    .map_err(|e| VmError::new(format!("time.now failed: {e}")))?;
-                let epoch_ns = dur.as_nanos() as i64;
+                let epoch_ns = self.epoch_ms()? * 1_000_000;
                 Ok(Self::make_instant(epoch_ns))
             }
 
@@ -4443,12 +4456,7 @@ impl Vm {
                 }
                 #[cfg(not(feature = "local-clock"))]
                 {
-                    // Compute UTC date from epoch seconds using Hinnant's algorithm.
-                    // Used when chrono/clock is unavailable (e.g. WASM).
-                    use std::time::{SystemTime, UNIX_EPOCH};
-                    let secs = SystemTime::now().duration_since(UNIX_EPOCH)
-                        .map_err(|e| VmError::new(format!("time.today failed: {e}")))?
-                        .as_secs() as i64;
+                    let secs = self.epoch_ms()? / 1000;
                     let (y, m, d) = civil_from_epoch_secs(secs);
                     let date = NaiveDate::from_ymd_opt(y, m, d)
                         .ok_or_else(|| VmError::new("time.today: date out of range".into()))?;
@@ -4764,17 +4772,20 @@ impl Vm {
                 if dur_ns <= 0 {
                     return Ok(Value::Unit);
                 }
-                let target = std::time::Instant::now() + std::time::Duration::from_nanos(dur_ns as u64);
+                let dur_ms = dur_ns / 1_000_000;
+                let target_ms = self.epoch_ms()? + dur_ms;
                 // Fiber-aware sleep: yield to other fibers while waiting
-                while std::time::Instant::now() < target {
+                while self.epoch_ms()? < target_ms {
                     self.run_other_fibers_once()?;
-                    let remaining = target.saturating_duration_since(std::time::Instant::now());
-                    if remaining.is_zero() {
+                    let remaining_ms = target_ms - self.epoch_ms()?;
+                    if remaining_ms <= 0 {
                         break;
                     }
-                    // Sleep in small increments to stay responsive
-                    let sleep_dur = remaining.min(std::time::Duration::from_millis(1));
-                    std::thread::sleep(sleep_dur);
+                    // On native, sleep in small increments to stay responsive
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        (remaining_ms as u64).min(1)
+                    ));
                 }
                 Ok(Value::Unit)
             }
