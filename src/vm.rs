@@ -55,7 +55,7 @@ fn decode_field_type(s: &str) -> FieldType {
 
 /// Compute (year, month, day) from Unix epoch seconds.
 /// Uses Howard Hinnant's civil_from_days algorithm (public domain).
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(feature = "local-clock"))]
 fn civil_from_epoch_secs(secs: i64) -> (i32, u32, u32) {
     let z = secs.div_euclid(86400) + 719468;
     let era = z.div_euclid(146097);
@@ -4436,15 +4436,15 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(VmError::new("time.today takes 0 arguments".into()));
                 }
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(feature = "local-clock")]
                 {
                     let today = chrono::Local::now().date_naive();
                     Ok(Self::make_date(today))
                 }
-                #[cfg(target_arch = "wasm32")]
+                #[cfg(not(feature = "local-clock"))]
                 {
                     // Compute UTC date from epoch seconds using Hinnant's algorithm.
-                    // Avoids chrono clock features which are unavailable in WASM.
+                    // Used when chrono/clock is unavailable (e.g. WASM).
                     use std::time::{SystemTime, UNIX_EPOCH};
                     let secs = SystemTime::now().duration_since(UNIX_EPOCH)
                         .map_err(|e| VmError::new(format!("time.today failed: {e}")))?
