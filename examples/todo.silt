@@ -1,3 +1,10 @@
+import int
+import io
+import json
+import list
+import option
+import string
+
 -- Interactive todo list manager with add, done, remove, save, and load commands.
 -- Persists todos to a JSON file.
 

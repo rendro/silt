@@ -1,3 +1,7 @@
+import list
+import option
+import string
+
 -- BFS maze solver on a grid.
 -- Parses a maze from strings (# = wall, . = open, S = start, E = end),
 -- finds the shortest path, and prints the solution with the path marked.

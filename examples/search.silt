@@ -1,3 +1,7 @@
+import list
+import map
+import option
+
 -- Search algorithms using loop
 --
 -- Demonstrates why loop is preferred over fold_until for search:

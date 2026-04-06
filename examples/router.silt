@@ -1,3 +1,8 @@
+import list
+import map
+import regex
+import string
+
 -- URL router/dispatcher that matches HTTP requests against route patterns,
 -- extracts path parameters, and dispatches to handler closures.
 

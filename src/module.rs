@@ -4,7 +4,7 @@
 /// in the global environment rather than loaded from files.
 const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
-    "regex", "json",
+    "regex", "json", "set", "math",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -12,11 +12,22 @@ pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)
 }
 
+/// Returns the module that must be imported for a gated constructor to be available.
+/// Returns `None` for prelude constructors (Ok, Err, Some, None) that are always available.
+pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
+    match name {
+        "Stop" | "Continue" => Some("list"),
+        "Message" | "Closed" | "Empty" => Some("channel"),
+        _ => None,
+    }
+}
+
 /// Returns the list of builtin function suffixes for a given builtin module.
 /// E.g., for "string" returns ["split", "trim", "trim_start", ...].
 pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
     match module {
         "string" => vec![
+            "from",
             "split", "trim", "trim_start", "trim_end",
             "char_code", "from_char_code",
             "contains", "replace", "join",

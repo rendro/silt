@@ -1,3 +1,6 @@
+import list
+import map
+
 -- Vending machine state machine simulator.
 -- Models states (Idle, Accepting, Dispensing, OutOfStock), events (InsertCoin,
 -- SelectItem, Cancel, Restock), and transitions with inventory tracking.

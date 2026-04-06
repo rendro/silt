@@ -144,8 +144,8 @@ fn builtin_names() -> Vec<String> {
         "import", "loop", "true", "false",
         // Globals
         "print", "println", "panic",
-        "Ok", "Err", "Some", "None", "Stop", "Continue",
-        "Message", "Closed", "Empty",
+        "Ok", "Err", "Some", "None",
+        "Stop", "Continue", "Message", "Closed", "Empty",
         // Modules
         "list.map", "list.filter", "list.fold", "list.each", "list.find",
         "list.sort", "list.sort_by", "list.reverse", "list.head", "list.tail",
@@ -263,6 +263,7 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
 
     // Compile declarations only (no main call)
     let mut compiler = Compiler::new();
+    compiler.import_all_builtins();
     let functions = match compiler.compile_declarations(&program) {
         Ok(f) => f,
         Err(e) => {
@@ -297,6 +298,7 @@ fn eval_expression(vm: &mut Vm, input: &str) {
 
     // Use compile_program which emits GetGlobal "main"; Call 0; Return
     let mut compiler = Compiler::new();
+    compiler.import_all_builtins();
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {

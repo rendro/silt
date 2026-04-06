@@ -1,3 +1,14 @@
+import float
+import int
+import list
+import map
+import option
+import regex
+import result
+import set
+import string
+import test
+
 -- Comprehensive test suite covering arithmetic, strings, lists, maps, sets,
 -- option/result types, pattern matching, closures, pipes, loops, and regex.
 

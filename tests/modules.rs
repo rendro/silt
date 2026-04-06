@@ -88,16 +88,16 @@ fn rand_u64() -> u64 {
 #[test]
 fn test_import_module_qualified() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
 fn internal_helper(x) = x * 2
         "#)],
         r#"
-import math
+import calc
 
 fn main() {
-  math.add(3, 4)
+  calc.add(3, 4)
 }
         "#,
     );
@@ -107,15 +107,15 @@ fn main() {
 #[test]
 fn test_import_module_multiple_functions() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
         "#)],
         r#"
-import math
+import calc
 
 fn main() {
-  math.add(math.square(3), math.square(4))
+  calc.add(calc.square(3), calc.square(4))
 }
         "#,
     );
@@ -127,12 +127,12 @@ fn main() {
 #[test]
 fn test_import_specific_items() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
         "#)],
         r#"
-import math.{ add, square }
+import calc.{ add, square }
 
 fn main() {
   add(square(3), square(4))
@@ -145,12 +145,12 @@ fn main() {
 #[test]
 fn test_import_single_item() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
         "#)],
         r#"
-import math.{ add }
+import calc.{ add }
 
 fn main() {
   add(10, 20)
@@ -165,12 +165,12 @@ fn main() {
 #[test]
 fn test_import_module_with_alias() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
         "#)],
         r#"
-import math as m
+import calc as m
 
 fn main() {
   m.add(3, 4)
@@ -183,12 +183,12 @@ fn main() {
 #[test]
 fn test_import_alias_multiple_calls() {
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn mul(a, b) = a * b
         "#)],
         r#"
-import math as m
+import calc as m
 
 fn main() {
   m.add(m.mul(2, 3), m.mul(4, 5))
@@ -203,15 +203,15 @@ fn main() {
 #[test]
 fn test_private_function_not_importable_qualified() {
     let err = run_module_test_err(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 fn secret(x) = x * 2
         "#)],
         r#"
-import math
+import calc
 
 fn main() {
-  math.secret(5)
+  calc.secret(5)
 }
         "#,
     );
@@ -224,12 +224,12 @@ fn main() {
 #[test]
 fn test_private_function_not_selectively_importable() {
     let err = run_module_test_err(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
 fn secret(x) = x * 2
         "#)],
         r#"
-import math.{ secret }
+import calc.{ secret }
 
 fn main() {
   secret(5)
@@ -249,15 +249,15 @@ fn main() {
 fn test_module_loaded_only_once() {
     // Importing the same module twice should work (cached)
     let result = run_module_test(
-        &[("math.silt", r#"
+        &[("calc.silt", r#"
 pub fn add(a, b) = a + b
         "#)],
         r#"
-import math
-import math.{ add }
+import calc
+import calc.{ add }
 
 fn main() {
-  add(math.add(1, 2), 3)
+  add(calc.add(1, 2), 3)
 }
         "#,
     );
@@ -351,6 +351,7 @@ fn main() {
 fn test_import_builtin_io_module() {
     let result = run_vm(r#"
 import io
+import list
 
 fn main() {
   let args = io.args()
@@ -429,7 +430,7 @@ fn main() {
 fn test_multi_module_example() {
     let result = run_module_test(
         &[
-            ("math.silt", r#"
+            ("calc.silt", r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
 fn internal_helper(x) = x * 2
@@ -440,12 +441,12 @@ pub fn triple(x) = x * 3
             "#),
         ],
         r#"
-import math
+import calc
 import utils.{ double }
 
 fn main() {
-  let x = math.add(3, 4)
-  let y = math.square(x)
+  let x = calc.add(3, 4)
+  let y = calc.square(x)
   double(y)
 }
         "#,

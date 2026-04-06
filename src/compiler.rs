@@ -122,6 +122,8 @@ pub struct Compiler {
     compiling_modules: HashSet<String>,
     /// Warnings emitted during compilation.
     warnings: Vec<CompileWarning>,
+    /// Builtin modules that have been explicitly imported in this compilation unit.
+    imported_builtin_modules: HashSet<String>,
 }
 
 impl Compiler {
@@ -133,6 +135,7 @@ impl Compiler {
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
             warnings: Vec::new(),
+            imported_builtin_modules: HashSet::new(),
         }
     }
 
@@ -145,12 +148,21 @@ impl Compiler {
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
             warnings: Vec::new(),
+            imported_builtin_modules: HashSet::new(),
         }
     }
 
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[CompileWarning] {
         &self.warnings
+    }
+
+    /// Mark all builtin modules as imported (used by the REPL).
+    pub fn import_all_builtins(&mut self) {
+        for name in &["io", "string", "int", "float", "list", "map", "result",
+                       "option", "test", "channel", "task", "regex", "json", "set", "math"] {
+            self.imported_builtin_modules.insert(name.to_string());
+        }
     }
 
     // ── Public entry point ────────────────────────────────────────
@@ -447,8 +459,9 @@ impl Compiler {
         match target {
             ImportTarget::Module(name) => {
                 // Builtin modules (io, string, list, ...) are already registered
-                // in the VM's global table. Nothing to compile.
+                // in the VM's global table. Record the import for gating.
                 if module::is_builtin_module(name) {
+                    self.imported_builtin_modules.insert(name.clone());
                     return Ok(());
                 }
                 self.compile_file_module(name)?;
@@ -456,6 +469,7 @@ impl Compiler {
             }
             ImportTarget::Items(module_name, items) => {
                 if module::is_builtin_module(module_name) {
+                    self.imported_builtin_modules.insert(module_name.clone());
                     // For builtin modules, create aliases: bare "item" -> "module.item"
                     let span = Span::new(0, 0);
                     for item in items {
@@ -488,6 +502,7 @@ impl Compiler {
             }
             ImportTarget::Alias(module_name, alias) => {
                 if module::is_builtin_module(module_name) {
+                    self.imported_builtin_modules.insert(module_name.clone());
                     // Builtin alias: copy all "module.func" globals to "alias.func".
                     let span = Span::new(0, 0);
                     for func in module::builtin_module_functions(module_name) {
@@ -967,6 +982,14 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
+                    // Gate constructors that require module imports
+                    if let Some(required) = module::gated_constructor_module(name) {
+                        if !self.imported_builtin_modules.contains(required) {
+                            return Err(format!(
+                                "'{name}' requires `import {required}`"
+                            ));
+                        }
+                    }
                     let name_idx =
                         self.current_chunk().add_constant(Value::String(name.clone()));
                     self.current_chunk().emit_op(Op::GetGlobal, span);
@@ -976,7 +999,7 @@ impl Compiler {
 
             ExprKind::Call(callee, args) => {
                 // Check if this is a module-qualified builtin call like list.map(...)
-                if let Some(builtin_name) = self.extract_builtin_name(callee) {
+                if let Some(builtin_name) = self.extract_builtin_name(callee)? {
                     // Emit arguments first
                     for arg in args {
                         self.compile_expr(arg)?;
@@ -998,6 +1021,12 @@ impl Compiler {
                     };
                     if is_module_call {
                         if let ExprKind::Ident(module) = &receiver.kind {
+                            // Gate: require import for builtin modules
+                            if module::is_builtin_module(module) && !self.imported_builtin_modules.contains(module.as_str()) {
+                                return Err(format!(
+                                    "module '{module}' is not imported; add `import {module}` at the top of the file"
+                                ));
+                            }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
                             let name_idx = self.current_chunk().add_constant(Value::String(qualified));
@@ -1042,6 +1071,12 @@ impl Compiler {
                     let is_local = self.resolve_local(name).is_some()
                         || self.resolve_upvalue(name).is_some();
                     if !is_local {
+                        // Gate: require import for builtin modules
+                        if module::is_builtin_module(name) && !self.imported_builtin_modules.contains(name.as_str()) {
+                            return Err(format!(
+                                "module '{name}' is not imported; add `import {name}` at the top of the file"
+                            ));
+                        }
                         // Module-qualified global: list.map, string.length, etc.
                         let qualified = format!("{name}.{field}");
                         let name_idx =
@@ -1476,6 +1511,14 @@ impl Compiler {
             }
 
             Pattern::Constructor(name, fields) => {
+                // Gate constructors that require module imports
+                if let Some(required) = module::gated_constructor_module(name) {
+                    if !self.imported_builtin_modules.contains(required) {
+                        return Err(format!(
+                            "'{name}' requires `import {required}`"
+                        ));
+                    }
+                }
                 // Test: tag matches?
                 let idx = self.current_chunk().add_constant(Value::String(name.clone()));
                 self.current_chunk().emit_op(Op::TestTag, span);
@@ -1946,7 +1989,7 @@ impl Compiler {
         match &right.kind {
             ExprKind::Call(callee, args) => {
                 // Check if callee is a module-qualified builtin
-                if let Some(builtin_name) = self.extract_builtin_name(callee) {
+                if let Some(builtin_name) = self.extract_builtin_name(callee)? {
                     // left is already on stack, compile remaining args
                     for arg in args {
                         self.compile_expr(arg)?;
@@ -2050,7 +2093,7 @@ impl Compiler {
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
     /// return the qualified name. Only returns Some if the ident is NOT a
     /// local/upvalue AND belongs to a known builtin module.
-    fn extract_builtin_name(&self, callee: &Expr) -> Option<String> {
+    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, String> {
         if let ExprKind::FieldAccess(expr, field) = &callee.kind {
             if let ExprKind::Ident(module) = &expr.kind {
                 // Check if it's a local or upvalue first
@@ -2058,11 +2101,16 @@ impl Compiler {
                     && self.resolve_upvalue_peek(module).is_none()
                     && module::is_builtin_module(module)
                 {
-                    return Some(format!("{module}.{field}"));
+                    if !self.imported_builtin_modules.contains(module.as_str()) {
+                        return Err(format!(
+                            "module '{module}' is not imported; add `import {module}` at the top of the file"
+                        ));
+                    }
+                    return Ok(Some(format!("{module}.{field}")));
                 }
             }
         }
-        None
+        Ok(None)
     }
 
     // ── Context & scope helpers ───────────────────────────────────

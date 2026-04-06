@@ -1,3 +1,11 @@
+import float
+import int
+import list
+import math
+import option
+import result
+import string
+
 -- Recursive expression evaluator with simplification, RPN conversion, and complexity analysis.
 -- Demonstrates deep pattern matching, or-patterns, and custom Display traits on ADTs.
 

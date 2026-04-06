@@ -1,3 +1,9 @@
+import int
+import io
+import list
+import option
+import string
+
 -- Line-by-line diff tool using LCS (longest common subsequence) dynamic programming.
 -- Compares two text files and outputs unified-style diff with statistics.
 

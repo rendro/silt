@@ -1,3 +1,7 @@
+import float
+import list
+import math
+
 -- Trait showcase: custom Area and Perimeter traits on Shape ADTs,
 -- Display trait implementations, where-clause generics, and sorted collections.
 

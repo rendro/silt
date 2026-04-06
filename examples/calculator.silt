@@ -1,3 +1,10 @@
+import float
+import io
+import list
+import math
+import option
+import string
+
 -- Stack-based scientific calculator with history and undo.
 -- Supports arithmetic, sqrt, pow, trig, log, and constants (pi, e).
 

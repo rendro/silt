@@ -1,3 +1,10 @@
+import float
+import int
+import json
+import list
+import map
+import string
+
 -- JSON data pipeline that parses employee records, groups by department,
 -- computes salary statistics, filters by skill, and outputs summary JSON.
 

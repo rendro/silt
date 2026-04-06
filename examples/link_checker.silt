@@ -1,3 +1,8 @@
+import io
+import list
+import regex
+import string
+
 -- Markdown link checker that extracts [text](url) links from a file,
 -- classifies them by URL scheme, and reports valid/invalid counts.
 

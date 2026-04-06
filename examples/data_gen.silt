@@ -1,3 +1,11 @@
+import float
+import int
+import list
+import map
+import math
+import option
+import string
+
 -- Synthetic data generator using a linear congruential PRNG.
 -- Generates random student records, computes statistics (mean, median,
 -- standard deviation), and displays score/age histograms.

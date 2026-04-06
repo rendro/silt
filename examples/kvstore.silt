@@ -1,3 +1,9 @@
+import io
+import json
+import list
+import map
+import string
+
 -- Interactive key-value store with GET, SET, DEL, KEYS, COUNT, SAVE, and LOAD commands.
 -- Persists data as JSON.
 

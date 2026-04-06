@@ -1,3 +1,12 @@
+import float
+import int
+import io
+import list
+import map
+import option
+import result
+import string
+
 -- CSV data analyzer that parses student records and computes statistics,
 -- rankings, honor roll filtering, and grade distribution.
 

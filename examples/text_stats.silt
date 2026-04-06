@@ -1,3 +1,12 @@
+import float
+import int
+import io
+import list
+import map
+import option
+import regex
+import string
+
 -- Text file statistics: line count, word count, character count, unique words,
 -- average word length, longest/shortest words, and top-N frequency table.
 

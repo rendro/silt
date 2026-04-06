@@ -1,3 +1,11 @@
+import float
+import int
+import list
+import map
+import option
+import result
+import string
+
 -- Personal budget tracker with category totals, monthly summary, running balance,
 -- budget-vs-actual comparison, and spending forecast.
 

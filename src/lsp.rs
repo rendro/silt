@@ -1378,11 +1378,6 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
     ("Err", CompletionItemKind::CONSTRUCTOR),
     ("Some", CompletionItemKind::CONSTRUCTOR),
     ("None", CompletionItemKind::CONSTRUCTOR),
-    ("Stop", CompletionItemKind::CONSTRUCTOR),
-    ("Continue", CompletionItemKind::CONSTRUCTOR),
-    ("Message", CompletionItemKind::CONSTRUCTOR),
-    ("Closed", CompletionItemKind::CONSTRUCTOR),
-    ("Empty", CompletionItemKind::CONSTRUCTOR),
     ("true", CompletionItemKind::CONSTANT),
     ("false", CompletionItemKind::CONSTANT),
     // list
@@ -1415,6 +1410,7 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
     ("list.fold_until", CompletionItemKind::FUNCTION),
     ("list.unfold", CompletionItemKind::FUNCTION),
     // string
+    ("string.from", CompletionItemKind::FUNCTION),
     ("string.split", CompletionItemKind::FUNCTION),
     ("string.trim", CompletionItemKind::FUNCTION),
     ("string.join", CompletionItemKind::FUNCTION),

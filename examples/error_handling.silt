@@ -1,3 +1,7 @@
+import int
+import list
+import string
+
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 

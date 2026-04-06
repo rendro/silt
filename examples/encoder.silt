@@ -1,3 +1,11 @@
+import int
+import list
+import map
+import option
+import regex
+import result
+import string
+
 -- Encoding and cipher toolkit: Caesar cipher, ROT13, run-length encoding,
 -- and Atbash substitution cipher with round-trip verification.
 

@@ -1,3 +1,7 @@
+import channel
+import list
+import task
+
 fn main() {
   let ch = channel.new(10)
 

@@ -1541,6 +1541,16 @@ impl TypeChecker {
     }
 
     fn register_string_builtins(&mut self, env: &mut TypeEnv) {
+        // string.from: (a) -> String
+        {
+            let (a, av) = self.fresh_tv();
+            env.define("string.from".into(), Scheme {
+                vars: vec![av],
+                ty: Type::Fun(vec![a], Box::new(Type::String)),
+                constraints: vec![],
+            });
+        }
+
         // string.split: (String, String) -> List(String)
         env.define("string.split".into(), Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],

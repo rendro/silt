@@ -91,6 +91,7 @@ fn main() {
 #[test]
 fn test_fizzbuzz_with_pipe() {
     run_ok(r#"
+import list
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -178,6 +179,7 @@ fn main() {
 #[test]
 fn test_enum_and_trait() {
     run_ok(r#"
+import list
 type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -236,6 +238,7 @@ fn main() {
 #[test]
 fn test_record_filter_map() {
     run_ok(r#"
+import list
 type User {
   name: String,
   age: Int,
@@ -267,6 +270,7 @@ fn main() {
 #[test]
 fn test_module_access() {
     let result = run(r#"
+import string
 fn main() {
   let parts = "hello world" |> string.split(" ")
   parts
@@ -284,6 +288,9 @@ fn main() {
 #[test]
 fn test_error_handling_pipeline() {
     run_ok(r#"
+import int
+import list
+import string
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
@@ -350,6 +357,7 @@ fn main() {
 #[test]
 fn test_fold() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3, 4, 5]
   |> list.filter { x -> x > 2 }
@@ -436,6 +444,7 @@ fn main() {
 #[test]
 fn test_chan_send_receive_buffered() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -449,6 +458,7 @@ fn main() {
 #[test]
 fn test_chan_send_receive_multiple() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
@@ -466,6 +476,8 @@ fn main() {
 #[test]
 fn test_spawn_and_join() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch = channel.new(10)
 
@@ -486,6 +498,7 @@ fn main() {
 #[test]
 fn test_spawn_return_value() {
     let result = run(r#"
+import task
 fn main() {
   let h = task.spawn(fn() {
     42
@@ -499,6 +512,8 @@ fn main() {
 #[test]
 fn test_producer_consumer() {
     run_ok(r#"
+import channel
+import task
 fn main() {
   let ch = channel.new(10)
 
@@ -522,6 +537,8 @@ fn main() {
 #[test]
 fn test_channel_with_integers() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch = channel.new(5)
 
@@ -545,6 +562,7 @@ fn main() {
 #[test]
 fn test_cancel_task() {
     run_ok(r#"
+import task
 fn main() {
   let h = task.spawn(fn() {
     42
@@ -557,6 +575,7 @@ fn main() {
 #[test]
 fn test_select_expression() {
     let result = run(r#"
+import channel
 fn main() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
@@ -576,6 +595,8 @@ fn main() {
 #[test]
 fn test_select_with_spawn() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
@@ -598,6 +619,8 @@ fn main() {
 #[test]
 fn test_unbuffered_channel() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch = channel.new()
 
@@ -616,6 +639,8 @@ fn main() {
 #[test]
 fn test_multiple_spawns() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch = channel.new(10)
 
@@ -647,6 +672,7 @@ fn main() {
 #[test]
 fn test_channel_passing_complex_values() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(5)
   channel.send(ch, [1, 2, 3])
@@ -667,6 +693,8 @@ fn main() {
 #[test]
 fn test_spawn_with_closure_capture() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let x = 10
   let ch = channel.new(10)
@@ -689,6 +717,7 @@ fn main() {
 fn test_channel_close() {
     // After close, receive on empty channel returns Closed
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
@@ -708,6 +737,7 @@ fn main() {
 fn test_send_on_closed_channel_errors() {
     // Sending on closed channel should error
     let err = run_err(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.close(ch)
@@ -720,6 +750,7 @@ fn main() {
 #[test]
 fn test_try_send_success() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(1)
   channel.try_send(ch, 42)
@@ -731,6 +762,7 @@ fn main() {
 #[test]
 fn test_try_send_full() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(1)
   channel.send(ch, 1)
@@ -743,6 +775,7 @@ fn main() {
 #[test]
 fn test_try_receive_message() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -755,6 +788,7 @@ fn main() {
 #[test]
 fn test_try_receive_empty() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.try_receive(ch)
@@ -766,6 +800,7 @@ fn main() {
 #[test]
 fn test_channel_module_qualified() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -779,6 +814,7 @@ fn main() {
 #[test]
 fn test_channel_module_qualified_close() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 1)
@@ -797,6 +833,7 @@ fn main() {
 #[test]
 fn test_channel_module_try_send_receive() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(1)
   channel.try_send(ch, 99)
@@ -1032,6 +1069,7 @@ fn main() {
 #[test]
 fn test_list_append() {
     let result = run(r#"
+import list
 fn main() {
   list.append([1, 2, 3], 4)
 }
@@ -1042,6 +1080,7 @@ fn main() {
 #[test]
 fn test_list_concat() {
     let result = run(r#"
+import list
 fn main() {
   list.concat([1, 2], [3, 4])
 }
@@ -1053,49 +1092,57 @@ fn main() {
 
 #[test]
 fn test_list_get() {
-    let result = run(r#"fn main() { list.get([10, 20, 30], 1) }"#);
+    let result = run(r#"import list
+fn main() { list.get([10, 20, 30], 1) }"#);
     assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(20)]));
 }
 
 #[test]
 fn test_list_get_out_of_bounds() {
-    let result = run(r#"fn main() { list.get([1, 2], 5) }"#);
+    let result = run(r#"import list
+fn main() { list.get([1, 2], 5) }"#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
 
 #[test]
 fn test_string_index_of() {
-    let result = run(r#"fn main() { string.index_of("hello world", "world") }"#);
+    let result = run(r#"import string
+fn main() { string.index_of("hello world", "world") }"#);
     assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(6)]));
 }
 
 #[test]
 fn test_string_index_of_not_found() {
-    let result = run(r#"fn main() { string.index_of("hello", "xyz") }"#);
+    let result = run(r#"import string
+fn main() { string.index_of("hello", "xyz") }"#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
 
 #[test]
 fn test_string_slice() {
-    let result = run(r#"fn main() { string.slice("hello world", 0, 5) }"#);
+    let result = run(r#"import string
+fn main() { string.slice("hello world", 0, 5) }"#);
     assert_eq!(result, Value::String("hello".into()));
 }
 
 #[test]
 fn test_list_take() {
-    let result = run(r#"fn main() { list.take([1, 2, 3, 4, 5], 3) }"#);
+    let result = run(r#"import list
+fn main() { list.take([1, 2, 3, 4, 5], 3) }"#);
     assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
 }
 
 #[test]
 fn test_list_drop() {
-    let result = run(r#"fn main() { list.drop([1, 2, 3, 4, 5], 2) }"#);
+    let result = run(r#"import list
+fn main() { list.drop([1, 2, 3, 4, 5], 2) }"#);
     assert_eq!(result, Value::List(Arc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)])));
 }
 
 #[test]
 fn test_list_enumerate() {
-    let result = run(r#"fn main() { list.enumerate(["a", "b"]) }"#);
+    let result = run(r#"import list
+fn main() { list.enumerate(["a", "b"]) }"#);
     assert_eq!(result, Value::List(Arc::new(vec![
         Value::Tuple(vec![Value::Int(0), Value::String("a".into())]),
         Value::Tuple(vec![Value::Int(1), Value::String("b".into())]),
@@ -1104,7 +1151,8 @@ fn test_list_enumerate() {
 
 #[test]
 fn test_float_min_max() {
-    let result = run(r#"fn main() { (float.min(3.14, 2.71), float.max(3.14, 2.71)) }"#);
+    let result = run(r#"import float
+fn main() { (float.min(3.14, 2.71), float.max(3.14, 2.71)) }"#);
     assert_eq!(result, Value::Tuple(vec![Value::Float(2.71), Value::Float(3.14)]));
 }
 
@@ -1113,6 +1161,8 @@ fn test_float_min_max() {
 #[test]
 fn test_sort_by() {
     let result = run(r#"
+import list
+import string
 fn main() {
   let words = ["banana", "apple", "cherry"]
   words |> list.sort_by { w -> string.length(w) }
@@ -1222,6 +1272,7 @@ fn main() {
 #[test]
 fn test_list_flat_map() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3] |> list.flat_map { n -> [n, n * 10] }
 }
@@ -1238,6 +1289,7 @@ fn main() {
 #[test]
 fn test_list_filter_map() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3, 4, 5] |> list.filter_map { n ->
     match n % 2 == 0 {
@@ -1255,6 +1307,7 @@ fn main() {
 #[test]
 fn test_list_filter_map_all_none() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3] |> list.filter_map { _ -> None }
 }
@@ -1265,6 +1318,7 @@ fn main() {
 #[test]
 fn test_list_filter_map_all_some() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3] |> list.filter_map { n -> Some(n + 100) }
 }
@@ -1279,6 +1333,7 @@ fn main() {
 #[test]
 fn test_list_any() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3, 4] |> list.any { x -> x > 3 }
 }
@@ -1289,6 +1344,7 @@ fn main() {
 #[test]
 fn test_list_all() {
     let result = run(r#"
+import list
 fn main() {
   [2, 4, 6] |> list.all { x -> x > 0 }
 }
@@ -1301,6 +1357,7 @@ fn main() {
 #[test]
 fn test_string_pad_left() {
     let result = run(r#"
+import string
 fn main() {
   string.pad_left("42", 5, "0")
 }
@@ -1311,6 +1368,7 @@ fn main() {
 #[test]
 fn test_string_pad_right() {
     let result = run(r#"
+import string
 fn main() {
   string.pad_right("hi", 5, ".")
 }
@@ -1429,6 +1487,7 @@ fn main() {
 #[test]
 fn test_pin_channel_equality() {
     let result = run(r#"
+import channel
 fn main() {
   let ch1 = channel.new(1)
   let ch2 = channel.new(1)
@@ -1476,6 +1535,7 @@ fn main() {
 #[test]
 fn test_channel_select_basic() {
     let result = run(r#"
+import channel
 fn main() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
@@ -1493,6 +1553,8 @@ fn main() {
 #[test]
 fn test_channel_select_with_spawn() {
     let result = run(r#"
+import channel
+import task
 fn main() {
   let ch1 = channel.new(10)
   let ch2 = channel.new(10)
@@ -1515,6 +1577,7 @@ fn main() {
 #[test]
 fn test_channel_select_returns_tuple() {
     let result = run(r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -1549,6 +1612,7 @@ fn main() {
 #[test]
 fn test_loop_collect_squares() {
     let result = run(r#"
+import list
 fn main() {
   loop i = 0, acc = [] {
     match i >= 5 {
@@ -1676,6 +1740,7 @@ fn main() {
 #[test]
 fn test_loop_with_guardless_match() {
     let result = run(r#"
+import list
 fn main() {
   loop n = 1, acc = [] {
     match {
@@ -1697,6 +1762,7 @@ fn main() {
 #[test]
 fn test_fold_until_stop() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3, 4, 5]
   |> list.fold_until(0) { acc, x ->
@@ -1713,6 +1779,7 @@ fn main() {
 #[test]
 fn test_fold_until_all_continue() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3]
   |> list.fold_until(0) { acc, x -> Continue(acc + x) }
@@ -1724,6 +1791,7 @@ fn main() {
 #[test]
 fn test_fold_until_immediate_stop() {
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3]
   |> list.fold_until(99) { acc, x -> Stop(acc) }
@@ -1735,6 +1803,7 @@ fn main() {
 #[test]
 fn test_fold_until_find_first_even() {
     let result = run(r#"
+import list
 fn main() {
   [1, 3, 5, 4, 6]
   |> list.fold_until(None) { acc, x ->
@@ -1756,6 +1825,7 @@ fn main() {
 #[test]
 fn test_unfold_range() {
     let result = run(r#"
+import list
 fn main() {
   list.unfold(1) { n ->
     match n > 5 {
@@ -1780,6 +1850,7 @@ fn main() {
 #[test]
 fn test_unfold_fibonacci() {
     let result = run(r#"
+import list
 fn main() {
   list.unfold((0, 1)) { state ->
     let (a, b) = state
@@ -1808,6 +1879,7 @@ fn main() {
 #[test]
 fn test_unfold_empty() {
     let result = run(r#"
+import list
 fn main() {
   list.unfold(0) { n -> None }
 }
@@ -1818,6 +1890,7 @@ fn main() {
 #[test]
 fn test_unfold_powers_of_two() {
     let result = run(r#"
+import list
 fn main() {
   list.unfold(1) { n ->
     match n > 32 {
@@ -1845,6 +1918,7 @@ fn main() {
 #[test]
 fn test_int_to_string() {
     let result = run(r#"
+import int
 fn main() {
   int.to_string(42)
 }
@@ -1855,6 +1929,7 @@ fn main() {
 #[test]
 fn test_int_to_string_negative() {
     let result = run(r#"
+import int
 fn main() {
   int.to_string(-7)
 }
@@ -1867,6 +1942,7 @@ fn main() {
 #[test]
 fn test_float_to_string_no_decimals_arg() {
     let result = run(r#"
+import float
 fn main() {
   float.to_string(3.14, 2)
 }
@@ -1877,6 +1953,7 @@ fn main() {
 #[test]
 fn test_float_to_string_with_decimals() {
     let result = run(r#"
+import float
 fn main() {
   float.to_string(3.14159, 2)
 }
@@ -1887,6 +1964,7 @@ fn main() {
 #[test]
 fn test_float_to_string_zero_decimals() {
     let result = run(r#"
+import float
 fn main() {
   float.to_string(3.7, 0)
 }
@@ -1897,6 +1975,7 @@ fn main() {
 #[test]
 fn test_float_to_string_padding() {
     let result = run(r#"
+import float
 fn main() {
   float.to_string(3.1, 4)
 }
@@ -1909,6 +1988,7 @@ fn main() {
 #[test]
 fn test_float_to_int() {
     let result = run(r#"
+import float
 fn main() {
   float.to_int(3.7)
 }
@@ -1921,6 +2001,7 @@ fn main() {
 #[test]
 fn test_map_int_keys() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ 1: "one", 2: "two", 3: "three" }
   map.get(m, 2)
@@ -1935,6 +2016,7 @@ fn main() {
 #[test]
 fn test_map_bool_keys() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ true: "yes", false: "no" }
   map.get(m, false)
@@ -1949,6 +2031,7 @@ fn main() {
 #[test]
 fn test_map_mixed_key_operations() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ 1: "a", 2: "b" }
   let m2 = map.set(m, 3, "c")
@@ -1961,6 +2044,7 @@ fn main() {
 #[test]
 fn test_map_int_key_delete() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ 1: "a", 2: "b", 3: "c" }
   let m2 = map.delete(m, 2)
@@ -1973,6 +2057,7 @@ fn main() {
 #[test]
 fn test_map_keys_returns_non_string() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ 1: "one", 2: "two" }
   map.keys(m)
@@ -1987,6 +2072,7 @@ fn main() {
 #[test]
 fn test_map_tuple_keys() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ (0, 0): "origin", (1, 0): "right", (0, 1): "up" }
   map.get(m, (1, 0))
@@ -2001,6 +2087,7 @@ fn main() {
 #[test]
 fn test_map_string_keys_still_work() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
   map.get(m, "name")
@@ -2015,6 +2102,7 @@ fn main() {
 #[test]
 fn test_map_merge_mixed_keys() {
     let result = run(r#"
+import map
 fn main() {
   let m1 = #{ 1: "a", 2: "b" }
   let m2 = #{ 2: "B", 3: "c" }
@@ -2238,6 +2326,8 @@ fn main() { 7 / 2.0 }
 #[test]
 fn test_mixed_arithmetic_in_pipeline() {
     let result = run(r#"
+import float
+import int
 fn main() {
   let total = 100
   let ratio = int.to_float(total) / 3.0
@@ -2328,6 +2418,7 @@ fn main() { 3.compare(5) }
 #[test]
 fn test_math_sqrt() {
     let result = run(r#"
+import math
 fn main() { math.sqrt(16.0) }
     "#);
     assert_eq!(result, Value::Float(4.0));
@@ -2336,6 +2427,7 @@ fn main() { math.sqrt(16.0) }
 #[test]
 fn test_math_pow() {
     let result = run(r#"
+import math
 fn main() { math.pow(2.0, 10.0) }
     "#);
     assert_eq!(result, Value::Float(1024.0));
@@ -2344,6 +2436,7 @@ fn main() { math.pow(2.0, 10.0) }
 #[test]
 fn test_math_pi() {
     let result = run(r#"
+import math
 fn main() { math.pi }
     "#);
     assert_eq!(result, Value::Float(std::f64::consts::PI));
@@ -2352,6 +2445,7 @@ fn main() { math.pi }
 #[test]
 fn test_math_trig() {
     let result = run(r#"
+import math
 fn main() { math.sin(0.0) }
     "#);
     assert_eq!(result, Value::Float(0.0));
@@ -2360,6 +2454,7 @@ fn main() { math.sin(0.0) }
 #[test]
 fn test_math_log() {
     let result = run(r#"
+import math
 fn main() { math.log(math.e) }
     "#);
     // ln(e) = 1.0
@@ -2375,6 +2470,7 @@ fn main() { math.log(math.e) }
 #[test]
 fn test_map_filter() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ "a": 1, "b": 2, "c": 3 }
   let big = map.filter(m) { k, v -> v > 1 }
@@ -2387,6 +2483,7 @@ fn main() {
 #[test]
 fn test_map_map() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ "x": 1, "y": 2 }
   let doubled = map.map(m) { k, v -> (k, v * 2) }
@@ -2399,6 +2496,7 @@ fn main() {
 #[test]
 fn test_map_entries_roundtrip() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let entries = map.entries(m)
@@ -2414,6 +2512,8 @@ fn main() {
 #[test]
 fn test_list_group_by() {
     let result = run(r#"
+import list
+import map
 fn main() {
   let xs = [1, 2, 3, 4, 5, 6]
   let groups = xs |> list.group_by { x -> x % 2 }
@@ -2430,6 +2530,7 @@ fn main() {
 #[test]
 fn test_regex_is_match() {
     let result = run(r#"
+import regex
 fn main() {
   regex.is_match("\\d+", "abc 123 def")
 }
@@ -2440,6 +2541,7 @@ fn main() {
 #[test]
 fn test_regex_is_match_no_match() {
     let result = run(r#"
+import regex
 fn main() {
   regex.is_match("\\d+", "no numbers here")
 }
@@ -2450,6 +2552,7 @@ fn main() {
 #[test]
 fn test_regex_find() {
     let result = run(r#"
+import regex
 fn main() {
   regex.find("\\d+", "abc 123 def 456")
 }
@@ -2460,6 +2563,7 @@ fn main() {
 #[test]
 fn test_regex_find_all() {
     let result = run(r#"
+import regex
 fn main() {
   regex.find_all("\\d+", "abc 123 def 456")
 }
@@ -2473,6 +2577,7 @@ fn main() {
 #[test]
 fn test_regex_split() {
     let result = run(r#"
+import regex
 fn main() {
   regex.split("\\s+", "hello   world   foo")
 }
@@ -2487,6 +2592,7 @@ fn main() {
 #[test]
 fn test_regex_replace() {
     let result = run(r#"
+import regex
 fn main() {
   regex.replace("\\d+", "abc 123 def 456", "NUM")
 }
@@ -2497,6 +2603,7 @@ fn main() {
 #[test]
 fn test_regex_replace_all() {
     let result = run(r#"
+import regex
 fn main() {
   regex.replace_all("\\d+", "abc 123 def 456", "NUM")
 }
@@ -2509,6 +2616,7 @@ fn main() {
 #[test]
 fn test_json_parse_record() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
@@ -2523,6 +2631,7 @@ fn main() {
 #[test]
 fn test_json_parse_record_int_field() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
@@ -2537,6 +2646,7 @@ fn main() {
 #[test]
 fn test_json_parse_nested_record() {
     let result = run(r#"
+import json
 type Address { city: String, zip: String }
 type User { name: String, address: Address }
 fn main() {
@@ -2552,6 +2662,8 @@ fn main() {
 #[test]
 fn test_json_parse_list_field() {
     let result = run(r#"
+import json
+import list
 type User { name: String, skills: List(String) }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\", \"skills\": [\"go\", \"rust\"]\}") {
@@ -2566,6 +2678,7 @@ fn main() {
 #[test]
 fn test_json_parse_option_field_present() {
     let result = run(r#"
+import json
 type User { name: String, email: Option(String) }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\", \"email\": \"a@b.com\"\}") {
@@ -2580,6 +2693,7 @@ fn main() {
 #[test]
 fn test_json_parse_option_field_null() {
     let result = run(r#"
+import json
 type User { name: String, email: Option(String) }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\", \"email\": null\}") {
@@ -2594,6 +2708,7 @@ fn main() {
 #[test]
 fn test_json_parse_option_field_missing() {
     let result = run(r#"
+import json
 type User { name: String, email: Option(String) }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\"\}") {
@@ -2608,6 +2723,7 @@ fn main() {
 #[test]
 fn test_json_parse_missing_field_error() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   match json.parse(User, "\{\"name\": \"Alice\"\}") {
@@ -2622,6 +2738,7 @@ fn main() {
 #[test]
 fn test_json_parse_wrong_type_error() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   match json.parse(User, "\{\"name\": 42, \"age\": 30\}") {
@@ -2636,6 +2753,7 @@ fn main() {
 #[test]
 fn test_json_parse_not_object_error() {
     let result = run(r#"
+import json
 type User { name: String }
 fn main() {
   match json.parse(User, "[1,2,3]") {
@@ -2650,6 +2768,7 @@ fn main() {
 #[test]
 fn test_json_parse_invalid_json_error() {
     let result = run(r#"
+import json
 type User { name: String }
 fn main() {
   match json.parse(User, "not json") {
@@ -2664,6 +2783,8 @@ fn main() {
 #[test]
 fn test_json_parse_list_basic() {
     let result = run(r#"
+import json
+import list
 type Employee { name: String, department: String, salary: Int }
 fn main() {
   let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
@@ -2679,6 +2800,8 @@ fn main() {
 #[test]
 fn test_json_parse_list_access_fields() {
     let result = run(r#"
+import json
+import list
 type Employee { name: String, salary: Int }
 fn main() {
   let json_str = "[\{\"name\": \"Alice\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"salary\": 95000\}]"
@@ -2697,6 +2820,8 @@ fn main() {
 #[test]
 fn test_json_parse_list_empty() {
     let result = run(r#"
+import json
+import list
 type Employee { name: String }
 fn main() {
   match json.parse_list(Employee, "[]") {
@@ -2711,6 +2836,7 @@ fn main() {
 #[test]
 fn test_json_parse_list_not_array_error() {
     let result = run(r#"
+import json
 type Employee { name: String }
 fn main() {
   match json.parse_list(Employee, "\{\"name\": \"Alice\"\}") {
@@ -2725,6 +2851,7 @@ fn main() {
 #[test]
 fn test_json_parse_list_invalid_field_error() {
     let result = run(r#"
+import json
 type Employee { name: String, salary: Int }
 fn main() {
   match json.parse_list(Employee, "[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]") {
@@ -2739,6 +2866,8 @@ fn main() {
 #[test]
 fn test_json_parse_list_nested_records() {
     let result = run(r#"
+import json
+import list
 type Address { city: String, zip: String }
 type Person { name: String, address: Address }
 fn main() {
@@ -2758,6 +2887,7 @@ fn main() {
 #[test]
 fn test_json_stringify() {
     let result = run(r#"
+import json
 fn main() {
   let data = #{ "name": "Bob", "age": 25 }
   json.stringify(data)
@@ -2772,6 +2902,7 @@ fn main() {
 #[test]
 fn test_json_stringify_record() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   let u = User { name: "Alice", age: 30 }
@@ -2788,6 +2919,7 @@ fn main() {
 #[test]
 fn test_json_roundtrip_record() {
     let result = run(r#"
+import json
 type User { name: String, age: Int }
 fn main() {
   let u = User { name: "Carol", age: 25 }
@@ -2804,6 +2936,7 @@ fn main() {
 #[test]
 fn test_json_pretty() {
     let result = run(r#"
+import json
 fn main() {
   let data = #{ "a": 1 }
   json.pretty(data)
@@ -2820,6 +2953,7 @@ fn main() {
 #[test]
 fn test_regex_captures() {
     let result = run(r#"
+import regex
 fn main() {
   regex.captures("(\\w+)@(\\w+)", "user@host")
 }
@@ -2836,6 +2970,7 @@ fn main() {
 #[test]
 fn test_regex_captures_no_match() {
     let result = run(r#"
+import regex
 fn main() {
   regex.captures("(\\d+)", "no numbers")
 }
@@ -2848,6 +2983,7 @@ fn main() {
 #[test]
 fn test_assert_with_message() {
     let err = run_err(r#"
+import test
 fn main() {
   test.assert(false, "should be true")
 }
@@ -2858,6 +2994,7 @@ fn main() {
 #[test]
 fn test_assert_eq_with_message() {
     let err = run_err(r#"
+import test
 fn main() {
   test.assert_eq(1, 2, "1 + 0")
 }
@@ -2869,6 +3006,7 @@ fn main() {
 #[test]
 fn test_assert_ne_with_message() {
     let err = run_err(r#"
+import test
 fn main() {
   test.assert_ne(5, 5, "should differ")
 }
@@ -2879,6 +3017,7 @@ fn main() {
 #[test]
 fn test_assert_without_message_still_works() {
     run_ok(r#"
+import test
 fn main() {
   test.assert(true)
   test.assert_eq(1, 1)
@@ -2891,6 +3030,8 @@ fn main() {
 fn test_parameterized_test_pattern() {
     // Demonstrates the idiomatic parameterized test pattern
     run_ok(r#"
+import list
+import test
 fn main() {
   let cases = [(1, 2, 3), (0, 0, 0), (10, -10, 0)]
   cases |> list.each { (a, b, expected) ->
@@ -2906,6 +3047,7 @@ fn main() {
 fn test_and_short_circuit() {
     // false && panic() should NOT panic — right side not evaluated
     run_ok(r#"
+import test
 fn main() {
   let result = false && panic("should not reach")
   test.assert_eq(result, false)
@@ -2917,6 +3059,7 @@ fn main() {
 fn test_or_short_circuit() {
     // true || panic() should NOT panic — right side not evaluated
     run_ok(r#"
+import test
 fn main() {
   let result = true || panic("should not reach")
   test.assert_eq(result, true)
@@ -2948,6 +3091,7 @@ fn main() {
 fn test_underscore_trailing_closure_param() {
     // { _ -> expr } as a trailing closure — the core fix
     let result = run(r#"
+import list
 fn main() {
   [1, 2, 3] |> list.map { _ -> 0 }
 }
@@ -2974,6 +3118,7 @@ fn main() {
 fn test_underscore_second_closure_param() {
     // { x, _ -> expr } — regression check, already worked
     let result = run(r#"
+import list
 fn main() {
   [(1, "a"), (2, "b")] |> list.map { (x, _) -> x }
 }
@@ -3004,6 +3149,7 @@ fn main() {
 #[test]
 fn test_inspect_int() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(42)
 }
@@ -3014,6 +3160,7 @@ fn main() {
 #[test]
 fn test_inspect_float() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(3.14)
 }
@@ -3024,6 +3171,7 @@ fn main() {
 #[test]
 fn test_inspect_bool() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(true)
 }
@@ -3034,6 +3182,7 @@ fn main() {
 #[test]
 fn test_inspect_string() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect("hello")
 }
@@ -3045,6 +3194,7 @@ fn main() {
 #[test]
 fn test_inspect_list() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect([1, 2, 3])
 }
@@ -3055,6 +3205,7 @@ fn main() {
 #[test]
 fn test_inspect_nested_list() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect([[1, 2], [3, 4]])
 }
@@ -3065,6 +3216,7 @@ fn main() {
 #[test]
 fn test_inspect_list_of_strings() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(["a", "b", "c"])
 }
@@ -3075,6 +3227,7 @@ fn main() {
 #[test]
 fn test_inspect_map() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(#{"a": 1})
 }
@@ -3085,6 +3238,7 @@ fn main() {
 #[test]
 fn test_inspect_variant_some() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(Some(42))
 }
@@ -3095,6 +3249,7 @@ fn main() {
 #[test]
 fn test_inspect_variant_none() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(None)
 }
@@ -3105,6 +3260,7 @@ fn main() {
 #[test]
 fn test_inspect_variant_ok() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(Ok("hi"))
 }
@@ -3115,6 +3271,7 @@ fn main() {
 #[test]
 fn test_inspect_variant_err() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(Err("oops"))
 }
@@ -3125,6 +3282,7 @@ fn main() {
 #[test]
 fn test_inspect_tuple() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect((1, "two"))
 }
@@ -3135,6 +3293,7 @@ fn main() {
 #[test]
 fn test_inspect_record() {
     let result = run(r#"
+import io
 type User { name: String, age: Int }
 
 fn main() {
@@ -3148,6 +3307,7 @@ fn main() {
 #[test]
 fn test_inspect_unit() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(())
 }
@@ -3158,6 +3318,7 @@ fn main() {
 #[test]
 fn test_inspect_closure() {
     let result = run(r#"
+import io
 fn main() {
   let f = { x -> x + 1 }
   io.inspect(f)
@@ -3169,6 +3330,7 @@ fn main() {
 #[test]
 fn test_inspect_nested_structure() {
     let result = run(r#"
+import io
 fn main() {
   io.inspect(Some([1, 2, 3]))
 }
@@ -3394,6 +3556,8 @@ fn test_fanout_round_robin_channel_each() {
     // channel, messages are distributed in round-robin order rather
     // than all going to the first worker.
     let result = run(r#"
+import channel
+import task
 fn main() {
   let jobs = channel.new(10)
   let results = channel.new(10)
@@ -3466,6 +3630,8 @@ fn test_fanout_single_receive_per_worker() {
     // When each worker does a single receive, all workers should get
     // a message (not just the first worker).
     let result = run(r#"
+import channel
+import task
 fn main() {
   let jobs = channel.new(10)
   let results = channel.new(10)
@@ -3508,6 +3674,7 @@ fn main() {
 #[test]
 fn test_string_is_empty_true() {
     let result = run(r#"
+import string
 fn main() { string.is_empty("") }
     "#);
     assert_eq!(result, Value::Bool(true));
@@ -3516,6 +3683,7 @@ fn main() { string.is_empty("") }
 #[test]
 fn test_string_is_empty_false() {
     let result = run(r#"
+import string
 fn main() { string.is_empty("hi") }
     "#);
     assert_eq!(result, Value::Bool(false));
@@ -3526,6 +3694,7 @@ fn main() { string.is_empty("hi") }
 #[test]
 fn test_string_is_alpha() {
     let result = run(r#"
+import string
 fn main() { (string.is_alpha("a"), string.is_alpha("5"), string.is_alpha("")) }
     "#);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false), Value::Bool(false)]));
@@ -3534,6 +3703,7 @@ fn main() { (string.is_alpha("a"), string.is_alpha("5"), string.is_alpha("")) }
 #[test]
 fn test_string_is_digit() {
     let result = run(r#"
+import string
 fn main() { (string.is_digit("7"), string.is_digit("x")) }
     "#);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
@@ -3542,6 +3712,7 @@ fn main() { (string.is_digit("7"), string.is_digit("x")) }
 #[test]
 fn test_string_is_upper_lower() {
     let result = run(r#"
+import string
 fn main() { (string.is_upper("A"), string.is_upper("a"), string.is_lower("z"), string.is_lower("Z")) }
     "#);
     assert_eq!(result, Value::Tuple(vec![
@@ -3552,6 +3723,7 @@ fn main() { (string.is_upper("A"), string.is_upper("a"), string.is_lower("z"), s
 #[test]
 fn test_string_is_alnum() {
     let result = run(r#"
+import string
 fn main() { (string.is_alnum("a"), string.is_alnum("3"), string.is_alnum("!")) }
     "#);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(false)]));
@@ -3560,6 +3732,7 @@ fn main() { (string.is_alnum("a"), string.is_alnum("3"), string.is_alnum("!")) }
 #[test]
 fn test_string_is_whitespace() {
     let result = run(r#"
+import string
 fn main() { (string.is_whitespace(" "), string.is_whitespace("a")) }
     "#);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
@@ -3570,6 +3743,8 @@ fn main() { (string.is_whitespace(" "), string.is_whitespace("a")) }
 #[test]
 fn test_map_each_iterates() {
     let result = run(r#"
+import channel
+import map
 fn main() {
   let m = #{"a": 1, "b": 2}
   let ch = channel.new(10)
@@ -3585,6 +3760,7 @@ fn main() {
 #[test]
 fn test_map_each_empty() {
     let result = run(r#"
+import map
 fn main() {
   let m = #{}
   map.each(m) { k, v -> panic("should not run") }
@@ -3599,6 +3775,7 @@ fn main() {
 #[test]
 fn test_set_literal() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3]
   set.length(s)
@@ -3610,6 +3787,7 @@ fn main() {
 #[test]
 fn test_set_empty() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[]
   set.length(s)
@@ -3621,6 +3799,7 @@ fn main() {
 #[test]
 fn test_set_deduplication() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 2, 3, 3, 3]
   set.length(s)
@@ -3632,6 +3811,7 @@ fn main() {
 #[test]
 fn test_set_contains() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3]
   (set.contains(s, 2), set.contains(s, 4))
@@ -3643,6 +3823,7 @@ fn main() {
 #[test]
 fn test_set_insert() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2]
   let s2 = set.insert(s, 3)
@@ -3655,6 +3836,7 @@ fn main() {
 #[test]
 fn test_set_remove() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3]
   let s2 = set.remove(s, 2)
@@ -3667,6 +3849,7 @@ fn main() {
 #[test]
 fn test_set_union() {
     let result = run(r#"
+import set
 fn main() {
   let a = #[1, 2, 3]
   let b = #[3, 4, 5]
@@ -3679,6 +3862,7 @@ fn main() {
 #[test]
 fn test_set_intersection() {
     let result = run(r#"
+import set
 fn main() {
   let a = #[1, 2, 3, 4]
   let b = #[3, 4, 5, 6]
@@ -3692,6 +3876,7 @@ fn main() {
 #[test]
 fn test_set_difference() {
     let result = run(r#"
+import set
 fn main() {
   let a = #[1, 2, 3]
   let b = #[2, 3, 4]
@@ -3704,6 +3889,7 @@ fn main() {
 #[test]
 fn test_set_is_subset() {
     let result = run(r#"
+import set
 fn main() {
   let a = #[1, 2]
   let b = #[1, 2, 3]
@@ -3716,6 +3902,7 @@ fn main() {
 #[test]
 fn test_set_from_list() {
     let result = run(r#"
+import set
 fn main() {
   let xs = [3, 1, 2, 1, 3]
   let s = set.from_list(xs)
@@ -3731,6 +3918,7 @@ fn main() {
 #[test]
 fn test_set_to_list() {
     let result = run(r#"
+import set
 fn main() {
   set.to_list(#[3, 1, 2])
 }
@@ -3741,6 +3929,7 @@ fn main() {
 #[test]
 fn test_set_map() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3]
   set.to_list(set.map(s) { x -> x * 10 })
@@ -3752,6 +3941,7 @@ fn main() {
 #[test]
 fn test_set_filter() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3, 4, 5]
   set.to_list(set.filter(s) { x -> x > 3 })
@@ -3763,6 +3953,7 @@ fn main() {
 #[test]
 fn test_set_each() {
     run_ok(r#"
+import set
 fn main() {
   let s = #[1, 2, 3]
   set.each(s) { x -> println(x) }
@@ -3773,6 +3964,7 @@ fn main() {
 #[test]
 fn test_set_fold() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[1, 2, 3, 4]
   set.fold(s, 0) { acc, x -> acc + x }
@@ -3784,6 +3976,7 @@ fn main() {
 #[test]
 fn test_set_with_strings() {
     let result = run(r#"
+import set
 fn main() {
   let s = #["hello", "world", "hello"]
   (set.length(s), set.contains(s, "hello"))
@@ -3795,6 +3988,7 @@ fn main() {
 #[test]
 fn test_set_with_tuples() {
     let result = run(r#"
+import set
 fn main() {
   let s = #[(1, 2), (3, 4), (1, 2)]
   set.length(s)
@@ -3806,6 +4000,7 @@ fn main() {
 #[test]
 fn test_set_new() {
     let result = run(r#"
+import set
 fn main() {
   let s = set.new()
   let s2 = set.insert(s, 42)
@@ -3818,6 +4013,7 @@ fn main() {
 #[test]
 fn test_set_display() {
     let result = run(r#"
+import io
 fn main() {
   let s = #[3, 1, 2]
   io.inspect(s)

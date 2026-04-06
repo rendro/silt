@@ -191,11 +191,26 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         }
     }
 
+    // Separate imports from other declarations, sort imports alphabetically.
+    let mut import_strs: Vec<String> = Vec::new();
+    let mut has_imports = false;
+
     let formatted_decls: Vec<String> = program
         .decls
         .iter()
         .map(|d| format_decl(d, 0))
         .collect();
+
+    // Collect and sort import strings; track which decl indices are imports.
+    let mut is_import = vec![false; program.decls.len()];
+    for (i, decl) in program.decls.iter().enumerate() {
+        if matches!(decl, Decl::Import(_)) {
+            import_strs.push(formatted_decls[i].clone());
+            is_import[i] = true;
+            has_imports = true;
+        }
+    }
+    import_strs.sort();
 
     let mut result = String::new();
 
@@ -208,21 +223,35 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         result.push('\n');
     }
 
-    for (i, decl_str) in formatted_decls.iter().enumerate() {
+    // Emit sorted imports grouped together (single newline between them)
+    for (i, imp) in import_strs.iter().enumerate() {
         if i > 0 {
-            // Insert separator: blank line, then any comments, then blank line
-            if buckets[i].is_empty() {
-                result.push_str("\n\n");
-            } else {
-                result.push_str("\n\n");
-                for c in &buckets[i] {
-                    result.push_str(&c.text);
-                    result.push('\n');
-                }
+            result.push('\n');
+        }
+        result.push_str(imp);
+    }
+
+    // Emit non-import declarations with blank lines between them
+    let mut first_non_import = true;
+    for (i, decl_str) in formatted_decls.iter().enumerate() {
+        if is_import[i] {
+            continue;
+        }
+        if has_imports || !first_non_import {
+            // Blank line separator
+            result.push_str("\n\n");
+        }
+        // Insert any comments that belong before this declaration
+        // (skip bucket[0] since it was already emitted above)
+        if i > 0 && !buckets[i].is_empty() {
+            for c in &buckets[i] {
+                result.push_str(&c.text);
                 result.push('\n');
             }
+            result.push('\n');
         }
         result.push_str(decl_str);
+        first_non_import = false;
     }
 
     // Comments after last declaration

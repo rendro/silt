@@ -336,7 +336,7 @@ impl Vm {
 
         // All builtin function names
         let builtin_names = [
-            "print", "println", "io.inspect", "panic", "to_string", "type_of",
+            "print", "println", "io.inspect", "panic",
             "list.map", "list.filter", "list.each", "list.fold",
             "list.find", "list.zip", "list.flatten", "list.sort_by",
             "list.flat_map", "list.filter_map", "list.any", "list.all",
@@ -350,6 +350,7 @@ impl Vm {
             "result.flatten", "result.flat_map", "result.is_ok", "result.is_err",
             "option.map", "option.unwrap_or", "option.to_result",
             "option.is_some", "option.is_none", "option.flat_map",
+            "string.from",
             "string.split", "string.trim", "string.trim_start", "string.trim_end",
             "string.char_code", "string.from_char_code",
             "string.contains", "string.replace", "string.join",
@@ -2251,18 +2252,6 @@ impl Vm {
                     let msg = args.first().map(|v| v.to_string()).unwrap_or_default();
                     Err(VmError::new(format!("panic: {msg}")))
                 }
-                "to_string" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new("to_string expects 1 argument".into()));
-                    }
-                    Ok(Value::String(self.display_value(&args[0])))
-                }
-                "type_of" => {
-                    if args.len() != 1 {
-                        return Err(VmError::new("type_of expects 1 argument".into()));
-                    }
-                    Ok(Value::String(self.type_name(&args[0]).to_string()))
-                }
                 _ => {
                     if let Some(f) = self.foreign_fns.get(name).cloned() {
                         f(args)
@@ -2594,6 +2583,10 @@ impl Vm {
 
     fn dispatch_string(&self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         match name {
+            "from" => {
+                if args.len() != 1 { return Err(VmError::new("string.from takes 1 argument".into())); }
+                Ok(Value::String(self.display_value(&args[0])))
+            }
             "split" => {
                 if args.len() != 2 { return Err(VmError::new("string.split takes 2 arguments".into())); }
                 let (Value::String(s), Value::String(sep)) = (&args[0], &args[1]) else { return Err(VmError::new("string.split requires strings".into())); };
@@ -4786,6 +4779,8 @@ mod tests {
     #[test]
     fn test_e2e_string_operations() {
         let result = run_vm(r#"
+            import string
+
             fn main() {
                 let s = "hello, world"
                 string.length(s)
@@ -4797,6 +4792,8 @@ mod tests {
     #[test]
     fn test_e2e_list_operations() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let xs = [1, 2, 3, 4, 5]
                 list.length(xs)
@@ -4808,6 +4805,8 @@ mod tests {
     #[test]
     fn test_e2e_test_assert() {
         run_vm(r#"
+            import test
+
             fn main() {
                 test.assert_eq(2 + 2, 4)
             }
@@ -4875,6 +4874,8 @@ mod tests {
     #[test]
     fn test_e2e_int_to_string() {
         let result = run_vm(r#"
+            import int
+
             fn main() {
                 int.to_string(42)
             }
@@ -4885,6 +4886,8 @@ mod tests {
     #[test]
     fn test_e2e_list_append() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let xs = [1, 2, 3]
                 list.append(xs, 4)
@@ -4912,6 +4915,8 @@ mod tests {
     #[test]
     fn test_closure_in_map() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let factor = 10
                 [1, 2, 3] |> list.map(fn(x) { x * factor })
@@ -4938,6 +4943,8 @@ mod tests {
     fn test_closure_counter() {
         // Tests that closures capture values, not references
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let fns = [1, 2, 3] |> list.map(fn(n) {
                     fn() { n * 10 }
@@ -4995,6 +5002,8 @@ mod tests {
     #[test]
     fn test_closure_with_filter() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let threshold = 3
                 [1, 2, 3, 4, 5] |> list.filter(fn(x) { x > threshold })
@@ -5006,6 +5015,8 @@ mod tests {
     #[test]
     fn test_closure_with_fold() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let offset = 100
                 [1, 2, 3] |> list.fold(offset, fn(acc, x) { acc + x })
@@ -5056,6 +5067,8 @@ mod tests {
     fn test_closure_with_pipe_and_fn_syntax() {
         // Pipe with explicit fn(x) { ... } closure
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let base = 5
                 [1, 2, 3] |> list.map(fn(x) { x + base })
@@ -5068,6 +5081,8 @@ mod tests {
     fn test_trailing_closure_with_capture() {
         // Pipe with trailing closure syntax { x -> ... }
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let factor = 10
                 [1, 2, 3] |> list.map { x -> x * factor }
@@ -5079,6 +5094,8 @@ mod tests {
     #[test]
     fn test_trailing_closure_filter_with_capture() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let limit = 3
                 [1, 2, 3, 4, 5] |> list.filter { x -> x > limit }
@@ -5090,6 +5107,8 @@ mod tests {
     #[test]
     fn test_chained_pipes_with_closures() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let offset = 10
                 let cutoff = 13
@@ -5862,6 +5881,8 @@ mod tests {
     #[test]
     fn test_range_expression() {
         let result = run_vm(r#"
+            import list
+
             fn main() {
                 let nums = 1..6
                 nums |> list.fold(0) { acc, n -> acc + n }
@@ -5873,6 +5894,8 @@ mod tests {
     #[test]
     fn test_set_literal() {
         let result = run_vm(r#"
+            import set
+
             fn main() {
                 let s = #[1, 2, 3, 2, 1]
                 set.length(s)
@@ -5884,6 +5907,8 @@ mod tests {
     #[test]
     fn test_question_mark_ok() {
         let result = run_vm(r#"
+            import int
+
             fn parse_add(a, b) {
                 let x = int.parse(a)?
                 let y = int.parse(b)?
@@ -5902,6 +5927,8 @@ mod tests {
     #[test]
     fn test_question_mark_err() {
         let result = run_vm(r#"
+            import int
+
             fn parse_add(a, b) {
                 let x = int.parse(a)?
                 let y = int.parse(b)?
@@ -6015,6 +6042,8 @@ mod tests {
     #[test]
     fn test_spawn_join() {
         let result = run_vm(r#"
+            import task
+
             fn main() {
                 let t = task.spawn(fn() { 42 })
                 task.join(t)
@@ -6028,6 +6057,9 @@ mod tests {
         // Ensure task.join works when the fiber has already completed
         // before join is called (the original deadlock scenario).
         let result = run_vm(r#"
+            import channel
+            import task
+
             fn main() {
                 let ch = channel.new(1)
                 let t = task.spawn(fn() {
@@ -6047,6 +6079,9 @@ mod tests {
     fn test_spawn_join_multiple_completed() {
         // Multiple fibers that complete before join is called
         let result = run_vm(r#"
+            import channel
+            import task
+
             fn main() {
                 let ch = channel.new(10)
                 let t1 = task.spawn(fn() {
@@ -6160,7 +6195,7 @@ mod tests {
     fn test_foreign_fn_higher_order() {
         let mut vm = Vm::new();
         vm.register_fn1("square", |x: i64| -> i64 { x * x });
-        let result = run_vm_with(&mut vm, "fn main() { [1, 2, 3] |> list.map(square) }");
+        let result = run_vm_with(&mut vm, "import list\nfn main() { [1, 2, 3] |> list.map(square) }");
         assert_eq!(result, Value::List(Arc::new(vec![
             Value::Int(1), Value::Int(4), Value::Int(9),
         ])));

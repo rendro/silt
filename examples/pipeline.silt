@@ -1,3 +1,8 @@
+import io
+import list
+import regex
+import string
+
 -- Unix-pipe-style text processing pipeline.
 -- Reads a log file and applies 15 different transformation chains using
 -- the pipe operator, higher-order function factories, and regex.

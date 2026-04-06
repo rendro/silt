@@ -1,3 +1,10 @@
+import channel
+import io
+import list
+import regex
+import string
+import task
+
 -- Parallel file processor using channels and tasks.
 -- Spawns worker tasks that read files, extract stats, and send results
 -- back through channels for aggregation.
