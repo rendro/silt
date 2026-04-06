@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 use regex::Regex;
 
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
@@ -25,6 +26,9 @@ enum FieldType {
     List(Box<FieldType>),
     Option(Box<FieldType>),
     Record(std::string::String),
+    Date,
+    Time,
+    DateTime,
 }
 
 /// Decode a type encoding string (from compiler metadata) into a FieldType.
@@ -41,8 +45,27 @@ fn decode_field_type(s: &str) -> FieldType {
             "Float" => FieldType::Float,
             "String" => FieldType::String,
             "Bool" => FieldType::Bool,
+            "Date" => FieldType::Date,
+            "Time" => FieldType::Time,
+            "DateTime" => FieldType::DateTime,
             other => FieldType::Record(other.to_string()),
         }
+    }
+}
+
+/// Returns the number of days in the given month (1-12) for the given year.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30, // fallback for invalid month
     }
 }
 
@@ -323,6 +346,9 @@ impl Vm {
         self.globals.insert("Message".into(), Value::VariantConstructor("Message".into(), 1));
         self.globals.insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
         self.globals.insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
+        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
+            self.globals.insert(day.into(), Value::Variant(day.into(), Vec::new()));
+        }
 
         // Primitive type descriptors
         self.globals.insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
@@ -388,6 +414,15 @@ impl Vm {
             "channel.new", "channel.send", "channel.receive", "channel.close",
             "channel.try_send", "channel.try_receive", "channel.select", "channel.each",
             "task.spawn", "task.join", "task.cancel",
+            "time.now", "time.today",
+            "time.date", "time.time", "time.datetime",
+            "time.to_datetime", "time.to_instant", "time.to_utc", "time.from_utc",
+            "time.format", "time.format_date", "time.parse", "time.parse_date",
+            "time.add_days", "time.add_months",
+            "time.add", "time.since",
+            "time.hours", "time.minutes", "time.seconds", "time.ms",
+            "time.weekday", "time.days_between", "time.days_in_month", "time.is_leap_year",
+            "time.sleep",
         ];
 
         for name in builtin_names {
@@ -2014,6 +2049,8 @@ impl Vm {
                 .partial_cmp(b)
                 .unwrap_or(std::cmp::Ordering::Equal),
             (Value::String(a), Value::String(b)) => a.cmp(b),
+            (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
+            (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
             _ => {
                 return Err(VmError::new(format!(
                     "unsupported operation: cannot compare {} and {}",
@@ -2214,6 +2251,7 @@ impl Vm {
                 "json" => self.dispatch_json(func, args),
                 "channel" => self.dispatch_channel(func, args),
                 "task" => self.dispatch_task(func, args),
+                "time" => self.dispatch_time(func, args),
                 _ => {
                     if let Some(f) = self.foreign_fns.get(name).cloned() {
                         f(args)
@@ -3859,6 +3897,58 @@ impl Vm {
                     Ok(Value::Variant("Some".into(), vec![val]))
                 }
             },
+            FieldType::Date => match json {
+                serde_json::Value::String(s) => {
+                    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                        .map(|d| Self::make_date(d))
+                        .map_err(|e| VmError::new(format!(
+                            "json.parse({parent_type}): field '{field_name}': invalid date '{s}' (expected YYYY-MM-DD): {e}"
+                        )))
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected date string, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::Time => match json {
+                serde_json::Value::String(s) => {
+                    NaiveTime::parse_from_str(s, "%H:%M:%S")
+                        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+                        .map(|t| Self::make_time(t))
+                        .map_err(|e| VmError::new(format!(
+                            "json.parse({parent_type}): field '{field_name}': invalid time '{s}' (expected HH:MM:SS): {e}"
+                        )))
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected time string, got {}",
+                    json_type_name(json)
+                ))),
+            },
+            FieldType::DateTime => match json {
+                serde_json::Value::String(s) => {
+                    // Try timezone-aware formats first (RFC 3339 / ISO 8601 with offset),
+                    // converting to UTC. Then fall back to naive formats.
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        Ok(Self::make_datetime(dt.naive_utc()))
+                    } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%z") {
+                        Ok(Self::make_datetime(dt.naive_utc()))
+                    } else if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%z") {
+                        Ok(Self::make_datetime(dt.naive_utc()))
+                    } else {
+                        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
+                            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
+                            .map(|dt| Self::make_datetime(dt))
+                            .map_err(|_| VmError::new(format!(
+                                "json.parse({parent_type}): field '{field_name}': invalid datetime '{s}'"
+                            )))
+                    }
+                }
+                _ => Err(VmError::new(format!(
+                    "json.parse({parent_type}): field '{field_name}': expected datetime string, got {}",
+                    json_type_name(json)
+                ))),
+            },
             FieldType::Record(rec_name) => {
                 let fields = self.load_record_fields(rec_name)?;
                 let result = self.json_to_record(rec_name, &fields, json)?;
@@ -4190,6 +4280,462 @@ impl Vm {
                 Ok(Value::Unit)
             }
             _ => Err(VmError::new(format!("unknown task function: {name}"))),
+        }
+    }
+
+    // ── Time module ─────────────────────────────────────────────────
+
+    /// Build a Silt `Date` record Value from chrono NaiveDate.
+    fn make_date(d: NaiveDate) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("year".into(), Value::Int(d.year() as i64));
+        fields.insert("month".into(), Value::Int(d.month() as i64));
+        fields.insert("day".into(), Value::Int(d.day() as i64));
+        Value::Record("Date".into(), Arc::new(fields))
+    }
+
+    /// Build a Silt `Time` record Value from chrono NaiveTime.
+    fn make_time(t: NaiveTime) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("hour".into(), Value::Int(t.hour() as i64));
+        fields.insert("minute".into(), Value::Int(t.minute() as i64));
+        fields.insert("second".into(), Value::Int(t.second() as i64));
+        fields.insert("ns".into(), Value::Int(t.nanosecond() as i64));
+        Value::Record("Time".into(), Arc::new(fields))
+    }
+
+    /// Build a Silt `DateTime` record Value from chrono NaiveDateTime.
+    fn make_datetime(dt: NaiveDateTime) -> Value {
+        let date_val = Self::make_date(dt.date());
+        let time_val = Self::make_time(dt.time());
+        let mut fields = BTreeMap::new();
+        fields.insert("date".into(), date_val);
+        fields.insert("time".into(), time_val);
+        Value::Record("DateTime".into(), Arc::new(fields))
+    }
+
+    /// Build a Silt `Instant` record Value.
+    fn make_instant(epoch_ns: i64) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("epoch_ns".into(), Value::Int(epoch_ns));
+        Value::Record("Instant".into(), Arc::new(fields))
+    }
+
+    /// Build a Silt `Duration` record Value.
+    fn make_duration(ns: i64) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("ns".into(), Value::Int(ns));
+        Value::Record("Duration".into(), Arc::new(fields))
+    }
+
+    /// Extract a NaiveDate from a Silt Date record.
+    fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
+        let Value::Record(name, fields) = v else {
+            return Err(VmError::new("expected a Date record".into()));
+        };
+        if name != "Date" {
+            return Err(VmError::new(format!("expected Date, got {name}")));
+        }
+        let y = match fields.get("year") { Some(Value::Int(n)) => *n as i32, _ => 0 };
+        let m = match fields.get("month") { Some(Value::Int(n)) => *n as u32, _ => 1 };
+        let d = match fields.get("day") { Some(Value::Int(n)) => *n as u32, _ => 1 };
+        NaiveDate::from_ymd_opt(y, m, d)
+            .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
+    }
+
+    /// Extract a NaiveTime from a Silt Time record.
+    fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
+        let Value::Record(name, fields) = v else {
+            return Err(VmError::new("expected a Time record".into()));
+        };
+        if name != "Time" {
+            return Err(VmError::new(format!("expected Time, got {name}")));
+        }
+        let h = match fields.get("hour") { Some(Value::Int(n)) => *n as u32, _ => 0 };
+        let m = match fields.get("minute") { Some(Value::Int(n)) => *n as u32, _ => 0 };
+        let s = match fields.get("second") { Some(Value::Int(n)) => *n as u32, _ => 0 };
+        let ns = match fields.get("ns") { Some(Value::Int(n)) => *n as u32, _ => 0 };
+        NaiveTime::from_hms_nano_opt(h, m, s, ns)
+            .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
+    }
+
+    /// Extract a NaiveDateTime from a Silt DateTime record.
+    fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
+        let Value::Record(name, fields) = v else {
+            return Err(VmError::new("expected a DateTime record".into()));
+        };
+        if name != "DateTime" {
+            return Err(VmError::new(format!("expected DateTime, got {name}")));
+        }
+        let date = fields.get("date").ok_or_else(|| VmError::new("DateTime missing date field".into()))?;
+        let time = fields.get("time").ok_or_else(|| VmError::new("DateTime missing time field".into()))?;
+        let d = Self::extract_date(date)?;
+        let t = Self::extract_time(time)?;
+        Ok(NaiveDateTime::new(d, t))
+    }
+
+    /// Extract epoch_ns from an Instant record.
+    fn extract_instant(v: &Value) -> Result<i64, VmError> {
+        let Value::Record(name, fields) = v else {
+            return Err(VmError::new("expected an Instant record".into()));
+        };
+        if name != "Instant" {
+            return Err(VmError::new(format!("expected Instant, got {name}")));
+        }
+        match fields.get("epoch_ns") {
+            Some(Value::Int(n)) => Ok(*n),
+            _ => Err(VmError::new("Instant missing epoch_ns field".into())),
+        }
+    }
+
+    /// Extract ns from a Duration record.
+    fn extract_duration(v: &Value) -> Result<i64, VmError> {
+        let Value::Record(name, fields) = v else {
+            return Err(VmError::new("expected a Duration record".into()));
+        };
+        if name != "Duration" {
+            return Err(VmError::new(format!("expected Duration, got {name}")));
+        }
+        match fields.get("ns") {
+            Some(Value::Int(n)) => Ok(*n),
+            _ => Err(VmError::new("Duration missing ns field".into())),
+        }
+    }
+
+    fn dispatch_time(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "now" => {
+                if !args.is_empty() {
+                    return Err(VmError::new("time.now takes 0 arguments".into()));
+                }
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let dur = SystemTime::now().duration_since(UNIX_EPOCH)
+                    .map_err(|e| VmError::new(format!("time.now failed: {e}")))?;
+                let epoch_ns = dur.as_nanos() as i64;
+                Ok(Self::make_instant(epoch_ns))
+            }
+
+            "today" => {
+                if !args.is_empty() {
+                    return Err(VmError::new("time.today takes 0 arguments".into()));
+                }
+                let today = chrono::Local::now().date_naive();
+                Ok(Self::make_date(today))
+            }
+
+            "date" => {
+                if args.len() != 3 {
+                    return Err(VmError::new("time.date takes 3 arguments (year, month, day)".into()));
+                }
+                let (Value::Int(y), Value::Int(m), Value::Int(d)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(VmError::new("time.date requires Int arguments".into()));
+                };
+                match NaiveDate::from_ymd_opt(*y as i32, *m as u32, *d as u32) {
+                    Some(date) => Ok(Value::Variant("Ok".into(), vec![Self::make_date(date)])),
+                    None => Ok(Value::Variant("Err".into(), vec![
+                        Value::String(format!("invalid date: {y}-{m}-{d}")),
+                    ])),
+                }
+            }
+
+            "time" => {
+                if args.len() != 3 {
+                    return Err(VmError::new("time.time takes 3 arguments (hour, min, sec)".into()));
+                }
+                let (Value::Int(h), Value::Int(m), Value::Int(s)) = (&args[0], &args[1], &args[2]) else {
+                    return Err(VmError::new("time.time requires Int arguments".into()));
+                };
+                match NaiveTime::from_hms_opt(*h as u32, *m as u32, *s as u32) {
+                    Some(t) => Ok(Value::Variant("Ok".into(), vec![Self::make_time(t)])),
+                    None => Ok(Value::Variant("Err".into(), vec![
+                        Value::String(format!("invalid time: {h}:{m}:{s}")),
+                    ])),
+                }
+            }
+
+            "datetime" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.datetime takes 2 arguments (date, time)".into()));
+                }
+                let d = Self::extract_date(&args[0])?;
+                let t = Self::extract_time(&args[1])?;
+                Ok(Self::make_datetime(NaiveDateTime::new(d, t)))
+            }
+
+            "to_datetime" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.to_datetime takes 2 arguments (instant, offset_minutes)".into()));
+                }
+                let epoch_ns = Self::extract_instant(&args[0])?;
+                let Value::Int(offset_min) = &args[1] else {
+                    return Err(VmError::new("time.to_datetime requires Int offset".into()));
+                };
+                let epoch_secs = epoch_ns / 1_000_000_000;
+                let nano_remainder = (epoch_ns % 1_000_000_000) as u32;
+                let utc_dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
+                    .ok_or_else(|| VmError::new("instant out of range".into()))?
+                    .naive_utc();
+                let offset = chrono::Duration::minutes(*offset_min);
+                let local_dt = utc_dt + offset;
+                Ok(Self::make_datetime(local_dt))
+            }
+
+            "to_instant" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.to_instant takes 2 arguments (datetime, offset_minutes)".into()));
+                }
+                let dt = Self::extract_datetime(&args[0])?;
+                let Value::Int(offset_min) = &args[1] else {
+                    return Err(VmError::new("time.to_instant requires Int offset".into()));
+                };
+                let offset = chrono::Duration::minutes(*offset_min);
+                let utc_dt = dt - offset;
+                let epoch_ns = utc_dt.and_utc().timestamp_nanos_opt()
+                    .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
+                Ok(Self::make_instant(epoch_ns))
+            }
+
+            "to_utc" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.to_utc takes 1 argument (instant)".into()));
+                }
+                let epoch_ns = Self::extract_instant(&args[0])?;
+                let epoch_secs = epoch_ns / 1_000_000_000;
+                let nano_remainder = (epoch_ns % 1_000_000_000) as u32;
+                let dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
+                    .ok_or_else(|| VmError::new("instant out of range".into()))?
+                    .naive_utc();
+                Ok(Self::make_datetime(dt))
+            }
+
+            "from_utc" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.from_utc takes 1 argument (datetime)".into()));
+                }
+                let dt = Self::extract_datetime(&args[0])?;
+                let epoch_ns = dt.and_utc().timestamp_nanos_opt()
+                    .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
+                Ok(Self::make_instant(epoch_ns))
+            }
+
+            "format" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.format takes 2 arguments (datetime, pattern)".into()));
+                }
+                let dt = Self::extract_datetime(&args[0])?;
+                let Value::String(pattern) = &args[1] else {
+                    return Err(VmError::new("time.format requires a String pattern".into()));
+                };
+                Ok(Value::String(dt.format(pattern).to_string()))
+            }
+
+            "format_date" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.format_date takes 2 arguments (date, pattern)".into()));
+                }
+                let d = Self::extract_date(&args[0])?;
+                let Value::String(pattern) = &args[1] else {
+                    return Err(VmError::new("time.format_date requires a String pattern".into()));
+                };
+                Ok(Value::String(d.format(pattern).to_string()))
+            }
+
+            "parse" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.parse takes 2 arguments (string, pattern)".into()));
+                }
+                let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("time.parse requires String arguments".into()));
+                };
+                match NaiveDateTime::parse_from_str(s, pattern) {
+                    Ok(dt) => Ok(Value::Variant("Ok".into(), vec![Self::make_datetime(dt)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![
+                        Value::String(format!("parse error: {e}")),
+                    ])),
+                }
+            }
+
+            "parse_date" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.parse_date takes 2 arguments (string, pattern)".into()));
+                }
+                let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("time.parse_date requires String arguments".into()));
+                };
+                match NaiveDate::parse_from_str(s, pattern) {
+                    Ok(d) => Ok(Value::Variant("Ok".into(), vec![Self::make_date(d)])),
+                    Err(e) => Ok(Value::Variant("Err".into(), vec![
+                        Value::String(format!("parse error: {e}")),
+                    ])),
+                }
+            }
+
+            "add_days" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.add_days takes 2 arguments (date, days)".into()));
+                }
+                let d = Self::extract_date(&args[0])?;
+                let Value::Int(days) = &args[1] else {
+                    return Err(VmError::new("time.add_days requires Int days".into()));
+                };
+                let result = d + chrono::Duration::days(*days);
+                Ok(Self::make_date(result))
+            }
+
+            "add_months" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.add_months takes 2 arguments (date, months)".into()));
+                }
+                let d = Self::extract_date(&args[0])?;
+                let Value::Int(months) = &args[1] else {
+                    return Err(VmError::new("time.add_months requires Int months".into()));
+                };
+                let months = *months;
+                // Calculate target year and month
+                let total_months = d.year() as i64 * 12 + (d.month() as i64 - 1) + months;
+                let target_year = (total_months.div_euclid(12)) as i32;
+                let target_month = (total_months.rem_euclid(12) + 1) as u32;
+                // Clamp day to last valid day of target month
+                let max_day = days_in_month(target_year, target_month);
+                let target_day = d.day().min(max_day);
+                let result = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
+                    .ok_or_else(|| VmError::new(format!(
+                        "add_months overflow: {target_year}-{target_month}-{target_day}"
+                    )))?;
+                Ok(Self::make_date(result))
+            }
+
+            "add" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.add takes 2 arguments (instant, duration)".into()));
+                }
+                let epoch_ns = Self::extract_instant(&args[0])?;
+                let dur_ns = Self::extract_duration(&args[1])?;
+                Ok(Self::make_instant(epoch_ns + dur_ns))
+            }
+
+            "since" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.since takes 2 arguments (from, to)".into()));
+                }
+                let from_ns = Self::extract_instant(&args[0])?;
+                let to_ns = Self::extract_instant(&args[1])?;
+                Ok(Self::make_duration(to_ns - from_ns))
+            }
+
+            "hours" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.hours takes 1 argument".into()));
+                }
+                let Value::Int(n) = &args[0] else {
+                    return Err(VmError::new("time.hours requires an Int".into()));
+                };
+                Ok(Self::make_duration(*n * 3_600_000_000_000))
+            }
+
+            "minutes" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.minutes takes 1 argument".into()));
+                }
+                let Value::Int(n) = &args[0] else {
+                    return Err(VmError::new("time.minutes requires an Int".into()));
+                };
+                Ok(Self::make_duration(*n * 60_000_000_000))
+            }
+
+            "seconds" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.seconds takes 1 argument".into()));
+                }
+                let Value::Int(n) = &args[0] else {
+                    return Err(VmError::new("time.seconds requires an Int".into()));
+                };
+                Ok(Self::make_duration(*n * 1_000_000_000))
+            }
+
+            "ms" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.ms takes 1 argument".into()));
+                }
+                let Value::Int(n) = &args[0] else {
+                    return Err(VmError::new("time.ms requires an Int".into()));
+                };
+                Ok(Self::make_duration(*n * 1_000_000))
+            }
+
+            "weekday" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.weekday takes 1 argument (date)".into()));
+                }
+                let d = Self::extract_date(&args[0])?;
+                let day_name = match d.weekday() {
+                    Weekday::Mon => "Monday",
+                    Weekday::Tue => "Tuesday",
+                    Weekday::Wed => "Wednesday",
+                    Weekday::Thu => "Thursday",
+                    Weekday::Fri => "Friday",
+                    Weekday::Sat => "Saturday",
+                    Weekday::Sun => "Sunday",
+                };
+                Ok(Value::Variant(day_name.into(), vec![]))
+            }
+
+            "days_between" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.days_between takes 2 arguments (from, to)".into()));
+                }
+                let from = Self::extract_date(&args[0])?;
+                let to = Self::extract_date(&args[1])?;
+                let diff = to.signed_duration_since(from).num_days();
+                Ok(Value::Int(diff))
+            }
+
+            "days_in_month" => {
+                if args.len() != 2 {
+                    return Err(VmError::new("time.days_in_month takes 2 arguments (year, month)".into()));
+                }
+                let (Value::Int(y), Value::Int(m)) = (&args[0], &args[1]) else {
+                    return Err(VmError::new("time.days_in_month requires Int arguments".into()));
+                };
+                Ok(Value::Int(days_in_month(*y as i32, *m as u32) as i64))
+            }
+
+            "is_leap_year" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.is_leap_year takes 1 argument".into()));
+                }
+                let Value::Int(y) = &args[0] else {
+                    return Err(VmError::new("time.is_leap_year requires an Int".into()));
+                };
+                let y = *y as i32;
+                let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+                Ok(Value::Bool(leap))
+            }
+
+            "sleep" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("time.sleep takes 1 argument (duration)".into()));
+                }
+                let dur_ns = Self::extract_duration(&args[0])?;
+                if dur_ns <= 0 {
+                    return Ok(Value::Unit);
+                }
+                let target = std::time::Instant::now() + std::time::Duration::from_nanos(dur_ns as u64);
+                // Fiber-aware sleep: yield to other fibers while waiting
+                while std::time::Instant::now() < target {
+                    self.run_other_fibers_once()?;
+                    let remaining = target.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    // Sleep in small increments to stay responsive
+                    let sleep_dur = remaining.min(std::time::Duration::from_millis(1));
+                    std::thread::sleep(sleep_dur);
+                }
+                Ok(Value::Unit)
+            }
+
+            _ => Err(VmError::new(format!("unknown time function: {name}"))),
         }
     }
 

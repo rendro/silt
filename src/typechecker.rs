@@ -1068,6 +1068,7 @@ impl TypeChecker {
         self.register_test_builtins(env);
         self.register_math_builtins(env);
         self.register_channel_builtins(env);
+        self.register_time_builtins(env);
     }
 
     fn register_list_builtins(&mut self, env: &mut TypeEnv) {
@@ -2684,6 +2685,242 @@ impl TypeChecker {
                 constraints: vec![],
             });
         }
+    }
+
+    fn register_time_builtins(&mut self, env: &mut TypeEnv) {
+        // ── Time module type definitions ──────────────────────────────
+
+        let instant_ty = Type::Record("Instant".into(), vec![
+            ("epoch_ns".into(), Type::Int),
+        ]);
+        let date_ty = Type::Record("Date".into(), vec![
+            ("year".into(), Type::Int),
+            ("month".into(), Type::Int),
+            ("day".into(), Type::Int),
+        ]);
+        let time_of_day_ty = Type::Record("Time".into(), vec![
+            ("hour".into(), Type::Int),
+            ("minute".into(), Type::Int),
+            ("second".into(), Type::Int),
+            ("ns".into(), Type::Int),
+        ]);
+        let datetime_ty = Type::Record("DateTime".into(), vec![
+            ("date".into(), date_ty.clone()),
+            ("time".into(), time_of_day_ty.clone()),
+        ]);
+        let duration_ty = Type::Record("Duration".into(), vec![
+            ("ns".into(), Type::Int),
+        ]);
+        let weekday_ty = Type::Generic("Weekday".into(), vec![]);
+
+        // Register record types so field access type-checks
+        self.records.insert("Instant".into(), RecordInfo {
+            _name: "Instant".into(),
+            _params: vec![],
+            fields: vec![("epoch_ns".into(), Type::Int)],
+        });
+        self.records.insert("Date".into(), RecordInfo {
+            _name: "Date".into(),
+            _params: vec![],
+            fields: vec![
+                ("year".into(), Type::Int),
+                ("month".into(), Type::Int),
+                ("day".into(), Type::Int),
+            ],
+        });
+        self.records.insert("Time".into(), RecordInfo {
+            _name: "Time".into(),
+            _params: vec![],
+            fields: vec![
+                ("hour".into(), Type::Int),
+                ("minute".into(), Type::Int),
+                ("second".into(), Type::Int),
+                ("ns".into(), Type::Int),
+            ],
+        });
+        self.records.insert("DateTime".into(), RecordInfo {
+            _name: "DateTime".into(),
+            _params: vec![],
+            fields: vec![
+                ("date".into(), date_ty.clone()),
+                ("time".into(), time_of_day_ty.clone()),
+            ],
+        });
+        self.records.insert("Duration".into(), RecordInfo {
+            _name: "Duration".into(),
+            _params: vec![],
+            fields: vec![("ns".into(), Type::Int)],
+        });
+
+        // Register Weekday enum
+        self.enums.insert("Weekday".into(), EnumInfo {
+            _name: "Weekday".into(),
+            params: vec![],
+            variants: vec![
+                VariantInfo { name: "Monday".into(), field_types: vec![] },
+                VariantInfo { name: "Tuesday".into(), field_types: vec![] },
+                VariantInfo { name: "Wednesday".into(), field_types: vec![] },
+                VariantInfo { name: "Thursday".into(), field_types: vec![] },
+                VariantInfo { name: "Friday".into(), field_types: vec![] },
+                VariantInfo { name: "Saturday".into(), field_types: vec![] },
+                VariantInfo { name: "Sunday".into(), field_types: vec![] },
+            ],
+        });
+        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
+            self.variant_to_enum.insert(day.to_string(), "Weekday".into());
+            env.define(day.to_string(), Scheme::mono(weekday_ty.clone()));
+        }
+
+        // ── Function signatures ──────────────────────────────────────
+
+        // time.now: () -> Instant
+        env.define("time.now".into(), Scheme::mono(Type::Fun(
+            vec![], Box::new(instant_ty.clone()),
+        )));
+
+        // time.today: () -> Date
+        env.define("time.today".into(), Scheme::mono(Type::Fun(
+            vec![], Box::new(date_ty.clone()),
+        )));
+
+        // time.date: (Int, Int, Int) -> Result(Date, String)
+        env.define("time.date".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int, Type::Int],
+            Box::new(Type::Generic("Result".into(), vec![date_ty.clone(), Type::String])),
+        )));
+
+        // time.time: (Int, Int, Int) -> Result(Time, String)
+        env.define("time.time".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int, Type::Int],
+            Box::new(Type::Generic("Result".into(), vec![time_of_day_ty.clone(), Type::String])),
+        )));
+
+        // time.datetime: (Date, Time) -> DateTime
+        env.define("time.datetime".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone(), time_of_day_ty.clone()],
+            Box::new(datetime_ty.clone()),
+        )));
+
+        // time.to_datetime: (Instant, Int) -> DateTime
+        env.define("time.to_datetime".into(), Scheme::mono(Type::Fun(
+            vec![instant_ty.clone(), Type::Int],
+            Box::new(datetime_ty.clone()),
+        )));
+
+        // time.to_instant: (DateTime, Int) -> Instant
+        env.define("time.to_instant".into(), Scheme::mono(Type::Fun(
+            vec![datetime_ty.clone(), Type::Int],
+            Box::new(instant_ty.clone()),
+        )));
+
+        // time.to_utc: (Instant) -> DateTime
+        env.define("time.to_utc".into(), Scheme::mono(Type::Fun(
+            vec![instant_ty.clone()],
+            Box::new(datetime_ty.clone()),
+        )));
+
+        // time.from_utc: (DateTime) -> Instant
+        env.define("time.from_utc".into(), Scheme::mono(Type::Fun(
+            vec![datetime_ty.clone()],
+            Box::new(instant_ty.clone()),
+        )));
+
+        // time.format: (DateTime, String) -> String
+        env.define("time.format".into(), Scheme::mono(Type::Fun(
+            vec![datetime_ty.clone(), Type::String],
+            Box::new(Type::String),
+        )));
+
+        // time.format_date: (Date, String) -> String
+        env.define("time.format_date".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone(), Type::String],
+            Box::new(Type::String),
+        )));
+
+        // time.parse: (String, String) -> Result(DateTime, String)
+        env.define("time.parse".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Result".into(), vec![datetime_ty.clone(), Type::String])),
+        )));
+
+        // time.parse_date: (String, String) -> Result(Date, String)
+        env.define("time.parse_date".into(), Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic("Result".into(), vec![date_ty.clone(), Type::String])),
+        )));
+
+        // time.add_days: (Date, Int) -> Date
+        env.define("time.add_days".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone(), Type::Int],
+            Box::new(date_ty.clone()),
+        )));
+
+        // time.add_months: (Date, Int) -> Date
+        env.define("time.add_months".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone(), Type::Int],
+            Box::new(date_ty.clone()),
+        )));
+
+        // time.add: (Instant, Duration) -> Instant
+        env.define("time.add".into(), Scheme::mono(Type::Fun(
+            vec![instant_ty.clone(), duration_ty.clone()],
+            Box::new(instant_ty.clone()),
+        )));
+
+        // time.since: (Instant, Instant) -> Duration
+        env.define("time.since".into(), Scheme::mono(Type::Fun(
+            vec![instant_ty.clone(), instant_ty.clone()],
+            Box::new(duration_ty.clone()),
+        )));
+
+        // time.hours: (Int) -> Duration
+        env.define("time.hours".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int], Box::new(duration_ty.clone()),
+        )));
+
+        // time.minutes: (Int) -> Duration
+        env.define("time.minutes".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int], Box::new(duration_ty.clone()),
+        )));
+
+        // time.seconds: (Int) -> Duration
+        env.define("time.seconds".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int], Box::new(duration_ty.clone()),
+        )));
+
+        // time.ms: (Int) -> Duration
+        env.define("time.ms".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int], Box::new(duration_ty.clone()),
+        )));
+
+        // time.weekday: (Date) -> Weekday
+        env.define("time.weekday".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone()], Box::new(weekday_ty),
+        )));
+
+        // time.days_between: (Date, Date) -> Int
+        env.define("time.days_between".into(), Scheme::mono(Type::Fun(
+            vec![date_ty.clone(), date_ty.clone()],
+            Box::new(Type::Int),
+        )));
+
+        // time.days_in_month: (Int, Int) -> Int
+        env.define("time.days_in_month".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int],
+            Box::new(Type::Int),
+        )));
+
+        // time.is_leap_year: (Int) -> Bool
+        env.define("time.is_leap_year".into(), Scheme::mono(Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::Bool),
+        )));
+
+        // time.sleep: (Duration) -> Unit
+        env.define("time.sleep".into(), Scheme::mono(Type::Fun(
+            vec![duration_ty],
+            Box::new(Type::Unit),
+        )));
     }
 
     // ── Register type declarations ──────────────────────────────────

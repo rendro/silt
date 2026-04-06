@@ -277,6 +277,72 @@ impl Value {
     }
 }
 
+/// Extract an i64 from an optional Value reference.
+fn val_i64(v: Option<&Value>) -> i64 {
+    match v {
+        Some(Value::Int(n)) => *n,
+        _ => 0,
+    }
+}
+
+/// Compare a named field in two record field maps.
+fn cmp_record_field(a: &BTreeMap<String, Value>, b: &BTreeMap<String, Value>, key: &str) -> Ordering {
+    match (a.get(key), b.get(key)) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// Map Weekday variant name to ordinal for comparison (Monday=1..Sunday=7).
+fn weekday_ordinal(name: &str) -> Option<u8> {
+    match name {
+        "Monday" => Some(1),
+        "Tuesday" => Some(2),
+        "Wednesday" => Some(3),
+        "Thursday" => Some(4),
+        "Friday" => Some(5),
+        "Saturday" => Some(6),
+        "Sunday" => Some(7),
+        _ => None,
+    }
+}
+
+/// Format a duration in nanoseconds as a human-readable string.
+fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
+    if total_ns < 0 {
+        write!(f, "-")?;
+    }
+    let ns = total_ns.unsigned_abs();
+    if ns == 0 {
+        write!(f, "0s")
+    } else if ns >= 3_600_000_000_000 {
+        let h = ns / 3_600_000_000_000;
+        let m = (ns % 3_600_000_000_000) / 60_000_000_000;
+        let s = (ns % 60_000_000_000) / 1_000_000_000;
+        if m > 0 && s > 0 { write!(f, "{h}h{m}m{s}s") }
+        else if m > 0 { write!(f, "{h}h{m}m") }
+        else { write!(f, "{h}h") }
+    } else if ns >= 60_000_000_000 {
+        let m = ns / 60_000_000_000;
+        let s = (ns % 60_000_000_000) / 1_000_000_000;
+        if s > 0 { write!(f, "{m}m{s}s") }
+        else { write!(f, "{m}m") }
+    } else if ns >= 1_000_000_000 {
+        let s = ns / 1_000_000_000;
+        let ms = (ns % 1_000_000_000) / 1_000_000;
+        if ms > 0 { write!(f, "{s}.{ms:03}s") }
+        else { write!(f, "{s}s") }
+    } else if ns >= 1_000_000 {
+        write!(f, "{}ms", ns / 1_000_000)
+    } else if ns >= 1_000 {
+        write!(f, "{}us", ns / 1_000)
+    } else {
+        write!(f, "{ns}ns")
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -328,15 +394,42 @@ impl fmt::Display for Value {
                 }
                 write!(f, ")")
             }
-            Value::Record(name, fields) => {
-                write!(f, "{name} {{")?;
-                for (i, (k, v)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{k}: {v}")?;
+            Value::Record(name, fields) => match name.as_str() {
+                "Date" => {
+                    let y = val_i64(fields.get("year"));
+                    let m = val_i64(fields.get("month"));
+                    let d = val_i64(fields.get("day"));
+                    write!(f, "{y:04}-{m:02}-{d:02}")
                 }
-                write!(f, "}}")
+                "Time" => {
+                    let h = val_i64(fields.get("hour"));
+                    let m = val_i64(fields.get("minute"));
+                    let s = val_i64(fields.get("second"));
+                    let ns = val_i64(fields.get("ns"));
+                    if ns > 0 {
+                        write!(f, "{h:02}:{m:02}:{s:02}.{ns:09}")
+                    } else {
+                        write!(f, "{h:02}:{m:02}:{s:02}")
+                    }
+                }
+                "DateTime" => {
+                    if let (Some(date), Some(time)) = (fields.get("date"), fields.get("time")) {
+                        write!(f, "{date}T{time}")
+                    } else {
+                        write!(f, "DateTime {{}}")
+                    }
+                }
+                "Duration" => fmt_duration(f, val_i64(fields.get("ns"))),
+                _ => {
+                    write!(f, "{name} {{")?;
+                    for (i, (k, v)) in fields.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{k}: {v}")?;
+                    }
+                    write!(f, "}}")
+                }
             }
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
@@ -443,10 +536,31 @@ impl Ord for Value {
                 a.iter().cmp(b.iter())
             }
             (Value::Record(na, fa), Value::Record(nb, fb)) => {
-                na.cmp(nb).then_with(|| fa.iter().cmp(fb.iter()))
+                na.cmp(nb).then_with(|| match na.as_str() {
+                    "Date" => {
+                        cmp_record_field(fa, fb, "year")
+                            .then_with(|| cmp_record_field(fa, fb, "month"))
+                            .then_with(|| cmp_record_field(fa, fb, "day"))
+                    }
+                    "Time" => {
+                        cmp_record_field(fa, fb, "hour")
+                            .then_with(|| cmp_record_field(fa, fb, "minute"))
+                            .then_with(|| cmp_record_field(fa, fb, "second"))
+                            .then_with(|| cmp_record_field(fa, fb, "ns"))
+                    }
+                    "DateTime" => {
+                        cmp_record_field(fa, fb, "date")
+                            .then_with(|| cmp_record_field(fa, fb, "time"))
+                    }
+                    _ => fa.iter().cmp(fb.iter()),
+                })
             }
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => {
-                na.cmp(nb).then_with(|| fa.cmp(fb))
+                if let (Some(a), Some(b)) = (weekday_ordinal(na), weekday_ordinal(nb)) {
+                    a.cmp(&b)
+                } else {
+                    na.cmp(nb).then_with(|| fa.cmp(fb))
+                }
             }
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),

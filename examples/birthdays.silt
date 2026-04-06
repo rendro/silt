@@ -1,0 +1,48 @@
+import json
+import list
+import time
+
+type Person {
+  name: String,
+  dob: Date,
+}
+
+fn age(dob: Date) -> Int {
+  let today = time.today()
+  let years = today.year - dob.year
+  match today.month < dob.month || (today.month == dob.month && today.day < dob.day) {
+    true -> years - 1
+    false -> years
+  }
+}
+
+fn next_birthday(dob: Date) -> Date {
+  let today = time.today()
+  let year = today.year
+  let this_year = match time.date(year, dob.month, dob.day) {
+    Ok(d) -> d
+    Err(_) -> time.date(year, dob.month, 28)?
+  }
+  match this_year > today || this_year == today {
+    true -> this_year
+    false -> match time.date(year + 1, dob.month, dob.day) {
+      Ok(d) -> d
+      Err(_) -> time.date(year + 1, dob.month, 28)?
+    }
+  }
+}
+
+fn main() {
+  let people = json.parse_list(Person, """[
+    {"name": "Alice",  "dob": "1990-07-20"},
+    {"name": "Bob",    "dob": "1984-02-29"},
+    {"name": "Carol",  "dob": "2000-12-25"}
+  ]""")?
+
+  people |> list.each { p ->
+    let bday = next_birthday(p.dob)
+    let days = time.days_between(time.today(), bday)
+    let wd = p.dob |> time.weekday
+    println("{p.name}: born {p.dob} ({wd}), age {age(p.dob)}, next birthday {bday} in {days} days")
+  }
+}

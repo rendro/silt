@@ -4,7 +4,7 @@
 /// in the global environment rather than loaded from files.
 const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
-    "regex", "json", "set", "math",
+    "regex", "json", "set", "math", "time",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -18,6 +18,7 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
     match name {
         "Stop" | "Continue" => Some("list"),
         "Message" | "Closed" | "Empty" => Some("channel"),
+        "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" => Some("time"),
         _ => None,
     }
 }
@@ -96,6 +97,17 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "insert", "remove", "length",
             "union", "intersection", "difference", "is_subset",
             "map", "filter", "each", "fold",
+        ],
+        "time" => vec![
+            "now", "today",
+            "date", "time", "datetime",
+            "to_datetime", "to_instant", "to_utc", "from_utc",
+            "format", "format_date", "parse", "parse_date",
+            "add_days", "add_months",
+            "add", "since",
+            "hours", "minutes", "seconds", "ms",
+            "weekday", "days_between", "days_in_month", "is_leap_year",
+            "sleep",
         ],
         _ => vec![],
     }

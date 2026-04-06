@@ -27,7 +27,7 @@ use crate::value::Value;
 fn encode_type_expr(te: &TypeExpr) -> String {
     match te {
         TypeExpr::Named(n) => match n.as_str() {
-            "Int" | "Float" | "String" | "Bool" => n.clone(),
+            "Int" | "Float" | "String" | "Bool" | "Date" | "Time" | "DateTime" => n.clone(),
             _ if n.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) => {
                 format!("Record:{n}")
             }

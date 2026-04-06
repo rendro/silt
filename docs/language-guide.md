@@ -960,6 +960,7 @@ files needed):
 | `test`    | `assert`, `assert_eq`, `assert_ne`                           |
 | `channel` | `new`, `send`, `receive`, `close`, `select`, `each`         |
 | `task`    | `spawn`, `join`, `cancel`                                    |
+| `time`    | `now`, `today`, `date`, `format`, `parse`, `add_days`, `weekday`, `sleep` |
 
 ### Notable Standard Library Details
 
@@ -972,6 +973,9 @@ files needed):
   `string.is_whitespace`.
 - `regex.replace_all_with(pattern, text, fn)` takes a callback for per-match
   replacement.
+- The `time` module provides `Instant`, `Date`, `Time`, `DateTime`, `Duration`,
+  and `Weekday` types with nanosecond precision. Comparison operators (`<`, `>`)
+  work correctly on all time types. Display shows ISO 8601 format.
 
 Circular imports are detected and rejected with a clear error message.
 

@@ -29,8 +29,9 @@ Complete API reference for every built-in function in silt.
 | [math](#math) | 11 + 2 | Trigonometry, logarithms, exponentiation, and constants |
 | [channel](#channel) | 8 | Bounded channels for cooperative concurrency |
 | [task](#task) | 3 | Spawn, join, and cancel cooperative tasks |
+| [time](#time) | 26 | Dates, times, instants, durations, formatting, parsing, and arithmetic |
 
-**Total: 162 names** (12 globals + 4 type descriptors + 146 module functions/constants)
+**Total: 195 names** (19 globals + 4 type descriptors + 172 module functions/constants)
 
 
 ## Globals
@@ -53,6 +54,7 @@ Always available. No import or qualification needed.
 | `Message` | `(a) -> ChannelResult(a)` | Wraps a received channel value |
 | `Closed` | `ChannelResult(a)` | Channel is closed |
 | `Empty` | `ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
+| `Monday`..`Sunday` | `Weekday` | Day-of-week constructors (require `import time`) |
 
 Additionally, four **type descriptors** are in the global namespace for use with
 `json.parse_map` and similar type-directed APIs:
@@ -2740,6 +2742,17 @@ Parses a JSON string into a record of type `T`. The first argument is a record
 type name (not a string). Fields are matched by name; `Option` fields default to
 `None` if missing from the JSON.
 
+Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) are
+automatically parsed from ISO 8601 strings. `DateTime` fields also accept
+timezone-aware formats (RFC 3339) — the offset is applied and the value is
+stored as UTC:
+
+| Field type | Accepted formats | Example |
+|------------|-----------------|---------|
+| `Date` | `YYYY-MM-DD` | `"2024-03-15"` |
+| `Time` | `HH:MM:SS`, `HH:MM` | `"14:30:00"` |
+| `DateTime` | `YYYY-MM-DDTHH:MM:SS`, with optional `Z` or `±HH:MM` offset | `"2024-03-15T09:00:00+09:00"` |
+
 ```silt
 type User {
     name: String,
@@ -2752,6 +2765,23 @@ fn main() {
         Ok(user) -> println(user.name)
         Err(e) -> println("Error: {e}")
     }
+}
+```
+
+Date/Time example:
+
+```silt
+import json
+import time
+
+type Event {
+    name: String,
+    date: Date,
+}
+
+fn main() {
+    let e = json.parse(Event, "{\"name\": \"launch\", \"date\": \"2024-03-15\"}")?
+    println(e.date |> time.weekday)  // Friday
 }
 ```
 
@@ -3303,5 +3333,449 @@ fn main() {
     })
     let result = task.join(h)
     println(result)  // 42
+}
+```
+
+
+## time
+
+Dates, times, instants, durations, formatting, parsing, and arithmetic. All values are immutable. Nanosecond precision throughout.
+
+### Types
+
+```silt
+type Instant  { epoch_ns: Int }                           -- point on the UTC timeline (ns since Unix epoch)
+type Date     { year: Int, month: Int, day: Int }          -- calendar date, no time or zone
+type Time     { hour: Int, minute: Int, second: Int, ns: Int }  -- wall clock time, no date or zone
+type DateTime { date: Date, time: Time }                   -- date + time, no zone
+type Duration { ns: Int }                                  -- fixed elapsed time in nanoseconds
+type Weekday  { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
+```
+
+`Date`, `Time`, and `DateTime` display as ISO 8601 in string interpolation.
+`Duration` displays in human-readable form (`2h30m15s`, `500ms`, `42ns`).
+Comparison operators (`<`, `>`, `==`) work correctly on all time types.
+
+### Summary
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `now` | `() -> Instant` | Current UTC time as nanosecond epoch |
+| `today` | `() -> Date` | Current local date |
+| `date` | `(Int, Int, Int) -> Result(Date, String)` | Validated date from year, month, day |
+| `time` | `(Int, Int, Int) -> Result(Time, String)` | Validated time from hour, min, sec (ns=0) |
+| `datetime` | `(Date, Time) -> DateTime` | Combine date and time (infallible) |
+| `to_datetime` | `(Instant, Int) -> DateTime` | Convert instant to local datetime with UTC offset in minutes |
+| `to_instant` | `(DateTime, Int) -> Instant` | Convert local datetime to instant with UTC offset in minutes |
+| `to_utc` | `(Instant) -> DateTime` | Convert instant to UTC datetime (shorthand for offset=0) |
+| `from_utc` | `(DateTime) -> Instant` | Convert UTC datetime to instant (shorthand for offset=0) |
+| `format` | `(DateTime, String) -> String` | Format datetime with strftime pattern |
+| `format_date` | `(Date, String) -> String` | Format date with strftime pattern |
+| `parse` | `(String, String) -> Result(DateTime, String)` | Parse string into datetime with strftime pattern |
+| `parse_date` | `(String, String) -> Result(Date, String)` | Parse string into date with strftime pattern |
+| `add_days` | `(Date, Int) -> Date` | Add/subtract days from a date |
+| `add_months` | `(Date, Int) -> Date` | Add/subtract months, clamping to end-of-month |
+| `add` | `(Instant, Duration) -> Instant` | Add duration to an instant |
+| `since` | `(Instant, Instant) -> Duration` | Signed duration between two instants (to − from) |
+| `hours` | `(Int) -> Duration` | Create duration from hours |
+| `minutes` | `(Int) -> Duration` | Create duration from minutes |
+| `seconds` | `(Int) -> Duration` | Create duration from seconds |
+| `ms` | `(Int) -> Duration` | Create duration from milliseconds |
+| `weekday` | `(Date) -> Weekday` | Day of the week |
+| `days_between` | `(Date, Date) -> Int` | Signed number of days between two dates |
+| `days_in_month` | `(Int, Int) -> Int` | Days in month for given year and month |
+| `is_leap_year` | `(Int) -> Bool` | Check if a year is a leap year |
+| `sleep` | `(Duration) -> ()` | Fiber-aware sleep |
+
+
+### `time.now`
+
+```
+time.now() -> Instant
+```
+
+Returns the current UTC time as nanoseconds since the Unix epoch (1970-01-01T00:00:00Z).
+
+```silt
+fn main() {
+    let t = time.now()
+    println(t.epoch_ns)  // 1775501213453369259
+}
+```
+
+
+### `time.today`
+
+```
+time.today() -> Date
+```
+
+Returns the current date in the system's local timezone.
+
+```silt
+fn main() {
+    println(time.today())  // 2026-04-06
+}
+```
+
+
+### `time.date`
+
+```
+time.date(year: Int, month: Int, day: Int) -> Result(Date, String)
+```
+
+Creates a validated `Date`. Returns `Err` for invalid dates.
+
+```silt
+fn main() {
+    println(time.date(2024, 3, 15))   // Ok(2024-03-15)
+    println(time.date(2024, 2, 29))   // Ok(2024-02-29) — leap year
+    println(time.date(2024, 13, 1))   // Err(invalid date: 2024-13-1)
+}
+```
+
+
+### `time.time`
+
+```
+time.time(hour: Int, min: Int, sec: Int) -> Result(Time, String)
+```
+
+Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
+
+```silt
+fn main() {
+    println(time.time(14, 30, 0))  // Ok(14:30:00)
+    println(time.time(25, 0, 0))   // Err(invalid time: 25:0:0)
+}
+```
+
+
+### `time.datetime`
+
+```
+time.datetime(date: Date, time: Time) -> DateTime
+```
+
+Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are already validated.
+
+```silt
+fn main() {
+    let d = time.date(2024, 6, 15)?
+    let t = time.time(9, 30, 0)?
+    println(time.datetime(d, t))  // 2024-06-15T09:30:00
+}
+```
+
+
+### `time.to_datetime`
+
+```
+time.to_datetime(instant: Instant, offset_minutes: Int) -> DateTime
+```
+
+Converts an `Instant` to a `DateTime` by applying a UTC offset in minutes.
+
+```silt
+fn main() {
+    let now = time.now()
+    let tokyo = now |> time.to_datetime(540)    // UTC+9:00
+    let india = now |> time.to_datetime(330)    // UTC+5:30
+    println(tokyo)
+    println(india)
+}
+```
+
+
+### `time.to_instant`
+
+```
+time.to_instant(datetime: DateTime, offset_minutes: Int) -> Instant
+```
+
+Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
+
+```silt
+fn main() {
+    let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
+    let instant = time.to_instant(dt, 0)
+    println(instant.epoch_ns)
+}
+```
+
+
+### `time.to_utc`
+
+```
+time.to_utc(instant: Instant) -> DateTime
+```
+
+Shorthand for `time.to_datetime(instant, 0)`.
+
+```silt
+fn main() {
+    println(time.now() |> time.to_utc)  // 2026-04-06T18:46:09.005723612
+}
+```
+
+
+### `time.from_utc`
+
+```
+time.from_utc(datetime: DateTime) -> Instant
+```
+
+Shorthand for `time.to_instant(datetime, 0)`.
+
+```silt
+fn main() {
+    let dt = time.now() |> time.to_utc
+    let back = dt |> time.from_utc
+    println(back.epoch_ns)
+}
+```
+
+
+### `time.format`
+
+```
+time.format(datetime: DateTime, pattern: String) -> String
+```
+
+Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
+
+```silt
+fn main() {
+    let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
+    println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
+    // Wednesday, December 25, 2024 at 18:00
+}
+```
+
+
+### `time.format_date`
+
+```
+time.format_date(date: Date, pattern: String) -> String
+```
+
+Formats a `Date` using strftime patterns.
+
+```silt
+fn main() {
+    let d = time.date(2024, 6, 15)?
+    println(d |> time.format_date("%d/%m/%Y"))  // 15/06/2024
+}
+```
+
+
+### `time.parse`
+
+```
+time.parse(s: String, pattern: String) -> Result(DateTime, String)
+```
+
+Parses a string into a `DateTime` using a strftime pattern.
+
+```silt
+fn main() {
+    let dt = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
+    println(dt)  // Ok(2024-07-04T12:00:00)
+}
+```
+
+
+### `time.parse_date`
+
+```
+time.parse_date(s: String, pattern: String) -> Result(Date, String)
+```
+
+Parses a string into a `Date` using a strftime pattern.
+
+```silt
+fn main() {
+    let d = time.parse_date("2024-07-04", "%Y-%m-%d")
+    println(d)  // Ok(2024-07-04)
+}
+```
+
+
+### `time.add_days`
+
+```
+time.add_days(date: Date, days: Int) -> Date
+```
+
+Adds (or subtracts, if negative) days from a date.
+
+```silt
+fn main() {
+    let d = time.date(2024, 1, 1)?
+    println(d |> time.add_days(90))   // 2024-03-31
+    println(d |> time.add_days(-1))   // 2023-12-31
+}
+```
+
+
+### `time.add_months`
+
+```
+time.add_months(date: Date, months: Int) -> Date
+```
+
+Adds (or subtracts) months from a date. Clamps to the last valid day of the target month.
+
+```silt
+fn main() {
+    let d = time.date(2024, 1, 31)?
+    println(d |> time.add_months(1))   // 2024-02-29 (leap year, clamped)
+    println(d |> time.add_months(2))   // 2024-03-31
+}
+```
+
+
+### `time.add`
+
+```
+time.add(instant: Instant, duration: Duration) -> Instant
+```
+
+Adds a duration to an instant.
+
+```silt
+fn main() {
+    let t = time.now()
+    let later = t |> time.add(time.hours(2))
+    println(time.since(t, later))  // 2h
+}
+```
+
+
+### `time.since`
+
+```
+time.since(from: Instant, to: Instant) -> Duration
+```
+
+Returns the signed duration from `from` to `to` (computed as `to.epoch_ns − from.epoch_ns`).
+
+```silt
+fn main() {
+    let start = time.now()
+    time.sleep(time.ms(100))
+    let elapsed = time.since(start, time.now())
+    println(elapsed)  // 100ms
+}
+```
+
+
+### `time.hours`, `time.minutes`, `time.seconds`, `time.ms`
+
+```
+time.hours(n: Int) -> Duration
+time.minutes(n: Int) -> Duration
+time.seconds(n: Int) -> Duration
+time.ms(n: Int) -> Duration
+```
+
+Duration constructor functions.
+
+```silt
+fn main() {
+    println(time.hours(1))     // 1h
+    println(time.minutes(30))  // 30m
+    println(time.seconds(5))   // 5s
+    println(time.ms(500))      // 500ms
+}
+```
+
+
+### `time.weekday`
+
+```
+time.weekday(date: Date) -> Weekday
+```
+
+Returns the day of the week. Pattern-match on the result for exhaustive handling.
+
+```silt
+fn main() {
+    let day = time.today() |> time.weekday
+    match day {
+        Monday -> println("start of the week")
+        Friday -> println("almost weekend")
+        Saturday | Sunday -> println("weekend!")
+        _ -> println("midweek")
+    }
+}
+```
+
+
+### `time.days_between`
+
+```
+time.days_between(from: Date, to: Date) -> Int
+```
+
+Returns the signed number of days between two dates.
+
+```silt
+fn main() {
+    let a = time.date(2024, 1, 1)?
+    let b = time.date(2024, 12, 31)?
+    println(time.days_between(a, b))  // 365
+}
+```
+
+
+### `time.days_in_month`
+
+```
+time.days_in_month(year: Int, month: Int) -> Int
+```
+
+Returns the number of days in the given month.
+
+```silt
+fn main() {
+    println(time.days_in_month(2024, 2))  // 29 (leap year)
+    println(time.days_in_month(2023, 2))  // 28
+}
+```
+
+
+### `time.is_leap_year`
+
+```
+time.is_leap_year(year: Int) -> Bool
+```
+
+Returns true if the year is a leap year.
+
+```silt
+fn main() {
+    println(time.is_leap_year(2024))  // true
+    println(time.is_leap_year(1900))  // false (divisible by 100)
+    println(time.is_leap_year(2000))  // true (divisible by 400)
+}
+```
+
+
+### `time.sleep`
+
+```
+time.sleep(duration: Duration) -> ()
+```
+
+Blocks the current fiber for the given duration. Other fibers continue running.
+
+```silt
+fn main() {
+    let before = time.now()
+    time.sleep(time.ms(100))
+    let elapsed = time.since(before, time.now())
+    println(elapsed)  // ~100ms
 }
 ```

@@ -2948,6 +2948,197 @@ fn main() {
 
 // ── map.get_in / map.set_in ─────────────────────────────────────────
 
+// ── JSON + time integration ─────────────────────────────────────────
+
+#[test]
+fn test_json_parse_date_field() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, date: Date }
+fn main() {
+  let e = json.parse(Event, "\{\"name\": \"launch\", \"date\": \"2024-03-15\"\}")?
+  e.date
+}
+    "#);
+    assert_eq!(result, make_date(2024, 3, 15));
+}
+
+#[test]
+fn test_json_parse_datetime_field() {
+    let result = run(r#"
+import json
+import time
+type Meeting { title: String, start: DateTime }
+fn main() {
+  let m = json.parse(Meeting, "\{\"title\": \"standup\", \"start\": \"2024-03-15T09:00:00\"\}")?
+  m.start.time.hour
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_json_parse_time_field() {
+    let result = run(r#"
+import json
+import time
+type Alarm { label: String, at: Time }
+fn main() {
+  let a = json.parse(Alarm, "\{\"label\": \"wake up\", \"at\": \"07:30:00\"\}")?
+  (a.at.hour, a.at.minute)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(7), Value::Int(30)]));
+}
+
+#[test]
+fn test_json_parse_date_invalid_string() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, date: Date }
+fn main() { json.parse(Event, "\{\"name\": \"x\", \"date\": \"not-a-date\"\}") }
+    "#);
+    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+}
+
+#[test]
+fn test_json_parse_date_weekday_pipeline() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, date: Date }
+fn main() {
+  let e = json.parse(Event, "\{\"name\": \"x\", \"date\": \"2024-03-15\"\}")?
+  e.date |> time.weekday
+}
+    "#);
+    assert_eq!(result, Value::Variant("Friday".into(), vec![]));
+}
+
+#[test]
+fn test_json_parse_option_date_field() {
+    let result = run(r#"
+import json
+import time
+type Task { name: String, due: Option(Date) }
+fn main() {
+  let t = json.parse(Task, "\{\"name\": \"write tests\", \"due\": \"2024-06-01\"\}")?
+  match t.due {
+    Some(d) -> d.year
+    None -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(2024));
+}
+
+#[test]
+fn test_json_parse_option_date_null() {
+    let result = run(r#"
+import json
+import time
+type Task { name: String, due: Option(Date) }
+fn main() {
+  let t = json.parse(Task, "\{\"name\": \"write tests\", \"due\": null\}")?
+  match t.due {
+    Some(d) -> d.year
+    None -> 0
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn test_json_parse_list_of_dates() {
+    let result = run(r#"
+import json
+import list
+import time
+type Event { name: String, date: Date }
+fn main() {
+  let events = json.parse_list(Event, "[\{\"name\": \"a\", \"date\": \"2024-01-15\"\}, \{\"name\": \"b\", \"date\": \"2024-12-25\"\}]")?
+  events |> list.map { e -> e.date.month }
+}
+    "#);
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(12)])));
+}
+
+#[test]
+fn test_json_parse_datetime_space_separator() {
+    let result = run(r#"
+import json
+import time
+type Log { msg: String, ts: DateTime }
+fn main() {
+  let l = json.parse(Log, "\{\"msg\": \"ok\", \"ts\": \"2024-03-15 09:00:00\"\}")?
+  l.ts.date.day
+}
+    "#);
+    assert_eq!(result, Value::Int(15));
+}
+
+#[test]
+fn test_json_parse_datetime_rfc3339_zulu() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, ts: DateTime }
+fn main() {
+  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T09:00:00Z\"\}")?
+  e.ts.time.hour
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_json_parse_datetime_positive_offset() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, ts: DateTime }
+fn main() {
+  -- 18:00 in UTC+9 = 09:00 UTC
+  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T18:00:00+09:00\"\}")?
+  e.ts.time.hour
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_json_parse_datetime_negative_offset() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, ts: DateTime }
+fn main() {
+  -- 05:00 in UTC-4 = 09:00 UTC
+  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T05:00:00-04:00\"\}")?
+  e.ts.time.hour
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
+#[test]
+fn test_json_parse_datetime_half_hour_offset() {
+    let result = run(r#"
+import json
+import time
+type Event { name: String, ts: DateTime }
+fn main() {
+  -- 14:30 in UTC+5:30 = 09:00 UTC
+  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T14:30:00+05:30\"\}")?
+  e.ts.time.hour
+}
+    "#);
+    assert_eq!(result, Value::Int(9));
+}
+
 // ── regex.captures ──────────────────────────────────────────────────
 
 #[test]
@@ -4020,4 +4211,503 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::String("#[1, 2, 3]".into()));
+}
+
+// ── Time module ─────────────────────────────────────────────────────
+
+use std::collections::BTreeMap;
+
+/// Helper to build a Silt record Value.
+fn make_record(name: &str, fields: Vec<(&str, Value)>) -> Value {
+    let map: BTreeMap<String, Value> = fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    Value::Record(name.to_string(), Arc::new(map))
+}
+
+fn make_date(y: i64, m: i64, d: i64) -> Value {
+    make_record("Date", vec![("year", Value::Int(y)), ("month", Value::Int(m)), ("day", Value::Int(d))])
+}
+
+fn make_time(h: i64, m: i64, s: i64, ns: i64) -> Value {
+    make_record("Time", vec![("hour", Value::Int(h)), ("minute", Value::Int(m)), ("second", Value::Int(s)), ("ns", Value::Int(ns))])
+}
+
+fn make_datetime(date: Value, time: Value) -> Value {
+    make_record("DateTime", vec![("date", date), ("time", time)])
+}
+
+fn make_duration(ns: i64) -> Value {
+    make_record("Duration", vec![("ns", Value::Int(ns))])
+}
+
+#[test]
+fn test_time_date_valid() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 3, 15) }
+    "#);
+    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 3, 15)]));
+}
+
+#[test]
+fn test_time_date_invalid() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 13, 1) }
+    "#);
+    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+}
+
+#[test]
+fn test_time_date_leap_day() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 2, 29) }
+    "#);
+    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 2, 29)]));
+}
+
+#[test]
+fn test_time_date_non_leap_day() {
+    let result = run(r#"
+import time
+fn main() { time.date(2023, 2, 29) }
+    "#);
+    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+}
+
+#[test]
+fn test_time_time_valid() {
+    let result = run(r#"
+import time
+fn main() { time.time(14, 30, 0) }
+    "#);
+    assert_eq!(result, Value::Variant("Ok".into(), vec![make_time(14, 30, 0, 0)]));
+}
+
+#[test]
+fn test_time_time_invalid() {
+    let result = run(r#"
+import time
+fn main() { time.time(25, 0, 0) }
+    "#);
+    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+}
+
+#[test]
+fn test_time_datetime_compose() {
+    let result = run(r#"
+import time
+fn main() {
+  let d = time.date(2024, 6, 15)?
+  let t = time.time(9, 30, 0)?
+  time.datetime(d, t)
+}
+    "#);
+    assert_eq!(result, make_datetime(make_date(2024, 6, 15), make_time(9, 30, 0, 0)));
+}
+
+#[test]
+fn test_time_now_returns_instant() {
+    let result = run(r#"
+import time
+fn main() {
+  let t = time.now()
+  t.epoch_ns > 0
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_time_today_returns_date() {
+    let result = run(r#"
+import time
+fn main() {
+  let d = time.today()
+  d.year > 2020
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_time_format_datetime() {
+    let result = run(r#"
+import time
+fn main() {
+  let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
+  dt |> time.format("%Y-%m-%d %H:%M:%S")
+}
+    "#);
+    assert_eq!(result, Value::String("2024-12-25 18:00:00".into()));
+}
+
+#[test]
+fn test_time_format_date() {
+    let result = run(r#"
+import time
+fn main() {
+  time.date(2024, 6, 15)? |> time.format_date("%d/%m/%Y")
+}
+    "#);
+    assert_eq!(result, Value::String("15/06/2024".into()));
+}
+
+#[test]
+fn test_time_parse_datetime() {
+    let result = run(r#"
+import time
+fn main() { time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S") }
+    "#);
+    let expected = make_datetime(make_date(2024, 7, 4), make_time(12, 0, 0, 0));
+    assert_eq!(result, Value::Variant("Ok".into(), vec![expected]));
+}
+
+#[test]
+fn test_time_parse_date() {
+    let result = run(r#"
+import time
+fn main() { time.parse_date("2024-07-04", "%Y-%m-%d") }
+    "#);
+    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 7, 4)]));
+}
+
+#[test]
+fn test_time_parse_invalid() {
+    let result = run(r#"
+import time
+fn main() { time.parse("not-a-date", "%Y-%m-%d") }
+    "#);
+    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+}
+
+#[test]
+fn test_time_add_days() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 1, 1)? |> time.add_days(90) }
+    "#);
+    assert_eq!(result, make_date(2024, 3, 31));
+}
+
+#[test]
+fn test_time_add_days_negative() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 1, 1)? |> time.add_days(-1) }
+    "#);
+    assert_eq!(result, make_date(2023, 12, 31));
+}
+
+#[test]
+fn test_time_add_months_clamp() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 1, 31)? |> time.add_months(1) }
+    "#);
+    // Jan 31 + 1 month = Feb 29 (2024 is leap year, clamped)
+    assert_eq!(result, make_date(2024, 2, 29));
+}
+
+#[test]
+fn test_time_add_months_negative_clamp() {
+    let result = run(r#"
+import time
+fn main() { time.date(2024, 3, 31)? |> time.add_months(-1) }
+    "#);
+    assert_eq!(result, make_date(2024, 2, 29));
+}
+
+#[test]
+fn test_time_add_months_non_leap() {
+    let result = run(r#"
+import time
+fn main() { time.date(2023, 1, 31)? |> time.add_months(1) }
+    "#);
+    // Jan 31 + 1 month in non-leap year = Feb 28
+    assert_eq!(result, make_date(2023, 2, 28));
+}
+
+#[test]
+fn test_time_duration_constructors() {
+    let result = run(r#"
+import time
+fn main() {
+  let h = time.hours(1)
+  let m = time.minutes(1)
+  let s = time.seconds(1)
+  let ms = time.ms(1)
+  (h.ns, m.ns, s.ns, ms.ns)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![
+        Value::Int(3_600_000_000_000),
+        Value::Int(60_000_000_000),
+        Value::Int(1_000_000_000),
+        Value::Int(1_000_000),
+    ]));
+}
+
+#[test]
+fn test_time_add_instant_duration() {
+    let result = run(r#"
+import time
+fn main() {
+  let start = time.now()
+  let later = start |> time.add(time.seconds(60))
+  let elapsed = time.since(start, later)
+  elapsed.ns == time.seconds(60).ns
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_time_to_utc_from_utc_roundtrip() {
+    let result = run(r#"
+import time
+fn main() {
+  let now = time.now()
+  let dt = now |> time.to_utc
+  let back = dt |> time.from_utc
+  back.epoch_ns == now.epoch_ns
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_time_to_datetime_offset() {
+    let result = run(r#"
+import time
+fn main() {
+  -- Construct a known instant: 2024-01-01T00:00:00 UTC
+  let dt_utc = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
+  let instant = time.from_utc(dt_utc)
+  -- Convert to UTC+9 (Tokyo)
+  let tokyo = instant |> time.to_datetime(540)
+  tokyo.date.year == 2024 && tokyo.time.hour == 9
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_time_weekday() {
+    let result = run(r#"
+import time
+fn main() {
+  -- 2024-01-01 was a Monday
+  time.date(2024, 1, 1)? |> time.weekday
+}
+    "#);
+    assert_eq!(result, Value::Variant("Monday".into(), vec![]));
+}
+
+#[test]
+fn test_time_weekday_saturday() {
+    let result = run(r#"
+import time
+fn main() {
+  -- 2024-03-16 was a Saturday
+  time.date(2024, 3, 16)? |> time.weekday
+}
+    "#);
+    assert_eq!(result, Value::Variant("Saturday".into(), vec![]));
+}
+
+#[test]
+fn test_time_weekday_pattern_match() {
+    let result = run(r#"
+import time
+fn main() {
+  let day = time.date(2024, 1, 1)? |> time.weekday
+  match day {
+    Monday -> "mon"
+    Tuesday -> "tue"
+    Wednesday -> "wed"
+    Thursday -> "thu"
+    Friday -> "fri"
+    Saturday -> "sat"
+    Sunday -> "sun"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("mon".into()));
+}
+
+#[test]
+fn test_time_days_between() {
+    let result = run(r#"
+import time
+fn main() { time.days_between(time.date(2024, 1, 1)?, time.date(2024, 12, 31)?) }
+    "#);
+    assert_eq!(result, Value::Int(365));
+}
+
+#[test]
+fn test_time_days_between_negative() {
+    let result = run(r#"
+import time
+fn main() { time.days_between(time.date(2024, 12, 31)?, time.date(2024, 1, 1)?) }
+    "#);
+    assert_eq!(result, Value::Int(-365));
+}
+
+#[test]
+fn test_time_days_in_month() {
+    let result = run(r#"
+import time
+fn main() { (time.days_in_month(2024, 2), time.days_in_month(2023, 2), time.days_in_month(2024, 7)) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(29), Value::Int(28), Value::Int(31)]));
+}
+
+#[test]
+fn test_time_is_leap_year() {
+    let result = run(r#"
+import time
+fn main() { (time.is_leap_year(2024), time.is_leap_year(1900), time.is_leap_year(2000), time.is_leap_year(2023)) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![
+        Value::Bool(true),   // divisible by 4
+        Value::Bool(false),  // divisible by 100 but not 400
+        Value::Bool(true),   // divisible by 400
+        Value::Bool(false),  // not divisible by 4
+    ]));
+}
+
+#[test]
+fn test_time_date_compare_correct_order() {
+    // Verifies that Date comparison is year→month→day, NOT alphabetical field order
+    let result = run(r#"
+import time
+fn main() {
+  let jan31 = time.date(2024, 1, 31)?
+  let feb1 = time.date(2024, 2, 1)?
+  (jan31 < feb1, feb1 > jan31, jan31 == jan31)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]));
+}
+
+#[test]
+fn test_time_weekday_compare_chronological() {
+    let result = run(r#"
+import time
+fn main() { (Monday < Friday, Sunday > Monday, Wednesday == Wednesday) }
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]));
+}
+
+#[test]
+fn test_time_display_date_iso() {
+    let result = run(r#"
+import time
+fn main() { "{time.date(2024, 3, 15)?}" }
+    "#);
+    assert_eq!(result, Value::String("2024-03-15".into()));
+}
+
+#[test]
+fn test_time_display_time_iso() {
+    let result = run(r#"
+import time
+fn main() { "{time.time(9, 5, 3)?}" }
+    "#);
+    assert_eq!(result, Value::String("09:05:03".into()));
+}
+
+#[test]
+fn test_time_display_datetime_iso() {
+    let result = run(r#"
+import time
+fn main() {
+  let dt = time.datetime(time.date(2024, 3, 15)?, time.time(14, 30, 0)?)
+  "{dt}"
+}
+    "#);
+    assert_eq!(result, Value::String("2024-03-15T14:30:00".into()));
+}
+
+#[test]
+fn test_time_display_duration() {
+    let result = run(r#"
+import time
+fn main() {
+  ("{time.hours(2)}", "{time.minutes(30)}", "{time.seconds(5)}", "{time.ms(500)}")
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![
+        Value::String("2h".into()),
+        Value::String("30m".into()),
+        Value::String("5s".into()),
+        Value::String("500ms".into()),
+    ]));
+}
+
+#[test]
+fn test_time_display_duration_compound() {
+    let result = run(r#"
+import time
+fn main() {
+  let d = Duration { ns: time.hours(2).ns + time.minutes(30).ns + time.seconds(15).ns }
+  "{d}"
+}
+    "#);
+    assert_eq!(result, Value::String("2h30m15s".into()));
+}
+
+#[test]
+fn test_time_since_signed() {
+    let result = run(r#"
+import time
+fn main() {
+  let a = time.now()
+  let b = a |> time.add(time.seconds(10))
+  let forward = time.since(a, b)
+  let backward = time.since(b, a)
+  (forward.ns > 0, backward.ns < 0)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true)]));
+}
+
+#[test]
+fn test_time_pipe_composition() {
+    let result = run(r#"
+import time
+fn main() {
+  time.date(2024, 1, 1)?
+  |> time.add_days(90)
+  |> time.weekday
+}
+    "#);
+    // 2024-01-01 + 90 days = 2024-03-31 (Sunday)
+    assert_eq!(result, Value::Variant("Sunday".into(), vec![]));
+}
+
+#[test]
+fn test_time_sleep_basic() {
+    run_ok(r#"
+import time
+import test
+fn main() {
+  let before = time.now()
+  time.sleep(time.ms(10))
+  let elapsed = time.since(before, time.now())
+  test.assert(elapsed.ns > 0)
+}
+    "#);
+}
+
+#[test]
+fn test_time_format_weekday_name() {
+    let result = run(r#"
+import time
+fn main() {
+  time.date(2024, 12, 25)? |> time.format_date("%A")
+}
+    "#);
+    assert_eq!(result, Value::String("Wednesday".into()));
 }
