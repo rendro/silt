@@ -4419,11 +4419,17 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(VmError::new("time.today takes 0 arguments".into()));
                 }
-                // Use local time on native, UTC on WASM (no local timezone available).
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let secs = SystemTime::now().duration_since(UNIX_EPOCH)
+                    .map_err(|e| VmError::new(format!("time.today failed: {e}")))?
+                    .as_secs() as i64;
+                // On native, apply local UTC offset. On WASM, use UTC.
                 #[cfg(not(target_arch = "wasm32"))]
-                let today = chrono::Local::now().date_naive();
-                #[cfg(target_arch = "wasm32")]
-                let today = chrono::Utc::now().date_naive();
+                let secs = secs + chrono::Local::now().offset().local_minus_utc() as i64;
+                let today = DateTime::from_timestamp(secs, 0)
+                    .ok_or_else(|| VmError::new("time.today: timestamp out of range".into()))?
+                    .naive_utc()
+                    .date();
                 Ok(Self::make_date(today))
             }
 
