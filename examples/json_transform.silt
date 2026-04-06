@@ -1,24 +1,5 @@
-{- Friction Report
-   Attempts: 1 (rewrite of original; applied direct tuple destructuring in closure params)
-   Rating: 10/10 (very natural data pipeline code)
-   Highlights:
-     - json.parse_list with a record type is excellent — typed JSON parsing with zero boilerplate
-     - Triple-quoted strings for embedding JSON are clean and intuitive
-     - Pipe operator + trailing closures make transformation chains very readable
-     - list.group_by returning a Map is exactly the right abstraction
-     - map.entries / map.from_entries enable smooth map transformations via list pipelines
-     - list.flat_map + list.unique for skill flattening reads like pseudocode
-     - json.pretty serializes records and maps nicely with zero config
-     - Tuple destructuring directly in closure params (`{ (k, v) -> ... }`) eliminates
-       the need for intermediate let bindings when iterating over map.entries — clean
-   Friction:
-     - Maps are homogeneously typed, so you cannot build ad-hoc JSON-like objects with
-       mixed value types (e.g., #{"count": 5, "name": "Alice"}). Needed to define a
-       DeptSummary record type. Not really a problem in practice — records are the right
-       tool — but it is a moment of surprise for someone thinking in JSON.
-   Missing: (none — everything needed was available in the stdlib)
-   Bugs: (none encountered)
--}
+-- JSON data pipeline that parses employee records, groups by department,
+-- computes salary statistics, filters by skill, and outputs summary JSON.
 
 type Employee {
   name: String,

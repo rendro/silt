@@ -1,31 +1,6 @@
-{- Friction Report
-   Attempts: 1 (rewrite)
-   Rating: 10/10 (everything just works)
-   Highlights:
-     - The pipe operator |> with trailing closures makes pipelines extremely readable
-     - Higher-order function factories work naturally — closures capture variables as expected
-     - list.enumerate, list.sort_by, list.filter, list.map all compose beautifully
-     - String interpolation with {expr} is convenient and works everywhere
-     - Pattern matching on tuples from enumerate is clean: let (i, line) = pair
-     - regex.split("\\s+", text) solves the whitespace-splitting problem elegantly
-     - regex.replace_all_with enables powerful per-match transformations via callback
-     - return in match arms now produces Never type — bail-out patterns work cleanly
-     - The stdlib has excellent coverage for text processing
-   Friction:
-     - The pipe operator note about |> inserting as first arg means you cannot pipe directly
-       into a factory call like `lines |> make_grep("ERROR")` — you must pre-bind the
-       factory result. This is well-documented but slightly less ergonomic than auto-currying.
-     - Regex quantifiers like \d{2} clash with string interpolation in regular strings.
-       Triple-quoted strings ("""...""") are the right tool here — no interpolation, no
-       escape processing — but this is a gotcha that fails silently (the {2} evaluates to
-       "2", producing a valid but wrong regex). Documented in language guide, just easy to
-       forget when writing regex inline.
-   Missing: nothing encountered
-   Bugs: none encountered
--}
-
--- Unix-pipe-style text processing pipeline
--- Reads a log file and applies various transformations using |>
+-- Unix-pipe-style text processing pipeline.
+-- Reads a log file and applies 15 different transformation chains using
+-- the pipe operator, higher-order function factories, and regex.
 
 -- ============================================================
 -- Pipeline utility functions
@@ -158,7 +133,7 @@ fn print_section(title, lines) {
 
 fn main() {
   -- Read the log file; return now works in match arms (Never type)
-  let content = match io.read_file("programs/log.txt") {
+  let content = match io.read_file("examples/log.txt") {
     Ok(c) -> c
     Err(e) -> return println("Error reading log file: {e}")
   }
@@ -201,7 +176,7 @@ fn main() {
   print_section("Pipeline 4: WARN sorted by length with word count", result4)
 
   -- --------------------------------------------------------
-  -- Pipeline 5: higher-order factory — make_grep
+  -- Pipeline 5: higher-order factory -- make_grep
   -- --------------------------------------------------------
   let grep_error = make_grep("ERROR")
   let result5 = lines
@@ -210,7 +185,7 @@ fn main() {
   print_section("Pipeline 5: make_grep factory for ERROR", result5)
 
   -- --------------------------------------------------------
-  -- Pipeline 6: higher-order factory — make_reject + uppercase
+  -- Pipeline 6: higher-order factory -- make_reject + uppercase
   -- --------------------------------------------------------
   let reject_debug = make_reject("DEBUG")
   let reject_info = make_reject("INFO")
@@ -277,7 +252,7 @@ fn main() {
   print_section("Pipeline 11: first 3 INFO lines with prefix and word count", result11)
 
   -- --------------------------------------------------------
-  -- Pipeline 12: full pipeline — filter, transform, sort, number
+  -- Pipeline 12: full pipeline -- filter, transform, sort, number
   -- --------------------------------------------------------
   let grep_conn = make_grep("connection")
   let result12 = lines
@@ -289,7 +264,7 @@ fn main() {
   print_section("Pipeline 12: connection-related lines, lowered, grepped, sorted, uppered, numbered", result12)
 
   -- --------------------------------------------------------
-  -- Pipeline 13: regex.replace_all_with — upcase log levels in-place
+  -- Pipeline 13: regex.replace_all_with -- upcase log levels in-place
   -- --------------------------------------------------------
   let result13 = lines
     |> list.take(5)
@@ -302,7 +277,7 @@ fn main() {
   print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
 
   -- --------------------------------------------------------
-  -- Pipeline 14: make_replace factory — redact timestamps with callback
+  -- Pipeline 14: make_replace factory -- redact timestamps with callback
   -- --------------------------------------------------------
   let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""", fn(m) { "XX:XX:XX" })
   let result14 = lines

@@ -1,22 +1,5 @@
-{- Friction Report
-   Attempts: 1
-   Rating: 9/10 (the language felt natural and expressive for this task)
-   Highlights:
-     - Pipe operator and trailing closures make data transformation pipelines very readable
-     - Pattern matching with tuple destructuring is elegant for extracting diff markers and stats
-     - list.fold for building the LCS table and accumulating statistics felt natural
-     - match on Result with panic in Err arm works cleanly now that return/panic produce Never
-     - string.split, list.filter, list.enumerate, list.zip all composed well together
-     - Immutable data with list.set returning new lists works fine for the DP table
-   Friction:
-     - No 2D array or mutable table makes the DP algorithm verbose (nested list.fold with list.get/list.set)
-     - Recursive trace_diff with list.prepend builds the result in reverse order by nature of prepend,
-       but since we prepend the current item to the recursive result, it actually works out correctly
-   Missing:
-     - No list.zip_with or list.map2 for element-wise operations on two lists simultaneously
-     - No built-in 2D array or matrix type (understandable for a minimal language)
-   Bugs: None encountered
--}
+-- Line-by-line diff tool using LCS (longest common subsequence) dynamic programming.
+-- Compares two text files and outputs unified-style diff with statistics.
 
 -- Build a 2D table (list of lists) for LCS lengths using bottom-up DP.
 -- table[i][j] = length of LCS of old[i..] and new[j..]
@@ -103,11 +86,11 @@ fn main() {
   println("")
 
   -- Read both files using match with panic in Err arm (Never type unifies with Ok's value)
-  let old_content = match io.read_file("programs/files/original.txt") {
+  let old_content = match io.read_file("examples/data/original.txt") {
     Ok(content) -> content
     Err(e) -> panic("Error reading original.txt: {e}")
   }
-  let new_content = match io.read_file("programs/files/modified.txt") {
+  let new_content = match io.read_file("examples/data/modified.txt") {
     Ok(content) -> content
     Err(e) -> panic("Error reading modified.txt: {e}")
   }
@@ -116,8 +99,8 @@ fn main() {
   let old_lines = old_content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
   let new_lines = new_content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
 
-  println("--- programs/files/original.txt ({list.length(old_lines)} lines)")
-  println("+++ programs/files/modified.txt ({list.length(new_lines)} lines)")
+  println("--- examples/data/original.txt ({list.length(old_lines)} lines)")
+  println("+++ examples/data/modified.txt ({list.length(new_lines)} lines)")
   println("")
 
   -- Build LCS table

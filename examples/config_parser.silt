@@ -1,24 +1,5 @@
-{- Friction Report
-   Attempts: 1 (worked on the first run)
-   Rating: 10/10 (very natural and pleasant to write)
-   Highlights:
-     - ADTs with match are perfect for line classification
-     - Pipe operator and trailing closures make data transformation very readable
-     - list.fold with tuple state works well for stateful accumulation
-     - Tuple destructuring in closure params works: { (idx, raw) -> ... }
-     - map module is complete and ergonomic (get, set, contains, each, keys)
-     - string module has everything needed (trim, starts_with, index_of, slice, split)
-     - list.filter_map is great for collecting validation errors
-     - list.flat_map for combining multiple validation results
-     - when/else for early returns on file read is clean
-     - Boolean match (match without scrutinee) is intuitive as an if/else replacement
-   Friction:
-     - No way to get line count or split-and-enumerate in one step (minor)
-   Missing:
-     - Verified: no string.split_once or string.split_at for splitting on first occurrence only
-       (used string.index_of + string.slice as workaround, which is fine)
-   Bugs: None encountered
--}
+-- INI-style config file parser with section/key-value extraction and validation.
+-- Classifies each line as blank, comment, section header, key-value pair, or parse error.
 
 -- ADT for classifying each line of the config file
 type Line {
@@ -147,9 +128,9 @@ fn print_config(config) {
 
 fn main() {
   -- Read the config file
-  let file_result = io.read_file("programs/app.conf")
+  let file_result = io.read_file("examples/app.conf")
   when Ok(text) = file_result else {
-    println("Error: could not read programs/app.conf")
+    println("Error: could not read examples/app.conf")
     return ()
   }
 

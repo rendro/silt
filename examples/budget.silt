@@ -1,28 +1,5 @@
-{- Friction Report
-   Attempts: 1 (rewrite of working program, applying map.update for category aggregation)
-   Rating: 8.5/10 (improved from 8/10 — map.update eliminates the group_by-then-fold-each-group pattern)
-   Highlights:
-     - map.update(m, key, default, fn) is excellent for category aggregation — replaces the
-       three-step group_by / per-group fold / map.get lookup pattern with a single fold
-     - String interpolation covers all string building needs cleanly
-     - Pipe operator + trailing closures make data transformation pipelines readable
-     - Record types with named fields are pleasant to work with
-     - match-without-scrutinee for boolean branching is intuitive
-     - float.to_string(f, 2) for currency formatting is exactly what you need
-     - string.pad_left/pad_right make table alignment straightforward
-     - list.fold for running balance accumulation is clean and readable
-   Friction:
-     - No string concatenation operator (++ or +). You must use interpolation "{a}{b}"
-       for all string joining. This works well in practice but is not obvious to newcomers.
-     - Building formatted table rows requires many intermediate let-bindings since
-       interpolation cannot span multiple lines gracefully. A known trade-off.
-     - Maps are homogeneous in value type, so aggregating both totals (Float) and counts (Int)
-       requires two separate map.update folds. A minor inconvenience, correct by design.
-   Missing:
-     - Nothing truly missing for this task.
-   Bugs:
-     - None encountered.
--}
+-- Personal budget tracker with category totals, monthly summary, running balance,
+-- budget-vs-actual comparison, and spending forecast.
 
 -- Transaction record type
 type Transaction {

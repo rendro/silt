@@ -1,21 +1,5 @@
-{- Friction Report
-   Attempts: 1 (worked on first run)
-   Rating: 9/10 (very natural, felt immediately productive)
-   Highlights:
-     - regex.captures_all with triple-quoted strings for patterns is excellent
-     - match-without-scrutinee is a clean if/else replacement
-     - Pipe operator + trailing closures make data pipelines very readable
-     - Tuple destructuring in fold accumulator is ergonomic
-     - string.starts_with, string.is_empty -- all the expected string utils are present
-     - Type inference meant zero annotations needed
-   Friction:
-     - None. The noted fold_until same-type constraint is a general language observation
-       but caused zero friction in this program.
-   Missing:
-     - None identified. The stdlib had everything needed for this task.
-   Bugs:
-     - None encountered.
--}
+-- Markdown link checker that extracts [text](url) links from a file,
+-- classifies them by URL scheme, and reports valid/invalid counts.
 
 fn classify_url(url) {
   match {
@@ -29,7 +13,7 @@ fn classify_url(url) {
 }
 
 fn main() {
-  let file_path = "programs/test.md"
+  let file_path = "examples/test.md"
   let content = match io.read_file(file_path) {
     Ok(c) -> c
     Err(e) -> {

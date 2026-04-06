@@ -1,33 +1,6 @@
-{- Friction Report
-   Attempts: 1 (clean rewrite from prior version)
-   Rating: 9.5/10 (natural and expressive for this task)
-   Highlights:
-     - Records with named fields (Pos type) made coordinate handling clean
-     - Record equality (==) works out of the box — no manual field comparisons needed
-     - list.contains with Pos values for visited checks is concise
-     - loop expression is a perfect fit for BFS: bind queue + visited, recurse naturally
-     - list.filter, list.map, list.any, list.flat_map, list.filter_map all worked
-       smoothly in pipelines with trailing closures
-     - Pattern matching on list head/tail [x, ..rest] is elegant for queue processing
-     - string.chars + list.get for grid cell access worked well
-     - Record update syntax (state.{ found: path }) is concise and readable
-     - string.join for row reconstruction was convenient
-   Friction:
-     - None significant. loop removes the dummy-range and same-type-constraint issues
-       that fold_until had. Record equality removes the need for manual field comparisons.
-   Missing:
-     - Nothing missing from stdlib for this task; all needed functions were available.
-   Bugs:
-     - No interpreter or typechecker bugs encountered. Everything worked as documented.
--}
-
--- Maze Solver: BFS pathfinding on a grid
---
--- Represents a maze as a list of strings where:
---   '#' = wall, '.' = open, 'S' = start, 'E' = end
--- Uses BFS with loop for the search iteration.
--- Tracks visited cells and reconstructs the path.
--- Prints the maze with the solution path marked as '*'.
+-- BFS maze solver on a grid.
+-- Parses a maze from strings (# = wall, . = open, S = start, E = end),
+-- finds the shortest path, and prints the solution with the path marked.
 
 type Pos {
   row: Int,

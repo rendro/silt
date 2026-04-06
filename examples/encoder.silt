@@ -1,24 +1,5 @@
-{- Friction Report
-   Attempts: 1 (worked on first run after rewrite)
-   Rating: 9.5/10 (very natural, expressive code)
-   Highlights:
-     - regex.replace_all_with(pattern, text, fn) is ideal for character-level cipher
-       transformations — replaces the manual string.chars -> list.map -> string.join("")
-       pattern with a single expressive call
-     - string.char_code / string.from_char_code make cipher arithmetic straightforward
-     - list.fold with tuple destructuring works great for stateful accumulation (RLE encoding)
-     - Trailing closure syntax with pipes reads very cleanly for data pipelines
-     - map.from_entries with list.zip is elegant for building cipher lookup tables
-     - regex.captures_all made RLE decoding trivial
-     - match-without-scrutinee is a clean replacement for if/else
-     - String interpolation with {expr} is convenient and intuitive
-     - Tuple destructuring in let bindings (let (a, b) = tuple) works reliably
-   Friction:
-     - None encountered in this rewrite.
-   Missing:
-     - Nothing observed.
-   Bugs: None encountered.
--}
+-- Encoding and cipher toolkit: Caesar cipher, ROT13, run-length encoding,
+-- and Atbash substitution cipher with round-trip verification.
 
 -- ============================================================
 -- Caesar Cipher (using regex.replace_all_with)

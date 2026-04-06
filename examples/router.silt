@@ -1,27 +1,5 @@
-{- Friction Report
-   Attempts: 1
-   Rating: 9/10 (very natural with Fn-typed record fields)
-   Highlights:
-     - Record types with Fn-typed fields let you store closures right alongside data,
-       eliminating the need for a separate handler map
-     - Pattern matching with match {} (no scrutinee) for boolean branching is readable
-     - Pipe operator and trailing closures make data pipelines very nice
-     - regex.captures works exactly as expected with capture groups
-     - list.fold, list.zip, map.set, map.entries all compose smoothly
-     - String interpolation with {expr} inside strings is convenient
-     - Type inference is strong: almost no annotations needed
-   Friction:
-     - Maps are homogeneously typed, so you cannot store mixed-type values (e.g. strings + lists)
-       in a single map. This is fine once you know to reach for records instead.
-   Missing:
-     - Nothing missing for this use case; the stdlib had everything needed.
-   Bugs:
-     - None encountered.
--}
-
--- URL Router/Dispatcher
--- Matches incoming HTTP requests against a list of route definitions,
--- extracts path parameters, and dispatches to handler closures stored in route records.
+-- URL router/dispatcher that matches HTTP requests against route patterns,
+-- extracts path parameters, and dispatches to handler closures.
 
 -- A route definition with handler closure stored directly in the record
 type Route {

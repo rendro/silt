@@ -1,26 +1,6 @@
-{- Friction Report
-   Attempts: 1 (rewrite from earlier version; fixed where-clause syntax)
-   Rating: 9/10 (very natural for a state machine with ADTs)
-   Highlights:
-   - ADT definition syntax is clean and intuitive, very ML-like
-   - Nested match expressions work exactly as expected for state/event dispatch
-   - Tuple returns from functions feel natural for multi-value results
-   - String interpolation with curly braces is convenient and reduces boilerplate
-   - Custom Display traits override the auto-derived versions seamlessly
-   - Maps with tuple values (inventory tracking qty+price) work well
-   - Pipe operator and trailing closures make list processing ergonomic
-   - Guardless match (match without scrutinee) is a nice if/else replacement
-   - where clauses with explicit type annotations read clearly now
-   Friction:
-   - Maps are homogeneous, so inventory items need tuples (qty, price) rather than
-     records with named fields. Not a real problem, but named fields would be clearer.
-   - No built-in way to do "match then fall through" or handle Dispensing as a
-     transient state that auto-resolves; had to manually handle it in the fold loop.
-   Missing:
-   - No map.map_values(m, fn) to transform just values while keeping keys (verified:
-     only map.map exists which takes (key, value) and returns (new_key, new_value))
-   Bugs: None encountered
--}
+-- Vending machine state machine simulator.
+-- Models states (Idle, Accepting, Dispensing, OutOfStock), events (InsertCoin,
+-- SelectItem, Cancel, Restock), and transitions with inventory tracking.
 
 -- ADT for vending machine states
 type State {

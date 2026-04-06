@@ -1,21 +1,5 @@
-{- Friction Report
-   Attempts: 3 (first failed because named fn declarations are not allowed inside function bodies,
-                 third adds tests for map.update, regex.replace_all_with, negative literal patterns)
-   Rating: 9/10 (very natural and pleasant to write)
-   Highlights:
-   - Pipe operator and trailing closures make data transformation extremely readable
-   - try() for catching panics works perfectly for building a test runner
-   - Pattern matching (tuples, lists, variants, guards, no-scrutinee) is comprehensive and consistent
-   - String interpolation is convenient and works with expressions
-   - Stdlib coverage is excellent: list, map, set, string, option, result modules all feel complete
-   - Type inference makes code concise without losing safety
-   Friction:
-   - Named fn declarations cannot be nested inside function bodies; must use top-level fns or let-bound anonymous fns.
-     This was the only error encountered and is a reasonable design choice, just unexpected at first.
-   - No built-in way to get a string representation of a boolean for display (minor, interpolation handles it)
-   Missing: (nothing missing -- all features needed were available in the stdlib)
-   Bugs: (none encountered)
--}
+-- Comprehensive test suite covering arithmetic, strings, lists, maps, sets,
+-- option/result types, pattern matching, closures, pipes, loops, and regex.
 
 -- Test runner infrastructure
 -- run_test takes a name and a zero-arg test function, uses try() to catch failures

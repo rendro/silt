@@ -1,25 +1,5 @@
-{- Friction Report
-   Attempts: 1 (rewrite using lessons learned from first version)
-   Rating: 9/10 (match on string literals and front-of-list stack made this significantly cleaner)
-   Highlights:
-     - match input { "quit" -> ... "+" -> ... } is a huge win over boolean arms — the dispatch reads like a command table
-     - list.head / list.tail / list.prepend as stack ops is natural and avoids the clunky list.take(list, list.length(list) - 1) pattern
-     - loop with named state variables remains excellent for REPL loops
-     - Tuple destructuring (let (stack, entry) = ...) works cleanly for multi-return
-     - String interpolation with {expr} is convenient and works everywhere
-     - Pipe operator |> chains nicely with option.unwrap_or
-     - list.reverse for display is simple and correct
-   Friction:
-     - loop() cannot be called from closures, so the match-on-entry pattern (Some(h) -> loop(...) | None -> loop(...)) must be inlined at each operation arm — a helper closure won't work
-     - No way to do `match list { [a, b, ..rest] -> ... }` destructuring — would eliminate the head/tail/length dance
-   Missing:
-     - List destructuring patterns in match (e.g., [a, b, ..rest])
-   Bugs: None encountered
--}
-
--- Scientific calculator with history
--- Stack-based: numbers push to stack, operations consume from stack
--- Stack convention: front of list = top of stack
+-- Stack-based scientific calculator with history and undo.
+-- Supports arithmetic, sqrt, pow, trig, log, and constants (pi, e).
 
 fn print_help() {
   println("Scientific Calculator")

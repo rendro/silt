@@ -1,26 +1,5 @@
-{- Friction Report
-   Attempts: 2 (first run had list.tail |> option.unwrap_or -- tail returns List, not Option)
-   Rating: 9/10 (very natural, expressive code)
-   Highlights:
-     - Recursive ADTs work exactly as expected, including self-referential types
-     - Pattern matching is excellent: deep nesting, or-patterns, guards all compose well
-     - Pipe operator and trailing closures make list processing very readable
-     - Auto-derived Display for ADTs is convenient; custom Display override is straightforward
-     - String interpolation with .display() calls is clean
-     - Negative integer patterns (e.g. Num(-1)) work in match arms -- very natural
-     - Front-of-list stack idiom (head/tail/prepend) is clean and O(1)
-     - math.pow available for numeric computations
-   Friction:
-     - Tuple destructuring in closure params for list.each works great, but the docs could
-       highlight this pattern more
-   Missing:
-     - list.init (all but last element) - not in stdlib
-   Bugs: none encountered
--}
-
--- Expression Evaluator
--- Recursive ADT with eval, simplify, to_rpn, from_rpn, classify complexity
--- Demonstrates deep pattern matching, or-patterns, and Display trait
+-- Recursive expression evaluator with simplification, RPN conversion, and complexity analysis.
+-- Demonstrates deep pattern matching, or-patterns, and custom Display traits on ADTs.
 
 type Expr {
   Num(Int),

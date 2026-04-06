@@ -1,35 +1,7 @@
-{- Friction Report
-   Attempts: 1 (rewrite applying lessons learned from v1)
-   Rating: 9.5/10 (very natural and expressive code)
-   Highlights:
-     - Pipe operator and trailing closures make data transformation pipelines very readable
-     - Pattern matching as the sole branching construct feels clean and consistent
-     - String interpolation is convenient and works everywhere
-     - list.flat_map, list.fold, list.enumerate, list.sort_by all compose beautifully
-     - map.entries + list.sort_by for frequency analysis is elegant
-     - string.pad_left/pad_right made column alignment trivial
-     - match without scrutinee for boolean branching is a nice pattern
-     - Type inference means zero annotation burden
-     - regex.split handles all whitespace properly -- big improvement over string.split(" ")
-     - map.update makes frequency counting a clean one-liner inside fold
-     - Tuple destructuring in closure params { (k, v) -> ... } avoids intermediate let bindings
-   Friction:
-     - Rest pattern in list match requires a binding name ([file, ..rest]) -- [file, ..] is
-       not valid. Minor, but other languages allow anonymous rest patterns.
-     - No string concatenation operator (must use interpolation "{a}{b}"). Fine in practice
-       but slightly awkward when building strings from non-string values.
-   Missing:
-     - list.max_by / list.min_by (had to write find_longest/find_shortest manually with fold)
-   Bugs: None encountered
--}
+-- Text file statistics: line count, word count, character count, unique words,
+-- average word length, longest/shortest words, and top-N frequency table.
 
-{- Text Statistics Program
-   Reads a text file and computes various statistics:
-   line count, word count, char count, unique words,
-   avg word length, longest/shortest words, top-N frequent words.
--}
-
-let default_file = "programs/sample_text.txt"
+let default_file = "examples/sample_text.txt"
 let top_n = 10
 
 fn get_filename() {

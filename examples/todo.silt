@@ -1,22 +1,5 @@
-{- Friction Report
-   Attempts: 1
-   Rating: 9.5/10 (json module makes persistence trivial)
-   Highlights:
-     - Pattern matching as the sole branching construct is very clean for command dispatch
-     - Record update syntax (t.{ done: true }) is elegant and readable
-     - loop with named state bindings is a perfect fit for REPL loops
-     - Pipe operator and trailing closures make list transformations pleasant
-     - json.stringify / json.parse_list make persistence a one-liner each way
-     - io.read_file/write_file returning Result is a natural error-handling pattern
-   Friction:
-     - String interpolation uses {expr} which conflicts visually with the #{id} map/set syntax;
-       had to be careful that "Marked #{id}" means interpolation of "id" prefixed with "#"
-       rather than a map literal (it works fine, just a moment of hesitation)
-     - No way to print without newline and then read input on the same line in a guaranteed way
-       (print + io.read_line works but flushing behavior is implementation-dependent)
-   Missing: Nothing significant for this use case
-   Bugs: None encountered
--}
+-- Interactive todo list manager with add, done, remove, save, and load commands.
+-- Persists todos to a JSON file.
 
 type Todo {
   id: Int,

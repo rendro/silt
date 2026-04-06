@@ -1,24 +1,5 @@
-{- Friction Report
-   Attempts: 1
-   Rating: 9/10 (very natural and pleasant to write)
-   Highlights:
-     - Pipe operator + trailing closures make data transformation pipelines extremely readable
-     - list.group_by, list.sort_by, list.enumerate are exactly the right primitives for this task
-     - string.pad_left/pad_right make formatted table output straightforward
-     - match with return/panic in arms now works via Never type, making Result handling clean inline
-     - Record types with dot access feel natural
-     - float.to_string(f, decimals) is a nice convenience for formatted numeric output
-     - int.to_float for division to get averages works smoothly
-   Friction:
-     - The 5th empty string arg in print_row calls is ugly; I defined a 5-column helper but only needed 4 columns in most sections. Not a language issue, just my design.
-     - No if/else takes a moment to internalize, but match-without-scrutinee is a solid replacement once you learn it.
-     - Negating for descending sort (-s.score) worked, but it relies on unary minus working on record field access, which felt uncertain until tested.
-   Missing:
-     - No string.to_int / string.to_float convenience functions (must use int.parse/float.parse which return Result -- correct but slightly verbose for CSV parsing where you just want unwrap_or)
-     - No list.max / list.min functions (had to write manual folds)
-     - No list.sum function (had to write manual fold)
-   Bugs: None encountered
--}
+-- CSV data analyzer that parses student records and computes statistics,
+-- rankings, honor roll filtering, and grade distribution.
 
 -- Record type for a student row
 type Student {
@@ -96,7 +77,7 @@ fn print_separator() {
 
 fn main() {
   -- Read and parse CSV using match with Never-typed panic in Err arm
-  let content = match io.read_file("programs/data.csv") {
+  let content = match io.read_file("examples/data.csv") {
     Ok(text) -> text
     Err(e) -> panic("Error reading data.csv: {e}")
   }

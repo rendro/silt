@@ -1,31 +1,6 @@
-{- Friction Report (rewrite)
-   Attempts: 2 (first run had Float/Int type mismatch in histogram; float.floor returns Int)
-   Rating: 9/10 (very natural and expressive)
-   Highlights:
-     - Pipe operator and trailing closures make data pipelines very readable
-     - list.unfold is a great fit for PRNG-based sequence generation
-     - Pattern matching with tuple destructuring works smoothly throughout
-     - list.group_by, list.sort_by, list.enumerate, list.zip all work as expected
-     - string.repeat and string.pad_right make histogram formatting easy
-     - map.update simplifies histogram bucketing to a clean fold (was per-bucket list.filter)
-     - Range syntax (0..n) with list.map replaces list.unfold for bucket generation
-     - int.to_float and float.to_string(f, decimals) are convenient for statistics output
-     - Record types with dot access feel natural
-   Friction:
-     - No ability to negate sort keys for sort_by descending without using -value
-       (minor, since negation works fine for Int)
-     - No list.sum / list.min / list.max utility; had to fold manually (very minor)
-     - float.floor returns Float, need float.to_int to mix with Int arithmetic
-   Missing:
-     - list.sum / list.product (convenience reducers)
-     - list.min / list.max (only int.min/int.max exist for pairs)
-     - float.from_int as an alias for int.to_float (minor ergonomic wish)
-   Bugs: None encountered
--}
-
--- Synthetic Data Generator
--- Uses a linear congruential PRNG to generate random student records,
--- then computes statistics and displays a histogram.
+-- Synthetic data generator using a linear congruential PRNG.
+-- Generates random student records, computes statistics (mean, median,
+-- standard deviation), and displays score/age histograms.
 
 -- Linear congruential PRNG
 -- Parameters from Numerical Recipes: a=1664525, c=1013904223, m=2^32

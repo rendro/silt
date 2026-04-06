@@ -1,30 +1,6 @@
-{- Friction Report
-   Attempts: 1 (rewrite; original also worked first try)
-   Rating: 9.5/10 (improved after learning wildcards and regex.split)
-   Highlights:
-     - channel.each is excellent for worker loops that drain a jobs channel
-     - channel.select wildcard (_, Message(result)) deduplicates match arms cleanly
-     - channel.close for graceful shutdown is intuitive -- workers just stop iterating
-     - Trailing closures + pipe operator make data transformations very ergonomic
-     - Pattern matching on Message/Closed/Ok/Err is consistent and predictable
-     - loop with named accumulators is a nice functional replacement for mutable state
-     - Type inference worked perfectly across channels, tuples, and closures
-     - regex.split with \s+ is cleaner than string.split(" ") for word counting
-   Friction:
-     - No way to match nested tuples directly in channel.select match arms
-       (e.g. cannot write (^ch, Message((id, Ok((path, ...)))))) -- must bind
-       and destructure in separate let statements. Understandable but verbose.
-   Missing: (verified these do not exist in stdlib-reference.md)
-     - No string.word_count or string.split_whitespace -- but regex.split
-       with \s+ covers this well
-   Bugs: None encountered
--}
-
--- Parallel file processor
--- Spawns 3 worker tasks that receive file paths via a channel,
--- process files (read + extract stats), and send results back
--- via a results channel. Main task collects results using
--- channel.select with wildcard arm and prints a summary.
+-- Parallel file processor using channels and tasks.
+-- Spawns worker tasks that read files, extract stats, and send results
+-- back through channels for aggregation.
 
 fn count_lines(content) {
   content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) } |> list.length
@@ -71,10 +47,10 @@ fn worker(id, jobs, results) {
 
 fn main() {
   let file_paths = [
-    "programs/files/report_q1.txt",
-    "programs/files/report_q2.txt",
-    "programs/files/report_q3.txt",
-    "programs/files/report_q4.txt"
+    "examples/data/report_q1.txt",
+    "examples/data/report_q2.txt",
+    "examples/data/report_q3.txt",
+    "examples/data/report_q4.txt"
   ]
 
   let num_workers = 3

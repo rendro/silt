@@ -1,25 +1,7 @@
-{- Friction Report
-   Attempts: 1 (rewrite)
-   Rating: 9/10 (very natural, expressive, and pleasant to write)
-   Highlights:
-   - loop with state threading is elegant for a REPL; passing the updated store as loop(new_store) feels natural
-   - match without scrutinee for boolean branching is clean and readable
-   - json.stringify/json.parse_map round-tripping a Map is effortless
-   - Pipe operator and trailing closures make list operations readable
-   - Error handling via Result/match is consistent and explicit
-   - string.to_upper for case-insensitive command matching works nicely
-   - list.drop + string.join workaround for multi-word SET values is clean enough
-   Friction:
-   - No string.split_n or string.split_once to split with a max-parts limit; worked around with list.drop(parts, 2) |> string.join(" ") for multi-word SET values
-   Improvements since v1:
-   - SET now supports multi-word values via list.drop + string.join
-   - map.update exists now but is not applicable here (no get-modify-set patterns; SET always replaces wholesale)
-   Missing:
-   - string.split_n(s, sep, max) or string.split_once(s, sep) for splitting with a limit (verified not in docs/stdlib-reference.md)
-   Bugs: none encountered
--}
+-- Interactive key-value store with GET, SET, DEL, KEYS, COUNT, SAVE, and LOAD commands.
+-- Persists data as JSON.
 
-let db_path = "programs/files/kvstore.json"
+let db_path = "examples/data/kvstore.json"
 
 fn handle_get(store, parts) {
   match list.get(parts, 1) {

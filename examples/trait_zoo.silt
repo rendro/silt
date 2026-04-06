@@ -1,30 +1,5 @@
-{- Friction Report
-   Attempts: 1 (rewrite; original needed where-clause syntax fix)
-   Rating: 9/10 (very natural, felt like a well-designed ML-family language)
-   Highlights:
-     - Custom trait declaration and implementation is clean and intuitive
-     - Trait method calls via dot notation (.area(), .perimeter(), .display()) feel natural
-     - list.sort_by with trailing closure is elegant for sorting by computed key
-     - String interpolation with auto Display calls is very convenient
-     - float.to_string(f, decimals) is a nice touch for formatting
-     - Pattern matching on ADT variants is straightforward
-     - Pipe operator with trailing closures makes list processing readable
-   Friction:
-     - Where clauses require explicit type annotations on parameters, e.g.
-       fn describe(item: a) where a: Display, not fn describe(item) where a: Display.
-       This is reasonable once you know it -- the type variable must be bound in the signature.
-     - Declaring a custom trait and implementing it are separate blocks (trait Area { ... }
-       then trait Area for Shape { ... }), which is fine but a bit verbose compared to
-       combining declaration with the first implementation.
-   Missing: (none found -- stdlib covered everything needed)
-   Bugs: (none encountered)
--}
-
--- =============================================================
--- Trait Zoo: Showcasing silt's trait system
--- =============================================================
-
--- 3 ADTs: Shape, Color, Styled
+-- Trait showcase: custom Area and Perimeter traits on Shape ADTs,
+-- Display trait implementations, where-clause generics, and sorted collections.
 
 type Shape {
   Circle(Float),
