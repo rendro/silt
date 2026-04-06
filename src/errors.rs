@@ -109,12 +109,31 @@ fn get_source_line(source: &str, line: usize) -> Option<String> {
 
 /// Check whether stderr is a terminal (for ANSI color support).
 fn use_color() -> bool {
-    unsafe { libc_isatty(2) != 0 }
-}
-
-unsafe extern "C" {
-    #[link_name = "isatty"]
-    fn libc_isatty(fd: i32) -> i32;
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            #[link_name = "isatty"]
+            fn libc_isatty(fd: i32) -> i32;
+        }
+        unsafe { libc_isatty(2) != 0 }
+    }
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetStdHandle(nStdHandle: u32) -> *mut core::ffi::c_void;
+            fn GetConsoleMode(hConsoleHandle: *mut core::ffi::c_void, lpMode: *mut u32) -> i32;
+        }
+        const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+        unsafe {
+            let handle = GetStdHandle(STD_ERROR_HANDLE);
+            let mut mode: u32 = 0;
+            GetConsoleMode(handle, &mut mode) != 0
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 // ── ANSI color helpers ─────────────────────────────────────────────
