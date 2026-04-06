@@ -11,6 +11,8 @@ pub mod module;
 pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;
+#[cfg(feature = "watch")]
+pub mod watch;
 pub mod types;
 pub mod typechecker;
 pub mod value;

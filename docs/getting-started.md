@@ -164,12 +164,15 @@ fn main() {
 
 ```sh
 silt run <file.silt>       -- run a program
+silt run -w <file.silt>    -- run and re-run on file changes
 silt check <file.silt>     -- type-check without running
 silt test [path]           -- run test functions
 silt fmt <file.silt>       -- format source code
 silt repl                  -- interactive REPL
 silt lsp                   -- start the language server
 ```
+
+The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically re-run on `.silt` file changes.
 
 ## What's next
 

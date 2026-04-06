@@ -126,6 +126,7 @@ silt run main.silt
 
 ```
 silt run <file.silt>       Run a program
+silt run -w <file.silt>    Run and re-run on file changes
 silt check <file.silt>     Type-check without running
 silt test [path]           Run test functions
 silt fmt <file.silt>       Format source code
@@ -134,11 +135,12 @@ silt init                  Create a new main.silt
 silt lsp                   Start the language server
 ```
 
+The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
+
 LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. Vim/Neovim syntax highlighting ships in `editors/vim/`.
 
 ## Reference
 
-| | |
 |---|---|
 | **keywords** | `as else fn import let loop match mod pub return trait type when where` |
 | **types** | inferred, with ADTs, records, and traits |
