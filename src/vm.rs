@@ -53,6 +53,23 @@ fn decode_field_type(s: &str) -> FieldType {
     }
 }
 
+/// Compute (year, month, day) from Unix epoch seconds.
+/// Uses Howard Hinnant's civil_from_days algorithm (public domain).
+#[cfg(target_arch = "wasm32")]
+fn civil_from_epoch_secs(secs: i64) -> (i32, u32, u32) {
+    let z = secs.div_euclid(86400) + 719468;
+    let era = z.div_euclid(146097);
+    let doe = (z - era * 146097) as u32; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
+}
+
 /// Returns the number of days in the given month (1-12) for the given year.
 fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
@@ -4419,18 +4436,24 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(VmError::new("time.today takes 0 arguments".into()));
                 }
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let secs = SystemTime::now().duration_since(UNIX_EPOCH)
-                    .map_err(|e| VmError::new(format!("time.today failed: {e}")))?
-                    .as_secs() as i64;
-                // On native, apply local UTC offset. On WASM, use UTC.
                 #[cfg(not(target_arch = "wasm32"))]
-                let secs = secs + chrono::Local::now().offset().local_minus_utc() as i64;
-                let today = DateTime::from_timestamp(secs, 0)
-                    .ok_or_else(|| VmError::new("time.today: timestamp out of range".into()))?
-                    .naive_utc()
-                    .date();
-                Ok(Self::make_date(today))
+                {
+                    let today = chrono::Local::now().date_naive();
+                    Ok(Self::make_date(today))
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Compute UTC date from epoch seconds using Hinnant's algorithm.
+                    // Avoids chrono clock features which are unavailable in WASM.
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    let secs = SystemTime::now().duration_since(UNIX_EPOCH)
+                        .map_err(|e| VmError::new(format!("time.today failed: {e}")))?
+                        .as_secs() as i64;
+                    let (y, m, d) = civil_from_epoch_secs(secs);
+                    let date = NaiveDate::from_ymd_opt(y, m, d)
+                        .ok_or_else(|| VmError::new("time.today: date out of range".into()))?;
+                    Ok(Self::make_date(date))
+                }
             }
 
             "date" => {
