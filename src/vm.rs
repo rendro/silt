@@ -4419,7 +4419,11 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(VmError::new("time.today takes 0 arguments".into()));
                 }
+                // Use local time on native, UTC on WASM (no local timezone available).
+                #[cfg(not(target_arch = "wasm32"))]
                 let today = chrono::Local::now().date_naive();
+                #[cfg(target_arch = "wasm32")]
+                let today = chrono::Utc::now().date_naive();
                 Ok(Self::make_date(today))
             }
 
