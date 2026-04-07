@@ -184,34 +184,6 @@ struct CallFrame {
     base_slot: usize,
 }
 
-// ── Fiber (concurrency execution context) ────────────────────────
-
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-enum FiberState {
-    Ready,
-    Running,
-    BlockedSend(usize),   // channel id
-    BlockedRecv(usize),   // channel id
-    Completed(Value),
-    Failed(String),
-}
-
-struct VmFiber {
-    frames: Vec<CallFrame>,
-    stack: Vec<Value>,
-    state: FiberState,
-    handle: Arc<TaskHandle>,
-}
-
-/// Result from running a fiber for a time slice.
-enum FiberSliceResult {
-    Yielded,
-    Completed(Value),
-    #[allow(dead_code)]
-    Blocked,
-}
-
 // ── Block reason (for M:N scheduler) ────────────────────────────
 
 /// Describes why a task wants to park (block without holding an OS thread).
@@ -254,13 +226,8 @@ pub struct Vm {
     record_types: HashMap<String, Vec<(String, FieldType)>>,
 
     // ── Concurrency state ────────────────────────────────────────
-    fibers: Vec<VmFiber>,
-    #[allow(dead_code)]
-    current_fiber: usize,
     next_channel_id: usize,
     next_task_id: usize,
-    /// Prevents nested `run_other_fibers_once()` calls during channel.each
-    scheduling_fibers: bool,
 
     // ── M:N scheduler state ─────────────────────────────────────
     /// Set by channel/task ops when they need to park this task.
@@ -282,11 +249,8 @@ impl Vm {
             stack: Vec::new(),
             globals: HashMap::new(),
             record_types: HashMap::new(),
-            fibers: Vec::new(),
-            current_fiber: 0,
             next_channel_id: 0,
             next_task_id: 0,
-            scheduling_fibers: false,
             block_reason: None,
             is_scheduled_task: false,
         };
@@ -385,11 +349,8 @@ impl Vm {
             stack: Vec::new(),
             globals: self.globals.clone(),
             record_types: self.record_types.clone(),
-            fibers: Vec::new(),
-            current_fiber: 0,
             next_channel_id: self.next_channel_id,
             next_task_id: self.next_task_id,
-            scheduling_fibers: false,
             block_reason: None,
             is_scheduled_task: false,
         }
@@ -4164,7 +4125,7 @@ impl Vm {
                     }
                     return Err(VmError::yield_signal());
                 }
-                // Main thread: spin with fiber scheduling and OS yield.
+                // Main thread: spin with OS yield until buffer has space.
                 loop {
                     match ch.try_send(val.clone()) {
                         TrySendResult::Sent => return Ok(Value::Unit),
@@ -4173,9 +4134,7 @@ impl Vm {
                         }
                         TrySendResult::Full => {}
                     }
-                    if !self.run_other_fibers_once()? {
-                        std::thread::yield_now();
-                    }
+                    std::thread::yield_now();
                 }
             }
             "receive" => {
@@ -4311,7 +4270,7 @@ impl Vm {
                     return Err(VmError::yield_signal());
                 }
 
-                // Main thread: spin with fiber scheduling (legacy path).
+                // Main thread: spin with OS yield.
                 let max_retries = 100_000;
                 for _ in 0..max_retries {
                     let mut all_closed = true;
@@ -4342,11 +4301,7 @@ impl Vm {
                             Value::Variant("Closed".into(), vec![]),
                         ]));
                     }
-                    if !self.run_other_fibers_once()? {
-                        return Err(VmError::new(
-                            "channel.select: deadlock detected - no channels have data and no tasks can make progress".into(),
-                        ));
-                    }
+                    std::thread::yield_now();
                 }
                 Err(VmError::new("channel.select: exceeded maximum retries".into()))
             }
@@ -4372,15 +4327,6 @@ impl Vm {
                                 }
                                 return Err(VmError::yield_signal());
                             }
-                            if self.scheduling_fibers {
-                                for arg in args {
-                                    self.push(arg.clone());
-                                }
-                                return Err(VmError::yield_signal());
-                            }
-                            if !self.fibers.is_empty() {
-                                let _ = self.run_other_fibers_once();
-                            }
                         }
                         TryReceiveResult::Closed => {
                             return Ok(Value::Unit);
@@ -4395,17 +4341,7 @@ impl Vm {
                                 }
                                 return Err(VmError::yield_signal());
                             }
-                            if self.scheduling_fibers {
-                                for arg in args {
-                                    self.push(arg.clone());
-                                }
-                                return Err(VmError::yield_signal());
-                            }
-                            if !self.run_other_fibers_once()? {
-                                return Err(VmError::new(
-                                    "channel.each: deadlock - channel is empty and no task can fill it".into(),
-                                ));
-                            }
+                            std::thread::yield_now();
                         }
                     }
                 }
@@ -4510,20 +4446,7 @@ impl Vm {
                 let Value::Handle(handle) = &args[0] else {
                     return Err(VmError::new("task.cancel requires a handle argument".into()));
                 };
-                let handle_id = handle.id;
                 handle.complete(Err("cancelled".to_string()));
-                // Mark matching fiber as Failed
-                // Mark the fiber as failed so it won't be scheduled again.
-                for fiber in &mut self.fibers {
-                    // We can't directly identify which fiber belongs to this handle_id,
-                    // but marking the handle's result is sufficient: the fiber will see
-                    // the cancellation when it next tries to run and the join caller
-                    // will see the error result.
-                    let _ = fiber;
-                }
-                // Remove any fibers whose handle result matches
-                // For now, mark as failed in the fibers list
-                let _ = handle_id;
                 Ok(Value::Unit)
             }
             _ => Err(VmError::new(format!("unknown task function: {name}"))),
@@ -5004,9 +4927,7 @@ impl Vm {
                 }
                 let dur_ms = dur_ns / 1_000_000;
                 let target_ms = self.epoch_ms()? + dur_ms;
-                // Fiber-aware sleep: yield to other fibers while waiting
                 while self.epoch_ms()? < target_ms {
-                    self.run_other_fibers_once()?;
                     let remaining_ms = target_ms - self.epoch_ms()?;
                     if remaining_ms <= 0 {
                         break;
@@ -5348,126 +5269,6 @@ impl Vm {
         }
     }
 
-    // ── Fiber scheduling ─────────────────────────────────────────────
-
-    /// Run one round of other fibers (not the main/current execution context).
-    /// Returns Ok(true) if any fiber made progress, Ok(false) if no progress.
-    fn run_other_fibers_once(&mut self) -> Result<bool, VmError> {
-        if self.fibers.is_empty() || self.scheduling_fibers {
-            return Ok(false);
-        }
-        self.scheduling_fibers = true;
-        let mut any_progress = false;
-        // Run each Ready fiber for one time slice.
-        // We iterate by index since we need to swap state with self.
-        let fiber_count = self.fibers.len();
-        for i in 0..fiber_count {
-            if i >= self.fibers.len() {
-                break;
-            }
-            match &self.fibers[i].state {
-                FiberState::Ready | FiberState::Running => {}
-                _ => continue,
-            }
-            // Save current main execution state
-            let saved_frames = std::mem::take(&mut self.frames);
-            let saved_stack = std::mem::take(&mut self.stack);
-
-            // Load fiber state
-            self.frames = std::mem::take(&mut self.fibers[i].frames);
-            self.stack = std::mem::take(&mut self.fibers[i].stack);
-            self.fibers[i].state = FiberState::Running;
-
-            // Run the fiber for a time slice
-            let result = self.run_fiber_slice(100);
-
-            // Save fiber state back
-            self.fibers[i].frames = std::mem::take(&mut self.frames);
-            self.fibers[i].stack = std::mem::take(&mut self.stack);
-
-            // Restore main state
-            self.frames = saved_frames;
-            self.stack = saved_stack;
-
-            match result {
-                Ok(FiberSliceResult::Yielded) => {
-                    self.fibers[i].state = FiberState::Ready;
-                    any_progress = true;
-                }
-                Ok(FiberSliceResult::Completed(val)) => {
-                    self.fibers[i].state = FiberState::Completed(val.clone());
-                    self.fibers[i].handle.complete(Ok(val));
-                    any_progress = true;
-                }
-                Ok(FiberSliceResult::Blocked) => {
-                    // Fiber is blocked on a channel op; it will be retried later
-                    // State is already set by the blocking operation
-                    self.fibers[i].state = FiberState::Ready;
-                    // Still counts as having tried
-                }
-                Err(e) => {
-                    self.fibers[i].state = FiberState::Failed(e.message.clone());
-                    self.fibers[i].handle.complete(Err(e.message));
-                    any_progress = true;
-                }
-            }
-        }
-        // Clean up completed/failed fibers
-        // (Keep them around so join() can find them, but skip in scheduling)
-        self.scheduling_fibers = false;
-        Ok(any_progress)
-    }
-
-    /// Run the current frames/stack for up to `max_steps` instructions.
-    fn run_fiber_slice(&mut self, max_steps: usize) -> Result<FiberSliceResult, VmError> {
-        for _ in 0..max_steps {
-            if self.frames.is_empty() {
-                // Fiber finished
-                let result = if self.stack.is_empty() {
-                    Value::Unit
-                } else {
-                    self.stack.last().cloned().unwrap_or(Value::Unit)
-                };
-                return Ok(FiberSliceResult::Completed(result));
-            }
-            // Save IP before this instruction so we can rewind on yield
-            let saved_ip = self.current_frame().ip;
-            let op_byte = self.read_byte();
-            match Op::from_byte(op_byte) {
-                Some(Op::Return) => {
-                    let result = self.pop();
-                    let finished_base = self.current_frame().base_slot;
-                    self.frames.pop();
-                    if self.frames.is_empty() {
-                        // Fiber completed
-                        return Ok(FiberSliceResult::Completed(result));
-                    }
-                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
-                    self.stack.truncate(func_slot);
-                    self.push(result);
-                }
-                Some(op) => {
-                    match self.dispatch_op(op) {
-                        Ok(()) => {}
-                        Err(e) if e.is_yield => {
-                            // Cooperative yield: rewind IP to re-execute this
-                            // instruction when the fiber is next scheduled.
-                            // The yielding code (e.g. channel.each) has already
-                            // restored its arguments on the stack.
-                            self.current_frame_mut().ip = saved_ip;
-                            return Ok(FiberSliceResult::Yielded);
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-                None => {
-                    return Err(VmError::new(format!("unknown opcode: {op_byte}")));
-                }
-            }
-        }
-        // Time slice expired
-        Ok(FiberSliceResult::Yielded)
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
