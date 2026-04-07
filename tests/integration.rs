@@ -6855,3 +6855,592 @@ fn main() {
         ]))
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// COMPILER UNIT TESTS
+// ═══════════════════════════════════════════════════════════════════
+//
+// Targeted tests for compiler code paths not covered by existing
+// integration tests. Organized by compiler subsystem.
+
+// ── Closures returning closures (upvalue capture in returned fn) ────
+
+#[test]
+fn test_fn_returns_closure_capturing_param() {
+    let result = run(
+        r#"
+fn make_multiplier(factor) {
+  fn(x) { x * factor }
+}
+
+fn main() {
+  let double = make_multiplier(2)
+  let triple = make_multiplier(3)
+  double(5) + triple(5)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(25));
+}
+
+#[test]
+fn test_fn_returns_closure_capturing_local() {
+    let result = run(
+        r#"
+fn make_counter(start) {
+  let base = start * 10
+  fn(n) { base + n }
+}
+
+fn main() {
+  let f = make_counter(5)
+  f(3)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(53));
+}
+
+// ── Lambda as immediately-invoked expression ────────────────────────
+
+#[test]
+fn test_lambda_iife() {
+    let result = run(
+        r#"
+fn main() {
+  let result = (fn(x, y) { x + y })(3, 4)
+  result
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(7));
+}
+
+#[test]
+fn test_lambda_captures_in_list_operations() {
+    let result = run(
+        r#"
+import list
+
+fn main() {
+  let offset = 100
+  [1, 2, 3] |> list.map(fn(x) { x + offset })
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(101),
+            Value::Int(102),
+            Value::Int(103),
+        ]))
+    );
+}
+
+// ── Upvalue edge cases ──────────────────────────────────────────────
+
+#[test]
+fn test_triple_nested_closure_upvalue_chain() {
+    let result = run(
+        r#"
+fn outer(x) {
+  let middle = fn() {
+    let inner = fn() { x }
+    inner()
+  }
+  middle()
+}
+
+fn main() {
+  outer(42)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_upvalue_deduplication() {
+    let result = run(
+        r#"
+fn main() {
+  let x = 10
+  let f = fn() { x + x + x }
+  f()
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(30));
+}
+
+#[test]
+fn test_multiple_upvalues_in_closure() {
+    let result = run(
+        r#"
+fn main() {
+  let a = 1
+  let b = 2
+  let c = 3
+  let d = 4
+  let f = fn() { a + b + c + d }
+  f()
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn test_upvalue_in_nested_match() {
+    let result = run(
+        r#"
+fn main() {
+  let factor = 10
+  let f = fn(x) {
+    match x {
+      0 -> factor
+      n -> n * factor
+    }
+  }
+  f(3)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(30));
+}
+
+// ── Map pattern edge cases ──────────────────────────────────────────
+
+#[test]
+fn test_map_pattern_multiple_keys() {
+    let result = run(
+        r#"
+fn main() {
+  let m = #{"a": 1, "b": 2, "c": 3}
+  match m {
+    #{"a": x, "b": y} -> x + y
+    _ -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(3));
+}
+
+#[test]
+fn test_map_pattern_missing_key() {
+    let result = run(
+        r#"
+fn main() {
+  let m = #{"a": 1}
+  match m {
+    #{"b": x} -> x
+    _ -> 99
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(99));
+}
+
+#[test]
+fn test_map_pattern_with_guard() {
+    let result = run(
+        r#"
+fn main() {
+  let m = #{"x": 5, "y": 10}
+  match m {
+    #{"x": x} when x > 3 -> "big"
+    #{"x": x} -> "small"
+    _ -> "none"
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("big".into()));
+}
+
+// ── Or-pattern without binding ──────────────────────────────────────
+
+#[test]
+fn test_or_pattern_multiple_literals() {
+    let result = run(
+        r#"
+fn classify(n) {
+  match n {
+    1 | 2 | 3 -> "low"
+    4 | 5 | 6 -> "mid"
+    _ -> "high"
+  }
+}
+
+fn main() {
+  [classify(2), classify(5), classify(9)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("low".into()),
+            Value::String("mid".into()),
+            Value::String("high".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_or_pattern_with_constructors_and_fallthrough() {
+    let result = run(
+        r#"
+type Color { Red, Green, Blue, Yellow }
+
+fn is_primary(c) {
+  match c {
+    Red | Blue | Yellow -> true
+    _ -> false
+  }
+}
+
+fn main() {
+  [is_primary(Red), is_primary(Green), is_primary(Blue)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(true),
+        ]))
+    );
+}
+
+// ── Scope cleanup ───────────────────────────────────────────────────
+
+#[test]
+fn test_scope_cleanup_reuses_slots() {
+    let result = run(
+        r#"
+fn main() {
+  {
+    let a = 1
+    let b = 2
+    let c = 3
+    a + b + c
+  }
+  {
+    let x = 10
+    let y = 20
+    x + y
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(30));
+}
+
+#[test]
+fn test_nested_scope_cleanup() {
+    let result = run(
+        r#"
+fn main() {
+  let outer = 100
+  {
+    let inner = 1
+    {
+      let deep = 2
+      deep
+    }
+    inner
+  }
+  outer
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(100));
+}
+
+// ── Empty block ─────────────────────────────────────────────────────
+
+#[test]
+fn test_empty_block_is_unit() {
+    run_ok(
+        r#"
+fn main() {
+  {}
+}
+    "#,
+    );
+}
+
+// ── Record update with multiple fields ──────────────────────────────
+
+#[test]
+fn test_record_update_multiple_fields() {
+    let result = run(
+        r#"
+type Point { x: Int, y: Int, z: Int }
+
+fn main() {
+  let p = Point { x: 1, y: 2, z: 3 }
+  let p2 = p.{ x: 10, z: 30 }
+  p2.x + p2.y + p2.z
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+// ── Tail call optimization verification ─────────────────────────────
+
+#[test]
+fn test_tco_deep_recursion() {
+    let result = run(
+        r#"
+fn count(n, acc) {
+  match n {
+    0 -> acc
+    _ -> count(n - 1, acc + 1)
+  }
+}
+
+fn main() {
+  count(200000, 0)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(200000));
+}
+
+#[test]
+fn test_tco_with_explicit_return() {
+    let result = run(
+        r#"
+fn count(n) {
+  match n <= 0 {
+    true -> return 0
+    _ -> return count(n - 1)
+  }
+}
+
+fn main() {
+  count(100000)
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(0));
+}
+
+// ── Constructor usage with and without imports ──────────────────────
+
+#[test]
+fn test_option_constructors_with_import() {
+    let result = run(
+        r#"
+import option
+
+fn main() {
+  match Some(42) {
+    Some(x) -> x
+    None -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_result_constructors_with_import() {
+    let result = run(
+        r#"
+import result
+
+fn main() {
+  match Ok(99) {
+    Ok(x) -> x
+    Err(e) -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(99));
+}
+
+// ── Tuple index access ──────────────────────────────────────────────
+
+#[test]
+fn test_tuple_numeric_field_access() {
+    let result = run(
+        r#"
+fn main() {
+  let t = (10, 20, 30)
+  t.0 + t.1 + t.2
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(60));
+}
+
+// ── Loop error cases ────────────────────────────────────────────────
+
+#[test]
+fn test_loop_arity_mismatch_compile() {
+    let err = run_err(
+        r#"
+fn main() {
+  loop x = 0 {
+    match x > 5 {
+      true -> x
+      _ -> loop(x + 1, 99)
+    }
+  }
+}
+    "#,
+    );
+    assert!(
+        err.contains("expects 1") || err.contains("argument"),
+        "expected arity mismatch error, got: {err}"
+    );
+}
+
+#[test]
+fn test_loop_nested_inner_outer() {
+    let result = run(
+        r#"
+fn main() {
+  loop i = 0, outer_sum = 0 {
+    match i >= 3 {
+      true -> outer_sum
+      _ -> {
+        let inner = loop j = 0, s = 0 {
+          match j >= 3 {
+            true -> s
+            _ -> loop(j + 1, s + 1)
+          }
+        }
+        loop(i + 1, outer_sum + inner)
+      }
+    }
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(9));
+}
+
+// ── Top-level let with destructuring ────────────────────────────────
+
+#[test]
+fn test_top_level_let_destructuring_error() {
+    let err = run_err(
+        r#"
+let (a, b) = (1, 2)
+fn main() { a }
+    "#,
+    );
+    assert!(
+        err.contains("unsupported pattern") || err.contains("top-level"),
+        "expected top-level let pattern error, got: {err}"
+    );
+}
+
+// ── Nested pattern matching compilation ─────────────────────────────
+
+#[test]
+fn test_deeply_nested_pattern() {
+    let result = run(
+        r#"
+import option
+
+fn main() {
+  let x = Some((1, [2, 3]))
+  match x {
+    Some((a, [b, c])) -> a + b + c
+    _ -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_pattern_match_multiple_arms_with_bindings() {
+    let result = run(
+        r#"
+type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+  Triangle(Float, Float),
+}
+
+fn area(s) {
+  match s {
+    Circle(r) -> 3.14 * r * r
+    Rect(w, h) -> w * h
+    Triangle(b, h) -> 0.5 * b * h
+  }
+}
+
+fn main() {
+  area(Rect(3.0, 4.0))
+}
+    "#,
+    );
+    assert_eq!(result, Value::Float(12.0));
+}
+
+// ── String interpolation compilation ────────────────────────────────
+
+#[test]
+fn test_string_interp_nested_braces() {
+    let result = run(
+        r#"
+fn main() {
+  let x = 42
+  "value: {x}"
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("value: 42".into()));
+}
+
+#[test]
+fn test_string_interp_complex_expr() {
+    let result = run(
+        r#"
+fn main() {
+  let x = 3
+  let y = 4
+  "sum: {x + y}, product: {x * y}"
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("sum: 7, product: 12".into()));
+}
+
+// ── Loop with multiple bindings ─────────────────────────────────────
+
+#[test]
+fn test_loop_three_bindings() {
+    let result = run(
+        r#"
+fn main() {
+  loop i = 0, sum = 0, product = 1 {
+    match i >= 4 {
+      true -> (sum, product)
+      _ -> loop(i + 1, sum + i, product * (i + 1))
+    }
+  }
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Int(6), Value::Int(24)])
+    );
+}
