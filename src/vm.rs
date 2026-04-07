@@ -491,12 +491,12 @@ impl Vm {
 
     fn execute(&mut self) -> Result<Value, VmError> {
         loop {
-            let op_byte = self.read_byte();
+            let op_byte = self.read_byte()?;
             match Op::from_byte(op_byte) {
                 // ── Constants & literals ───────────────────────
                 Some(Op::Constant) => {
-                    let index = self.read_u16() as usize;
-                    let value = self.read_constant(index);
+                    let index = self.read_u16()? as usize;
+                    let value = self.read_constant(index)?;
                     self.push(value);
                 }
                 Some(Op::Unit) => self.push(Value::Unit),
@@ -512,14 +512,14 @@ impl Vm {
 
                 // ── Comparison ────────────────────────────────
                 Some(Op::Eq) => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.check_same_type(&a, &b)?;
                     self.push(Value::Bool(a == b));
                 }
                 Some(Op::Neq) => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     self.check_same_type(&a, &b)?;
                     self.push(Value::Bool(a != b));
                 }
@@ -530,7 +530,7 @@ impl Vm {
 
                 // ── Unary ─────────────────────────────────────
                 Some(Op::Negate) => {
-                    let val = self.pop();
+                    let val = self.pop()?;
                     match val {
                         Value::Int(n) => self.push(Value::Int(-n)),
                         Value::Float(n) => self.push(Value::Float(-n)),
@@ -543,7 +543,7 @@ impl Vm {
                     }
                 }
                 Some(Op::Not) => {
-                    let val = self.pop();
+                    let val = self.pop()?;
                     match val {
                         Value::Bool(b) => self.push(Value::Bool(!b)),
                         other => {
@@ -557,8 +557,8 @@ impl Vm {
 
                 // ── Logical ───────────────────────────────────
                 Some(Op::And) => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     match (&a, &b) {
                         (Value::Bool(a_val), Value::Bool(b_val)) => {
                             self.push(Value::Bool(*a_val && *b_val));
@@ -571,8 +571,8 @@ impl Vm {
                     }
                 }
                 Some(Op::Or) => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     match (&a, &b) {
                         (Value::Bool(a_val), Value::Bool(b_val)) => {
                             self.push(Value::Bool(*a_val || *b_val));
@@ -587,12 +587,12 @@ impl Vm {
 
                 // ── String interpolation ──────────────────────
                 Some(Op::DisplayValue) => {
-                    let val = self.pop();
+                    let val = self.pop()?;
                     let s = self.display_value(&val);
                     self.push(Value::String(s));
                 }
                 Some(Op::StringConcat) => {
-                    let count = self.read_u8() as usize;
+                    let count = self.read_u8()? as usize;
                     let start = self.stack.len() - count;
                     let mut result = String::new();
                     for i in start..self.stack.len() {
@@ -610,15 +610,15 @@ impl Vm {
 
                 // ── Variables ─────────────────────────────────
                 Some(Op::GetLocal) => {
-                    let slot = self.read_u16() as usize;
-                    let base = self.current_frame().base_slot;
+                    let slot = self.read_u16()? as usize;
+                    let base = self.current_frame()?.base_slot;
                     let value = self.stack[base + slot].clone();
                     self.push(value);
                 }
                 Some(Op::SetLocal) => {
-                    let slot = self.read_u16() as usize;
-                    let base = self.current_frame().base_slot;
-                    let value = self.peek().clone();
+                    let slot = self.read_u16()? as usize;
+                    let base = self.current_frame()?.base_slot;
+                    let value = self.peek()?.clone();
                     // Extend stack if needed (for first-time local assignment)
                     let target = base + slot;
                     while self.stack.len() <= target {
@@ -627,7 +627,7 @@ impl Vm {
                     self.stack[target] = value;
                 }
                 Some(Op::GetGlobal) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
                     let value = self.globals.get(&name).cloned().ok_or_else(|| {
                         VmError::new(format!("undefined global: {name}"))
@@ -635,29 +635,29 @@ impl Vm {
                     self.push(value);
                 }
                 Some(Op::SetGlobal) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let value = self.peek().clone();
+                    let value = self.peek()?.clone();
                     self.globals.insert(name, value);
                 }
 
                 // ── Upvalues ──────────────────────────────────
                 Some(Op::GetUpvalue) => {
-                    let index = self.read_u8() as usize;
-                    let value = self.current_frame().closure.upvalues[index].clone();
+                    let index = self.read_u8()? as usize;
+                    let value = self.current_frame()?.closure.upvalues[index].clone();
                     self.push(value);
                 }
 
                 // ── Function calls ────────────────────────────
                 Some(Op::Call) => {
-                    let argc = self.read_u8() as usize;
+                    let argc = self.read_u8()? as usize;
                     // The function value sits below the arguments on the stack.
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
                     self.call_value(func_val, argc, func_slot)?;
                 }
                 Some(Op::TailCall) => {
-                    let argc = self.read_u8() as usize;
+                    let argc = self.read_u8()? as usize;
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
                     match func_val {
@@ -669,12 +669,12 @@ impl Vm {
                                 )));
                             }
                             // Reuse current frame: move args to base_slot
-                            let base = self.current_frame().base_slot;
+                            let base = self.current_frame()?.base_slot;
                             for i in 0..argc {
                                 self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
                             }
                             self.stack.truncate(base + argc);
-                            let frame = self.current_frame_mut();
+                            let frame = self.current_frame_mut()?;
                             frame.closure = closure;
                             frame.ip = 0;
                         }
@@ -685,8 +685,8 @@ impl Vm {
                     }
                 }
                 Some(Op::Return) => {
-                    let result = self.pop();
-                    let finished_base = self.current_frame().base_slot;
+                    let result = self.pop()?;
+                    let finished_base = self.current_frame()?.base_slot;
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(result);
@@ -698,8 +698,8 @@ impl Vm {
                     self.push(result);
                 }
                 Some(Op::CallBuiltin) => {
-                    let name_index = self.read_u16() as usize;
-                    let argc = self.read_u8() as usize;
+                    let name_index = self.read_u16()? as usize;
+                    let argc = self.read_u8()? as usize;
                     let name = self.read_constant_string(name_index)?;
                     let start = self.stack.len() - argc;
                     let args: Vec<Value> = self.stack[start..].to_vec();
@@ -710,20 +710,20 @@ impl Vm {
 
                 // ── Closures ──────────────────────────────────
                 Some(Op::MakeClosure) => {
-                    let func_index = self.read_u16() as usize;
-                    let upvalue_count = self.read_u8() as usize;
-                    let constant = self.read_constant(func_index);
+                    let func_index = self.read_u16()? as usize;
+                    let upvalue_count = self.read_u8()? as usize;
+                    let constant = self.read_constant(func_index)?;
 
                     // Collect upvalue values from the descriptors
                     let mut upvalues = Vec::with_capacity(upvalue_count);
                     for _ in 0..upvalue_count {
-                        let is_local = self.read_u8() != 0;
-                        let index = self.read_u8() as usize;
+                        let is_local = self.read_u8()? != 0;
+                        let index = self.read_u8()? as usize;
                         let val = if is_local {
-                            let base = self.current_frame().base_slot;
+                            let base = self.current_frame()?.base_slot;
                             self.stack[base + index].clone()
                         } else {
-                            self.current_frame().closure.upvalues[index].clone()
+                            self.current_frame()?.closure.upvalues[index].clone()
                         };
                         upvalues.push(val);
                     }
@@ -746,21 +746,21 @@ impl Vm {
 
                 // ── Data constructors ─────────────────────────
                 Some(Op::MakeTuple) => {
-                    let count = self.read_u8() as usize;
+                    let count = self.read_u8()? as usize;
                     let start = self.stack.len() - count;
                     let elements: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
                     self.push(Value::Tuple(elements));
                 }
                 Some(Op::MakeList) => {
-                    let count = self.read_u16() as usize;
+                    let count = self.read_u16()? as usize;
                     let start = self.stack.len() - count;
                     let elements: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
                     self.push(Value::List(Arc::new(elements)));
                 }
                 Some(Op::MakeMap) => {
-                    let pair_count = self.read_u16() as usize;
+                    let pair_count = self.read_u16()? as usize;
                     let total = pair_count * 2;
                     let start = self.stack.len() - total;
                     let mut map = BTreeMap::new();
@@ -773,7 +773,7 @@ impl Vm {
                     self.push(Value::Map(Arc::new(map)));
                 }
                 Some(Op::MakeSet) => {
-                    let count = self.read_u16() as usize;
+                    let count = self.read_u16()? as usize;
                     let start = self.stack.len() - count;
                     let mut set = BTreeSet::new();
                     for i in start..self.stack.len() {
@@ -783,11 +783,11 @@ impl Vm {
                     self.push(Value::Set(Arc::new(set)));
                 }
                 Some(Op::MakeRecord) => {
-                    let type_name_index = self.read_u16() as usize;
-                    let field_count = self.read_u8() as usize;
+                    let type_name_index = self.read_u16()? as usize;
+                    let field_count = self.read_u8()? as usize;
                     let mut field_names = Vec::with_capacity(field_count);
                     for _ in 0..field_count {
-                        let name_index = self.read_u16() as usize;
+                        let name_index = self.read_u16()? as usize;
                         field_names.push(self.read_constant_string(name_index)?);
                     }
                     let type_name = self.read_constant_string(type_name_index)?;
@@ -800,8 +800,8 @@ impl Vm {
                     self.push(Value::Record(type_name, Arc::new(fields)));
                 }
                 Some(Op::MakeVariant) => {
-                    let name_index = self.read_u16() as usize;
-                    let field_count = self.read_u8() as usize;
+                    let name_index = self.read_u16()? as usize;
+                    let field_count = self.read_u8()? as usize;
                     let name = self.read_constant_string(name_index)?;
                     let start = self.stack.len() - field_count;
                     let fields: Vec<Value> = self.stack[start..].to_vec();
@@ -809,17 +809,17 @@ impl Vm {
                     self.push(Value::Variant(name, fields));
                 }
                 Some(Op::RecordUpdate) => {
-                    let field_count = self.read_u8() as usize;
+                    let field_count = self.read_u8()? as usize;
                     let mut field_names = Vec::with_capacity(field_count);
                     for _ in 0..field_count {
-                        let name_index = self.read_u16() as usize;
+                        let name_index = self.read_u16()? as usize;
                         field_names.push(self.read_constant_string(name_index)?);
                     }
                     // Stack: [base_record, new_val_1, ..., new_val_N]
                     let start = self.stack.len() - field_count;
                     let new_values: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
-                    let base = self.pop();
+                    let base = self.pop()?;
                     match base {
                         Value::Record(type_name, existing) => {
                             let mut fields = (*existing).clone();
@@ -839,8 +839,8 @@ impl Vm {
                     }
                 }
                 Some(Op::MakeRange) => {
-                    let end = self.pop();
-                    let start = self.pop();
+                    let end = self.pop()?;
+                    let start = self.pop()?;
                     match (&start, &end) {
                         (Value::Int(a), Value::Int(b)) => {
                             let items: Vec<Value> =
@@ -857,9 +857,9 @@ impl Vm {
 
                 // ── Field access ──────────────────────────────
                 Some(Op::GetField) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let target = self.pop();
+                    let target = self.pop()?;
                     match target {
                         Value::Record(_, ref fields) => {
                             let val = fields.get(&name).cloned().ok_or_else(|| {
@@ -884,8 +884,8 @@ impl Vm {
                     }
                 }
                 Some(Op::GetIndex) => {
-                    let index = self.read_u8() as usize;
-                    let target = self.pop();
+                    let index = self.read_u8()? as usize;
+                    let target = self.pop()?;
                     match target {
                         Value::Tuple(ref elems) => {
                             let val = elems.get(index).cloned().ok_or_else(|| {
@@ -907,83 +907,83 @@ impl Vm {
 
                 // ── Control flow ──────────────────────────────
                 Some(Op::Jump) => {
-                    let offset = self.read_u16() as usize;
-                    let frame = self.current_frame_mut();
+                    let offset = self.read_u16()? as usize;
+                    let frame = self.current_frame_mut()?;
                     frame.ip += offset;
                 }
                 Some(Op::JumpBack) => {
-                    let offset = self.read_u16() as usize;
-                    let frame = self.current_frame_mut();
+                    let offset = self.read_u16()? as usize;
+                    let frame = self.current_frame_mut()?;
                     frame.ip -= offset;
                 }
                 Some(Op::JumpIfFalse) => {
-                    let offset = self.read_u16() as usize;
-                    let val = self.pop();
+                    let offset = self.read_u16()? as usize;
+                    let val = self.pop()?;
                     if self.is_falsy(&val) {
-                        let frame = self.current_frame_mut();
+                        let frame = self.current_frame_mut()?;
                         frame.ip += offset;
                     }
                 }
                 Some(Op::JumpIfTrue) => {
-                    let offset = self.read_u16() as usize;
-                    let val = self.pop();
+                    let offset = self.read_u16()? as usize;
+                    let val = self.pop()?;
                     if self.is_truthy(&val) {
-                        let frame = self.current_frame_mut();
+                        let frame = self.current_frame_mut()?;
                         frame.ip += offset;
                     }
                 }
                 Some(Op::Pop) => {
-                    self.pop();
+                    self.pop()?;
                 }
                 Some(Op::PopN) => {
-                    let count = self.read_u8() as usize;
+                    let count = self.read_u8()? as usize;
                     let new_len = self.stack.len().saturating_sub(count);
                     self.stack.truncate(new_len);
                 }
                 Some(Op::Dup) => {
-                    let val = self.peek().clone();
+                    let val = self.peek()?.clone();
                     self.push(val);
                 }
 
                 // ── Pattern matching ──────────────────────────
                 Some(Op::TestTag) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let val = self.peek();
+                    let val = self.peek()?;
                     let result = matches!(val, Value::Variant(tag, _) if *tag == name);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestEqual) => {
-                    let const_index = self.read_u16() as usize;
-                    let constant = self.read_constant(const_index);
-                    let val = self.peek();
+                    let const_index = self.read_u16()? as usize;
+                    let constant = self.read_constant(const_index)?;
+                    let val = self.peek()?;
                     let result = *val == constant;
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestTupleLen) => {
-                    let len = self.read_u8() as usize;
-                    let val = self.peek();
+                    let len = self.read_u8()? as usize;
+                    let val = self.peek()?;
                     let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestListMin) => {
-                    let min_len = self.read_u8() as usize;
-                    let val = self.peek();
+                    let min_len = self.read_u8()? as usize;
+                    let val = self.peek()?;
                     let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestListExact) => {
-                    let len = self.read_u8() as usize;
-                    let val = self.peek();
+                    let len = self.read_u8()? as usize;
+                    let val = self.peek()?;
                     let result = matches!(val, Value::List(xs) if xs.len() == len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestIntRange) => {
-                    let lo_index = self.read_u16() as usize;
-                    let hi_index = self.read_u16() as usize;
-                    let lo = self.read_constant(lo_index);
-                    let hi = self.read_constant(hi_index);
-                    let val = self.peek();
+                    let lo_index = self.read_u16()? as usize;
+                    let hi_index = self.read_u16()? as usize;
+                    let lo = self.read_constant(lo_index)?;
+                    let hi = self.read_constant(hi_index)?;
+                    let val = self.peek()?;
                     let result = match (val, &lo, &hi) {
                         (Value::Int(n), Value::Int(lo), Value::Int(hi)) => {
                             *n >= *lo && *n <= *hi
@@ -993,11 +993,11 @@ impl Vm {
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestFloatRange) => {
-                    let lo_index = self.read_u16() as usize;
-                    let hi_index = self.read_u16() as usize;
-                    let lo = self.read_constant(lo_index);
-                    let hi = self.read_constant(hi_index);
-                    let val = self.peek();
+                    let lo_index = self.read_u16()? as usize;
+                    let hi_index = self.read_u16()? as usize;
+                    let lo = self.read_constant(lo_index)?;
+                    let hi = self.read_constant(hi_index)?;
+                    let val = self.peek()?;
                     let result = match (val, &lo, &hi) {
                         (Value::Float(n), Value::Float(lo), Value::Float(hi)) => {
                             *n >= *lo && *n <= *hi
@@ -1007,14 +1007,14 @@ impl Vm {
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestBool) => {
-                    let expected = self.read_u8() != 0;
-                    let val = self.peek();
+                    let expected = self.read_u8()? != 0;
+                    let val = self.peek()?;
                     let result = matches!(val, Value::Bool(b) if *b == expected);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::DestructTuple) => {
-                    let index = self.read_u8() as usize;
-                    let val = self.peek().clone();
+                    let index = self.read_u8()? as usize;
+                    let val = self.peek()?.clone();
                     match val {
                         Value::Tuple(elems) => {
                             self.push(elems[index].clone());
@@ -1027,8 +1027,8 @@ impl Vm {
                     }
                 }
                 Some(Op::DestructVariant) => {
-                    let index = self.read_u8() as usize;
-                    let val = self.peek().clone();
+                    let index = self.read_u8()? as usize;
+                    let val = self.peek()?.clone();
                     match val {
                         Value::Variant(_, fields) => {
                             self.push(fields[index].clone());
@@ -1041,8 +1041,8 @@ impl Vm {
                     }
                 }
                 Some(Op::DestructList) => {
-                    let index = self.read_u8() as usize;
-                    let val = self.peek().clone();
+                    let index = self.read_u8()? as usize;
+                    let val = self.peek()?.clone();
                     match val {
                         Value::List(xs) => {
                             self.push(xs[index].clone());
@@ -1055,8 +1055,8 @@ impl Vm {
                     }
                 }
                 Some(Op::DestructListRest) => {
-                    let start = self.read_u8() as usize;
-                    let val = self.peek().clone();
+                    let start = self.read_u8()? as usize;
+                    let val = self.peek()?.clone();
                     match val {
                         Value::List(xs) => {
                             let rest: Vec<Value> = xs[start..].to_vec();
@@ -1070,9 +1070,9 @@ impl Vm {
                     }
                 }
                 Some(Op::DestructRecordField) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let val = self.peek().clone();
+                    let val = self.peek()?.clone();
                     match val {
                         Value::Record(_, fields) => {
                             let field = fields.get(&name).cloned().ok_or_else(|| {
@@ -1088,16 +1088,16 @@ impl Vm {
                     }
                 }
                 Some(Op::TestRecordTag) => {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let val = self.peek();
+                    let val = self.peek()?;
                     let result = matches!(val, Value::Record(tag, _) if *tag == name);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestMapHasKey) => {
-                    let const_index = self.read_u16() as usize;
+                    let const_index = self.read_u16()? as usize;
                     let key_name = self.read_constant_string(const_index)?;
-                    let val = self.peek();
+                    let val = self.peek()?;
                     let result = match val {
                         Value::Map(map) => map.contains_key(&Value::String(key_name)),
                         _ => false,
@@ -1105,9 +1105,9 @@ impl Vm {
                     self.push(Value::Bool(result));
                 }
                 Some(Op::DestructMapValue) => {
-                    let const_index = self.read_u16() as usize;
+                    let const_index = self.read_u16()? as usize;
                     let key_name = self.read_constant_string(const_index)?;
-                    let val = self.peek().clone();
+                    let val = self.peek()?.clone();
                     match val {
                         Value::Map(map) => {
                             let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| {
@@ -1125,16 +1125,16 @@ impl Vm {
 
                 // ── Loop ──────────────────────────────────────
                 Some(Op::LoopSetup) => {
-                    let _binding_count = self.read_u8();
+                    let _binding_count = self.read_u8()?;
                     // Loop setup is handled during compilation by placing
                     // bindings in local slots. Nothing to do at runtime.
                 }
                 Some(Op::Recur) => {
-                    let arg_count = self.read_u8() as usize;
-                    let first_slot = self.read_u16() as usize;
+                    let arg_count = self.read_u8()? as usize;
+                    let first_slot = self.read_u16()? as usize;
                     // Update loop bindings: the new values are on top of stack.
                     // Copy them back into the binding slots starting at first_slot.
-                    let base = self.current_frame().base_slot;
+                    let base = self.current_frame()?.base_slot;
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
                         self.stack[base + first_slot + i] = self.stack[start + i].clone();
@@ -1146,12 +1146,12 @@ impl Vm {
 
                 // ── Error handling ────────────────────────────
                 Some(Op::QuestionMark) => {
-                    let val = self.peek().clone();
+                    let val = self.peek()?.clone();
                     match val {
                         Value::Variant(ref tag, ref fields) => {
                             match tag.as_str() {
                                 "Ok" | "Some" => {
-                                    self.pop();
+                                    self.pop()?;
                                     if fields.len() == 1 {
                                         self.push(fields[0].clone());
                                     } else {
@@ -1160,8 +1160,8 @@ impl Vm {
                                 }
                                 "Err" | "None" => {
                                     // Early return with the error/none value.
-                                    let result = self.pop();
-                                    let finished_base = self.current_frame().base_slot;
+                                    let result = self.pop()?;
+                                    let finished_base = self.current_frame()?.base_slot;
                                     self.frames.pop();
                                     if self.frames.is_empty() {
                                         return Ok(result);
@@ -1188,14 +1188,14 @@ impl Vm {
                     }
                 }
                 Some(Op::Panic) => {
-                    let msg = self.pop();
+                    let msg = self.pop()?;
                     return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
                 }
 
                 // ── Method dispatch ───────────────────────────
                 Some(Op::CallMethod) => {
-                    let method_name_index = self.read_u16() as usize;
-                    let argc = self.read_u8() as usize;
+                    let method_name_index = self.read_u16()? as usize;
+                    let argc = self.read_u8()? as usize;
                     let method_name = self.read_constant_string(method_name_index)?;
                     // The receiver is at stack[len - argc] (first arg)
                     let receiver_slot = self.stack.len() - argc;
@@ -1262,6 +1262,15 @@ impl Vm {
     /// Run up to `max_steps` instructions and return a `SliceResult`.
     /// Used by the M:N scheduler's worker threads.
     pub fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        // Helper macro to convert Result to SliceResult::Failed on error.
+        macro_rules! try_or_fail {
+            ($expr:expr) => {
+                match $expr {
+                    Ok(v) => v,
+                    Err(e) => return SliceResult::Failed(e),
+                }
+            };
+        }
         for _ in 0..max_steps {
             if self.frames.is_empty() {
                 let result = if self.stack.is_empty() {
@@ -1271,12 +1280,12 @@ impl Vm {
                 };
                 return SliceResult::Completed(result);
             }
-            let saved_ip = self.current_frame().ip;
-            let op_byte = self.read_byte();
+            let saved_ip = try_or_fail!(self.current_frame()).ip;
+            let op_byte = try_or_fail!(self.read_byte());
             match Op::from_byte(op_byte) {
                 Some(Op::Return) => {
-                    let result = self.pop();
-                    let finished_base = self.current_frame().base_slot;
+                    let result = try_or_fail!(self.pop());
+                    let finished_base = try_or_fail!(self.current_frame()).base_slot;
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return SliceResult::Completed(result);
@@ -1290,7 +1299,7 @@ impl Vm {
                         Ok(()) => {}
                         Err(e) if e.is_yield => {
                             // Cooperative yield: rewind IP to re-execute.
-                            self.current_frame_mut().ip = saved_ip;
+                            try_or_fail!(self.current_frame_mut()).ip = saved_ip;
                             // Check if this was a block request.
                             if self.block_reason.is_some() {
                                 return SliceResult::Blocked;
@@ -1397,11 +1406,11 @@ impl Vm {
                 });
                 // Run the execution loop until we return to the previous frame count
                 loop {
-                    let op_byte = self.read_byte();
+                    let op_byte = self.read_byte()?;
                     match Op::from_byte(op_byte) {
                         Some(Op::Return) => {
-                            let result = self.pop();
-                            let finished_base = self.current_frame().base_slot;
+                            let result = self.pop()?;
+                            let finished_base = self.current_frame()?.base_slot;
                             self.frames.pop();
                             if self.frames.len() < saved_frame_count {
                                 // This shouldn't happen
@@ -1460,8 +1469,8 @@ impl Vm {
     fn dispatch_op(&mut self, op: Op) -> Result<(), VmError> {
         match op {
             Op::Constant => {
-                let index = self.read_u16() as usize;
-                let value = self.read_constant(index);
+                let index = self.read_u16()? as usize;
+                let value = self.read_constant(index)?;
                 self.push(value);
             }
             Op::Unit => self.push(Value::Unit),
@@ -1473,14 +1482,14 @@ impl Vm {
             Op::Div => self.binary_arithmetic(Op::Div)?,
             Op::Mod => self.binary_arithmetic(Op::Mod)?,
             Op::Eq => {
-                let b = self.pop();
-                let a = self.pop();
+                let b = self.pop()?;
+                let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
                 self.push(Value::Bool(a == b));
             }
             Op::Neq => {
-                let b = self.pop();
-                let a = self.pop();
+                let b = self.pop()?;
+                let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
                 self.push(Value::Bool(a != b));
             }
@@ -1489,7 +1498,7 @@ impl Vm {
             Op::Leq => self.compare(|ord| ord.is_le())?,
             Op::Geq => self.compare(|ord| ord.is_ge())?,
             Op::Negate => {
-                let val = self.pop();
+                let val = self.pop()?;
                 match val {
                     Value::Int(n) => self.push(Value::Int(-n)),
                     Value::Float(n) => self.push(Value::Float(-n)),
@@ -1497,35 +1506,35 @@ impl Vm {
                 }
             }
             Op::Not => {
-                let val = self.pop();
+                let val = self.pop()?;
                 match val {
                     Value::Bool(b) => self.push(Value::Bool(!b)),
                     other => return Err(VmError::new(format!("cannot apply 'not' to {}", self.type_name(&other)))),
                 }
             }
             Op::And => {
-                let b = self.pop();
-                let a = self.pop();
+                let b = self.pop()?;
+                let a = self.pop()?;
                 match (&a, &b) {
                     (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val && *b_val)),
                     _ => return Err(VmError::new("logical 'and' requires two booleans".into())),
                 }
             }
             Op::Or => {
-                let b = self.pop();
-                let a = self.pop();
+                let b = self.pop()?;
+                let a = self.pop()?;
                 match (&a, &b) {
                     (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val || *b_val)),
                     _ => return Err(VmError::new("logical 'or' requires two booleans".into())),
                 }
             }
             Op::DisplayValue => {
-                let val = self.pop();
+                let val = self.pop()?;
                 let s = self.display_value(&val);
                 self.push(Value::String(s));
             }
             Op::StringConcat => {
-                let count = self.read_u8() as usize;
+                let count = self.read_u8()? as usize;
                 let start = self.stack.len() - count;
                 let mut result = String::new();
                 for i in start..self.stack.len() {
@@ -1539,15 +1548,15 @@ impl Vm {
                 self.push(Value::String(result));
             }
             Op::GetLocal => {
-                let slot = self.read_u16() as usize;
-                let base = self.current_frame().base_slot;
+                let slot = self.read_u16()? as usize;
+                let base = self.current_frame()?.base_slot;
                 let value = self.stack[base + slot].clone();
                 self.push(value);
             }
             Op::SetLocal => {
-                let slot = self.read_u16() as usize;
-                let base = self.current_frame().base_slot;
-                let value = self.peek().clone();
+                let slot = self.read_u16()? as usize;
+                let base = self.current_frame()?.base_slot;
+                let value = self.peek()?.clone();
                 let target = base + slot;
                 while self.stack.len() <= target {
                     self.stack.push(Value::Unit);
@@ -1555,7 +1564,7 @@ impl Vm {
                 self.stack[target] = value;
             }
             Op::GetGlobal => {
-                let name_index = self.read_u16() as usize;
+                let name_index = self.read_u16()? as usize;
                 let name = self.read_constant_string(name_index)?;
                 let value = self.globals.get(&name).cloned().ok_or_else(|| {
                     VmError::new(format!("undefined global: {name}"))
@@ -1563,33 +1572,33 @@ impl Vm {
                 self.push(value);
             }
             Op::SetGlobal => {
-                let name_index = self.read_u16() as usize;
+                let name_index = self.read_u16()? as usize;
                 let name = self.read_constant_string(name_index)?;
-                let value = self.peek().clone();
+                let value = self.peek()?.clone();
                 self.globals.insert(name, value);
             }
             Op::GetUpvalue => {
-                let index = self.read_u8() as usize;
-                let value = self.current_frame().closure.upvalues[index].clone();
+                let index = self.read_u8()? as usize;
+                let value = self.current_frame()?.closure.upvalues[index].clone();
                 self.push(value);
             }
             Op::Call => {
-                let argc = self.read_u8() as usize;
+                let argc = self.read_u8()? as usize;
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 self.call_value(func_val, argc, func_slot)?;
             }
             Op::TailCall => {
-                let argc = self.read_u8() as usize;
+                let argc = self.read_u8()? as usize;
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 if let Value::VmClosure(closure) = func_val {
-                    let base = self.current_frame().base_slot;
+                    let base = self.current_frame()?.base_slot;
                     for i in 0..argc {
                         self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
                     }
                     self.stack.truncate(base + argc);
-                    let frame = self.current_frame_mut();
+                    let frame = self.current_frame_mut()?;
                     frame.closure = closure;
                     frame.ip = 0;
                 } else {
@@ -1601,8 +1610,8 @@ impl Vm {
                 unreachable!("Return should be handled by caller");
             }
             Op::CallBuiltin => {
-                let name_index = self.read_u16() as usize;
-                let argc = self.read_u8() as usize;
+                let name_index = self.read_u16()? as usize;
+                let argc = self.read_u8()? as usize;
                 let name = self.read_constant_string(name_index)?;
                 let start = self.stack.len() - argc;
                 let args: Vec<Value> = self.stack[start..].to_vec();
@@ -1611,18 +1620,18 @@ impl Vm {
                 self.push(result);
             }
             Op::MakeClosure => {
-                let func_index = self.read_u16() as usize;
-                let upvalue_count = self.read_u8() as usize;
-                let constant = self.read_constant(func_index);
+                let func_index = self.read_u16()? as usize;
+                let upvalue_count = self.read_u8()? as usize;
+                let constant = self.read_constant(func_index)?;
                 let mut upvalues = Vec::with_capacity(upvalue_count);
                 for _ in 0..upvalue_count {
-                    let is_local = self.read_u8() != 0;
-                    let index = self.read_u8() as usize;
+                    let is_local = self.read_u8()? != 0;
+                    let index = self.read_u8()? as usize;
                     let val = if is_local {
-                        let base = self.current_frame().base_slot;
+                        let base = self.current_frame()?.base_slot;
                         self.stack[base + index].clone()
                     } else {
-                        self.current_frame().closure.upvalues[index].clone()
+                        self.current_frame()?.closure.upvalues[index].clone()
                     };
                     upvalues.push(val);
                 }
@@ -1637,21 +1646,21 @@ impl Vm {
                 }
             }
             Op::MakeTuple => {
-                let count = self.read_u8() as usize;
+                let count = self.read_u8()? as usize;
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
                 self.push(Value::Tuple(elements));
             }
             Op::MakeList => {
-                let count = self.read_u16() as usize;
+                let count = self.read_u16()? as usize;
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
                 self.push(Value::List(Arc::new(elements)));
             }
             Op::MakeMap => {
-                let pair_count = self.read_u16() as usize;
+                let pair_count = self.read_u16()? as usize;
                 let total = pair_count * 2;
                 let start = self.stack.len() - total;
                 let mut map = BTreeMap::new();
@@ -1662,7 +1671,7 @@ impl Vm {
                 self.push(Value::Map(Arc::new(map)));
             }
             Op::MakeSet => {
-                let count = self.read_u16() as usize;
+                let count = self.read_u16()? as usize;
                 let start = self.stack.len() - count;
                 let mut set = BTreeSet::new();
                 for i in start..self.stack.len() {
@@ -1672,11 +1681,11 @@ impl Vm {
                 self.push(Value::Set(Arc::new(set)));
             }
             Op::MakeRecord => {
-                let type_name_index = self.read_u16() as usize;
-                let field_count = self.read_u8() as usize;
+                let type_name_index = self.read_u16()? as usize;
+                let field_count = self.read_u8()? as usize;
                 let mut field_names = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
-                    let name_index = self.read_u16() as usize;
+                    let name_index = self.read_u16()? as usize;
                     field_names.push(self.read_constant_string(name_index)?);
                 }
                 let type_name = self.read_constant_string(type_name_index)?;
@@ -1689,8 +1698,8 @@ impl Vm {
                 self.push(Value::Record(type_name, Arc::new(fields)));
             }
             Op::MakeVariant => {
-                let name_index = self.read_u16() as usize;
-                let field_count = self.read_u8() as usize;
+                let name_index = self.read_u16()? as usize;
+                let field_count = self.read_u8()? as usize;
                 let name = self.read_constant_string(name_index)?;
                 let start = self.stack.len() - field_count;
                 let fields: Vec<Value> = self.stack[start..].to_vec();
@@ -1698,16 +1707,16 @@ impl Vm {
                 self.push(Value::Variant(name, fields));
             }
             Op::RecordUpdate => {
-                let field_count = self.read_u8() as usize;
+                let field_count = self.read_u8()? as usize;
                 let mut field_names = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
-                    let ni = self.read_u16() as usize;
+                    let ni = self.read_u16()? as usize;
                     field_names.push(self.read_constant_string(ni)?);
                 }
                 let start = self.stack.len() - field_count;
                 let new_values: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
-                let base = self.pop();
+                let base = self.pop()?;
                 if let Value::Record(type_name, existing) = base {
                     let mut fields = (*existing).clone();
                     for (name, val) in field_names.into_iter().zip(new_values) {
@@ -1719,8 +1728,8 @@ impl Vm {
                 }
             }
             Op::MakeRange => {
-                let end = self.pop();
-                let start = self.pop();
+                let end = self.pop()?;
+                let start = self.pop()?;
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
                     let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
                     self.push(Value::List(Arc::new(items)));
@@ -1729,9 +1738,9 @@ impl Vm {
                 }
             }
             Op::GetField => {
-                let name_index = self.read_u16() as usize;
+                let name_index = self.read_u16()? as usize;
                 let name = self.read_constant_string(name_index)?;
-                let target = self.pop();
+                let target = self.pop()?;
                 match target {
                     Value::Record(_, ref fields) => {
                         let val = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
@@ -1745,8 +1754,8 @@ impl Vm {
                 }
             }
             Op::GetIndex => {
-                let index = self.read_u8() as usize;
-                let target = self.pop();
+                let index = self.read_u8()? as usize;
+                let target = self.pop()?;
                 if let Value::Tuple(ref elems) = target {
                     let val = elems.get(index).cloned().ok_or_else(|| VmError::new(format!("tuple index out of bounds")))?;
                     self.push(val);
@@ -1755,75 +1764,75 @@ impl Vm {
                 }
             }
             Op::Jump => {
-                let offset = self.read_u16() as usize;
-                self.current_frame_mut().ip += offset;
+                let offset = self.read_u16()? as usize;
+                self.current_frame_mut()?.ip += offset;
             }
             Op::JumpBack => {
-                let offset = self.read_u16() as usize;
-                self.current_frame_mut().ip -= offset;
+                let offset = self.read_u16()? as usize;
+                self.current_frame_mut()?.ip -= offset;
             }
             Op::JumpIfFalse => {
-                let offset = self.read_u16() as usize;
-                let val = self.pop();
+                let offset = self.read_u16()? as usize;
+                let val = self.pop()?;
                 if self.is_falsy(&val) {
-                    self.current_frame_mut().ip += offset;
+                    self.current_frame_mut()?.ip += offset;
                 }
             }
             Op::JumpIfTrue => {
-                let offset = self.read_u16() as usize;
-                let val = self.pop();
+                let offset = self.read_u16()? as usize;
+                let val = self.pop()?;
                 if self.is_truthy(&val) {
-                    self.current_frame_mut().ip += offset;
+                    self.current_frame_mut()?.ip += offset;
                 }
             }
-            Op::Pop => { self.pop(); }
+            Op::Pop => { self.pop()?; }
             Op::PopN => {
-                let count = self.read_u8() as usize;
+                let count = self.read_u8()? as usize;
                 let new_len = self.stack.len().saturating_sub(count);
                 self.stack.truncate(new_len);
             }
             Op::Dup => {
-                let val = self.peek().clone();
+                let val = self.peek()?.clone();
                 self.push(val);
             }
             Op::TestTag => {
-                let ni = self.read_u16() as usize;
+                let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;
-                let val = self.peek();
+                let val = self.peek()?;
                 let result = matches!(val, Value::Variant(tag, _) if *tag == name);
                 self.push(Value::Bool(result));
             }
             Op::TestEqual => {
-                let ci = self.read_u16() as usize;
-                let constant = self.read_constant(ci);
-                let val = self.peek();
+                let ci = self.read_u16()? as usize;
+                let constant = self.read_constant(ci)?;
+                let val = self.peek()?;
                 let result = *val == constant;
                 self.push(Value::Bool(result));
             }
             Op::TestTupleLen => {
-                let len = self.read_u8() as usize;
-                let val = self.peek();
+                let len = self.read_u8()? as usize;
+                let val = self.peek()?;
                 let result = matches!(val, Value::Tuple(elems) if elems.len() == len);
                 self.push(Value::Bool(result));
             }
             Op::TestListMin => {
-                let min_len = self.read_u8() as usize;
-                let val = self.peek();
+                let min_len = self.read_u8()? as usize;
+                let val = self.peek()?;
                 let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
                 self.push(Value::Bool(result));
             }
             Op::TestListExact => {
-                let len = self.read_u8() as usize;
-                let val = self.peek();
+                let len = self.read_u8()? as usize;
+                let val = self.peek()?;
                 let result = matches!(val, Value::List(xs) if xs.len() == len);
                 self.push(Value::Bool(result));
             }
             Op::TestIntRange => {
-                let lo_index = self.read_u16() as usize;
-                let hi_index = self.read_u16() as usize;
-                let lo = self.read_constant(lo_index);
-                let hi = self.read_constant(hi_index);
-                let val = self.peek();
+                let lo_index = self.read_u16()? as usize;
+                let hi_index = self.read_u16()? as usize;
+                let lo = self.read_constant(lo_index)?;
+                let hi = self.read_constant(hi_index)?;
+                let val = self.peek()?;
                 let result = match (val, &lo, &hi) {
                     (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
                     _ => false,
@@ -1831,11 +1840,11 @@ impl Vm {
                 self.push(Value::Bool(result));
             }
             Op::TestFloatRange => {
-                let lo_index = self.read_u16() as usize;
-                let hi_index = self.read_u16() as usize;
-                let lo = self.read_constant(lo_index);
-                let hi = self.read_constant(hi_index);
-                let val = self.peek();
+                let lo_index = self.read_u16()? as usize;
+                let hi_index = self.read_u16()? as usize;
+                let lo = self.read_constant(lo_index)?;
+                let hi = self.read_constant(hi_index)?;
+                let val = self.peek()?;
                 let result = match (val, &lo, &hi) {
                     (Value::Float(n), Value::Float(lo), Value::Float(hi)) => *n >= *lo && *n <= *hi,
                     _ => false,
@@ -1843,55 +1852,55 @@ impl Vm {
                 self.push(Value::Bool(result));
             }
             Op::TestBool => {
-                let expected = self.read_u8() != 0;
-                let val = self.peek();
+                let expected = self.read_u8()? != 0;
+                let val = self.peek()?;
                 let result = matches!(val, Value::Bool(b) if *b == expected);
                 self.push(Value::Bool(result));
             }
             Op::DestructTuple => {
-                let index = self.read_u8() as usize;
-                let val = self.peek().clone();
+                let index = self.read_u8()? as usize;
+                let val = self.peek()?.clone();
                 if let Value::Tuple(elems) = val { self.push(elems[index].clone()); }
                 else { return Err(VmError::new("DestructTuple on non-tuple".into())); }
             }
             Op::DestructVariant => {
-                let index = self.read_u8() as usize;
-                let val = self.peek().clone();
+                let index = self.read_u8()? as usize;
+                let val = self.peek()?.clone();
                 if let Value::Variant(_, fields) = val { self.push(fields[index].clone()); }
                 else { return Err(VmError::new("DestructVariant on non-variant".into())); }
             }
             Op::DestructList => {
-                let index = self.read_u8() as usize;
-                let val = self.peek().clone();
+                let index = self.read_u8()? as usize;
+                let val = self.peek()?.clone();
                 if let Value::List(xs) = val { self.push(xs[index].clone()); }
                 else { return Err(VmError::new("DestructList on non-list".into())); }
             }
             Op::DestructListRest => {
-                let start = self.read_u8() as usize;
-                let val = self.peek().clone();
+                let start = self.read_u8()? as usize;
+                let val = self.peek()?.clone();
                 if let Value::List(xs) = val { self.push(Value::List(Arc::new(xs[start..].to_vec()))); }
                 else { return Err(VmError::new("DestructListRest on non-list".into())); }
             }
             Op::DestructRecordField => {
-                let ni = self.read_u16() as usize;
+                let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;
-                let val = self.peek().clone();
+                let val = self.peek()?.clone();
                 if let Value::Record(_, fields) = val {
                     let field = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
                     self.push(field);
                 } else { return Err(VmError::new("DestructRecordField on non-record".into())); }
             }
             Op::TestRecordTag => {
-                let ni = self.read_u16() as usize;
+                let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;
-                let val = self.peek();
+                let val = self.peek()?;
                 let result = matches!(val, Value::Record(tag, _) if *tag == name);
                 self.push(Value::Bool(result));
             }
             Op::TestMapHasKey => {
-                let ci = self.read_u16() as usize;
+                let ci = self.read_u16()? as usize;
                 let key_name = self.read_constant_string(ci)?;
-                let val = self.peek();
+                let val = self.peek()?;
                 let result = match val {
                     Value::Map(map) => map.contains_key(&Value::String(key_name)),
                     _ => false,
@@ -1899,19 +1908,19 @@ impl Vm {
                 self.push(Value::Bool(result));
             }
             Op::DestructMapValue => {
-                let ci = self.read_u16() as usize;
+                let ci = self.read_u16()? as usize;
                 let key_name = self.read_constant_string(ci)?;
-                let val = self.peek().clone();
+                let val = self.peek()?.clone();
                 if let Value::Map(map) = val {
                     let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
                     self.push(value);
                 } else { return Err(VmError::new("DestructMapValue on non-map".into())); }
             }
-            Op::LoopSetup => { let _ = self.read_u8(); }
+            Op::LoopSetup => { let _ = self.read_u8()?; }
             Op::Recur => {
-                let arg_count = self.read_u8() as usize;
-                let first_slot = self.read_u16() as usize;
-                let base = self.current_frame().base_slot;
+                let arg_count = self.read_u8()? as usize;
+                let first_slot = self.read_u16()? as usize;
+                let base = self.current_frame()?.base_slot;
                 let start = self.stack.len() - arg_count;
                 for i in 0..arg_count {
                     self.stack[base + first_slot + i] = self.stack[start + i].clone();
@@ -1920,16 +1929,16 @@ impl Vm {
                 self.stack.truncate(base + first_slot + arg_count);
             }
             Op::QuestionMark => {
-                let val = self.peek().clone();
+                let val = self.peek()?.clone();
                 match val {
                     Value::Variant(ref tag, ref fields) => match tag.as_str() {
                         "Ok" | "Some" => {
-                            self.pop();
+                            self.pop()?;
                             self.push(if fields.len() == 1 { fields[0].clone() } else { Value::Unit });
                         }
                         "Err" | "None" => {
-                            let result = self.pop();
-                            let finished_base = self.current_frame().base_slot;
+                            let result = self.pop()?;
+                            let finished_base = self.current_frame()?.base_slot;
                             self.frames.pop();
                             if self.frames.is_empty() {
                                 self.push(result);
@@ -1944,12 +1953,12 @@ impl Vm {
                 }
             }
             Op::Panic => {
-                let msg = self.pop();
+                let msg = self.pop()?;
                 return Err(VmError::new(format!("panic: {}", self.display_value(&msg))));
             }
             Op::CallMethod => {
-                let method_name_index = self.read_u16() as usize;
-                let argc = self.read_u8() as usize;
+                let method_name_index = self.read_u16()? as usize;
+                let argc = self.read_u8()? as usize;
                 let method_name = self.read_constant_string(method_name_index)?;
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
@@ -1999,40 +2008,55 @@ impl Vm {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Value {
-        self.stack.pop().expect("stack underflow")
+    fn pop(&mut self) -> Result<Value, VmError> {
+        self.stack.pop().ok_or_else(|| {
+            let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
+            VmError::new(format!("internal: stack underflow at ip={ip}"))
+        })
     }
 
-    fn peek(&self) -> &Value {
-        self.stack.last().expect("stack underflow")
+    fn peek(&self) -> Result<&Value, VmError> {
+        self.stack.last().ok_or_else(|| {
+            let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
+            VmError::new(format!("internal: stack underflow at ip={ip}"))
+        })
     }
 
     // ── Bytecode reading ──────────────────────────────────────────
 
-    fn read_byte(&mut self) -> u8 {
-        let frame = self.frames.last().unwrap();
+    fn read_byte(&mut self) -> Result<u8, VmError> {
+        let frame = self.frames.last().ok_or_else(|| {
+            VmError::new("internal: no call frame in read_byte".to_string())
+        })?;
         let ip = frame.ip;
-        let byte = frame.closure.function.chunk.code[ip];
-        self.frames.last_mut().unwrap().ip = ip + 1;
-        byte
+        let byte = *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
+            VmError::new(format!("internal: bytecode out of bounds at ip={ip}"))
+        })?;
+        self.frames.last_mut().ok_or_else(|| {
+            VmError::new("internal: no call frame in read_byte".to_string())
+        })?.ip = ip + 1;
+        Ok(byte)
     }
 
-    fn read_u8(&mut self) -> u8 {
+    fn read_u8(&mut self) -> Result<u8, VmError> {
         self.read_byte()
     }
 
-    fn read_u16(&mut self) -> u16 {
-        let lo = self.read_byte() as u16;
-        let hi = self.read_byte() as u16;
-        lo | (hi << 8)
+    fn read_u16(&mut self) -> Result<u16, VmError> {
+        let lo = self.read_byte()? as u16;
+        let hi = self.read_byte()? as u16;
+        Ok(lo | (hi << 8))
     }
 
-    fn read_constant(&self, index: usize) -> Value {
-        self.current_frame().closure.function.chunk.constants[index].clone()
+    fn read_constant(&self, index: usize) -> Result<Value, VmError> {
+        let frame = self.current_frame()?;
+        frame.closure.function.chunk.constants.get(index).cloned().ok_or_else(|| {
+            VmError::new(format!("internal: constant index {index} out of bounds"))
+        })
     }
 
     fn read_constant_string(&self, index: usize) -> Result<String, VmError> {
-        let val = self.read_constant(index);
+        let val = self.read_constant(index)?;
         match val {
             Value::String(s) => Ok(s),
             other => Err(VmError::new(format!(
@@ -2044,17 +2068,21 @@ impl Vm {
 
     // ── Frame access ──────────────────────────────────────────────
 
-    fn current_frame(&self) -> &CallFrame {
-        self.frames.last().expect("no call frame")
+    fn current_frame(&self) -> Result<&CallFrame, VmError> {
+        self.frames.last().ok_or_else(|| {
+            VmError::new("internal: no call frame".to_string())
+        })
     }
 
-    fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().expect("no call frame")
+    fn current_frame_mut(&mut self) -> Result<&mut CallFrame, VmError> {
+        self.frames.last_mut().ok_or_else(|| {
+            VmError::new("internal: no call frame".to_string())
+        })
     }
 
     #[allow(dead_code)]
-    fn current_chunk(&self) -> &Chunk {
-        &self.current_frame().closure.function.chunk
+    fn current_chunk(&self) -> Result<&Chunk, VmError> {
+        Ok(&self.current_frame()?.closure.function.chunk)
     }
 
     // ── Error enrichment ─────────────────────────────────────────
@@ -2088,8 +2116,8 @@ impl Vm {
     // ── Arithmetic helpers ────────────────────────────────────────
 
     fn binary_arithmetic(&mut self, op: Op) -> Result<(), VmError> {
-        let b = self.pop();
-        let a = self.pop();
+        let b = self.pop()?;
+        let a = self.pop()?;
         let result = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => match op {
                 Op::Add => Value::Int(a.wrapping_add(*b)),
@@ -2147,8 +2175,8 @@ impl Vm {
     }
 
     fn compare(&mut self, pred: fn(std::cmp::Ordering) -> bool) -> Result<(), VmError> {
-        let b = self.pop();
-        let a = self.pop();
+        let b = self.pop()?;
+        let a = self.pop()?;
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
             (Value::Float(a), Value::Float(b)) => a
