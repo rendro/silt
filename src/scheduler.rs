@@ -269,6 +269,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                         }));
                     }
+                    Some(BlockReason::Io(completion)) => {
+                        let slot = task_slot.clone();
+                        let inner2 = inner.clone();
+                        completion.register_waker(Box::new(move || {
+                            if let Some(task) = slot.lock().unwrap().take() {
+                                requeue(&inner2, task);
+                            }
+                        }));
+                    }
                     None => {
                         // No block reason — shouldn't happen but treat as yield.
                         if let Some(task) = task_slot.lock().unwrap().take() {
