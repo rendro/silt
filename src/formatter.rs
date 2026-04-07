@@ -870,6 +870,7 @@ fn format_type_expr(ty: &TypeExpr) -> String {
             let param_strs: Vec<String> = params.iter().map(format_type_expr).collect();
             format!("Fn({}) -> {}", param_strs.join(", "), format_type_expr(ret))
         }
+        TypeExpr::SelfType => "Self".to_string(),
     }
 }
 

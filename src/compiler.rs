@@ -50,6 +50,7 @@ fn encode_type_expr(te: &TypeExpr) -> String {
             }
             _ => "String".to_string(),
         },
+        TypeExpr::SelfType => "Self".to_string(),
         _ => "String".to_string(),
     }
 }

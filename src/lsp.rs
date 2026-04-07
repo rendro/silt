@@ -1607,6 +1607,7 @@ fn type_expr_to_type(te: &TypeExpr) -> Type {
                 _ => Type::Generic(name.clone(), targs),
             }
         }
+        TypeExpr::SelfType => Type::Generic("Self".into(), vec![]),
         _ => Type::String, // fallback
     }
 }
