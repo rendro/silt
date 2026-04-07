@@ -46,10 +46,10 @@ pub struct Channel {
     condvar: Condvar,
     /// Wakers to call when a value is sent or the channel is closed
     /// (wakes tasks blocked on receive/select/each).
-    recv_wakers: Mutex<Vec<Waker>>,
+    recv_wakers: Mutex<VecDeque<Waker>>,
     /// Wakers to call when buffer space becomes available
     /// (wakes tasks blocked on send when buffer was full).
-    send_wakers: Mutex<Vec<Waker>>,
+    send_wakers: Mutex<VecDeque<Waker>>,
 }
 
 /// Result of attempting to send on a channel.
@@ -75,8 +75,8 @@ impl Channel {
             capacity: effective_capacity,
             closed: AtomicBool::new(false),
             condvar: Condvar::new(),
-            recv_wakers: Mutex::new(Vec::new()),
-            send_wakers: Mutex::new(Vec::new()),
+            recv_wakers: Mutex::new(VecDeque::new()),
+            send_wakers: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -141,18 +141,57 @@ impl Channel {
     }
 
     /// Register a waker to be called when a value is sent or the channel is closed.
+    ///
+    /// Uses a double-check pattern to avoid lost wakeups: after registering,
+    /// re-checks data availability (or closed state). If the channel became
+    /// readable between the caller's `try_receive` and this registration,
+    /// the waker fires immediately.
     pub fn register_recv_waker(&self, waker: Waker) {
-        self.recv_wakers.lock().unwrap().push(waker);
+        self.recv_wakers.lock().unwrap().push_back(waker);
+        // Double-check: if data is now available or channel closed, wake immediately.
+        let has_data_or_closed = {
+            let buf = self.buffer.lock().unwrap();
+            !buf.is_empty() || self.closed.load(AtomicOrdering::Acquire)
+        };
+        if has_data_or_closed {
+            // Drain and fire all recv wakers — the channel state changed.
+            let wakers: VecDeque<Waker> = {
+                let mut guard = self.recv_wakers.lock().unwrap();
+                std::mem::take(&mut *guard)
+            };
+            for w in wakers {
+                w();
+            }
+        }
     }
 
     /// Register a waker to be called when buffer space becomes available.
+    ///
+    /// Uses a double-check pattern to avoid lost wakeups: after registering,
+    /// re-checks buffer space availability. If space opened up between the
+    /// caller's `try_send` and this registration, the waker fires immediately.
     pub fn register_send_waker(&self, waker: Waker) {
-        self.send_wakers.lock().unwrap().push(waker);
+        self.send_wakers.lock().unwrap().push_back(waker);
+        // Double-check: if buffer space is now available or channel closed, wake immediately.
+        let has_space_or_closed = {
+            let buf = self.buffer.lock().unwrap();
+            buf.len() < self.capacity || self.closed.load(AtomicOrdering::Acquire)
+        };
+        if has_space_or_closed {
+            // Drain and fire all send wakers — the channel state changed.
+            let wakers: VecDeque<Waker> = {
+                let mut guard = self.send_wakers.lock().unwrap();
+                std::mem::take(&mut *guard)
+            };
+            for w in wakers {
+                w();
+            }
+        }
     }
 
-    /// Wake one task blocked on receive.
+    /// Wake one task blocked on receive (FIFO — oldest waiter first).
     fn wake_recv(&self) {
-        let waker = self.recv_wakers.lock().unwrap().pop();
+        let waker = self.recv_wakers.lock().unwrap().pop_front();
         if let Some(w) = waker {
             w();
         }
@@ -160,7 +199,7 @@ impl Channel {
 
     /// Wake all tasks blocked on receive (used when channel is closed).
     fn wake_all_recv(&self) {
-        let wakers: Vec<Waker> = {
+        let wakers: VecDeque<Waker> = {
             let mut guard = self.recv_wakers.lock().unwrap();
             std::mem::take(&mut *guard)
         };
@@ -169,9 +208,9 @@ impl Channel {
         }
     }
 
-    /// Wake one task blocked on send.
+    /// Wake one task blocked on send (FIFO — oldest waiter first).
     fn wake_send(&self) {
-        let waker = self.send_wakers.lock().unwrap().pop();
+        let waker = self.send_wakers.lock().unwrap().pop_front();
         if let Some(w) = waker {
             w();
         }
@@ -179,7 +218,7 @@ impl Channel {
 
     /// Wake all tasks blocked on send (used when channel is closed).
     fn wake_all_send(&self) {
-        let wakers: Vec<Waker> = {
+        let wakers: VecDeque<Waker> = {
             let mut guard = self.send_wakers.lock().unwrap();
             std::mem::take(&mut *guard)
         };
