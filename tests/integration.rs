@@ -7620,3 +7620,377 @@ fn main() {
     );
     assert_eq!(result, Value::Int(42));
 }
+
+// ── Record pattern matching ────────────────────────────────────────
+
+#[test]
+fn test_record_pattern_field_binding() {
+    let result = run(
+        r#"
+type Person { name: String, age: Int }
+
+fn main() {
+  let p = Person { name: "Alice", age: 30 }
+  match p {
+    Person { name, age } -> "{name} is {age}"
+    _ -> "unknown"
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("Alice is 30".into()));
+}
+
+#[test]
+fn test_record_pattern_nested_constructor() {
+    let result = run(
+        r#"
+type Status { Active, Inactive }
+type User { name: String, status: Status }
+
+fn describe(u) {
+  match u {
+    User { name, status: Active } -> "{name} is active"
+    User { name, status: Inactive } -> "{name} is inactive"
+  }
+}
+
+fn main() {
+  let u1 = User { name: "Alice", status: Active }
+  let u2 = User { name: "Bob", status: Inactive }
+  [describe(u1), describe(u2)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("Alice is active".into()),
+            Value::String("Bob is inactive".into()),
+        ]))
+    );
+}
+
+// ── Float range patterns ───────────────────────────────────────────
+
+#[test]
+fn test_float_range_pattern_basic() {
+    let result = run(
+        r#"
+fn classify(x) {
+  match x {
+    0.0..10.0 -> "low"
+    10.0..100.0 -> "mid"
+    _ -> "high"
+  }
+}
+
+fn main() {
+  [classify(5.0), classify(50.0), classify(200.0)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("low".into()),
+            Value::String("mid".into()),
+            Value::String("high".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_float_range_boundary_inclusive() {
+    let result = run(
+        r#"
+fn classify(x) {
+  match x {
+    10.0..20.0 -> "in range"
+    _ -> "out of range"
+  }
+}
+
+fn main() {
+  [classify(10.0), classify(20.0), classify(9.9), classify(20.1)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("in range".into()),
+            Value::String("in range".into()),
+            Value::String("out of range".into()),
+            Value::String("out of range".into()),
+        ]))
+    );
+}
+
+// ── Complex or-patterns ────────────────────────────────────────────
+
+#[test]
+fn test_or_pattern_five_alternatives() {
+    let result = run(
+        r#"
+fn classify(n) {
+  match n {
+    1 | 2 | 3 | 4 | 5 -> "small"
+    _ -> "big"
+  }
+}
+
+fn main() {
+  [classify(1), classify(3), classify(5), classify(6), classify(100)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("small".into()),
+            Value::String("small".into()),
+            Value::String("small".into()),
+            Value::String("big".into()),
+            Value::String("big".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_or_pattern_nested_in_tuple() {
+    let result = run(
+        r#"
+fn check(x, y) {
+  match (x, y) {
+    (1 | 2, "a" | "b") -> "match"
+    _ -> "no"
+  }
+}
+
+fn main() {
+  [check(1, "a"), check(2, "b"), check(1, "c"), check(3, "a")]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("match".into()),
+            Value::String("match".into()),
+            Value::String("no".into()),
+            Value::String("no".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_or_pattern_in_constructor() {
+    let result = run(
+        r#"
+fn classify(opt) {
+  match opt {
+    Some(1 | 2 | 3) -> "small"
+    Some(_) -> "other"
+    None -> "none"
+  }
+}
+
+fn main() {
+  [classify(Some(1)), classify(Some(2)), classify(Some(99)), classify(None)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("small".into()),
+            Value::String("small".into()),
+            Value::String("other".into()),
+            Value::String("none".into()),
+        ]))
+    );
+}
+
+// ── Nested map patterns ────────────────────────────────────────────
+
+#[test]
+fn test_map_pattern_nested() {
+    let result = run(
+        r#"
+fn main() {
+  let m = #{"user": #{"name": "alice"}}
+  match m {
+    #{"user": #{"name": n}} -> n
+    _ -> "unknown"
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("alice".into()));
+}
+
+#[test]
+fn test_map_pattern_literal_and_binding() {
+    let result = run(
+        r#"
+fn main() {
+  let m = #{"type": "admin", "level": 5}
+  match m {
+    #{"type": "admin", "level": l} -> l
+    _ -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(5));
+}
+
+// ── Deep constructor patterns ──────────────────────────────────────
+
+#[test]
+fn test_constructor_four_level_nesting() {
+    let result = run(
+        r#"
+type C { WrapC(Int) }
+type B { WrapB(C) }
+type A { WrapA(B) }
+
+fn main() {
+  let val = WrapA(WrapB(WrapC(42)))
+  match val {
+    WrapA(WrapB(WrapC(n))) -> n
+    _ -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_constructor_mixed_nesting() {
+    let result = run(
+        r#"
+fn main() {
+  let val = Some((1, [2, 3]))
+  match val {
+    Some((a, [b, c])) -> a + b + c
+    _ -> 0
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(6));
+}
+
+// ── Lambda parameter destructuring ─────────────────────────────────
+
+#[test]
+fn test_lambda_tuple_param_destructure() {
+    let result = run(
+        r#"
+import list
+
+fn main() {
+  let pairs = [(1, 2), (3, 4)]
+  let sums = list.map(pairs) { (a, b) -> a + b }
+  sums
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(3), Value::Int(7)]))
+    );
+}
+
+#[test]
+fn test_lambda_nested_param_destructure() {
+    let result = run(
+        r#"
+import list
+
+fn main() {
+  let data = [(1, (2, 3)), (4, (5, 6))]
+  let results = list.map(data) { (a, (b, c)) -> a + b + c }
+  results
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(6), Value::Int(15)]))
+    );
+}
+
+// ── Guard edge cases ───────────────────────────────────────────────
+
+#[test]
+fn test_guard_accesses_bound_variables() {
+    let result = run(
+        r#"
+fn classify(pair) {
+  match pair {
+    (a, b) when a > b -> "first"
+    (a, b) when b > a -> "second"
+    _ -> "equal"
+  }
+}
+
+fn main() {
+  [classify((5, 3)), classify((3, 5)), classify((4, 4))]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("first".into()),
+            Value::String("second".into()),
+            Value::String("equal".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_guard_false_falls_through() {
+    let result = run(
+        r#"
+fn main() {
+  match 5 {
+    n when n > 10 -> "big"
+    n when n > 3 -> "medium"
+    _ -> "small"
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::String("medium".into()));
+}
+
+#[test]
+fn test_guard_with_function_call() {
+    let result = run(
+        r#"
+fn is_even(n) { n % 2 == 0 }
+fn classify(n) {
+  match n {
+    x when is_even(x) -> "even"
+    _ -> "odd"
+  }
+}
+
+fn main() {
+  [classify(4), classify(7)]
+}
+    "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("even".into()),
+            Value::String("odd".into()),
+        ]))
+    );
+}

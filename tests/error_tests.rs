@@ -1917,3 +1917,56 @@ fn main() {
         "should not flag unresolved type when binding is used later, got: {errs:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// IMPORT GATING COMPILE ERRORS
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_compile_gated_constructor_no_import() {
+    let err = run_err(r#"
+fn main() { Stop }
+    "#);
+    assert!(
+        err.contains("requires `import list`"),
+        "expected gated constructor error, got: {err}"
+    );
+}
+
+#[test]
+fn test_compile_module_method_no_import() {
+    let err = run_err(r#"
+fn main() { list.map([1, 2, 3], fn(x) { x }) }
+    "#);
+    assert!(
+        err.contains("not imported"),
+        "expected module not imported error, got: {err}"
+    );
+}
+
+#[test]
+fn test_compile_module_field_no_import() {
+    let err = run_err(r#"
+fn main() { math.pi }
+    "#);
+    assert!(
+        err.contains("not imported"),
+        "expected module not imported error, got: {err}"
+    );
+}
+
+#[test]
+fn test_compile_gated_pattern_no_import() {
+    let err = run_err(r#"
+fn main() {
+  match 1 {
+    Monday -> "mon"
+    _ -> "other"
+  }
+}
+    "#);
+    assert!(
+        err.contains("requires `import time`"),
+        "expected gated pattern error, got: {err}"
+    );
+}
