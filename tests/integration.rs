@@ -4957,3 +4957,263 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(42));
 }
+
+// ════════════════════════════════════════════════════════════════════
+// HTTP Module Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_http_segments_basic() {
+    let result = run(r#"
+import http
+fn main() {
+  http.segments("/api/users/42")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("api".into()),
+            Value::String("users".into()),
+            Value::String("42".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_http_segments_root_path() {
+    let result = run(r#"
+import http
+fn main() {
+  http.segments("/")
+}
+    "#);
+    assert_eq!(result, Value::List(Arc::new(vec![])));
+}
+
+#[test]
+fn test_http_segments_no_leading_slash() {
+    let result = run(r#"
+import http
+fn main() {
+  http.segments("foo/bar")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("foo".into()),
+            Value::String("bar".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_http_segments_trailing_slash() {
+    let result = run(r#"
+import http
+fn main() {
+  http.segments("/a/b/")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_http_segments_empty_string() {
+    let result = run(r#"
+import http
+fn main() {
+  http.segments("")
+}
+    "#);
+    assert_eq!(result, Value::List(Arc::new(vec![])));
+}
+
+#[test]
+fn test_http_segments_wrong_arg_count() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.segments("/a", "/b")
+}
+    "#);
+    assert!(
+        err.contains("http.segments takes 1 argument"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_segments_wrong_type() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.segments(42)
+}
+    "#);
+    assert!(
+        err.contains("http.segments requires a String"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_get_wrong_arg_count() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.get("http://example.com", "extra")
+}
+    "#);
+    assert!(
+        err.contains("http.get takes 1 argument"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_get_wrong_type() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.get(42)
+}
+    "#);
+    assert!(
+        err.contains("http.get requires a String"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_request_wrong_arg_count() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.request(GET, "http://example.com")
+}
+    "#);
+    assert!(
+        err.contains("http.request takes 4 arguments"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_request_non_variant_method() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.request("GET", "http://example.com", "", #{})
+}
+    "#);
+    assert!(
+        err.contains("first argument must be a Method"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_request_non_string_url() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.request(GET, 42, "", #{})
+}
+    "#);
+    assert!(
+        err.contains("url must be a String"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_request_non_string_body() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.request(POST, "http://example.com", 42, #{})
+}
+    "#);
+    assert!(
+        err.contains("body must be a String"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_request_non_map_headers() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.request(GET, "http://example.com", "", "bad")
+}
+    "#);
+    assert!(
+        err.contains("headers must be a Map"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_serve_wrong_arg_count() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.serve(8080)
+}
+    "#);
+    assert!(
+        err.contains("http.serve takes 2 arguments"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_serve_non_int_port() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.serve("8080", fn(req) { Response { status: 200, body: "", headers: #{} } })
+}
+    "#);
+    assert!(
+        err.contains("port must be an Int"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_unknown_function() {
+    let err = run_err(r#"
+import http
+fn main() {
+  http.nonexistent()
+}
+    "#);
+    assert!(
+        err.contains("unknown http function"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_segments_in_pipeline() {
+    let result = run(r#"
+import http
+import list
+fn main() {
+  "/api/v2/users/123"
+  |> http.segments()
+  |> list.length()
+}
+    "#);
+    assert_eq!(result, Value::Int(4));
+}
