@@ -1315,7 +1315,13 @@ impl Vm {
                     let val = self.peek()?.clone();
                     match val {
                         Value::Tuple(elems) => {
-                            self.push(elems[index].clone());
+                            let elem = elems.get(index).ok_or_else(|| {
+                                VmError::new(format!(
+                                    "DestructTuple index {} out of bounds (len {})",
+                                    index, elems.len()
+                                ))
+                            })?;
+                            self.push(elem.clone());
                         }
                         _ => return Err(VmError::new("DestructTuple on non-tuple".to_string())),
                     }
@@ -1325,7 +1331,13 @@ impl Vm {
                     let val = self.peek()?.clone();
                     match val {
                         Value::Variant(_, fields) => {
-                            self.push(fields[index].clone());
+                            let field = fields.get(index).ok_or_else(|| {
+                                VmError::new(format!(
+                                    "DestructVariant index {} out of bounds (len {})",
+                                    index, fields.len()
+                                ))
+                            })?;
+                            self.push(field.clone());
                         }
                         _ => {
                             return Err(VmError::new("DestructVariant on non-variant".to_string()));
@@ -1337,7 +1349,13 @@ impl Vm {
                     let val = self.peek()?.clone();
                     match val {
                         Value::List(xs) => {
-                            self.push(xs[index].clone());
+                            let elem = xs.get(index).ok_or_else(|| {
+                                VmError::new(format!(
+                                    "DestructList index {} out of bounds (len {})",
+                                    index, xs.len()
+                                ))
+                            })?;
+                            self.push(elem.clone());
                         }
                         Value::Range(lo, hi) => {
                             let i = lo + index as i64;
@@ -1354,6 +1372,12 @@ impl Vm {
                     let val = self.peek()?.clone();
                     match val {
                         Value::List(xs) => {
+                            if start > xs.len() {
+                                return Err(VmError::new(format!(
+                                    "DestructListRest start {} out of bounds (len {})",
+                                    start, xs.len()
+                                )));
+                            }
                             let rest: Vec<Value> = xs[start..].to_vec();
                             self.push(Value::List(Arc::new(rest)));
                         }
@@ -1874,6 +1898,12 @@ impl Vm {
             }
             Op::StringConcat => {
                 let count = self.read_u8()? as usize;
+                if count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "StringConcat: need {} values but stack has {}",
+                        count, self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - count;
                 // Pre-calculate total capacity to avoid reallocations
                 let mut total_len = 0;
@@ -2253,7 +2283,13 @@ impl Vm {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 if let Value::Tuple(elems) = val {
-                    self.push(elems[index].clone());
+                    let elem = elems.get(index).ok_or_else(|| {
+                        VmError::new(format!(
+                            "DestructTuple index {} out of bounds (len {})",
+                            index, elems.len()
+                        ))
+                    })?;
+                    self.push(elem.clone());
                 } else {
                     return Err(VmError::new("DestructTuple on non-tuple".into()));
                 }
@@ -2262,7 +2298,13 @@ impl Vm {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 if let Value::Variant(_, fields) = val {
-                    self.push(fields[index].clone());
+                    let field = fields.get(index).ok_or_else(|| {
+                        VmError::new(format!(
+                            "DestructVariant index {} out of bounds (len {})",
+                            index, fields.len()
+                        ))
+                    })?;
+                    self.push(field.clone());
                 } else {
                     return Err(VmError::new("DestructVariant on non-variant".into()));
                 }
@@ -2271,7 +2313,15 @@ impl Vm {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 match val {
-                    Value::List(xs) => self.push(xs[index].clone()),
+                    Value::List(xs) => {
+                        let elem = xs.get(index).ok_or_else(|| {
+                            VmError::new(format!(
+                                "DestructList index {} out of bounds (len {})",
+                                index, xs.len()
+                            ))
+                        })?;
+                        self.push(elem.clone());
+                    }
                     Value::Range(lo, hi) => {
                         let i = lo + index as i64;
                         if i > hi {
@@ -2286,7 +2336,15 @@ impl Vm {
                 let start = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 match val {
-                    Value::List(xs) => self.push(Value::List(Arc::new(xs[start..].to_vec()))),
+                    Value::List(xs) => {
+                        if start > xs.len() {
+                            return Err(VmError::new(format!(
+                                "DestructListRest start {} out of bounds (len {})",
+                                start, xs.len()
+                            )));
+                        }
+                        self.push(Value::List(Arc::new(xs[start..].to_vec())));
+                    }
                     Value::Range(lo, hi) => {
                         let new_lo = lo + start as i64;
                         if new_lo > hi + 1 {

@@ -602,7 +602,7 @@ impl Value {
             Value::List(xs) => Some(xs.len()),
             Value::Range(lo, hi) => {
                 if hi >= lo {
-                    Some((*hi - *lo + 1) as usize)
+                    (*hi as i128 - *lo as i128 + 1).try_into().ok()
                 } else {
                     Some(0)
                 }
