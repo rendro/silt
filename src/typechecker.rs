@@ -1069,6 +1069,7 @@ impl TypeChecker {
         self.register_math_builtins(env);
         self.register_channel_builtins(env);
         self.register_time_builtins(env);
+        self.register_http_builtins(env);
     }
 
     fn register_list_builtins(&mut self, env: &mut TypeEnv) {
@@ -2920,6 +2921,102 @@ impl TypeChecker {
         env.define("time.sleep".into(), Scheme::mono(Type::Fun(
             vec![duration_ty],
             Box::new(Type::Unit),
+        )));
+    }
+
+    fn register_http_builtins(&mut self, env: &mut TypeEnv) {
+        // ── HTTP module type definitions ─────────────────────────────
+
+        // Method enum
+        let method_ty = Type::Generic("Method".into(), vec![]);
+
+        self.enums.insert("Method".into(), EnumInfo {
+            _name: "Method".into(),
+            params: vec![],
+            variants: vec![
+                VariantInfo { name: "GET".into(), field_types: vec![] },
+                VariantInfo { name: "POST".into(), field_types: vec![] },
+                VariantInfo { name: "PUT".into(), field_types: vec![] },
+                VariantInfo { name: "PATCH".into(), field_types: vec![] },
+                VariantInfo { name: "DELETE".into(), field_types: vec![] },
+                VariantInfo { name: "HEAD".into(), field_types: vec![] },
+                VariantInfo { name: "OPTIONS".into(), field_types: vec![] },
+            ],
+        });
+        for variant in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+            self.variant_to_enum.insert(variant.to_string(), "Method".into());
+            env.define(variant.to_string(), Scheme::mono(method_ty.clone()));
+        }
+
+        // Response record
+        let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));
+
+        let response_ty = Type::Record("Response".into(), vec![
+            ("status".into(), Type::Int),
+            ("body".into(), Type::String),
+            ("headers".into(), map_ss.clone()),
+        ]);
+
+        self.records.insert("Response".into(), RecordInfo {
+            _name: "Response".into(),
+            _params: vec![],
+            fields: vec![
+                ("status".into(), Type::Int),
+                ("body".into(), Type::String),
+                ("headers".into(), map_ss.clone()),
+            ],
+        });
+
+        // Request record
+        let request_ty = Type::Record("Request".into(), vec![
+            ("method".into(), method_ty.clone()),
+            ("path".into(), Type::String),
+            ("query".into(), Type::String),
+            ("headers".into(), map_ss.clone()),
+            ("body".into(), Type::String),
+        ]);
+
+        self.records.insert("Request".into(), RecordInfo {
+            _name: "Request".into(),
+            _params: vec![],
+            fields: vec![
+                ("method".into(), method_ty.clone()),
+                ("path".into(), Type::String),
+                ("query".into(), Type::String),
+                ("headers".into(), map_ss.clone()),
+                ("body".into(), Type::String),
+            ],
+        });
+
+        // ── Function signatures ──────────────────────────────────────
+
+        let result_response = Type::Generic("Result".into(), vec![response_ty.clone(), Type::String]);
+
+        // http.get: (String) -> Result(Response, String)
+        env.define("http.get".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(result_response.clone()),
+        )));
+
+        // http.request: (Method, String, String, Map(String, String)) -> Result(Response, String)
+        env.define("http.request".into(), Scheme::mono(Type::Fun(
+            vec![method_ty, Type::String, Type::String, map_ss],
+            Box::new(result_response),
+        )));
+
+        // http.serve: (Int, Fn(Request) -> Response) -> Unit
+        env.define("http.serve".into(), Scheme::mono(Type::Fun(
+            vec![
+                Type::Int,
+                Type::Fun(vec![request_ty], Box::new(response_ty)),
+            ],
+            Box::new(Type::Unit),
+        )));
+
+        // http.segments: (String) -> List(String)
+        env.define("http.segments".into(), Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
         )));
     }
 

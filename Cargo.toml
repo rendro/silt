@@ -1,6 +1,6 @@
 [package]
 name = "silt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A minimal, statically-typed, expression-based language with CSP concurrency"
 license = "MIT"
@@ -21,6 +21,7 @@ repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
+http = ["dep:ureq", "dep:tiny_http"]
 
 [dependencies]
 lsp-server = { version = "0.7", optional = true }
@@ -30,3 +31,5 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
 rustyline = { version = "15", optional = true }
 serde_json = "1"
+ureq = { version = "3", optional = true }
+tiny_http = { version = "0.12", optional = true }

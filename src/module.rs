@@ -4,7 +4,7 @@
 /// in the global environment rather than loaded from files.
 const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
-    "regex", "json", "set", "math", "time",
+    "regex", "json", "set", "math", "time", "http",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -19,6 +19,7 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
         "Stop" | "Continue" => Some("list"),
         "Message" | "Closed" | "Empty" => Some("channel"),
         "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" => Some("time"),
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
         _ => None,
     }
 }
@@ -109,6 +110,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "weekday", "days_between", "days_in_month", "is_leap_year",
             "sleep",
         ],
+        "http" => vec!["get", "request", "serve", "segments"],
         _ => vec![],
     }
 }

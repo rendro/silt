@@ -366,6 +366,9 @@ impl Vm {
         for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
             self.globals.insert(day.into(), Value::Variant(day.into(), Vec::new()));
         }
+        for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+            self.globals.insert(method.into(), Value::Variant(method.into(), Vec::new()));
+        }
 
         // Primitive type descriptors
         self.globals.insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
@@ -440,6 +443,7 @@ impl Vm {
             "time.hours", "time.minutes", "time.seconds", "time.ms",
             "time.weekday", "time.days_between", "time.days_in_month", "time.is_leap_year",
             "time.sleep",
+            "http.get", "http.request", "http.serve", "http.segments",
         ];
 
         for name in builtin_names {
@@ -2269,6 +2273,7 @@ impl Vm {
                 "channel" => self.dispatch_channel(func, args),
                 "task" => self.dispatch_task(func, args),
                 "time" => self.dispatch_time(func, args),
+                "http" => self.dispatch_http(func, args),
                 _ => {
                     if let Some(f) = self.foreign_fns.get(name).cloned() {
                         f(args)
@@ -4791,6 +4796,330 @@ impl Vm {
             }
 
             _ => Err(VmError::new(format!("unknown time function: {name}"))),
+        }
+    }
+
+    // ── HTTP builtins ────────────────────────────────────────────────
+
+    #[cfg(feature = "http")]
+    fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: String) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("status".into(), Value::Int(status as i64));
+        fields.insert("body".into(), Value::String(body));
+        fields.insert("headers".into(), Value::Map(Arc::new(headers)));
+        Value::Record("Response".into(), Arc::new(fields))
+    }
+
+    #[cfg(feature = "http")]
+    fn make_http_request_value(
+        method: &str, path: &str, query: &str,
+        headers: BTreeMap<Value, Value>, body: String,
+    ) -> Value {
+        let mut fields = BTreeMap::new();
+        fields.insert("method".into(), Value::Variant(method.into(), vec![]));
+        fields.insert("path".into(), Value::String(path.into()));
+        fields.insert("query".into(), Value::String(query.into()));
+        fields.insert("headers".into(), Value::Map(Arc::new(headers)));
+        fields.insert("body".into(), Value::String(body));
+        Value::Record("Request".into(), Arc::new(fields))
+    }
+
+    #[cfg(feature = "http")]
+    fn extract_http_response(val: &Value) -> Result<(u16, String, &BTreeMap<String, Value>), VmError> {
+        let Value::Record(name, fields) = val else {
+            return Err(VmError::new("handler must return a Response record".into()));
+        };
+        if name != "Response" {
+            return Err(VmError::new(format!("handler must return Response, got {name}")));
+        }
+        let status = match fields.get("status") {
+            Some(Value::Int(n)) => *n as u16,
+            _ => return Err(VmError::new("Response.status must be an Int".into())),
+        };
+        let body = match fields.get("body") {
+            Some(Value::String(s)) => s.clone(),
+            _ => return Err(VmError::new("Response.body must be a String".into())),
+        };
+        Ok((status, body, fields))
+    }
+
+    #[cfg(feature = "http")]
+    fn ureq_response_to_value(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, VmError> {
+        let status = response.status().as_u16();
+        let mut headers = BTreeMap::new();
+        for (name, value) in response.headers().iter() {
+            if let Ok(v) = value.to_str() {
+                headers.insert(
+                    Value::String(name.as_str().to_string()),
+                    Value::String(v.to_string()),
+                );
+            }
+        }
+        let body = response.body_mut().read_to_string()
+            .map_err(|e| VmError::new(format!("http: failed to read body: {e}")))?;
+        Ok(Self::make_http_response(status, headers, body))
+    }
+
+    fn dispatch_http(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
+        match name {
+            "get" => {
+                #[cfg(feature = "http")]
+                {
+                    if args.len() != 1 {
+                        return Err(VmError::new("http.get takes 1 argument (url)".into()));
+                    }
+                    let Value::String(url) = &args[0] else {
+                        return Err(VmError::new("http.get requires a String url".into()));
+                    };
+                    let agent: ureq::Agent = ureq::Agent::config_builder()
+                        .http_status_as_error(false)
+                        .build()
+                        .into();
+                    match agent.get(url).call() {
+                        Ok(response) => {
+                            let resp = Self::ureq_response_to_value(response)?;
+                            Ok(Value::Variant("Ok".into(), vec![resp]))
+                        }
+                        Err(e) => {
+                            Ok(Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]))
+                        }
+                    }
+                }
+                #[cfg(not(feature = "http"))]
+                {
+                    let _ = args;
+                    Err(VmError::new("http.get requires the 'http' feature".into()))
+                }
+            }
+
+            "request" => {
+                #[cfg(feature = "http")]
+                {
+                    if args.len() != 4 {
+                        return Err(VmError::new(
+                            "http.request takes 4 arguments (method, url, body, headers)".into()
+                        ));
+                    }
+                    let Value::Variant(method_tag, method_args) = &args[0] else {
+                        return Err(VmError::new("http.request: first argument must be a Method".into()));
+                    };
+                    if !method_args.is_empty() {
+                        return Err(VmError::new("http.request: invalid Method variant".into()));
+                    }
+                    let Value::String(url) = &args[1] else {
+                        return Err(VmError::new("http.request: url must be a String".into()));
+                    };
+                    let Value::String(body) = &args[2] else {
+                        return Err(VmError::new("http.request: body must be a String".into()));
+                    };
+                    let Value::Map(header_map) = &args[3] else {
+                        return Err(VmError::new("http.request: headers must be a Map".into()));
+                    };
+
+                    let agent: ureq::Agent = ureq::Agent::config_builder()
+                        .http_status_as_error(false)
+                        .build()
+                        .into();
+
+                    // Methods split into WithBody (POST/PUT/PATCH) and WithoutBody (GET/DELETE/HEAD/OPTIONS)
+                    let result = match method_tag.as_str() {
+                        "POST" => {
+                            let mut req = agent.post(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        }
+                        "PUT" => {
+                            let mut req = agent.put(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        }
+                        "PATCH" => {
+                            let mut req = agent.patch(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        }
+                        "GET" => {
+                            let mut req = agent.get(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            req.call()
+                        }
+                        "DELETE" => {
+                            let mut req = agent.delete(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            req.call()
+                        }
+                        "HEAD" => {
+                            let mut req = agent.head(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            req.call()
+                        }
+                        "OPTIONS" => {
+                            let mut req = agent.options(url);
+                            for (k, v) in header_map.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    req = req.header(key.as_str(), val.as_str());
+                                }
+                            }
+                            req.call()
+                        }
+                        other => {
+                            return Err(VmError::new(format!("http.request: unknown method: {other}")));
+                        }
+                    };
+
+                    match result {
+                        Ok(response) => {
+                            let resp = Self::ureq_response_to_value(response)?;
+                            Ok(Value::Variant("Ok".into(), vec![resp]))
+                        }
+                        Err(e) => {
+                            Ok(Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]))
+                        }
+                    }
+                }
+                #[cfg(not(feature = "http"))]
+                {
+                    let _ = args;
+                    Err(VmError::new("http.request requires the 'http' feature".into()))
+                }
+            }
+
+            "serve" => {
+                #[cfg(feature = "http")]
+                {
+                    if args.len() != 2 {
+                        return Err(VmError::new("http.serve takes 2 arguments (port, handler)".into()));
+                    }
+                    let Value::Int(port) = &args[0] else {
+                        return Err(VmError::new("http.serve: port must be an Int".into()));
+                    };
+                    let handler = args[1].clone();
+
+                    let addr = format!("0.0.0.0:{port}");
+                    let server = tiny_http::Server::http(&addr)
+                        .map_err(|e| VmError::new(format!("http.serve: failed to bind: {e}")))?;
+
+                    loop {
+                        let mut req = match server.recv() {
+                            Ok(req) => req,
+                            Err(e) => {
+                                return Err(VmError::new(format!("http.serve: recv error: {e}")));
+                            }
+                        };
+
+                        // Convert method to silt Method variant
+                        let method_str = match req.method() {
+                            tiny_http::Method::Get => "GET",
+                            tiny_http::Method::Post => "POST",
+                            tiny_http::Method::Put => "PUT",
+                            tiny_http::Method::Patch => "PATCH",
+                            tiny_http::Method::Delete => "DELETE",
+                            tiny_http::Method::Head => "HEAD",
+                            tiny_http::Method::Options => "OPTIONS",
+                            _ => {
+                                let resp = tiny_http::Response::from_string("Method Not Allowed")
+                                    .with_status_code(tiny_http::StatusCode(405));
+                                let _ = req.respond(resp);
+                                continue;
+                            }
+                        };
+
+                        // Parse URL into path and query
+                        let url = req.url().to_string();
+                        let (path, query) = match url.split_once('?') {
+                            Some((p, q)) => (p.to_string(), q.to_string()),
+                            None => (url, String::new()),
+                        };
+
+                        // Collect headers
+                        let mut headers = BTreeMap::new();
+                        for header in req.headers() {
+                            headers.insert(
+                                Value::String(header.field.as_str().to_string()),
+                                Value::String(header.value.as_str().to_string()),
+                            );
+                        }
+
+                        // Read body
+                        let mut body = String::new();
+                        let _ = req.as_reader().read_to_string(&mut body);
+
+                        // Build Request record
+                        let request_val = Self::make_http_request_value(
+                            method_str, &path, &query, headers, body,
+                        );
+
+                        // Call handler
+                        let response_val = self.invoke_callable(&handler, &[request_val])?;
+
+                        // Extract Response record and send
+                        let (status, resp_body, resp_fields) = Self::extract_http_response(&response_val)?;
+
+                        let mut response = tiny_http::Response::from_string(&resp_body)
+                            .with_status_code(tiny_http::StatusCode(status));
+
+                        if let Some(Value::Map(resp_headers)) = resp_fields.get("headers") {
+                            for (k, v) in resp_headers.iter() {
+                                if let (Value::String(key), Value::String(val)) = (k, v) {
+                                    if let Ok(header) = tiny_http::Header::from_bytes(
+                                        key.as_bytes(), val.as_bytes()
+                                    ) {
+                                        response = response.with_header(header);
+                                    }
+                                }
+                            }
+                        }
+
+                        let _ = req.respond(response);
+                    }
+                }
+                #[cfg(not(feature = "http"))]
+                {
+                    let _ = args;
+                    Err(VmError::new("http.serve requires the 'http' feature".into()))
+                }
+            }
+
+            "segments" => {
+                if args.len() != 1 {
+                    return Err(VmError::new("http.segments takes 1 argument (path)".into()));
+                }
+                let Value::String(path) = &args[0] else {
+                    return Err(VmError::new("http.segments requires a String".into()));
+                };
+                let segments: Vec<Value> = path
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| Value::String(s.to_string()))
+                    .collect();
+                Ok(Value::List(Arc::new(segments)))
+            }
+
+            _ => Err(VmError::new(format!("unknown http function: {name}"))),
         }
     }
 

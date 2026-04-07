@@ -30,8 +30,9 @@ Complete API reference for every built-in function in silt.
 | [channel](#channel) | 8 | Bounded channels for cooperative concurrency |
 | [task](#task) | 3 | Spawn, join, and cancel cooperative tasks |
 | [time](#time) | 26 | Dates, times, instants, durations, formatting, parsing, and arithmetic |
+| [http](#http) | 4 | HTTP client and server (requires `--features http`) |
 
-**Total: 195 names** (19 globals + 4 type descriptors + 172 module functions/constants)
+**Total: 199 names** (19 globals + 4 type descriptors + 176 module functions/constants)
 
 
 ## Globals
@@ -3779,3 +3780,155 @@ fn main() {
     println(elapsed)  // ~100ms
 }
 ```
+
+
+## http
+
+HTTP client and server. Requires the `http` Cargo feature: `cargo build --features http`. Without the feature, `http.segments` still works but networking functions return a runtime error.
+
+### Types
+
+```silt
+type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }
+
+type Request {
+  method: Method,
+  path: String,
+  query: String,
+  headers: Map(String, String),
+  body: String,
+}
+
+type Response {
+  status: Int,
+  body: String,
+  headers: Map(String, String),
+}
+```
+
+`Method` variants are gated constructors -- using `GET`, `POST`, etc. requires `import http`.
+
+### Summary
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `get` | `(String) -> Result(Response, String)` | HTTP GET request |
+| `request` | `(Method, String, String, Map(String, String)) -> Result(Response, String)` | HTTP request with method, URL, body, headers |
+| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a blocking HTTP server |
+| `segments` | `(String) -> List(String)` | Split URL path into segments |
+
+
+### `http.get`
+
+```
+http.get(url: String) -> Result(Response, String)
+```
+
+Makes an HTTP GET request. Returns `Ok(Response)` for any successful connection (including 4xx/5xx status codes). Returns `Err(message)` for network errors (DNS failure, connection refused, timeout).
+
+```silt
+fn main() {
+  match http.get("https://api.github.com/users/torvalds") {
+    Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
+    Err(e) -> println("Network error: {e}")
+  }
+}
+```
+
+Compose with `json.parse` and `?` for typed API responses:
+
+```silt
+type User { name: String, id: Int }
+
+fn fetch_user(name) {
+  let resp = http.get("https://api.example.com/users/{name}")?
+  json.parse(User, resp.body)
+}
+```
+
+
+### `http.request`
+
+```
+http.request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, String)
+```
+
+Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
+
+```silt
+-- POST with JSON body
+let resp = http.request(
+  POST,
+  "https://api.example.com/users",
+  json.stringify(#{"name": "Alice"}),
+  #{"Content-Type": "application/json", "Authorization": "Bearer tok123"}
+)?
+
+-- DELETE
+let resp = http.request(DELETE, "https://api.example.com/users/42", "", #{})?
+
+-- GET with custom headers
+let resp = http.request(GET, "https://api.example.com/data", "", #{"Accept": "text/plain"})?
+```
+
+
+### `http.serve`
+
+```
+http.serve(port: Int, handler: Fn(Request) -> Response) -> ()
+```
+
+Starts a blocking HTTP server on the given port. The handler function receives a `Request` and must return a `Response`. The server runs forever (stop with Ctrl-C).
+
+Use pattern matching on `(req.method, segments)` for routing:
+
+```silt
+fn main() {
+  println("Listening on :8080")
+
+  http.serve(8080, fn(req) {
+    let parts = string.split(req.path, "/")
+      |> list.filter { s -> !string.is_empty(s) }
+
+    match (req.method, parts) {
+      (GET, []) ->
+        Response { status: 200, body: "Hello!", headers: #{} }
+
+      (GET, ["users", id]) ->
+        Response { status: 200, body: "User {id}", headers: #{} }
+
+      (POST, ["users"]) ->
+        match json.parse(User, req.body) {
+          Ok(user) -> Response {
+            status: 201,
+            body: json.stringify(user),
+            headers: #{"Content-Type": "application/json"},
+          }
+          Err(e) -> Response { status: 400, body: e, headers: #{} }
+        }
+
+      _ ->
+        Response { status: 404, body: "Not found", headers: #{} }
+    }
+  })
+}
+```
+
+Unsupported HTTP methods (e.g. TRACE) receive an automatic 405 response.
+
+
+### `http.segments`
+
+```
+http.segments(path: String) -> List(String)
+```
+
+Splits a URL path into non-empty segments. Useful for pattern-matched routing.
+
+```silt
+http.segments("/api/users/42")   -- ["api", "users", "42"]
+http.segments("/")               -- []
+http.segments("//foo//bar/")     -- ["foo", "bar"]
+```
+
+This function has no dependencies and works without the `http` Cargo feature.

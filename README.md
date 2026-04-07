@@ -80,6 +80,35 @@ fn main() {
 }
 ```
 
+## HTTP
+
+Built-in HTTP client and server. Pattern matching replaces routing frameworks.
+
+```silt
+import http
+import json
+
+type Todo { id: Int, title: String, done: Bool }
+
+fn main() {
+  http.serve(8080, fn(req) {
+    match (req.method, http.segments(req.path)) {
+      (GET, ["todos"]) ->
+        Response { status: 200, body: json.stringify(todos()), headers: #{} }
+      (POST, ["todos"]) ->
+        match json.parse(Todo, req.body) {
+          Ok(todo) -> Response { status: 201, body: json.stringify(todo), headers: #{} }
+          Err(e) -> Response { status: 400, body: e, headers: #{} }
+        }
+      _ ->
+        Response { status: 404, body: "Not found", headers: #{} }
+    }
+  })
+}
+```
+
+Requires `cargo build --features http`.
+
 ## Type inference
 
 The type checker infers everything. You get static type safety without writing annotations. Define records, enums, and traits when you need structure.

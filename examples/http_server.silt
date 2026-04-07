@@ -1,0 +1,61 @@
+import http
+import json
+import list
+import string
+import int
+
+-- A minimal JSON API server demonstrating pattern-matched routing.
+
+type Todo {
+  id: Int,
+  title: String,
+  done: Bool,
+}
+
+fn json_response(status, data) {
+  Response {
+    status: status,
+    body: json.stringify(data),
+    headers: #{"Content-Type": "application/json"},
+  }
+}
+
+fn main() {
+  println("Listening on http://localhost:8080")
+
+  http.serve(8080, fn(req) {
+    let segments = string.split(req.path, "/")
+      |> list.filter { s -> !string.is_empty(s) }
+
+    match (req.method, segments) {
+      (GET, []) ->
+        Response { status: 200, body: "Welcome to silt!", headers: #{} }
+
+      (GET, ["todos"]) -> {
+        let todos = [
+          Todo { id: 1, title: "Learn silt", done: true },
+          Todo { id: 2, title: "Build an API", done: false },
+        ]
+        json_response(200, todos)
+      }
+
+      (POST, ["todos"]) ->
+        match json.parse(Todo, req.body) {
+          Ok(todo) -> json_response(201, todo)
+          Err(e) -> json_response(400, #{"error": e})
+        }
+
+      (GET, ["todos", id_str]) ->
+        match int.parse(id_str) {
+          Ok(id) -> json_response(200, Todo { id: id, title: "Todo {id}", done: false })
+          Err(_) -> json_response(400, #{"error": "invalid id"})
+        }
+
+      (DELETE, ["todos", _]) ->
+        Response { status: 204, body: "", headers: #{} }
+
+      _ ->
+        Response { status: 404, body: "Not found", headers: #{} }
+    }
+  })
+}
