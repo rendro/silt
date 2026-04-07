@@ -73,16 +73,17 @@ A channel is a conduit for passing values between tasks.
 ### Creating channels
 
 ```silt
--- Unbuffered channel (capacity 0, promoted to 1 internally -- see below)
+-- Rendezvous channel (capacity 0 -- sender blocks until receiver is ready)
 let ch = channel.new()
 
 -- Buffered channel with capacity 10
 let ch = channel.new(10)
 ```
 
-`channel.new()` takes zero or one argument. With no argument, it creates an
-unbuffered channel. With an integer argument, it creates a buffered channel with
-that capacity.
+`channel.new()` takes zero or one argument. With no argument, it creates a
+rendezvous channel (capacity 0) where the sender blocks until a receiver is
+ready and vice versa. With an integer argument, it creates a buffered channel
+with that capacity.
 
 Channels carry any value type -- integers, strings, lists, tuples, records,
 even other channels. The type is inferred from usage.
@@ -192,13 +193,46 @@ After processing each message, `channel.each` yields to the scheduler so that
 other tasks waiting on the same channel get a fair turn. This is the mechanism
 behind round-robin fan-out (see Section 5).
 
-### Unbuffered channels
+### Unbuffered channels (true rendezvous)
 
-`channel.new()` with no arguments creates a channel with a single-slot
-buffer. A send succeeds immediately if the slot is empty, and blocks if it
-is full. This gives "at most one value in flight" semantics, which is
-equivalent to true rendezvous for most patterns (producer/consumer,
-fan-out, pipelines).
+`channel.new()` with no arguments creates a true rendezvous channel with
+capacity 0. The sender blocks until a receiver is ready, and the receiver
+blocks until a sender is ready. The value is handed off directly -- it is
+never buffered. This provides the strongest synchronization guarantee: when
+`channel.send` returns, you know the receiver has accepted the value.
+
+```silt
+let ch = channel.new()   -- capacity 0, true rendezvous
+
+task.spawn(fn() {
+  -- this blocks until the main task calls channel.receive
+  channel.send(ch, "hello")
+})
+
+-- this blocks until the spawned task calls channel.send
+let Message(msg) = channel.receive(ch)
+println(msg)  -- "hello"
+```
+
+### Timeout channels
+
+`channel.timeout(ms)` creates a channel that automatically closes after the
+given number of milliseconds. It is useful for adding deadlines to
+`channel.select` operations.
+
+```silt
+let ch = channel.new(10)
+let timer = channel.timeout(5000)  -- closes after 5 seconds
+
+match channel.select([ch, timer]) {
+  (^ch, Message(val))  -> println("got: {val}")
+  (^timer, Closed)     -> println("timed out after 5s")
+}
+```
+
+The timeout channel carries no values -- it simply closes when the duration
+elapses. Receiving from it will block until closure, at which point it
+returns `Closed`.
 
 
 ## 3. Tasks
@@ -268,19 +302,22 @@ Returns `Unit`.
 
 ## 4. Select
 
-### `channel.select(channels)`
+### `channel.select(operations)`
 
-`channel.select` lets a task wait on multiple channels at once. It takes a list
-of channels and returns a tuple of `(channel, status)` for whichever channel
-has data first.
+`channel.select` lets a task wait on multiple channel operations at once. It
+takes a list of operations and returns a tuple of `(channel, status)` for
+whichever operation completes first.
+
+Operations in the list can be either receives or sends:
+
+- **Bare channel** -- receive from that channel: `ch`
+- **`(channel, value)` tuple** -- send a value to that channel: `(ch, val)`
 
 ```silt
-match channel.select([ch1, ch2, ch3]) {
-  (^ch1, Message(val)) -> handle_ch1(val)
-  (^ch2, Message(val)) -> handle_ch2(val)
-  (^ch3, Message(val)) -> handle_ch3(val)
-  (_, Closed)          -> println("all done")
-  _                    -> panic("unexpected")
+match channel.select([ch_in, (ch_out, result)]) {
+  (^ch_in, Message(val))  -> handle_input(val)
+  (^ch_out, Sent)         -> println("sent result")
+  (_, Closed)             -> println("all done")
 }
 ```
 
@@ -289,7 +326,8 @@ The return value is a 2-tuple:
 - **First element:** the channel that produced the result.
 - **Second element:** one of:
   - `Message(value)` -- a value was received from that channel.
-  - `Closed` -- all channels in the list are closed and drained.
+  - `Sent` -- a value was successfully sent to that channel.
+  - `Closed` -- the channel is closed (and drained, for receives).
 
 ### The pin operator `^`
 
@@ -340,13 +378,15 @@ match channel.select([ch1, ch2]) {
 
 ### How select works internally
 
-`channel.select` checks the channels in list order and returns the first one
-that has data. If no channel is ready, the task is parked until one of the
-channels receives a value (via waker-based notification). When all channels are
-closed and empty, it returns `(channel, Closed)`. If no tasks can make progress
-and no channels have data, it detects a deadlock and reports an error.
+`channel.select` checks the operations in list order and returns the first one
+that succeeds. For a receive, "succeeds" means data is available (or the
+channel is closed). For a send, "succeeds" means there is space in the buffer
+(or a receiver is waiting, for rendezvous channels).
 
-Select only supports receive. You cannot select on send operations.
+If no operation is ready, the task is parked until one of the channels becomes
+ready (via waker-based notification). When all channels are closed,
+it returns `(channel, Closed)`. If no tasks can make progress
+and no channels have data, it detects a deadlock and reports an error.
 
 
 ## 5. Patterns
@@ -690,26 +730,8 @@ running other tasks.
 
 ### Current limitations
 
-- **Unbuffered channels are single-slot.** `channel.new()` without an
-  argument creates a channel with one-slot buffering rather than true
-  rendezvous semantics.
-
-- **No timeouts or timers.** There is no way to say "receive from this channel
-  but give up after 5 seconds."
-
-- **Select only supports receive.** `channel.select` polls channels for
-  incoming data. You cannot select on send operations.
-
 - **No buffered channel resizing.** A channel's capacity is fixed at creation
   time.
-
-### Future work
-
-- **Timeouts and deadlines.** Adding a timeout parameter to `channel.select`
-  or a `channel.receive_timeout`.
-
-- **Buffered send in select.** Extending `channel.select` to support send
-  operations alongside receive.
 
 
 ## Quick Reference
@@ -723,7 +745,9 @@ running other tasks.
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
 | Try receive | `channel.try_receive(ch)` | `Message(val)`, `Empty`, or `Closed` |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select | `channel.select([ch1, ch2])` | `(channel, Message(val))` or `(channel, Closed)` |
+| Select (receive) | `channel.select([ch1, ch2])` | `(channel, Message(val))`, `(channel, Closed)` |
+| Select (send) | `channel.select([(ch, val)])` | `(channel, Sent)`, `(channel, Closed)` |
+| Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value |
 | Cancel task | `task.cancel(handle)` | `Unit` |
