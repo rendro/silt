@@ -1017,7 +1017,9 @@ fn main() {
 // ── Tail-Call Optimization ─────────────────────────────────────────
 
 #[test]
-fn test_tail_call_optimization() {
+fn test_tco_match_tail_call() {
+    // Tail call inside match arm — should use constant stack space.
+    // 200_000 exceeds the 100_000 frame limit, proving TCO is active.
     let result = run(r#"
 fn count_down(n, acc) {
   match n {
@@ -1026,14 +1028,14 @@ fn count_down(n, acc) {
   }
 }
 fn main() {
-  count_down(10000, 0)
+  count_down(200000, 0)
 }
     "#);
-    assert_eq!(result, Value::Int(10000));
+    assert_eq!(result, Value::Int(200_000));
 }
 
 #[test]
-fn test_tail_recursive_sum() {
+fn test_tco_list_recursion() {
     let result = run(r#"
 fn sum_helper(xs, acc) {
   match xs {
@@ -1049,7 +1051,43 @@ fn main() {
 }
 
 #[test]
-fn test_non_tail_call_still_works() {
+fn test_tco_block_tail_call() {
+    // Tail call as the last expression in a block.
+    let result = run(r#"
+fn count(n, acc) {
+  let next = acc + 1
+  match n {
+    0 -> acc
+    _ -> count(n - 1, next)
+  }
+}
+fn main() {
+  count(200000, 0)
+}
+    "#);
+    assert_eq!(result, Value::Int(200_000));
+}
+
+#[test]
+fn test_tco_guardless_match() {
+    // Tail call in a guardless match arm.
+    let result = run(r#"
+fn countdown(n) {
+  match {
+    n == 0 -> 0
+    _ -> countdown(n - 1)
+  }
+}
+fn main() {
+  countdown(200000)
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn test_non_tail_call_under_depth_limit() {
+    // Non-tail recursion within the frame limit should work fine.
     let result = run(r#"
 fn factorial(n) {
   match n {
@@ -1062,6 +1100,24 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Int(3628800));
+}
+
+#[test]
+fn test_non_tail_call_exceeds_depth_limit() {
+    // Non-tail recursion exceeding the frame limit should produce a clear error.
+    let err = run_err(r#"
+fn deep(n) {
+  match n {
+    0 -> 0
+    _ -> 1 + deep(n - 1)
+  }
+}
+fn main() {
+  deep(200000)
+}
+    "#);
+    assert!(err.contains("stack overflow"), "expected stack overflow error, got: {err}");
+    assert!(err.contains("tail position"), "error should hint at TCO, got: {err}");
 }
 
 // ── List append and concat ──────────────────────────────────────────

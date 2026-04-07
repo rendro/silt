@@ -1238,12 +1238,19 @@ impl Vm {
     // ── Call a value ──────────────────────────────────────────────
 
     fn call_value(&mut self, func_val: Value, argc: usize, func_slot: usize) -> Result<(), VmError> {
+        const MAX_FRAMES: usize = 100_000;
         match func_val {
             Value::VmClosure(closure) => {
                 if argc != closure.function.arity as usize {
                     return Err(VmError::new(format!(
                         "function '{}' expects {} arguments, got {}",
                         closure.function.name, closure.function.arity, argc
+                    )));
+                }
+                if self.frames.len() >= MAX_FRAMES {
+                    return Err(VmError::new(format!(
+                        "stack overflow: recursion depth exceeded {} frames (tip: put the recursive call in tail position to avoid this limit)",
+                        MAX_FRAMES
                     )));
                 }
                 // Push a new call frame. The arguments are already on the stack

@@ -124,6 +124,8 @@ pub struct Compiler {
     warnings: Vec<CompileWarning>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
+    /// Whether the current expression is in tail position (for TCO).
+    in_tail_position: bool,
 }
 
 impl Compiler {
@@ -136,6 +138,7 @@ impl Compiler {
             compiling_modules: HashSet::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
+            in_tail_position: false,
         }
     }
 
@@ -149,6 +152,7 @@ impl Compiler {
             compiling_modules: HashSet::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
+            in_tail_position: false,
         }
     }
 
@@ -266,10 +270,12 @@ impl Compiler {
                     }
                 }
 
-                // Compile the function body.
+                // Compile the function body in tail position for TCO.
+                self.in_tail_position = true;
                 self.compile_expr(&fn_decl.body)?;
+                self.in_tail_position = false;
 
-                // Emit Return.
+                // Emit Return (may be dead code if body ends with a tail call).
                 self.current_chunk().emit_op(Op::Return, span);
 
                 // Pop the context, recovering the compiled function.
@@ -871,6 +877,8 @@ impl Compiler {
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), String> {
         let span = expr.span;
+        let tail = self.in_tail_position;
+        self.in_tail_position = false;
 
         match &expr.kind {
             ExprKind::Int(n) => {
@@ -967,6 +975,9 @@ impl Compiler {
                 } else {
                     let last_idx = stmts.len() - 1;
                     for (i, stmt) in stmts.iter().enumerate() {
+                        if i == last_idx {
+                            self.in_tail_position = tail;
+                        }
                         self.compile_stmt(stmt, i == last_idx)?;
                     }
                 }
@@ -1036,8 +1047,14 @@ impl Compiler {
                                 self.compile_expr(arg)?;
                             }
                             let argc = args.len() as u8;
-                            self.current_chunk().emit_op(Op::Call, span);
-                            self.current_chunk().emit_u8(argc, span);
+                            if tail {
+                                self.current_chunk().emit_op(Op::TailCall, span);
+                                self.current_chunk().emit_u8(argc, span);
+                                self.current_chunk().emit_op(Op::Return, span);
+                            } else {
+                                self.current_chunk().emit_op(Op::Call, span);
+                                self.current_chunk().emit_u8(argc, span);
+                            }
                         }
                     } else {
                         // Method call on a value: expr.method(args)
@@ -1059,8 +1076,14 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = args.len() as u8;
-                    self.current_chunk().emit_op(Op::Call, span);
-                    self.current_chunk().emit_u8(argc, span);
+                    if tail {
+                        self.current_chunk().emit_op(Op::TailCall, span);
+                        self.current_chunk().emit_u8(argc, span);
+                        self.current_chunk().emit_op(Op::Return, span);
+                    } else {
+                        self.current_chunk().emit_op(Op::Call, span);
+                        self.current_chunk().emit_u8(argc, span);
+                    }
                 }
             }
 
@@ -1125,6 +1148,8 @@ impl Compiler {
 
             ExprKind::Return(maybe_expr) => {
                 if let Some(e) = maybe_expr {
+                    // Explicit return is always in tail position.
+                    self.in_tail_position = true;
                     self.compile_expr(e)?;
                 } else {
                     self.current_chunk().emit_op(Op::Unit, span);
@@ -1133,7 +1158,7 @@ impl Compiler {
             }
 
             ExprKind::Match { expr, arms } => {
-                self.compile_match(expr.as_deref(), arms, span)?;
+                self.compile_match(expr.as_deref(), arms, span, tail)?;
             }
 
             ExprKind::Lambda { params, body } => {
@@ -1171,8 +1196,10 @@ impl Compiler {
                     }
                 }
 
-                // Compile the lambda body.
+                // Compile the lambda body in tail position for TCO.
+                self.in_tail_position = true;
                 self.compile_expr(body)?;
+                self.in_tail_position = false;
                 self.current_chunk().emit_op(Op::Return, span);
 
                 let ctx = self.contexts.pop().unwrap();
@@ -1336,10 +1363,11 @@ impl Compiler {
         scrutinee: Option<&Expr>,
         arms: &[MatchArm],
         span: Span,
+        tail: bool,
     ) -> Result<(), String> {
         // ── Guardless match (no scrutinee) ───────────────────────
         if scrutinee.is_none() {
-            return self.compile_guardless_match(arms, span);
+            return self.compile_guardless_match(arms, span, tail);
         }
 
         // Compile the scrutinee and save it in a known local slot.
@@ -1384,7 +1412,8 @@ impl Compiler {
                 None
             };
 
-            // 7. Compile the arm body
+            // 7. Compile the arm body (in tail position if the match is)
+            self.in_tail_position = tail;
             self.compile_expr(&arm.body)?;
 
             self.end_scope(span);
@@ -1425,6 +1454,7 @@ impl Compiler {
         &mut self,
         arms: &[MatchArm],
         span: Span,
+        tail: bool,
     ) -> Result<(), String> {
         let mut end_jumps = Vec::new();
 
@@ -1434,6 +1464,7 @@ impl Compiler {
                 self.compile_expr(arm.guard.as_ref().unwrap())?;
                 let fail_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
 
+                self.in_tail_position = tail;
                 self.compile_expr(&arm.body)?;
                 let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
                 end_jumps.push(end_jump);
@@ -1441,6 +1472,7 @@ impl Compiler {
                 self.current_chunk().patch_jump(fail_jump);
             } else {
                 // Wildcard / default arm — always matches
+                self.in_tail_position = tail;
                 self.compile_expr(&arm.body)?;
                 let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
                 end_jumps.push(end_jump);
