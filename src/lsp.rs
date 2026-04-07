@@ -113,15 +113,21 @@ impl Server {
     fn handle_notification(&mut self, notif: Notification) {
         match notif.method.as_str() {
             DidOpenTextDocument::METHOD => {
-                let params: lsp_types::DidOpenTextDocumentParams =
-                    serde_json::from_value(notif.params).unwrap();
+                let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(notif.params)
+                else {
+                    return;
+                };
                 let uri = params.text_document.uri;
                 let source = params.text_document.text;
                 self.update_document(uri, source);
             }
             DidChangeTextDocument::METHOD => {
-                let params: lsp_types::DidChangeTextDocumentParams =
-                    serde_json::from_value(notif.params).unwrap();
+                let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidChangeTextDocumentParams>(notif.params)
+                else {
+                    return;
+                };
                 let uri = params.text_document.uri;
                 // We use full sync, so the first content change is the full text.
                 if let Some(change) = params.content_changes.into_iter().next() {
@@ -129,8 +135,11 @@ impl Server {
                 }
             }
             DidCloseTextDocument::METHOD => {
-                let params: lsp_types::DidCloseTextDocumentParams =
-                    serde_json::from_value(notif.params).unwrap();
+                let Ok(params) =
+                    serde_json::from_value::<lsp_types::DidCloseTextDocumentParams>(notif.params)
+                else {
+                    return;
+                };
                 self.documents.remove(&params.text_document.uri);
                 // Clear diagnostics for closed file.
                 self.publish_diagnostics(params.text_document.uri, vec![]);
@@ -144,40 +153,46 @@ impl Server {
     fn handle_request(&mut self, req: Request) {
         match req.method.as_str() {
             HoverRequest::METHOD => {
-                let (id, params) = extract_request::<HoverRequest>(req);
-                let result = self.hover(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<HoverRequest>(req) {
+                    let result = self.hover(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             GotoDefinition::METHOD => {
-                let (id, params) = extract_request::<GotoDefinition>(req);
-                let result = self.goto_definition(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<GotoDefinition>(req) {
+                    let result = self.goto_definition(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             Formatting::METHOD => {
-                let (id, params) = extract_request::<Formatting>(req);
-                let result = self.format(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<Formatting>(req) {
+                    let result = self.format(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             Completion::METHOD => {
-                let (id, params) = extract_request::<Completion>(req);
-                let result = self.completion(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<Completion>(req) {
+                    let result = self.completion(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             SignatureHelpRequest::METHOD => {
-                let (id, params) = extract_request::<SignatureHelpRequest>(req);
-                let result = self.signature_help(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<SignatureHelpRequest>(req) {
+                    let result = self.signature_help(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             DocumentSymbolRequest::METHOD => {
-                let (id, params) = extract_request::<DocumentSymbolRequest>(req);
-                let result = self.document_symbols(params);
-                let resp = Response::new_ok(id, result);
-                self.connection.sender.send(Message::Response(resp)).ok();
+                if let Some((id, params)) = extract_request::<DocumentSymbolRequest>(req) {
+                    let result = self.document_symbols(params);
+                    let resp = Response::new_ok(id, result);
+                    self.connection.sender.send(Message::Response(resp)).ok();
+                }
             }
             _ => {}
         }
@@ -327,10 +342,12 @@ impl Server {
         let doc = self.documents.get(uri);
 
         // Detect dot-completion context: extract the identifier before the `.`
-        if let Some(prefix) = doc.and_then(|d| extract_dot_prefix(&d.source, &pos)) {
-            let cursor = doc.map(|d| position_to_offset(&d.source, &pos)).unwrap_or(0);
-            let items = self.dot_completions(doc.unwrap(), &prefix, cursor);
-            return Some(CompletionResponse::Array(items));
+        if let Some(doc) = doc {
+            if let Some(prefix) = extract_dot_prefix(&doc.source, &pos) {
+                let cursor = position_to_offset(&doc.source, &pos);
+                let items = self.dot_completions(doc, &prefix, cursor);
+                return Some(CompletionResponse::Array(items));
+            }
         }
 
         let mut items: Vec<CompletionItem> = Vec::new();
@@ -1592,9 +1609,8 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
 
 fn extract_request<R: lsp_types::request::Request>(
     req: Request,
-) -> (RequestId, R::Params) {
-    let (id, params) = req.extract::<R::Params>(R::METHOD).unwrap();
-    (id, params)
+) -> Option<(RequestId, R::Params)> {
+    req.extract::<R::Params>(R::METHOD).ok()
 }
 
 // ── Entry point ────────────────────────────────────────────────────

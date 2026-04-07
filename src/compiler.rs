@@ -192,7 +192,11 @@ impl Compiler {
         self.current_chunk().emit_u8(0, span);
         self.current_chunk().emit_op(Op::Return, span);
 
-        let script = self.contexts.pop().unwrap().function;
+        let script = self
+            .contexts
+            .pop()
+            .ok_or("compiler bug: missing script context")?
+            .function;
 
         // Build the result: script first, then all compiled functions.
         let mut result = vec![script];
@@ -217,7 +221,11 @@ impl Compiler {
         self.current_chunk().emit_op(Op::Unit, span);
         self.current_chunk().emit_op(Op::Return, span);
 
-        let script = self.contexts.pop().unwrap().function;
+        let script = self
+            .contexts
+            .pop()
+            .ok_or("compiler bug: missing script context")?
+            .function;
         let mut result = vec![script];
         result.append(&mut self.functions);
         Ok(result)
@@ -279,7 +287,10 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
 
                 // Pop the context, recovering the compiled function.
-                let ctx = self.contexts.pop().unwrap();
+                let ctx = self
+                    .contexts
+                    .pop()
+                    .ok_or("compiler bug: missing function context")?;
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
@@ -429,7 +440,10 @@ impl Compiler {
                     self.compile_expr(&method.body)?;
                     self.current_chunk().emit_op(Op::Return, span);
 
-                    let ctx = self.contexts.pop().unwrap();
+                    let ctx = self
+                        .contexts
+                        .pop()
+                        .ok_or("compiler bug: missing trait method context")?;
                     let func = ctx.function;
                     let vm_closure = Arc::new(VmClosure {
                         function: Arc::new(func),
@@ -652,7 +666,10 @@ impl Compiler {
                     self.compile_expr(&fn_decl.body)?;
                     self.current_chunk().emit_op(Op::Return, fn_span);
 
-                    let ctx = self.contexts.pop().unwrap();
+                    let ctx = self
+                        .contexts
+                        .pop()
+                        .ok_or("compiler bug: missing module function context")?;
                     let func = ctx.function;
 
                     let vm_closure = Arc::new(VmClosure {
@@ -1202,7 +1219,10 @@ impl Compiler {
                 self.in_tail_position = false;
                 self.current_chunk().emit_op(Op::Return, span);
 
-                let ctx = self.contexts.pop().unwrap();
+                let ctx = self
+                    .contexts
+                    .pop()
+                    .ok_or("compiler bug: missing lambda context")?;
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
@@ -1366,13 +1386,13 @@ impl Compiler {
         tail: bool,
     ) -> Result<(), String> {
         // ── Guardless match (no scrutinee) ───────────────────────
-        if scrutinee.is_none() {
+        let Some(scrutinee) = scrutinee else {
             return self.compile_guardless_match(arms, span, tail);
-        }
+        };
 
         // Compile the scrutinee and save it in a known local slot.
         // This lets us GetLocal it for each arm's test and binding.
-        self.compile_expr(scrutinee.unwrap())?;
+        self.compile_expr(scrutinee)?;
         self.begin_scope();
         let scrutinee_slot = self.add_local("__scrutinee__".into());
         self.current_chunk().emit_op(Op::SetLocal, span);
@@ -1459,9 +1479,9 @@ impl Compiler {
         let mut end_jumps = Vec::new();
 
         for arm in arms {
-            if arm.guard.is_some() {
+            if let Some(guard) = &arm.guard {
                 // The guard IS the condition in a guardless match
-                self.compile_expr(arm.guard.as_ref().unwrap())?;
+                self.compile_expr(guard)?;
                 let fail_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
 
                 self.in_tail_position = tail;
