@@ -15,6 +15,7 @@ pub mod repl;
 pub mod watch;
 pub mod types;
 pub mod typechecker;
+pub mod scheduler;
 pub mod value;
 pub mod vm;
 

@@ -4820,3 +4820,140 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(42));
 }
+
+// ── M:N scheduler tests ────────────────────────────────────────────
+
+#[test]
+fn test_many_concurrent_tasks_with_channels() {
+    // 100 tasks all sending through a single channel to verify M:N scheduling.
+    let result = run(r#"
+import channel
+import list
+import task
+fn main() {
+  let ch = channel.new(200)
+  let handles = []
+
+  loop i = 0, handles = [] {
+    match i >= 100 {
+      true -> handles
+      _ -> {
+        let h = task.spawn(fn() {
+          channel.send(ch, i)
+        })
+        loop(i + 1, list.append(handles, h))
+      }
+    }
+  }
+
+  -- Join all handles
+  loop i = 0 {
+    match i >= list.length(handles) {
+      true -> ()
+      _ -> {
+        task.join(list.get(handles, i))
+        loop(i + 1)
+      }
+    }
+  }
+
+  -- Drain all messages and sum them
+  loop i = 0, total = 0 {
+    match i >= 100 {
+      true -> total
+      _ -> {
+        let Message(val) = channel.receive(ch)
+        loop(i + 1, total + val)
+      }
+    }
+  }
+}
+    "#);
+    // Sum of 0..99 = 4950
+    assert_eq!(result, Value::Int(4950));
+}
+
+#[test]
+fn test_nested_spawn() {
+    // Task that spawns tasks that spawn tasks.
+    let result = run(r#"
+import task
+fn main() {
+  let h = task.spawn(fn() {
+    let inner = task.spawn(fn() {
+      let innermost = task.spawn(fn() {
+        42
+      })
+      task.join(innermost) + 1
+    })
+    task.join(inner) + 1
+  })
+  task.join(h)
+}
+    "#);
+    assert_eq!(result, Value::Int(44));
+}
+
+#[test]
+fn test_select_with_multiple_producers() {
+    // Multiple producers on different channels, select should pick up messages.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch1 = channel.new(10)
+  let ch2 = channel.new(10)
+  let ch3 = channel.new(10)
+
+  let p1 = task.spawn(fn() { channel.send(ch1, 1) })
+  let p2 = task.spawn(fn() { channel.send(ch2, 2) })
+  let p3 = task.spawn(fn() { channel.send(ch3, 3) })
+
+  task.join(p1)
+  task.join(p2)
+  task.join(p3)
+
+  -- Select three times to collect all messages
+  loop i = 0, total = 0 {
+    match i >= 3 {
+      true -> total
+      _ -> {
+        let (_, msg) = channel.select([ch1, ch2, ch3])
+        match msg {
+          Message(val) -> loop(i + 1, total + val)
+          _ -> total
+        }
+      }
+    }
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_channel_receive_blocks_scheduled_task() {
+    // A scheduled task blocks on receive, gets woken by a send from another task.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(1)
+
+  -- Consumer spawns first but has to wait for producer.
+  let consumer = task.spawn(fn() {
+    let Message(val) = channel.receive(ch)
+    val * 2
+  })
+
+  -- Producer sends after a moment.
+  let producer = task.spawn(fn() {
+    channel.send(ch, 21)
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}

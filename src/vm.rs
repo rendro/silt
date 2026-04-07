@@ -13,6 +13,7 @@ use regex::Regex;
 
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
+use crate::scheduler::{Scheduler, SliceResult, Task};
 use crate::value::{Channel, FromValue, IntoValue, TaskHandle, TryReceiveResult, TrySendResult, Value};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -211,6 +212,20 @@ enum FiberSliceResult {
     Blocked,
 }
 
+// ── Block reason (for M:N scheduler) ────────────────────────────
+
+/// Describes why a task wants to park (block without holding an OS thread).
+pub(crate) enum BlockReason {
+    /// Blocked on channel.receive (channel was empty).
+    Receive(Arc<Channel>),
+    /// Blocked on channel.send (channel buffer was full).
+    Send(Arc<Channel>),
+    /// Blocked on channel.select (all channels empty, at least one open).
+    Select(Vec<Arc<Channel>>),
+    /// Blocked on task.join (target task not yet complete).
+    Join(Arc<TaskHandle>),
+}
+
 // ── Runtime (shared state) ───────────────────────────────────────
 
 /// Shared, read-only-after-init state for a Silt program.
@@ -222,6 +237,10 @@ pub struct Runtime {
 
     // ── Foreign function interface ──────────────────────────────
     foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>>,
+
+    // ── M:N scheduler ──────────────────────────────────────────
+    /// The shared scheduler for spawned tasks (None until first task.spawn).
+    scheduler: std::sync::Mutex<Option<Arc<Scheduler>>>,
 }
 
 // ── VM ────────────────────────────────────────────────────────────
@@ -242,6 +261,13 @@ pub struct Vm {
     next_task_id: usize,
     /// Prevents nested `run_other_fibers_once()` calls during channel.each
     scheduling_fibers: bool,
+
+    // ── M:N scheduler state ─────────────────────────────────────
+    /// Set by channel/task ops when they need to park this task.
+    /// Consumed by execute_slice to return SliceResult::Blocked.
+    pub(crate) block_reason: Option<BlockReason>,
+    /// True when this VM is running as a scheduled task (not on the main thread).
+    pub(crate) is_scheduled_task: bool,
 }
 
 impl Vm {
@@ -250,6 +276,7 @@ impl Vm {
             runtime: Arc::new(Runtime {
                 variant_types: HashMap::new(),
                 foreign_fns: HashMap::new(),
+                scheduler: std::sync::Mutex::new(None),
             }),
             frames: Vec::new(),
             stack: Vec::new(),
@@ -260,6 +287,8 @@ impl Vm {
             next_channel_id: 0,
             next_task_id: 0,
             scheduling_fibers: false,
+            block_reason: None,
+            is_scheduled_task: false,
         };
         vm.register_builtins();
         vm
@@ -361,7 +390,26 @@ impl Vm {
             next_channel_id: self.next_channel_id,
             next_task_id: self.next_task_id,
             scheduling_fibers: false,
+            block_reason: None,
+            is_scheduled_task: false,
         }
+    }
+
+    /// Get or create the shared scheduler.
+    fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
+        let mut guard = self.runtime.scheduler.lock().unwrap();
+        if let Some(ref sched) = *guard {
+            sched.clone()
+        } else {
+            let sched = Arc::new(Scheduler::new());
+            *guard = Some(sched.clone());
+            sched
+        }
+    }
+
+    /// Take the block_reason out of this VM (consuming it).
+    pub(crate) fn take_block_reason(&mut self) -> Option<BlockReason> {
+        self.block_reason.take()
     }
 
     /// Register all builtin functions and variant constructors in globals.
@@ -1246,6 +1294,62 @@ impl Vm {
                 }
             }
         }
+    }
+
+    // ── Sliced execution (for M:N scheduler) ─────────────────────
+
+    /// Run up to `max_steps` instructions and return a `SliceResult`.
+    /// Used by the M:N scheduler's worker threads.
+    pub fn execute_slice(&mut self, max_steps: usize) -> SliceResult {
+        for _ in 0..max_steps {
+            if self.frames.is_empty() {
+                let result = if self.stack.is_empty() {
+                    Value::Unit
+                } else {
+                    self.stack.last().cloned().unwrap_or(Value::Unit)
+                };
+                return SliceResult::Completed(result);
+            }
+            let saved_ip = self.current_frame().ip;
+            let op_byte = self.read_byte();
+            match Op::from_byte(op_byte) {
+                Some(Op::Return) => {
+                    let result = self.pop();
+                    let finished_base = self.current_frame().base_slot;
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        return SliceResult::Completed(result);
+                    }
+                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                    self.stack.truncate(func_slot);
+                    self.push(result);
+                }
+                Some(op) => {
+                    match self.dispatch_op(op) {
+                        Ok(()) => {}
+                        Err(e) if e.is_yield => {
+                            // Cooperative yield: rewind IP to re-execute.
+                            self.current_frame_mut().ip = saved_ip;
+                            // Check if this was a block request.
+                            if self.block_reason.is_some() {
+                                return SliceResult::Blocked;
+                            }
+                            return SliceResult::Yielded;
+                        }
+                        Err(e) => return SliceResult::Failed(e),
+                    }
+                    // Check if a blocking operation set block_reason without yield.
+                    if self.block_reason.is_some() {
+                        return SliceResult::Blocked;
+                    }
+                }
+                None => {
+                    return SliceResult::Failed(VmError::new(format!("unknown opcode: {op_byte}")));
+                }
+            }
+        }
+        // Time slice expired.
+        SliceResult::Yielded
     }
 
     // ── Call a value ──────────────────────────────────────────────
@@ -4043,8 +4147,24 @@ impl Vm {
                 };
                 let val = args[1].clone();
                 let ch = ch.clone();
-                // Try non-blocking first, then spin briefly with fiber scheduling,
-                // and finally fall back to a short sleep loop for cross-thread sends.
+                // Try non-blocking first.
+                match ch.try_send(val.clone()) {
+                    TrySendResult::Sent => return Ok(Value::Unit),
+                    TrySendResult::Closed => {
+                        return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                    }
+                    TrySendResult::Full => {}
+                }
+                // Buffer is full — park via scheduler or spin.
+                if self.is_scheduled_task {
+                    self.block_reason = Some(BlockReason::Send(ch));
+                    // Re-push args so CallBuiltin can re-execute after wake.
+                    for arg in args {
+                        self.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+                // Main thread: spin with fiber scheduling and OS yield.
                 loop {
                     match ch.try_send(val.clone()) {
                         TrySendResult::Sent => return Ok(Value::Unit),
@@ -4053,7 +4173,6 @@ impl Vm {
                         }
                         TrySendResult::Full => {}
                     }
-                    // Try to advance local fibers; if none, yield to OS.
                     if !self.run_other_fibers_once()? {
                         std::thread::yield_now();
                     }
@@ -4067,7 +4186,7 @@ impl Vm {
                     return Err(VmError::new("channel.receive requires a channel argument".into()));
                 };
                 let ch = ch.clone();
-                // Try non-blocking first, then fall back to blocking receive.
+                // Try non-blocking first.
                 match ch.try_receive() {
                     TryReceiveResult::Value(val) => {
                         return Ok(Value::Variant("Message".into(), vec![val]));
@@ -4077,7 +4196,16 @@ impl Vm {
                     }
                     TryReceiveResult::Empty => {}
                 }
-                // No immediate value — block until one arrives.
+                // Channel is empty — park via scheduler or block.
+                if self.is_scheduled_task {
+                    self.block_reason = Some(BlockReason::Receive(ch));
+                    // Re-push args so CallBuiltin can re-execute after wake.
+                    for arg in args {
+                        self.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+                // Main thread: fall back to condvar-based blocking.
                 match ch.receive_blocking() {
                     TryReceiveResult::Value(val) => {
                         Ok(Value::Variant("Message".into(), vec![val]))
@@ -4142,6 +4270,48 @@ impl Vm {
                 if channel_refs.is_empty() {
                     return Err(VmError::new("channel.select requires at least one channel".into()));
                 }
+
+                // Try all channels non-blocking first.
+                let mut all_closed = true;
+                let mut first_closed_ch = None;
+                for ch in &channel_refs {
+                    match ch.try_receive() {
+                        TryReceiveResult::Value(val) => {
+                            return Ok(Value::Tuple(vec![
+                                Value::Channel(ch.clone()),
+                                Value::Variant("Message".into(), vec![val]),
+                            ]));
+                        }
+                        TryReceiveResult::Closed => {
+                            if first_closed_ch.is_none() {
+                                first_closed_ch = Some(ch.clone());
+                            }
+                            continue;
+                        }
+                        TryReceiveResult::Empty => {
+                            all_closed = false;
+                        }
+                    }
+                }
+                if all_closed {
+                    let ch = first_closed_ch.unwrap_or_else(|| channel_refs[0].clone());
+                    return Ok(Value::Tuple(vec![
+                        Value::Channel(ch),
+                        Value::Variant("Closed".into(), vec![]),
+                    ]));
+                }
+
+                // No data available — park via scheduler or spin.
+                if self.is_scheduled_task {
+                    self.block_reason = Some(BlockReason::Select(channel_refs));
+                    // Re-push args so CallBuiltin can re-execute after wake.
+                    for arg in args {
+                        self.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+
+                // Main thread: spin with fiber scheduling (legacy path).
                 let max_retries = 100_000;
                 for _ in 0..max_retries {
                     let mut all_closed = true;
@@ -4195,9 +4365,13 @@ impl Vm {
                         TryReceiveResult::Value(val) => {
                             self.invoke_callable(&callback, &[val])?;
                             // After each message, yield to scheduler for round-robin.
-                            // If we're running inside a fiber (scheduling_fibers is true),
-                            // push the channel.each args back onto the stack so the
-                            // CallBuiltin instruction can be re-executed, then yield.
+                            if self.is_scheduled_task {
+                                // Re-push args so the CallBuiltin re-executes channel.each.
+                                for arg in args {
+                                    self.push(arg.clone());
+                                }
+                                return Err(VmError::yield_signal());
+                            }
                             if self.scheduling_fibers {
                                 for arg in args {
                                     self.push(arg.clone());
@@ -4212,8 +4386,15 @@ impl Vm {
                             return Ok(Value::Unit);
                         }
                         TryReceiveResult::Empty => {
-                            // If we're in a fiber, yield to let other fibers run
-                            // (they may produce data for this channel).
+                            // Channel empty — park via scheduler or spin.
+                            if self.is_scheduled_task {
+                                self.block_reason = Some(BlockReason::Receive(ch));
+                                // Re-push args so the CallBuiltin re-executes channel.each.
+                                for arg in args {
+                                    self.push(arg.clone());
+                                }
+                                return Err(VmError::yield_signal());
+                            }
                             if self.scheduling_fibers {
                                 for arg in args {
                                     self.push(arg.clone());
@@ -4249,13 +4430,13 @@ impl Vm {
                 self.next_task_id += 1;
                 let handle = Arc::new(TaskHandle::new(task_id));
 
-                let child_handle = handle.clone();
                 let child_closure = closure.clone();
                 let mut child_vm = self.spawn_child();
 
                 #[cfg(target_arch = "wasm32")]
                 {
                     // WASM: run synchronously (no threads available).
+                    let child_handle = handle.clone();
                     child_vm.stack = vec![Value::Unit];
                     child_vm.frames = vec![CallFrame {
                         closure: child_closure,
@@ -4269,18 +4450,23 @@ impl Vm {
                 }
 
                 #[cfg(not(target_arch = "wasm32"))]
-                std::thread::spawn(move || {
+                {
+                    // M:N scheduler: submit task to the shared thread pool.
                     child_vm.stack = vec![Value::Unit];
                     child_vm.frames = vec![CallFrame {
                         closure: child_closure,
                         ip: 0,
                         base_slot: 1,
                     }];
-                    match child_vm.execute() {
-                        Ok(val) => child_handle.complete(Ok(val)),
-                        Err(e) => child_handle.complete(Err(e.message)),
-                    }
-                });
+                    child_vm.is_scheduled_task = true;
+
+                    let scheduler = self.get_or_create_scheduler();
+                    scheduler.submit(Task {
+                        id: task_id,
+                        vm: child_vm,
+                        handle: handle.clone(),
+                    });
+                }
 
                 Ok(Value::Handle(handle))
             }
@@ -4292,7 +4478,26 @@ impl Vm {
                     return Err(VmError::new("task.join requires a handle argument".into()));
                 };
                 let handle = handle.clone();
-                // Block until the spawned thread completes.
+
+                // If already complete, return immediately.
+                if let Some(result) = handle.try_get() {
+                    return match result {
+                        Ok(val) => Ok(val),
+                        Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
+                    };
+                }
+
+                // If we're a scheduled task, park via the scheduler.
+                if self.is_scheduled_task {
+                    self.block_reason = Some(BlockReason::Join(handle));
+                    // Re-push args so CallBuiltin can re-execute after wake.
+                    for arg in args {
+                        self.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+
+                // Main thread: block with condvar (safe since we're not a worker).
                 match handle.join() {
                     Ok(val) => Ok(val),
                     Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),

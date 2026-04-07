@@ -7,6 +7,10 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::bytecode;
 
+/// A boxed callback that re-enqueues a parked task.
+/// Called by Channel::try_send / Channel::close when data becomes available.
+pub type Waker = Box<dyn FnOnce() + Send>;
+
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
@@ -40,6 +44,12 @@ pub struct Channel {
     closed: AtomicBool,
     /// Notified when a value is sent or the channel is closed.
     condvar: Condvar,
+    /// Wakers to call when a value is sent or the channel is closed
+    /// (wakes tasks blocked on receive/select/each).
+    recv_wakers: Mutex<Vec<Waker>>,
+    /// Wakers to call when buffer space becomes available
+    /// (wakes tasks blocked on send when buffer was full).
+    send_wakers: Mutex<Vec<Waker>>,
 }
 
 /// Result of attempting to send on a channel.
@@ -65,6 +75,8 @@ impl Channel {
             capacity: effective_capacity,
             closed: AtomicBool::new(false),
             condvar: Condvar::new(),
+            recv_wakers: Mutex::new(Vec::new()),
+            send_wakers: Mutex::new(Vec::new()),
         }
     }
 
@@ -75,7 +87,10 @@ impl Channel {
         let mut buf = self.buffer.lock().unwrap();
         if buf.len() < self.capacity {
             buf.push_back(val);
+            drop(buf);
             self.condvar.notify_one();
+            // Wake one task that may be blocked on receive/select/each.
+            self.wake_recv();
             TrySendResult::Sent
         } else {
             TrySendResult::Full
@@ -85,6 +100,12 @@ impl Channel {
     pub fn try_receive(&self) -> TryReceiveResult {
         let mut buf = self.buffer.lock().unwrap();
         if let Some(val) = buf.pop_front() {
+            let was_full = buf.len() + 1 >= self.capacity;
+            drop(buf);
+            // If buffer was full, wake one task that may be blocked on send.
+            if was_full {
+                self.wake_send();
+            }
             TryReceiveResult::Value(val)
         } else if self.closed.load(AtomicOrdering::Acquire) {
             TryReceiveResult::Closed
@@ -110,10 +131,61 @@ impl Channel {
     pub fn close(&self) {
         self.closed.store(true, AtomicOrdering::Release);
         self.condvar.notify_all();
+        // Wake ALL tasks blocked on receive or send — channel is done.
+        self.wake_all_recv();
+        self.wake_all_send();
     }
 
     pub fn is_closed(&self) -> bool {
         self.closed.load(AtomicOrdering::Acquire)
+    }
+
+    /// Register a waker to be called when a value is sent or the channel is closed.
+    pub fn register_recv_waker(&self, waker: Waker) {
+        self.recv_wakers.lock().unwrap().push(waker);
+    }
+
+    /// Register a waker to be called when buffer space becomes available.
+    pub fn register_send_waker(&self, waker: Waker) {
+        self.send_wakers.lock().unwrap().push(waker);
+    }
+
+    /// Wake one task blocked on receive.
+    fn wake_recv(&self) {
+        let waker = self.recv_wakers.lock().unwrap().pop();
+        if let Some(w) = waker {
+            w();
+        }
+    }
+
+    /// Wake all tasks blocked on receive (used when channel is closed).
+    fn wake_all_recv(&self) {
+        let wakers: Vec<Waker> = {
+            let mut guard = self.recv_wakers.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        for w in wakers {
+            w();
+        }
+    }
+
+    /// Wake one task blocked on send.
+    fn wake_send(&self) {
+        let waker = self.send_wakers.lock().unwrap().pop();
+        if let Some(w) = waker {
+            w();
+        }
+    }
+
+    /// Wake all tasks blocked on send (used when channel is closed).
+    fn wake_all_send(&self) {
+        let wakers: Vec<Waker> = {
+            let mut guard = self.send_wakers.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        for w in wakers {
+            w();
+        }
     }
 }
 
@@ -122,6 +194,8 @@ pub struct TaskHandle {
     pub id: usize,
     result: Mutex<Option<Result<Value, String>>>,
     condvar: Condvar,
+    /// Wakers to call when the task completes (for scheduler-based join).
+    join_wakers: Mutex<Vec<Waker>>,
 }
 
 impl TaskHandle {
@@ -130,14 +204,25 @@ impl TaskHandle {
             id,
             result: Mutex::new(None),
             condvar: Condvar::new(),
+            join_wakers: Mutex::new(Vec::new()),
         }
     }
 
     /// Store the task result and notify any joiners.
     pub fn complete(&self, result: Result<Value, String>) {
-        let mut guard = self.result.lock().unwrap();
-        *guard = Some(result);
+        {
+            let mut guard = self.result.lock().unwrap();
+            *guard = Some(result);
+        }
         self.condvar.notify_all();
+        // Wake all tasks blocked on join.
+        let wakers: Vec<Waker> = {
+            let mut guard = self.join_wakers.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        for w in wakers {
+            w();
+        }
     }
 
     /// Block until the task produces a result.
@@ -154,6 +239,28 @@ impl TaskHandle {
     /// Non-blocking poll.
     pub fn try_get(&self) -> Option<Result<Value, String>> {
         self.result.lock().unwrap().clone()
+    }
+
+    /// Register a waker to be called when the task completes.
+    pub fn register_join_waker(&self, waker: Waker) {
+        // Check if already complete to avoid missed wakeups.
+        let already_done = self.result.lock().unwrap().is_some();
+        if already_done {
+            waker();
+        } else {
+            self.join_wakers.lock().unwrap().push(waker);
+            // Double-check to avoid race: if result was set between our check and push.
+            if self.result.lock().unwrap().is_some() {
+                // It completed in the meantime; drain and fire.
+                let wakers: Vec<Waker> = {
+                    let mut guard = self.join_wakers.lock().unwrap();
+                    std::mem::take(&mut *guard)
+                };
+                for w in wakers {
+                    w();
+                }
+            }
+        }
     }
 }
 
