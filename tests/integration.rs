@@ -637,6 +637,8 @@ fn main() {
 
 #[test]
 fn test_unbuffered_channel() {
+    // Rendezvous: sender blocks until receiver is ready.
+    // Receive before join to avoid deadlock.
     let result = run(r#"
 import channel
 import task
@@ -647,12 +649,181 @@ fn main() {
     channel.send(ch, 99)
   })
 
-  task.join(producer)
   let Message(val) = channel.receive(ch)
+  task.join(producer)
   val
 }
     "#);
     assert_eq!(result, Value::Int(99));
+}
+
+// ── Rendezvous channel tests ──────────────────────────────────────
+
+#[test]
+fn test_rendezvous_sender_blocks_until_receiver() {
+    // Sender on rendezvous channel must block until receiver is ready.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new()
+
+  let _ = task.spawn(fn() {
+    channel.send(ch, 42)
+  })
+
+  let Message(val) = channel.receive(ch)
+  val
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_rendezvous_try_send_fails_without_receiver() {
+    // try_send on rendezvous should fail when no receiver is waiting
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new()
+  channel.try_send(ch, 42)
+}
+    "#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_buffered_channel_send_succeeds_immediately() {
+    // Buffered channel.new(1) should let one send succeed without receiver
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.try_send(ch, 42)
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+// ── Timeout channel tests ────────────────────────────────────────
+
+#[test]
+fn test_channel_timeout_fires() {
+    // channel.timeout should close after the specified duration
+    let result = run(r#"
+import channel
+fn main() {
+  let timer = channel.timeout(50)
+  let result = channel.receive(timer)
+  match result {
+    Closed -> "timed_out"
+    _ -> "unexpected"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("timed_out".into()));
+}
+
+#[test]
+fn test_channel_timeout_with_select() {
+    // select with a timeout channel — timeout should fire when no data arrives
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+  let timer = channel.timeout(50)
+
+  match channel.select([ch, timer]) {
+    (_, Closed) -> "timeout"
+    (_, Message(_)) -> "data"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("timeout".into()));
+}
+
+#[test]
+fn test_channel_timeout_data_beats_timeout() {
+    // If data arrives before timeout, select should return the data
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(1)
+  let timer = channel.timeout(5000)
+
+  channel.send(ch, "fast")
+
+  match channel.select([ch, timer]) {
+    (_, Message(val)) -> val
+    (_, Closed) -> "timeout"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("fast".into()));
+}
+
+// ── Bidirectional select tests ───────────────────────────────────
+
+#[test]
+fn test_select_send_operation() {
+    // Select with a send operation — should succeed when channel has room
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+
+  match channel.select([(ch, 42)]) {
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("sent".into()));
+}
+
+#[test]
+fn test_select_mixed_send_receive() {
+    // Select with both send and receive operations
+    let result = run(r#"
+import channel
+fn main() {
+  let inbox = channel.new(1)
+  let outbox = channel.new(1)
+
+  channel.send(inbox, "hello")
+
+  match channel.select([inbox, (outbox, "world")]) {
+    (_, Message(val)) -> val
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_select_send_with_timeout() {
+    // Select: send to a full channel with a timeout
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch, "fill")
+
+  let timer = channel.timeout(50)
+
+  match channel.select([(ch, "more"), timer]) {
+    (_, Closed) -> "timeout"
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("timeout".into()));
 }
 
 #[test]

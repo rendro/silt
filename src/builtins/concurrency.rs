@@ -3,7 +3,7 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Dispatch `channel.<name>(args)`.
 pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
@@ -150,113 +150,69 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         "select" => {
             if args.len() != 1 {
                 return Err(VmError::new(
-                    "channel.select takes 1 argument (list of channels)".into(),
+                    "channel.select takes 1 argument (list of operations)".into(),
                 ));
             }
-            let Value::List(channels) = &args[0] else {
+            let Value::List(ops_list) = &args[0] else {
                 return Err(VmError::new(
-                    "channel.select argument must be a list of channels".into(),
+                    "channel.select argument must be a list".into(),
                 ));
             };
-            let channel_refs: Vec<Arc<Channel>> = channels
-                .iter()
-                .map(|v| match v {
-                    Value::Channel(ch) => Ok(ch.clone()),
-                    _ => Err(VmError::new(
-                        "channel.select list must contain only channels".into(),
-                    )),
-                })
-                .collect::<Result<_, _>>()?;
-            if channel_refs.is_empty() {
+
+            // Parse operations: bare Channel = receive, (Channel, value) = send.
+            let ops = parse_select_ops(ops_list)?;
+            if ops.is_empty() {
                 return Err(VmError::new(
-                    "channel.select requires at least one channel".into(),
+                    "channel.select requires at least one operation".into(),
                 ));
             }
 
-            // Try all channels non-blocking first.
-            let mut all_closed = true;
-            let mut first_closed_ch = None;
-            for ch in &channel_refs {
-                match ch.try_receive() {
-                    TryReceiveResult::Value(val) => {
-                        return Ok(Value::Tuple(vec![
-                            Value::Channel(ch.clone()),
-                            Value::Variant("Message".into(), vec![val]),
-                        ]));
-                    }
-                    TryReceiveResult::Closed => {
-                        if first_closed_ch.is_none() {
-                            first_closed_ch = Some(ch.clone());
-                        }
-                        continue;
-                    }
-                    TryReceiveResult::Empty => {
-                        all_closed = false;
-                    }
-                }
-            }
-            if all_closed {
-                let ch = first_closed_ch.unwrap_or_else(|| channel_refs[0].clone());
-                return Ok(Value::Tuple(vec![
-                    Value::Channel(ch),
-                    Value::Variant("Closed".into(), vec![]),
-                ]));
+            // Try all operations non-blocking first.
+            if let Some(result) = try_select_sweep(&ops)? {
+                return Ok(result);
             }
 
-            // No data available -- park via scheduler or spin.
+            // Build op descriptors for the scheduler.
+            let select_ops: Vec<(Arc<Channel>, SelectOpKind)> = ops
+                .iter()
+                .map(|op| match op {
+                    SelectOp::Receive(ch) => (ch.clone(), SelectOpKind::Receive),
+                    SelectOp::Send(ch, _) => (ch.clone(), SelectOpKind::Send),
+                })
+                .collect();
+
+            // No operation succeeded — park via scheduler or spin.
             if vm.is_scheduled_task {
-                vm.block_reason = Some(BlockReason::Select(channel_refs));
-                // Re-push args so CallBuiltin can re-execute after wake.
+                vm.block_reason = Some(BlockReason::Select(select_ops));
                 for arg in args {
                     vm.push(arg.clone());
                 }
                 return Err(VmError::yield_signal());
             }
 
-            // Main thread: block on a shared condvar until any channel has data.
+            // Main thread: block on a shared condvar.
             let pair = Arc::new((Mutex::new(false), Condvar::new()));
-            // Register a waker on each non-closed channel that notifies our condvar.
-            for ch in &channel_refs {
-                if !ch.is_closed() {
-                    let pair2 = pair.clone();
-                    ch.register_recv_waker(Box::new(move || {
-                        let (lock, cvar) = &*pair2;
-                        *lock.lock().unwrap() = true;
-                        cvar.notify_one();
-                    }));
+            for op in &ops {
+                let pair2 = pair.clone();
+                let waker = Box::new(move || {
+                    let (lock, cvar) = &*pair2;
+                    *lock.lock().unwrap() = true;
+                    cvar.notify_one();
+                });
+                match op {
+                    SelectOp::Receive(ch) if !ch.is_closed() => {
+                        ch.register_recv_waker(waker);
+                    }
+                    SelectOp::Send(ch, _) if !ch.is_closed() => {
+                        ch.register_send_waker(waker);
+                    }
+                    _ => {}
                 }
             }
             loop {
-                // Check all channels.
-                let mut all_closed = true;
-                let mut first_closed_ch = None;
-                for ch in &channel_refs {
-                    match ch.try_receive() {
-                        TryReceiveResult::Value(val) => {
-                            return Ok(Value::Tuple(vec![
-                                Value::Channel(ch.clone()),
-                                Value::Variant("Message".into(), vec![val]),
-                            ]));
-                        }
-                        TryReceiveResult::Closed => {
-                            if first_closed_ch.is_none() {
-                                first_closed_ch = Some(ch.clone());
-                            }
-                            continue;
-                        }
-                        TryReceiveResult::Empty => {
-                            all_closed = false;
-                        }
-                    }
+                if let Some(result) = try_select_sweep(&ops)? {
+                    return Ok(result);
                 }
-                if all_closed {
-                    let ch = first_closed_ch.unwrap_or_else(|| channel_refs[0].clone());
-                    return Ok(Value::Tuple(vec![
-                        Value::Channel(ch),
-                        Value::Variant("Closed".into(), vec![]),
-                    ]));
-                }
-                // Wait for a waker notification (with timeout as safety net).
                 let (lock, cvar) = &*pair;
                 let mut notified = lock.lock().unwrap();
                 if !*notified {
@@ -267,6 +223,34 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
                 *notified = false;
             }
+        }
+        "timeout" => {
+            if args.len() != 1 {
+                return Err(VmError::new(
+                    "channel.timeout takes 1 argument (milliseconds)".into(),
+                ));
+            }
+            let Value::Int(ms) = &args[0] else {
+                return Err(VmError::new(
+                    "channel.timeout requires an Int argument".into(),
+                ));
+            };
+            if *ms < 0 {
+                return Err(VmError::new(
+                    "channel.timeout duration must be non-negative".into(),
+                ));
+            }
+            let ms = *ms as u64;
+            let id = vm.next_channel_id();
+            // Use capacity 1 so the timeout channel itself is buffered
+            // (we close it, not send to it, so capacity doesn't matter much).
+            let ch = Arc::new(Channel::new(id, 1));
+            let ch_clone = ch.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                ch_clone.close();
+            });
+            Ok(Value::Channel(ch))
         }
         "each" => {
             if args.len() != 2 {
@@ -432,4 +416,81 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         }
         _ => Err(VmError::new(format!("unknown task function: {name}"))),
     }
+}
+
+// ── Select helpers ────────────────────────────────────────────────
+
+/// A parsed select operation: receive from a channel or send to a channel.
+enum SelectOp {
+    Receive(Arc<Channel>),
+    Send(Arc<Channel>, Value),
+}
+
+/// Parse the select operations list.
+/// - Bare `Channel` → receive
+/// - `(Channel, value)` tuple → send
+fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
+    let mut ops = Vec::with_capacity(ops_list.len());
+    for item in ops_list {
+        match item {
+            Value::Channel(ch) => {
+                ops.push(SelectOp::Receive(ch.clone()));
+            }
+            Value::Tuple(pair) if pair.len() == 2 => {
+                let Value::Channel(ch) = &pair[0] else {
+                    return Err(VmError::new(
+                        "channel.select send operation must be (channel, value)".into(),
+                    ));
+                };
+                ops.push(SelectOp::Send(ch.clone(), pair[1].clone()));
+            }
+            _ => {
+                return Err(VmError::new(
+                    "channel.select list items must be channels or (channel, value) tuples".into(),
+                ));
+            }
+        }
+    }
+    Ok(ops)
+}
+
+/// Try all select operations non-blocking. Returns the first that succeeds.
+/// A closed channel counts as a successful receive (returns Closed).
+fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
+    for op in ops {
+        match op {
+            SelectOp::Receive(ch) => match ch.try_receive() {
+                TryReceiveResult::Value(val) => {
+                    return Ok(Some(Value::Tuple(vec![
+                        Value::Channel(ch.clone()),
+                        Value::Variant("Message".into(), vec![val]),
+                    ])));
+                }
+                TryReceiveResult::Closed => {
+                    return Ok(Some(Value::Tuple(vec![
+                        Value::Channel(ch.clone()),
+                        Value::Variant("Closed".into(), vec![]),
+                    ])));
+                }
+                TryReceiveResult::Empty => {}
+            },
+            SelectOp::Send(ch, val) => match ch.try_send(val.clone()) {
+                TrySendResult::Sent => {
+                    return Ok(Some(Value::Tuple(vec![
+                        Value::Channel(ch.clone()),
+                        Value::Variant("Sent".into(), vec![]),
+                    ])));
+                }
+                TrySendResult::Closed => {
+                    return Ok(Some(Value::Tuple(vec![
+                        Value::Channel(ch.clone()),
+                        Value::Variant("Closed".into(), vec![]),
+                    ])));
+                }
+                TrySendResult::Full => {}
+            },
+        }
+    }
+
+    Ok(None)
 }

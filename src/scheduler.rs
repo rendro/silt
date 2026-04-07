@@ -10,7 +10,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use crate::value::{TaskHandle, Value};
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Result of running a task's VM for one time slice.
 pub enum SliceResult {
@@ -173,17 +173,21 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                         }));
                     }
-                    Some(BlockReason::Select(channels)) => {
+                    Some(BlockReason::Select(ops)) => {
                         // Register waker on ALL channels. First waker to fire
                         // wakes the task; the rest are no-ops (slot is empty).
-                        for ch in &channels {
+                        for (ch, kind) in &ops {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
-                            ch.register_recv_waker(Box::new(move || {
+                            let waker = Box::new(move || {
                                 if let Some(task) = slot.lock().unwrap().take() {
                                     requeue(&inner2, task);
                                 }
-                            }));
+                            });
+                            match kind {
+                                SelectOpKind::Receive => ch.register_recv_waker(waker),
+                                SelectOpKind::Send => ch.register_send_waker(waker),
+                            }
                         }
                     }
                     Some(BlockReason::Join(target_handle)) => {

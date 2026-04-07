@@ -962,6 +962,10 @@ impl TypeChecker {
                         name: "Closed".into(),
                         field_types: vec![],
                     },
+                    VariantInfo {
+                        name: "Sent".into(),
+                        field_types: vec![],
+                    },
                 ],
             },
         );
@@ -969,9 +973,11 @@ impl TypeChecker {
             .insert("Message".into(), "ChannelResult".into());
         self.variant_to_enum
             .insert("Closed".into(), "ChannelResult".into());
-        // Also register Empty as a standalone (used in try_receive alongside Message/Closed)
+        // Also register Empty and Sent as standalones
         self.variant_to_enum
             .insert("Empty".into(), "ChannelResult".into());
+        self.variant_to_enum
+            .insert("Sent".into(), "ChannelResult".into());
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -1001,6 +1007,17 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             env.define(
                 "Empty".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    constraints: vec![],
+                },
+            );
+        }
+        {
+            let (a, av) = self.fresh_tv();
+            env.define(
+                "Sent".into(),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Generic("ChannelResult".into(), vec![a]),

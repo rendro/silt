@@ -71,13 +71,20 @@ pub(crate) struct CallFrame {
 // ── Block reason (for M:N scheduler) ────────────────────────────
 
 /// Describes why a task wants to park (block without holding an OS thread).
+/// Describes whether a select operation is a receive or send.
+#[derive(Clone)]
+pub(crate) enum SelectOpKind {
+    Receive,
+    Send,
+}
+
 pub(crate) enum BlockReason {
     /// Blocked on channel.receive (channel was empty).
     Receive(Arc<Channel>),
     /// Blocked on channel.send (channel buffer was full).
     Send(Arc<Channel>),
-    /// Blocked on channel.select (all channels empty, at least one open).
-    Select(Vec<Arc<Channel>>),
+    /// Blocked on channel.select — carries channels with their operation kinds.
+    Select(Vec<(Arc<Channel>, SelectOpKind)>),
     /// Blocked on task.join (target task not yet complete).
     Join(Arc<TaskHandle>),
 }

@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use crate::bytecode;
@@ -33,10 +33,12 @@ pub enum Value {
     Unit,
 }
 
-/// A thread-safe bounded channel.
+/// A thread-safe channel with support for both buffered and rendezvous semantics.
 ///
-/// Uses Mutex+Condvar for cross-thread synchronization. Capacity 0 is
-/// promoted to buffered-1 for compatibility with cooperative scheduling.
+/// - **Capacity 0**: True rendezvous — sender blocks until a receiver is ready
+///   and vice versa. Value is transferred via a handoff slot, never buffered.
+/// - **Capacity N > 0**: Buffered — up to N values can be queued before the
+///   sender blocks.
 pub struct Channel {
     pub id: usize,
     buffer: Mutex<VecDeque<Value>>,
@@ -50,6 +52,12 @@ pub struct Channel {
     /// Wakers to call when buffer space becomes available
     /// (wakes tasks blocked on send when buffer was full).
     send_wakers: Mutex<VecDeque<Waker>>,
+    /// For rendezvous (capacity == 0): a parked sender places its value here.
+    /// The receiver takes it directly, completing the handshake.
+    handoff: Mutex<Option<Value>>,
+    /// Number of receivers currently waiting (waker-based + condvar-based).
+    /// Used by rendezvous try_send to detect if a direct handoff is possible.
+    waiting_receivers: AtomicUsize,
 }
 
 /// Result of attempting to send on a channel.
@@ -68,68 +76,128 @@ pub enum TryReceiveResult {
 
 impl Channel {
     pub fn new(id: usize, capacity: usize) -> Self {
-        let effective_capacity = if capacity == 0 { 1 } else { capacity };
         Self {
             id,
             buffer: Mutex::new(VecDeque::new()),
-            capacity: effective_capacity,
+            capacity,
             closed: AtomicBool::new(false),
             condvar: Condvar::new(),
             recv_wakers: Mutex::new(VecDeque::new()),
             send_wakers: Mutex::new(VecDeque::new()),
+            handoff: Mutex::new(None),
+            waiting_receivers: AtomicUsize::new(0),
         }
+    }
+
+    /// True if this is a rendezvous (unbuffered) channel.
+    pub fn is_rendezvous(&self) -> bool {
+        self.capacity == 0
     }
 
     pub fn try_send(&self, val: Value) -> TrySendResult {
         if self.closed.load(AtomicOrdering::Acquire) {
             return TrySendResult::Closed;
         }
-        let mut buf = self.buffer.lock().unwrap();
-        if buf.len() < self.capacity {
-            buf.push_back(val);
-            drop(buf);
-            self.condvar.notify_one();
-            // Wake one task that may be blocked on receive/select/each.
-            self.wake_recv();
-            TrySendResult::Sent
+        if self.is_rendezvous() {
+            // Rendezvous: only succeed if a receiver is already waiting AND
+            // the handoff slot is empty (no other sender already parked).
+            let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
+            let mut slot = self.handoff.lock().unwrap();
+            if has_receiver && slot.is_none() {
+                *slot = Some(val);
+                drop(slot);
+                self.condvar.notify_one();
+                self.wake_recv();
+                TrySendResult::Sent
+            } else {
+                TrySendResult::Full
+            }
         } else {
-            TrySendResult::Full
+            // Buffered: succeed if there's room in the buffer.
+            let mut buf = self.buffer.lock().unwrap();
+            if buf.len() < self.capacity {
+                buf.push_back(val);
+                drop(buf);
+                self.condvar.notify_one();
+                self.wake_recv();
+                TrySendResult::Sent
+            } else {
+                TrySendResult::Full
+            }
         }
     }
 
     pub fn try_receive(&self) -> TryReceiveResult {
-        let mut buf = self.buffer.lock().unwrap();
-        if let Some(val) = buf.pop_front() {
-            let was_full = buf.len() + 1 >= self.capacity;
-            drop(buf);
-            // If buffer was full, wake one task that may be blocked on send.
-            if was_full {
+        if self.is_rendezvous() {
+            // Rendezvous: check the handoff slot for a parked sender's value.
+            let mut slot = self.handoff.lock().unwrap();
+            if let Some(val) = slot.take() {
+                drop(slot);
+                // Sender completed the handshake — wake it.
                 self.wake_send();
+                TryReceiveResult::Value(val)
+            } else if self.closed.load(AtomicOrdering::Acquire) {
+                TryReceiveResult::Closed
+            } else {
+                TryReceiveResult::Empty
             }
-            TryReceiveResult::Value(val)
-        } else if self.closed.load(AtomicOrdering::Acquire) {
-            TryReceiveResult::Closed
         } else {
-            TryReceiveResult::Empty
+            // Buffered: pop from the buffer.
+            let mut buf = self.buffer.lock().unwrap();
+            if let Some(val) = buf.pop_front() {
+                let was_full = buf.len() + 1 >= self.capacity;
+                drop(buf);
+                if was_full {
+                    self.wake_send();
+                }
+                TryReceiveResult::Value(val)
+            } else if self.closed.load(AtomicOrdering::Acquire) {
+                TryReceiveResult::Closed
+            } else {
+                TryReceiveResult::Empty
+            }
         }
     }
 
     /// Blocking receive — waits until a value is available or the channel closes.
     pub fn receive_blocking(&self) -> TryReceiveResult {
-        let mut buf = self.buffer.lock().unwrap();
-        loop {
-            if let Some(val) = buf.pop_front() {
-                return TryReceiveResult::Value(val);
+        if self.is_rendezvous() {
+            // Signal that a receiver is waiting so rendezvous senders can proceed.
+            self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
+            // Wake any parked sender now that a receiver is available.
+            self.wake_send();
+            let mut slot = self.handoff.lock().unwrap();
+            loop {
+                if let Some(val) = slot.take() {
+                    self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
+                    drop(slot);
+                    self.wake_send();
+                    return TryReceiveResult::Value(val);
+                }
+                if self.closed.load(AtomicOrdering::Acquire) {
+                    self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
+                    return TryReceiveResult::Closed;
+                }
+                slot = self.condvar.wait(slot).unwrap();
             }
-            if self.closed.load(AtomicOrdering::Acquire) {
-                return TryReceiveResult::Closed;
+        } else {
+            let mut buf = self.buffer.lock().unwrap();
+            loop {
+                if let Some(val) = buf.pop_front() {
+                    return TryReceiveResult::Value(val);
+                }
+                if self.closed.load(AtomicOrdering::Acquire) {
+                    return TryReceiveResult::Closed;
+                }
+                buf = self.condvar.wait(buf).unwrap();
             }
-            buf = self.condvar.wait(buf).unwrap();
         }
     }
 
     pub fn close(&self) {
         self.closed.store(true, AtomicOrdering::Release);
+        // Clear any pending handoff value.
+        *self.handoff.lock().unwrap() = None;
         self.condvar.notify_all();
         // Wake ALL tasks blocked on receive or send — channel is done.
         self.wake_all_recv();
@@ -147,9 +215,12 @@ impl Channel {
     /// readable between the caller's `try_receive` and this registration,
     /// the waker fires immediately.
     pub fn register_recv_waker(&self, waker: Waker) {
+        self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
         self.recv_wakers.lock().unwrap().push_back(waker);
         // Double-check: if data is now available or channel closed, wake immediately.
-        let has_data_or_closed = {
+        let has_data_or_closed = if self.is_rendezvous() {
+            self.handoff.lock().unwrap().is_some() || self.closed.load(AtomicOrdering::Acquire)
+        } else {
             let buf = self.buffer.lock().unwrap();
             !buf.is_empty() || self.closed.load(AtomicOrdering::Acquire)
         };
@@ -159,9 +230,17 @@ impl Channel {
                 let mut guard = self.recv_wakers.lock().unwrap();
                 std::mem::take(&mut *guard)
             };
+            let count = wakers.len();
             for w in wakers {
                 w();
             }
+            self.waiting_receivers
+                .fetch_sub(count, AtomicOrdering::Release);
+        }
+        // For rendezvous channels, a receiver arriving means a parked sender
+        // can now proceed with the handshake. Wake one sender.
+        if self.is_rendezvous() {
+            self.wake_send();
         }
     }
 
@@ -172,8 +251,14 @@ impl Channel {
     /// caller's `try_send` and this registration, the waker fires immediately.
     pub fn register_send_waker(&self, waker: Waker) {
         self.send_wakers.lock().unwrap().push_back(waker);
-        // Double-check: if buffer space is now available or channel closed, wake immediately.
-        let has_space_or_closed = {
+        // Double-check: if we can now proceed or channel closed, wake immediately.
+        let has_space_or_closed = if self.is_rendezvous() {
+            // For rendezvous, sender can proceed if a receiver is waiting and
+            // the handoff slot is empty, or if the channel is closed.
+            let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
+            let slot_empty = self.handoff.lock().unwrap().is_none();
+            (has_receiver && slot_empty) || self.closed.load(AtomicOrdering::Acquire)
+        } else {
             let buf = self.buffer.lock().unwrap();
             buf.len() < self.capacity || self.closed.load(AtomicOrdering::Acquire)
         };
@@ -193,6 +278,7 @@ impl Channel {
     fn wake_recv(&self) {
         let waker = self.recv_wakers.lock().unwrap().pop_front();
         if let Some(w) = waker {
+            self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
             w();
         }
     }
@@ -203,9 +289,12 @@ impl Channel {
             let mut guard = self.recv_wakers.lock().unwrap();
             std::mem::take(&mut *guard)
         };
+        let count = wakers.len();
         for w in wakers {
             w();
         }
+        self.waiting_receivers
+            .fetch_sub(count, AtomicOrdering::Release);
     }
 
     /// Wake one task blocked on send (FIFO — oldest waiter first).

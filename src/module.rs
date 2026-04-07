@@ -16,7 +16,7 @@ pub fn is_builtin_module(name: &str) -> bool {
 pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
     match name {
         "Stop" | "Continue" => Some("list"),
-        "Message" | "Closed" | "Empty" => Some("channel"),
+        "Message" | "Closed" | "Empty" | "Sent" => Some("channel"),
         "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" => {
             Some("time")
         }
@@ -163,6 +163,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "try_receive",
             "select",
             "each",
+            "timeout",
         ],
         "task" => vec!["spawn", "join", "cancel"],
         "set" => vec![
