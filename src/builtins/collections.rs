@@ -6,6 +6,74 @@ use std::sync::Arc;
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
+/// Lazy iterator over `Value::List` or `Value::Range` without materializing.
+enum ValueIter {
+    List { items: Arc<Vec<Value>>, index: usize },
+    Range { current: i64, end: i64, done: bool },
+}
+
+impl ValueIter {
+    /// Build an iterator from a List or Range value.
+    fn try_from(val: &Value, fn_name: &str) -> Result<Self, VmError> {
+        match val {
+            Value::List(xs) => Ok(ValueIter::List { items: Arc::clone(xs), index: 0 }),
+            Value::Range(lo, hi) => Ok(ValueIter::Range {
+                current: *lo,
+                end: *hi,
+                done: *lo > *hi,
+            }),
+            _ => Err(VmError::new(format!("{fn_name} requires a list or range"))),
+        }
+    }
+
+    /// Collect all items into a Vec (explicit materialization).
+    fn collect_vec(self) -> Vec<Value> {
+        self.collect()
+    }
+}
+
+impl Iterator for ValueIter {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Value> {
+        match self {
+            ValueIter::List { items, index } => {
+                let item = items.get(*index)?.clone();
+                *index += 1;
+                Some(item)
+            }
+            ValueIter::Range { current, end, done } => {
+                if *done {
+                    return None;
+                }
+                let val = Value::Int(*current);
+                if *current == *end {
+                    *done = true;
+                } else {
+                    *current += 1;
+                }
+                Some(val)
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = match self {
+            ValueIter::List { items, index } => items.len().saturating_sub(*index),
+            ValueIter::Range { current, end, done } => {
+                if *done {
+                    0
+                } else {
+                    (*end - *current + 1) as usize
+                }
+            }
+        };
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for ValueIter {}
+
 /// Dispatch `list.<name>(args)`.
 pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -13,14 +81,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.map takes 2 arguments (list, fn)".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.map requires a list".into()));
-            };
+            let mut iter = ValueIter::try_from(&args[0], "list.map")?;
             let func = &args[1];
-            let mut result = Vec::with_capacity(xs.len());
-            for item in xs.iter() {
-                let val = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                result.push(val);
+            let mut result = Vec::with_capacity(iter.len());
+            for item in &mut iter {
+                result.push(vm.invoke_callable(func, std::slice::from_ref(&item))?);
             }
             Ok(Value::List(Arc::new(result)))
         }
@@ -28,15 +93,13 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.filter takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.filter requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.filter")?;
             let func = &args[1];
             let mut result = Vec::new();
-            for item in xs.iter() {
-                let keep = vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                let keep = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 if vm.is_truthy(&keep) {
-                    result.push(item.clone());
+                    result.push(item);
                 }
             }
             Ok(Value::List(Arc::new(result)))
@@ -45,12 +108,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.each takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.each requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.each")?;
             let func = &args[1];
-            for item in xs.iter() {
-                vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                vm.invoke_callable(func, std::slice::from_ref(&item))?;
             }
             Ok(Value::Unit)
         }
@@ -58,13 +119,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 3 {
                 return Err(VmError::new("list.fold takes 3 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.fold requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.fold")?;
             let func = &args[2];
             let mut acc = args[1].clone();
-            for item in xs.iter() {
-                acc = vm.invoke_callable(func, &[acc, item.clone()])?;
+            for item in iter {
+                acc = vm.invoke_callable(func, &[acc, item])?;
             }
             Ok(acc)
         }
@@ -72,14 +131,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.find takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.find requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.find")?;
             let func = &args[1];
-            for item in xs.iter() {
-                let result = vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 if vm.is_truthy(&result) {
-                    return Ok(Value::Variant("Some".into(), vec![item.clone()]));
+                    return Ok(Value::Variant("Some".into(), vec![item]));
                 }
             }
             Ok(Value::Variant("None".into(), Vec::new()))
@@ -88,12 +145,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.any takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.any requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.any")?;
             let func = &args[1];
-            for item in xs.iter() {
-                let result = vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 if vm.is_truthy(&result) {
                     return Ok(Value::Bool(true));
                 }
@@ -104,12 +159,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.all takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.all requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.all")?;
             let func = &args[1];
-            for item in xs.iter() {
-                let result = vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 if !vm.is_truthy(&result) {
                     return Ok(Value::Bool(false));
                 }
@@ -120,17 +173,19 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.flat_map takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.flat_map requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.flat_map")?;
             let func = &args[1];
             let mut result = Vec::new();
-            for item in xs.iter() {
-                let val = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                if let Value::List(inner) = val {
-                    result.extend(inner.iter().cloned());
-                } else {
-                    result.push(val);
+            for item in iter {
+                let val = vm.invoke_callable(func, std::slice::from_ref(&item))?;
+                match val {
+                    Value::List(inner) => result.extend(inner.iter().cloned()),
+                    Value::Range(lo, hi) => {
+                        for i in lo..=hi {
+                            result.push(Value::Int(i));
+                        }
+                    }
+                    other => result.push(other),
                 }
             }
             Ok(Value::List(Arc::new(result)))
@@ -139,13 +194,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.filter_map takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.filter_map requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.filter_map")?;
             let func = &args[1];
             let mut result = Vec::new();
-            for item in xs.iter() {
-                let val = vm.invoke_callable(func, std::slice::from_ref(item))?;
+            for item in iter {
+                let val = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 match val {
                     Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
                         result.push(fields[0].clone());
@@ -161,28 +214,30 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.zip takes 2 arguments".into()));
             }
-            let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("list.zip requires two lists".into()));
-            };
-            let pairs: Vec<Value> = a
-                .iter()
-                .zip(b.iter())
-                .map(|(x, y)| Value::Tuple(vec![x.clone(), y.clone()]))
-                .collect();
+            let mut a = ValueIter::try_from(&args[0], "list.zip")?;
+            let mut b = ValueIter::try_from(&args[1], "list.zip")?;
+            let cap = a.len().min(b.len());
+            let mut pairs = Vec::with_capacity(cap);
+            while let (Some(x), Some(y)) = (a.next(), b.next()) {
+                pairs.push(Value::Tuple(vec![x, y]));
+            }
             Ok(Value::List(Arc::new(pairs)))
         }
         "flatten" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.flatten takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.flatten requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.flatten")?;
             let mut result = Vec::new();
-            for item in xs.iter() {
+            for item in iter {
                 match item {
                     Value::List(inner) => result.extend(inner.iter().cloned()),
-                    other => result.push(other.clone()),
+                    Value::Range(lo, hi) => {
+                        for i in lo..=hi {
+                            result.push(Value::Int(i));
+                        }
+                    }
+                    other => result.push(other),
                 }
             }
             Ok(Value::List(Arc::new(result)))
@@ -191,47 +246,72 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("list.head takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.head requires a list".into()));
-            };
-            match xs.first() {
-                Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+            match &args[0] {
+                Value::List(xs) => match xs.first() {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                },
+                Value::Range(lo, hi) => {
+                    if lo <= hi {
+                        Ok(Value::Variant("Some".into(), vec![Value::Int(*lo)]))
+                    } else {
+                        Ok(Value::Variant("None".into(), Vec::new()))
+                    }
+                }
+                _ => Err(VmError::new("list.head requires a list or range".into())),
             }
         }
         "tail" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.tail takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.tail requires a list".into()));
-            };
-            if xs.is_empty() {
-                Ok(Value::List(Arc::new(Vec::new())))
-            } else {
-                Ok(Value::List(Arc::new(xs[1..].to_vec())))
+            match &args[0] {
+                Value::List(xs) => {
+                    if xs.is_empty() {
+                        Ok(Value::List(Arc::new(Vec::new())))
+                    } else {
+                        Ok(Value::List(Arc::new(xs[1..].to_vec())))
+                    }
+                }
+                Value::Range(lo, hi) => {
+                    if lo >= hi {
+                        Ok(Value::List(Arc::new(Vec::new())))
+                    } else {
+                        Ok(Value::Range(lo + 1, *hi))
+                    }
+                }
+                _ => Err(VmError::new("list.tail requires a list or range".into())),
             }
         }
         "last" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.last takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.last requires a list".into()));
-            };
-            match xs.last() {
-                Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+            match &args[0] {
+                Value::List(xs) => match xs.last() {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                },
+                Value::Range(lo, hi) => {
+                    if lo <= hi {
+                        Ok(Value::Variant("Some".into(), vec![Value::Int(*hi)]))
+                    } else {
+                        Ok(Value::Variant("None".into(), Vec::new()))
+                    }
+                }
+                _ => Err(VmError::new("list.last requires a list or range".into())),
             }
         }
         "reverse" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.reverse takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.reverse requires a list".into()));
-            };
-            let mut v = (**xs).clone();
+            // Range fast path: iterate backwards without materializing then reversing.
+            if let Value::Range(lo, hi) = &args[0] {
+                let items: Vec<Value> = (*lo..=*hi).rev().map(Value::Int).collect();
+                return Ok(Value::List(Arc::new(items)));
+            }
+            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.reverse")?.collect_vec();
             v.reverse();
             Ok(Value::List(Arc::new(v)))
         }
@@ -239,10 +319,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("list.sort takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.sort requires a list".into()));
-            };
-            let mut v = (**xs).clone();
+            // Range is already sorted — return as-is.
+            if matches!(&args[0], Value::Range(..)) {
+                return Ok(args[0].clone());
+            }
+            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.sort")?.collect_vec();
             v.sort();
             Ok(Value::List(Arc::new(v)))
         }
@@ -250,15 +331,17 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("list.unique takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.unique requires a list".into()));
-            };
+            // Range has no duplicates — return as-is.
+            if matches!(&args[0], Value::Range(..)) {
+                return Ok(args[0].clone());
+            }
+            let iter = ValueIter::try_from(&args[0], "list.unique")?;
             let mut seen = Vec::new();
             let mut result = Vec::new();
-            for x in xs.iter() {
-                if !seen.contains(x) {
+            for x in iter {
+                if !seen.contains(&x) {
                     seen.push(x.clone());
-                    result.push(x.clone());
+                    result.push(x);
                 }
             }
             Ok(Value::List(Arc::new(result)))
@@ -267,28 +350,34 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.contains takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.contains requires a list".into()));
-            };
-            Ok(Value::Bool(xs.contains(&args[1])))
+            match &args[0] {
+                Value::List(xs) => Ok(Value::Bool(xs.contains(&args[1]))),
+                Value::Range(lo, hi) => {
+                    if let Value::Int(n) = &args[1] {
+                        Ok(Value::Bool(*n >= *lo && *n <= *hi))
+                    } else {
+                        Ok(Value::Bool(false))
+                    }
+                }
+                _ => Err(VmError::new(
+                    "list.contains requires a list or range".into(),
+                )),
+            }
         }
         "length" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.length takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.length requires a list".into()));
-            };
-            Ok(Value::Int(xs.len() as i64))
+            match args[0].collection_len() {
+                Some(len) => Ok(Value::Int(len as i64)),
+                None => Err(VmError::new("list.length requires a list or range".into())),
+            }
         }
         "append" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.append takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.append requires a list".into()));
-            };
-            let mut v = (**xs).clone();
+            let mut v = ValueIter::try_from(&args[0], "list.append")?.collect_vec();
             v.push(args[1].clone());
             Ok(Value::List(Arc::new(v)))
         }
@@ -296,10 +385,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.prepend takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.prepend requires a list".into()));
-            };
-            let mut v = (**xs).clone();
+            let mut v = ValueIter::try_from(&args[0], "list.prepend")?.collect_vec();
             v.insert(0, args[1].clone());
             Ok(Value::List(Arc::new(v)))
         }
@@ -307,43 +393,49 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.concat takes 2 arguments".into()));
             }
-            let (Value::List(a), Value::List(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("list.concat requires two lists".into()));
-            };
-            let mut v = (**a).clone();
-            v.extend((**b).iter().cloned());
-            Ok(Value::List(Arc::new(v)))
+            let a = ValueIter::try_from(&args[0], "list.concat")?;
+            let b = ValueIter::try_from(&args[1], "list.concat")?;
+            let mut result = Vec::with_capacity(a.len() + b.len());
+            result.extend(a);
+            result.extend(b);
+            Ok(Value::List(Arc::new(result)))
         }
         "get" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.get takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.get requires a list".into()));
-            };
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.get index must be int".into()));
             };
-            match xs.get(*n as usize) {
-                Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
-                None => Ok(Value::Variant("None".into(), Vec::new())),
+            let idx = *n as usize;
+            match &args[0] {
+                Value::List(xs) => match xs.get(idx) {
+                    Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
+                    None => Ok(Value::Variant("None".into(), Vec::new())),
+                },
+                Value::Range(lo, hi) => {
+                    let i = lo + idx as i64;
+                    if i <= *hi {
+                        Ok(Value::Variant("Some".into(), vec![Value::Int(i)]))
+                    } else {
+                        Ok(Value::Variant("None".into(), Vec::new()))
+                    }
+                }
+                _ => Err(VmError::new("list.get requires a list or range".into())),
             }
         }
         "set" => {
             if args.len() != 3 {
                 return Err(VmError::new("list.set takes 3 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.set requires a list".into()));
-            };
+            let mut v = ValueIter::try_from(&args[0], "list.set")?.collect_vec();
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.set index must be int".into()));
             };
             let idx = *n as usize;
-            if idx >= xs.len() {
+            if idx >= v.len() {
                 return Err(VmError::new("list.set index out of bounds".into()));
             }
-            let mut v = (**xs).clone();
             v[idx] = args[2].clone();
             Ok(Value::List(Arc::new(v)))
         }
@@ -351,55 +443,70 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.take takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.take requires a list".into()));
-            };
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.take requires int".into()));
             };
-            let n = (*n as usize).min(xs.len());
-            Ok(Value::List(Arc::new(xs[..n].to_vec())))
+            match &args[0] {
+                Value::List(xs) => {
+                    let n = (*n as usize).min(xs.len());
+                    Ok(Value::List(Arc::new(xs[..n].to_vec())))
+                }
+                Value::Range(lo, hi) => {
+                    let count = *n;
+                    let new_hi = (*lo + count - 1).min(*hi);
+                    if new_hi < *lo {
+                        Ok(Value::List(Arc::new(Vec::new())))
+                    } else {
+                        Ok(Value::Range(*lo, new_hi))
+                    }
+                }
+                _ => Err(VmError::new("list.take requires a list or range".into())),
+            }
         }
         "drop" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.drop takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.drop requires a list".into()));
-            };
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.drop requires int".into()));
             };
-            let n = (*n as usize).min(xs.len());
-            Ok(Value::List(Arc::new(xs[n..].to_vec())))
+            match &args[0] {
+                Value::List(xs) => {
+                    let n = (*n as usize).min(xs.len());
+                    Ok(Value::List(Arc::new(xs[n..].to_vec())))
+                }
+                Value::Range(lo, hi) => {
+                    let new_lo = lo + n;
+                    if new_lo > *hi {
+                        Ok(Value::List(Arc::new(Vec::new())))
+                    } else {
+                        Ok(Value::Range(new_lo, *hi))
+                    }
+                }
+                _ => Err(VmError::new("list.drop requires a list or range".into())),
+            }
         }
         "enumerate" => {
             if args.len() != 1 {
                 return Err(VmError::new("list.enumerate takes 1 argument".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.enumerate requires a list".into()));
-            };
-            let result: Vec<Value> = xs
-                .iter()
-                .enumerate()
-                .map(|(i, v)| Value::Tuple(vec![Value::Int(i as i64), v.clone()]))
-                .collect();
+            let iter = ValueIter::try_from(&args[0], "list.enumerate")?;
+            let mut result = Vec::with_capacity(iter.len());
+            for (i, v) in iter.enumerate() {
+                result.push(Value::Tuple(vec![Value::Int(i as i64), v]));
+            }
             Ok(Value::List(Arc::new(result)))
         }
         "sort_by" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.sort_by takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.sort_by requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.sort_by")?;
             let func = &args[1];
-            // sort_by uses a key function: func(item) -> sort key
-            let mut pairs: Vec<(Value, Value)> = Vec::new();
-            for item in xs.iter() {
-                let key = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                pairs.push((key, item.clone()));
+            let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(iter.len());
+            for item in iter {
+                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
+                pairs.push((key, item));
             }
             pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
@@ -409,25 +516,23 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 3 {
                 return Err(VmError::new("list.fold_until takes 3 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.fold_until requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.fold_until")?;
             let func = &args[2];
             let mut acc = args[1].clone();
-            for item in xs.iter() {
-                let result = vm.invoke_callable(func, &[acc.clone(), item.clone()])?;
+            for item in iter {
+                let result = vm.invoke_callable(func, &[acc.clone(), item])?;
                 match result {
                     Value::Variant(ref tag, ref fields)
                         if tag == "Continue" && fields.len() == 1 =>
                     {
                         acc = fields[0].clone();
                     }
-                    Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
+                    Value::Variant(ref tag, ref fields)
+                        if tag == "Stop" && fields.len() == 1 =>
+                    {
                         return Ok(fields[0].clone());
                     }
-                    _ => {
-                        acc = result;
-                    }
+                    _ => acc = result,
                 }
             }
             Ok(acc)
@@ -468,14 +573,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.group_by takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("list.group_by requires a list".into()));
-            };
+            let iter = ValueIter::try_from(&args[0], "list.group_by")?;
             let func = &args[1];
             let mut groups: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
-            for item in xs.iter() {
-                let key = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                groups.entry(key).or_default().push(item.clone());
+            for item in iter {
+                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
+                groups.entry(key).or_default().push(item);
             }
             let result: BTreeMap<Value, Value> = groups
                 .into_iter()
