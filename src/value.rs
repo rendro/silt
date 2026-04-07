@@ -18,6 +18,7 @@ pub enum Value {
     Bool(bool),
     String(String),
     List(Arc<Vec<Value>>),
+    Range(i64, i64), // inclusive on both ends: start..end
     Map(Arc<BTreeMap<Value, Value>>),
     Set(Arc<BTreeSet<Value>>),
     Tuple(Vec<Value>),
@@ -400,6 +401,7 @@ impl fmt::Debug for Value {
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
             Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
+            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
             Value::Map(m) => f.debug_map().entries(m.iter()).finish(),
             Value::Set(s) => {
                 write!(f, "#[")?;
@@ -470,6 +472,7 @@ impl Value {
                 let items: Vec<String> = xs.iter().map(|v| v.format_silt()).collect();
                 format!("[{}]", items.join(", "))
             }
+            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             Value::Map(m) => {
                 let items: Vec<String> = m
                     .iter()
@@ -508,6 +511,34 @@ impl Value {
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
             Value::Unit => "()".to_string(),
+        }
+    }
+}
+
+impl Value {
+    /// Materialize a Range into a List. Returns self unchanged for non-Range values.
+    pub fn materialize_range(&self) -> Value {
+        match self {
+            Value::Range(lo, hi) => {
+                let items: Vec<Value> = (*lo..=*hi).map(Value::Int).collect();
+                Value::List(Arc::new(items))
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// Get the length of a list or range, if applicable.
+    pub fn collection_len(&self) -> Option<usize> {
+        match self {
+            Value::List(xs) => Some(xs.len()),
+            Value::Range(lo, hi) => {
+                if hi >= lo {
+                    Some((*hi - *lo + 1) as usize)
+                } else {
+                    Some(0)
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -609,6 +640,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::Range(lo, hi) => write!(f, "{lo}..{hi}"),
             Value::Map(m) => {
                 write!(f, "#{{")?;
                 for (i, (k, v)) in m.iter().enumerate() {
@@ -717,6 +749,7 @@ impl PartialEq for Value {
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Range(a1, a2), Value::Range(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
@@ -746,6 +779,7 @@ impl Ord for Value {
                 Value::Float(_) => 3,
                 Value::String(_) => 4,
                 Value::List(_) => 5,
+                Value::Range(..) => 5, // same discriminant as List for ordering
                 Value::Tuple(_) => 6,
                 Value::Map(_) => 7,
                 Value::Set(_) => 8,
@@ -777,6 +811,11 @@ impl Ord for Value {
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
+            (Value::Range(a1, a2), Value::Range(b1, b2)) => a1.cmp(b1).then_with(|| a2.cmp(b2)),
+            // Range vs List: compare by start element
+            (Value::Range(..), Value::List(..)) | (Value::List(..), Value::Range(..)) => {
+                Ordering::Equal
+            }
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
             (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
@@ -919,6 +958,7 @@ impl FromValue for Vec<Value> {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::List(xs) => Ok(xs.as_ref().clone()),
+            Value::Range(lo, hi) => Ok((*lo..=*hi).map(Value::Int).collect()),
             other => Err(format!("expected List, got {}", value_type_name(other))),
         }
     }
@@ -955,6 +995,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Bool(_) => "Bool",
         Value::String(_) => "String",
         Value::List(_) => "List",
+        Value::Range(..) => "Range",
         Value::Map(_) => "Map",
         Value::Set(_) => "Set",
         Value::Tuple(_) => "Tuple",
@@ -983,6 +1024,10 @@ impl Hash for Value {
                 for x in xs.iter() {
                     x.hash(state);
                 }
+            }
+            Value::Range(lo, hi) => {
+                lo.hash(state);
+                hi.hash(state);
             }
             Value::Tuple(vs) => {
                 vs.len().hash(state);

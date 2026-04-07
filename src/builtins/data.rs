@@ -100,6 +100,11 @@ fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::List(xs) => serde_json::Value::Array(xs.iter().map(value_to_json).collect()),
+        Value::Range(lo, hi) => serde_json::Value::Array(
+            (*lo..=*hi)
+                .map(|i| serde_json::Value::Number(i.into()))
+                .collect(),
+        ),
         Value::Map(m) => {
             let obj: serde_json::Map<std::string::String, serde_json::Value> = m
                 .iter()

@@ -1298,19 +1298,63 @@ impl Compiler {
             }
 
             ExprKind::List(elems) => {
-                for elem in elems {
-                    match elem {
-                        ListElem::Single(e) => self.compile_expr(e)?,
-                        ListElem::Spread(_) => {
-                            return Err(
-                                "spread in list literals not yet supported in compiler".into()
-                            );
+                let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
+                if !has_spread {
+                    // Fast path: no spreads, just compile all singles
+                    for elem in elems {
+                        if let ListElem::Single(e) = elem {
+                            self.compile_expr(e)?;
                         }
                     }
+                    let count = elems.len() as u16;
+                    self.current_chunk().emit_op(Op::MakeList, span);
+                    self.current_chunk().emit_u16(count, span);
+                } else {
+                    // Spread path: group consecutive singles into segments,
+                    // compile each spread, and ListConcat them together.
+                    let mut have_accumulated = false;
+                    let mut single_count: u16 = 0;
+
+                    for elem in elems {
+                        match elem {
+                            ListElem::Single(e) => {
+                                self.compile_expr(e)?;
+                                single_count += 1;
+                            }
+                            ListElem::Spread(e) => {
+                                // Flush any pending singles as a MakeList
+                                if single_count > 0 {
+                                    self.current_chunk().emit_op(Op::MakeList, span);
+                                    self.current_chunk().emit_u16(single_count, span);
+                                    if have_accumulated {
+                                        self.current_chunk().emit_op(Op::ListConcat, span);
+                                    }
+                                    have_accumulated = true;
+                                    single_count = 0;
+                                }
+                                // Compile the spread expression (should be a list or range)
+                                self.compile_expr(e)?;
+                                if have_accumulated {
+                                    self.current_chunk().emit_op(Op::ListConcat, span);
+                                } else {
+                                    have_accumulated = true;
+                                }
+                            }
+                        }
+                    }
+                    // Flush any trailing singles
+                    if single_count > 0 {
+                        self.current_chunk().emit_op(Op::MakeList, span);
+                        self.current_chunk().emit_u16(single_count, span);
+                        if have_accumulated {
+                            self.current_chunk().emit_op(Op::ListConcat, span);
+                        }
+                    } else if !have_accumulated {
+                        // Edge case: empty list with spreads (shouldn't happen, but be safe)
+                        self.current_chunk().emit_op(Op::MakeList, span);
+                        self.current_chunk().emit_u16(0, span);
+                    }
                 }
-                let count = elems.len() as u16;
-                self.current_chunk().emit_op(Op::MakeList, span);
-                self.current_chunk().emit_u16(count, span);
             }
 
             ExprKind::Map(pairs) => {

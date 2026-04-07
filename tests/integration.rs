@@ -105,7 +105,7 @@ fn fizzbuzz(n) {
 }
 
 fn main() {
-  1..101
+  1..100
   |> list.map { n -> fizzbuzz(n) }
   |> list.each { s -> println(s) }
 }
@@ -1244,7 +1244,7 @@ fn sum_helper(xs, acc) {
   }
 }
 fn main() {
-  sum_helper(1..1001, 0)
+  sum_helper(1..1000, 0)
 }
     "#);
     assert_eq!(result, Value::Int(500500));

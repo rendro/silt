@@ -1066,13 +1066,35 @@ impl Vm {
                     let start = self.pop()?;
                     match (&start, &end) {
                         (Value::Int(a), Value::Int(b)) => {
-                            let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
-                            self.push(Value::List(Arc::new(items)));
+                            self.push(Value::Range(*a, *b));
                         }
                         _ => {
                             return Err(VmError::new("range requires two integers".to_string()));
                         }
                     }
+                }
+                Some(Op::ListConcat) => {
+                    let b = self.pop()?;
+                    let a = self.pop()?;
+                    let mut result = match a {
+                        Value::List(xs) => xs.as_ref().clone(),
+                        Value::Range(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+                        _ => {
+                            return Err(VmError::new(
+                                "ListConcat: left operand is not a list or range".into(),
+                            ));
+                        }
+                    };
+                    match b {
+                        Value::List(xs) => result.extend(xs.iter().cloned()),
+                        Value::Range(lo, hi) => result.extend((lo..=hi).map(Value::Int)),
+                        _ => {
+                            return Err(VmError::new(
+                                "ListConcat: right operand is not a list or range".into(),
+                            ));
+                        }
+                    }
+                    self.push(Value::List(Arc::new(result)));
                 }
 
                 // ── Field access ──────────────────────────────
@@ -1190,13 +1212,13 @@ impl Vm {
                 Some(Op::TestListMin) => {
                     let min_len = self.read_u8()? as usize;
                     let val = self.peek()?;
-                    let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
+                    let result = val.collection_len().map_or(false, |len| len >= min_len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestListExact) => {
                     let len = self.read_u8()? as usize;
                     let val = self.peek()?;
-                    let result = matches!(val, Value::List(xs) if xs.len() == len);
+                    let result = val.collection_len().map_or(false, |l| l == len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestIntRange) => {
@@ -1260,6 +1282,13 @@ impl Vm {
                         Value::List(xs) => {
                             self.push(xs[index].clone());
                         }
+                        Value::Range(lo, hi) => {
+                            let i = lo + index as i64;
+                            if i > hi {
+                                return Err(VmError::new("range index out of bounds".to_string()));
+                            }
+                            self.push(Value::Int(i));
+                        }
                         _ => return Err(VmError::new("DestructList on non-list".to_string())),
                     }
                 }
@@ -1270,6 +1299,14 @@ impl Vm {
                         Value::List(xs) => {
                             let rest: Vec<Value> = xs[start..].to_vec();
                             self.push(Value::List(Arc::new(rest)));
+                        }
+                        Value::Range(lo, hi) => {
+                            let new_lo = lo + start as i64;
+                            if new_lo > hi + 1 {
+                                self.push(Value::List(Arc::new(Vec::new())));
+                            } else {
+                                self.push(Value::Range(new_lo, hi));
+                            }
                         }
                         _ => return Err(VmError::new("DestructListRest on non-list".to_string())),
                     }
@@ -1987,11 +2024,33 @@ impl Vm {
                 let end = self.pop()?;
                 let start = self.pop()?;
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
-                    let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
-                    self.push(Value::List(Arc::new(items)));
+                    self.push(Value::Range(*a, *b));
                 } else {
                     return Err(VmError::new("range requires two integers".into()));
                 }
+            }
+            Op::ListConcat => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let mut result = match a {
+                    Value::List(xs) => xs.as_ref().clone(),
+                    Value::Range(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+                    _ => {
+                        return Err(VmError::new(
+                            "ListConcat: left operand is not a list or range".into(),
+                        ));
+                    }
+                };
+                match b {
+                    Value::List(xs) => result.extend(xs.iter().cloned()),
+                    Value::Range(lo, hi) => result.extend((lo..=hi).map(Value::Int)),
+                    _ => {
+                        return Err(VmError::new(
+                            "ListConcat: right operand is not a list or range".into(),
+                        ));
+                    }
+                }
+                self.push(Value::List(Arc::new(result)));
             }
             Op::GetField => {
                 let name_index = self.read_u16()? as usize;
@@ -2094,13 +2153,13 @@ impl Vm {
             Op::TestListMin => {
                 let min_len = self.read_u8()? as usize;
                 let val = self.peek()?;
-                let result = matches!(val, Value::List(xs) if xs.len() >= min_len);
+                let result = val.collection_len().map_or(false, |len| len >= min_len);
                 self.push(Value::Bool(result));
             }
             Op::TestListExact => {
                 let len = self.read_u8()? as usize;
                 let val = self.peek()?;
-                let result = matches!(val, Value::List(xs) if xs.len() == len);
+                let result = val.collection_len().map_or(false, |l| l == len);
                 self.push(Value::Bool(result));
             }
             Op::TestIntRange => {
@@ -2154,19 +2213,32 @@ impl Vm {
             Op::DestructList => {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::List(xs) = val {
-                    self.push(xs[index].clone());
-                } else {
-                    return Err(VmError::new("DestructList on non-list".into()));
+                match val {
+                    Value::List(xs) => self.push(xs[index].clone()),
+                    Value::Range(lo, hi) => {
+                        let i = lo + index as i64;
+                        if i > hi {
+                            return Err(VmError::new("range index out of bounds".into()));
+                        }
+                        self.push(Value::Int(i));
+                    }
+                    _ => return Err(VmError::new("DestructList on non-list".into())),
                 }
             }
             Op::DestructListRest => {
                 let start = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::List(xs) = val {
-                    self.push(Value::List(Arc::new(xs[start..].to_vec())));
-                } else {
-                    return Err(VmError::new("DestructListRest on non-list".into()));
+                match val {
+                    Value::List(xs) => self.push(Value::List(Arc::new(xs[start..].to_vec()))),
+                    Value::Range(lo, hi) => {
+                        let new_lo = lo + start as i64;
+                        if new_lo > hi + 1 {
+                            self.push(Value::List(Arc::new(Vec::new())));
+                        } else {
+                            self.push(Value::Range(new_lo, hi));
+                        }
+                    }
+                    _ => return Err(VmError::new("DestructListRest on non-list".into())),
                 }
             }
             Op::DestructRecordField => {
@@ -2550,6 +2622,7 @@ impl Vm {
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
             Value::Float(f) => f.to_string(),
+            Value::Range(lo, hi) => format!("{lo}..{hi}"),
             _ => format!("{val}"),
         }
     }
@@ -2568,6 +2641,7 @@ impl Vm {
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
+            Value::Range(..) => "Range",
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",
             Value::Tuple(_) => "Tuple",
@@ -2594,7 +2668,7 @@ impl Vm {
             Value::Float(_) => 1,
             Value::Bool(_) => 2,
             Value::String(_) => 3,
-            Value::List(_) => 4,
+            Value::List(_) | Value::Range(..) => 4,
             Value::Map(_) => 5,
             Value::Set(_) => 6,
             Value::Tuple(_) => 7,
@@ -4590,12 +4664,13 @@ mod tests {
 
     #[test]
     fn test_range_expression() {
+        // 1..5 inclusive = [1, 2, 3, 4, 5], sum = 15
         let result = run_vm(
             r#"
             import list
 
             fn main() {
-                let nums = 1..6
+                let nums = 1..5
                 nums |> list.fold(0) { acc, n -> acc + n }
             }
         "#,

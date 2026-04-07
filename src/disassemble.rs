@@ -64,6 +64,7 @@ fn op_from_byte(byte: u8) -> Option<Op> {
         b if b == Op::MakeVariant as u8 => Op::MakeVariant,
         b if b == Op::RecordUpdate as u8 => Op::RecordUpdate,
         b if b == Op::MakeRange as u8 => Op::MakeRange,
+        b if b == Op::ListConcat as u8 => Op::ListConcat,
 
         b if b == Op::GetField as u8 => Op::GetField,
         b if b == Op::GetIndex as u8 => Op::GetIndex,
@@ -158,6 +159,7 @@ fn op_name(op: Op) -> &'static str {
         Op::MakeVariant => "MakeVariant",
         Op::RecordUpdate => "RecordUpdate",
         Op::MakeRange => "MakeRange",
+        Op::ListConcat => "ListConcat",
         Op::GetField => "GetField",
         Op::GetIndex => "GetIndex",
         Op::Jump => "Jump",
@@ -258,6 +260,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         | Op::Pop
         | Op::Dup
         | Op::MakeRange
+        | Op::ListConcat
         | Op::QuestionMark
         | Op::Panic
         | Op::ChanNew
@@ -730,6 +733,7 @@ mod tests {
             Op::MakeVariant,
             Op::RecordUpdate,
             Op::MakeRange,
+            Op::ListConcat,
             Op::GetField,
             Op::GetIndex,
             Op::Jump,

@@ -1072,10 +1072,12 @@ let x = 42  -- inline comment
 
 ## Ranges
 
-The `..` operator creates a range for generating sequences:
+The `..` operator creates an inclusive range. `1..10` includes both 1 and 10.
+Ranges are lazy — they don't allocate memory until iterated, so `1..1000000`
+is cheap. All `list.*` functions work on ranges directly.
 
 ```silt
-1..11
+1..10
 |> list.map { n -> n * n }
 |> list.each { n -> println("{n}") }
 ```
@@ -1191,7 +1193,7 @@ fn fizzbuzz(n) {
 }
 
 fn main() {
-  1..101
+  1..100
   |> list.map { n -> fizzbuzz(n) }
   |> list.each { s -> println(s) }
 }

@@ -101,8 +101,10 @@ pub enum Op {
     MakeVariant, // operands: u16 name_index, u8 field_count
     /// Functional record update.
     RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
-    /// Create a range list from two ints on the stack.
+    /// Create a lazy range (inclusive) from two ints on the stack.
     MakeRange,
+    /// Concatenate two lists/ranges on the stack into a single list.
+    ListConcat,
 
     // ── Field access ───────────────────────────────────────────
     /// Access a field by name from TOS.

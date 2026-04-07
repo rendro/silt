@@ -78,15 +78,16 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("string.join takes 2 arguments".into()));
             }
-            let Value::List(xs) = &args[0] else {
-                return Err(VmError::new("string.join requires a list".into()));
-            };
             let Value::String(sep) = &args[1] else {
                 return Err(VmError::new(
                     "string.join separator must be a string".into(),
                 ));
             };
-            let strs: Vec<String> = xs.iter().map(|v| v.to_string()).collect();
+            let strs: Vec<String> = match &args[0] {
+                Value::List(xs) => xs.iter().map(|v| v.to_string()).collect(),
+                Value::Range(lo, hi) => (*lo..=*hi).map(|i| i.to_string()).collect(),
+                _ => return Err(VmError::new("string.join requires a list or range".into())),
+            };
             Ok(Value::String(strs.join(sep.as_str())))
         }
         "length" => {
