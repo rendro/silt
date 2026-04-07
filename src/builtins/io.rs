@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{BlockReason, Vm, VmError};
 
 /// Dispatch `io.<name>(args)`.
-pub fn call(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "inspect" => {
             if args.len() != 1 {
@@ -21,6 +21,39 @@ pub fn call(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(path) = &args[0] else {
                 return Err(VmError::new("io.read_file requires a string path".into()));
             };
+
+            if vm.is_scheduled_task {
+                // Check for pending completion from a previous yield
+                if let Some(completion) = vm.pending_io.take() {
+                    if let Some(result) = completion.try_get() {
+                        return Ok(result);
+                    }
+                    // Not ready yet — re-park
+                    vm.pending_io = Some(completion.clone());
+                    vm.block_reason = Some(BlockReason::Io(completion));
+                    for arg in args {
+                        vm.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+                // First call — submit to I/O pool
+                let path = path.clone();
+                let completion = vm.runtime.io_pool.submit(move || {
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => Value::Variant("Ok".into(), vec![Value::String(content)]),
+                        Err(e) => {
+                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                        }
+                    }
+                });
+                vm.pending_io = Some(completion.clone());
+                vm.block_reason = Some(BlockReason::Io(completion));
+                for arg in args {
+                    vm.push(arg.clone());
+                }
+                return Err(VmError::yield_signal());
+            }
+            // Main thread: synchronous fallback
             match std::fs::read_to_string(path) {
                 Ok(content) => Ok(Value::Variant("Ok".into(), vec![Value::String(content)])),
                 Err(e) => Ok(Value::Variant(
@@ -38,6 +71,40 @@ pub fn call(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "io.write_file requires string arguments".into(),
                 ));
             };
+
+            if vm.is_scheduled_task {
+                // Check for pending completion from a previous yield
+                if let Some(completion) = vm.pending_io.take() {
+                    if let Some(result) = completion.try_get() {
+                        return Ok(result);
+                    }
+                    // Not ready yet — re-park
+                    vm.pending_io = Some(completion.clone());
+                    vm.block_reason = Some(BlockReason::Io(completion));
+                    for arg in args {
+                        vm.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+                // First call — submit to I/O pool
+                let path = path.clone();
+                let content = content.clone();
+                let completion = vm.runtime.io_pool.submit(move || {
+                    match std::fs::write(&path, &content) {
+                        Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
+                        Err(e) => {
+                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                        }
+                    }
+                });
+                vm.pending_io = Some(completion.clone());
+                vm.block_reason = Some(BlockReason::Io(completion));
+                for arg in args {
+                    vm.push(arg.clone());
+                }
+                return Err(VmError::yield_signal());
+            }
+            // Main thread: synchronous fallback
             match std::fs::write(path, content) {
                 Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
                 Err(e) => Ok(Value::Variant(
@@ -47,6 +114,41 @@ pub fn call(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "read_line" => {
+            if vm.is_scheduled_task {
+                // Check for pending completion from a previous yield
+                if let Some(completion) = vm.pending_io.take() {
+                    if let Some(result) = completion.try_get() {
+                        return Ok(result);
+                    }
+                    // Not ready yet — re-park
+                    vm.pending_io = Some(completion.clone());
+                    vm.block_reason = Some(BlockReason::Io(completion));
+                    for arg in args {
+                        vm.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+                // First call — submit to I/O pool
+                let completion = vm.runtime.io_pool.submit(move || {
+                    let mut line = String::new();
+                    match std::io::stdin().read_line(&mut line) {
+                        Ok(_) => Value::Variant(
+                            "Ok".into(),
+                            vec![Value::String(line.trim_end().to_string())],
+                        ),
+                        Err(e) => {
+                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                        }
+                    }
+                });
+                vm.pending_io = Some(completion.clone());
+                vm.block_reason = Some(BlockReason::Io(completion));
+                for arg in args {
+                    vm.push(arg.clone());
+                }
+                return Err(VmError::yield_signal());
+            }
+            // Main thread: synchronous fallback
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
                 Ok(_) => Ok(Value::Variant(

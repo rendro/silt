@@ -7,7 +7,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use crate::value::Value;
-use crate::vm::{Vm, VmError};
+use crate::vm::{BlockReason, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
 
@@ -1446,6 +1446,114 @@ fn ureq_response_to_value(
     Ok(make_http_response(status, headers, body))
 }
 
+/// Perform a synchronous HTTP GET and return a `Value`.
+#[cfg(feature = "http")]
+fn do_http_get(url: &str) -> Value {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    match agent.get(url).call() {
+        Ok(response) => match ureq_response_to_value(response) {
+            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
+            Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
+        },
+        Err(e) => Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]),
+    }
+}
+
+/// Perform a synchronous HTTP request and return a `Value`.
+#[cfg(feature = "http")]
+fn do_http_request(
+    method_tag: &str,
+    url: &str,
+    body: &str,
+    headers: &[(String, String)],
+) -> Value {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    let result = match method_tag {
+        "POST" => {
+            let mut req = agent.post(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            if body.is_empty() {
+                req.send_empty()
+            } else {
+                req.send(body)
+            }
+        }
+        "PUT" => {
+            let mut req = agent.put(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            if body.is_empty() {
+                req.send_empty()
+            } else {
+                req.send(body)
+            }
+        }
+        "PATCH" => {
+            let mut req = agent.patch(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            if body.is_empty() {
+                req.send_empty()
+            } else {
+                req.send(body)
+            }
+        }
+        "GET" => {
+            let mut req = agent.get(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            req.call()
+        }
+        "DELETE" => {
+            let mut req = agent.delete(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            req.call()
+        }
+        "HEAD" => {
+            let mut req = agent.head(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            req.call()
+        }
+        "OPTIONS" => {
+            let mut req = agent.options(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            req.call()
+        }
+        other => {
+            return Value::Variant(
+                "Err".into(),
+                vec![Value::String(format!("http.request: unknown method: {other}"))],
+            );
+        }
+    };
+
+    match result {
+        Ok(response) => match ureq_response_to_value(response) {
+            Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
+            Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
+        },
+        Err(e) => Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]),
+    }
+}
+
 /// Dispatch `http.<name>(args)`.
 pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -1458,20 +1566,33 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 let Value::String(url) = &args[0] else {
                     return Err(VmError::new("http.get requires a String url".into()));
                 };
-                let agent: ureq::Agent = ureq::Agent::config_builder()
-                    .http_status_as_error(false)
-                    .build()
-                    .into();
-                match agent.get(url).call() {
-                    Ok(response) => {
-                        let resp = ureq_response_to_value(response)?;
-                        Ok(Value::Variant("Ok".into(), vec![resp]))
+
+                if vm.is_scheduled_task {
+                    // Check for pending completion from a previous yield
+                    if let Some(completion) = vm.pending_io.take() {
+                        if let Some(result) = completion.try_get() {
+                            return Ok(result);
+                        }
+                        // Not ready yet — re-park
+                        vm.pending_io = Some(completion.clone());
+                        vm.block_reason = Some(BlockReason::Io(completion));
+                        for arg in args {
+                            vm.push(arg.clone());
+                        }
+                        return Err(VmError::yield_signal());
                     }
-                    Err(e) => Ok(Value::Variant(
-                        "Err".into(),
-                        vec![Value::String(format!("{e}"))],
-                    )),
+                    // First call — submit to I/O pool
+                    let url = url.clone();
+                    let completion = vm.runtime.io_pool.submit(move || do_http_get(&url));
+                    vm.pending_io = Some(completion.clone());
+                    vm.block_reason = Some(BlockReason::Io(completion));
+                    for arg in args {
+                        vm.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
                 }
+                // Main thread: synchronous fallback
+                Ok(do_http_get(url))
             }
             #[cfg(not(feature = "http"))]
             {
@@ -1506,105 +1627,57 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.request: headers must be a Map".into()));
                 };
 
-                let agent: ureq::Agent = ureq::Agent::config_builder()
-                    .http_status_as_error(false)
-                    .build()
-                    .into();
-
-                // Methods split into WithBody (POST/PUT/PATCH) and WithoutBody (GET/DELETE/HEAD/OPTIONS)
-                let result = match method_tag.as_str() {
-                    "POST" => {
-                        let mut req = agent.post(url);
-                        for (k, v) in header_map.iter() {
+                if vm.is_scheduled_task {
+                    // Check for pending completion from a previous yield
+                    if let Some(completion) = vm.pending_io.take() {
+                        if let Some(result) = completion.try_get() {
+                            return Ok(result);
+                        }
+                        // Not ready yet — re-park
+                        vm.pending_io = Some(completion.clone());
+                        vm.block_reason = Some(BlockReason::Io(completion));
+                        for arg in args {
+                            vm.push(arg.clone());
+                        }
+                        return Err(VmError::yield_signal());
+                    }
+                    // First call — submit to I/O pool
+                    let method_tag = method_tag.clone();
+                    let url = url.clone();
+                    let body = body.clone();
+                    let headers: Vec<(String, String)> = header_map
+                        .iter()
+                        .filter_map(|(k, v)| {
                             if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
+                                Some((key.clone(), val.clone()))
+                            } else {
+                                None
                             }
-                        }
-                        if body.is_empty() {
-                            req.send_empty()
-                        } else {
-                            req.send(body.as_str())
-                        }
+                        })
+                        .collect();
+                    let completion = vm.runtime.io_pool.submit(move || {
+                        do_http_request(&method_tag, &url, &body, &headers)
+                    });
+                    vm.pending_io = Some(completion.clone());
+                    vm.block_reason = Some(BlockReason::Io(completion));
+                    for arg in args {
+                        vm.push(arg.clone());
                     }
-                    "PUT" => {
-                        let mut req = agent.put(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        if body.is_empty() {
-                            req.send_empty()
-                        } else {
-                            req.send(body.as_str())
-                        }
-                    }
-                    "PATCH" => {
-                        let mut req = agent.patch(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        if body.is_empty() {
-                            req.send_empty()
-                        } else {
-                            req.send(body.as_str())
-                        }
-                    }
-                    "GET" => {
-                        let mut req = agent.get(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        req.call()
-                    }
-                    "DELETE" => {
-                        let mut req = agent.delete(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        req.call()
-                    }
-                    "HEAD" => {
-                        let mut req = agent.head(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        req.call()
-                    }
-                    "OPTIONS" => {
-                        let mut req = agent.options(url);
-                        for (k, v) in header_map.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                req = req.header(key.as_str(), val.as_str());
-                            }
-                        }
-                        req.call()
-                    }
-                    other => {
-                        return Err(VmError::new(format!(
-                            "http.request: unknown method: {other}"
-                        )));
-                    }
-                };
-
-                match result {
-                    Ok(response) => {
-                        let resp = ureq_response_to_value(response)?;
-                        Ok(Value::Variant("Ok".into(), vec![resp]))
-                    }
-                    Err(e) => Ok(Value::Variant(
-                        "Err".into(),
-                        vec![Value::String(format!("{e}"))],
-                    )),
+                    return Err(VmError::yield_signal());
                 }
+
+                // Main thread: synchronous fallback
+                let headers: Vec<(String, String)> = header_map
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if let (Value::String(key), Value::String(val)) = (k, v) {
+                            Some((key.clone(), val.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(do_http_request(method_tag, url, body, &headers))
             }
             #[cfg(not(feature = "http"))]
             {

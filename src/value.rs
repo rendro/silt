@@ -393,6 +393,75 @@ impl TaskHandle {
     }
 }
 
+/// Completion handle for async I/O operations.
+pub struct IoCompletion {
+    result: Mutex<Option<Value>>,
+    condvar: Condvar,
+    wakers: Mutex<Vec<Waker>>,
+}
+
+impl IoCompletion {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            result: Mutex::new(None),
+            condvar: Condvar::new(),
+            wakers: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Store the I/O result and notify all waiters.
+    pub fn complete(&self, value: Value) {
+        {
+            let mut guard = self.result.lock().unwrap();
+            *guard = Some(value);
+        }
+        self.condvar.notify_all();
+        let wakers: Vec<Waker> = {
+            let mut guard = self.wakers.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+        for w in wakers {
+            w();
+        }
+    }
+
+    /// Non-blocking poll.
+    pub fn try_get(&self) -> Option<Value> {
+        self.result.lock().unwrap().clone()
+    }
+
+    /// Blocking wait (for main thread).
+    pub fn wait(&self) -> Value {
+        let mut guard = self.result.lock().unwrap();
+        loop {
+            if let Some(result) = guard.take() {
+                return result;
+            }
+            guard = self.condvar.wait(guard).unwrap();
+        }
+    }
+
+    /// Register a waker with double-check pattern (prevents missed wakeups).
+    pub fn register_waker(&self, waker: Waker) {
+        let already_done = self.result.lock().unwrap().is_some();
+        if already_done {
+            waker();
+        } else {
+            self.wakers.lock().unwrap().push(waker);
+            // Double-check: result may have arrived between check and push
+            if self.result.lock().unwrap().is_some() {
+                let wakers: Vec<Waker> = {
+                    let mut guard = self.wakers.lock().unwrap();
+                    std::mem::take(&mut *guard)
+                };
+                for w in wakers {
+                    w();
+                }
+            }
+        }
+    }
+}
+
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

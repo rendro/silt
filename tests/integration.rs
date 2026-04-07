@@ -7620,3 +7620,59 @@ fn main() {
     );
     assert_eq!(result, Value::Int(42));
 }
+
+// ── Async I/O tests ────────────────────────────────────────────────
+
+#[test]
+fn test_async_io_read_file_in_task() {
+    let input = r#"
+import io
+import task
+
+fn main() {
+  io.write_file("/tmp/silt_test_async.txt", "hello async")
+  let h = task.spawn(fn() {
+    io.read_file("/tmp/silt_test_async.txt")
+  })
+  task.join(h)
+}
+"#;
+    let result = run(input);
+    assert!(
+        matches!(result, Value::Variant(ref tag, ref args) if tag == "Ok" && args[0] == Value::String("hello async".into())),
+        "expected Ok(\"hello async\"), got {result:?}"
+    );
+}
+
+#[test]
+fn test_async_io_parallel_reads() {
+    let input = r#"
+import io
+import task
+
+fn main() {
+  io.write_file("/tmp/silt_a.txt", "aaa")
+  io.write_file("/tmp/silt_b.txt", "bbb")
+  let h1 = task.spawn(fn() { io.read_file("/tmp/silt_a.txt") })
+  let h2 = task.spawn(fn() { io.read_file("/tmp/silt_b.txt") })
+  let a = task.join(h1)
+  let b = task.join(h2)
+  (a, b)
+}
+"#;
+    let result = run(input);
+    if let Value::Tuple(elems) = &result {
+        assert!(
+            matches!(&elems[0], Value::Variant(tag, _) if tag == "Ok"),
+            "expected Ok for first read, got {:?}",
+            elems[0]
+        );
+        assert!(
+            matches!(&elems[1], Value::Variant(tag, _) if tag == "Ok"),
+            "expected Ok for second read, got {:?}",
+            elems[1]
+        );
+    } else {
+        panic!("expected tuple, got {result:?}");
+    }
+}

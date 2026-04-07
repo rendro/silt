@@ -15,7 +15,7 @@ use crate::builtins::data::FieldType;
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
 use crate::scheduler::{Scheduler, SliceResult};
-use crate::value::{Channel, FromValue, IntoValue, TaskHandle, Value};
+use crate::value::{Channel, FromValue, IntoValue, IoCompletion, TaskHandle, Value};
 
 /// Type alias for foreign (Rust-side) functions registered with the VM.
 type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
@@ -88,6 +88,8 @@ pub(crate) enum BlockReason {
     Select(Vec<(Arc<Channel>, SelectOpKind)>),
     /// Blocked on task.join (target task not yet complete).
     Join(Arc<TaskHandle>),
+    /// Blocked on I/O completion.
+    Io(Arc<IoCompletion>),
 }
 
 // ── Timer manager (shared single-thread timer wheel) ────────────
@@ -144,6 +146,48 @@ impl TimerManager {
     }
 }
 
+// ── I/O thread pool ─────────────────────────────────────────────
+
+pub(crate) struct IoPool {
+    sender: std::sync::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+}
+
+impl IoPool {
+    fn new(num_threads: usize) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let rx = Arc::new(std::sync::Mutex::new(rx));
+        for _ in 0..num_threads {
+            let rx = rx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let task = {
+                        let rx = rx.lock().unwrap();
+                        rx.recv()
+                    };
+                    match task {
+                        Ok(f) => f(),
+                        Err(_) => break, // Channel closed
+                    }
+                }
+            });
+        }
+        IoPool {
+            sender: std::sync::Mutex::new(tx),
+        }
+    }
+
+    /// Submit a blocking I/O operation. Returns a completion handle.
+    pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
+        let completion = IoCompletion::new();
+        let completion2 = completion.clone();
+        let _ = self.sender.lock().unwrap().send(Box::new(move || {
+            let result = f();
+            completion2.complete(result);
+        }));
+        completion
+    }
+}
+
 // ── Runtime (shared state) ───────────────────────────────────────
 
 /// Shared, read-only-after-init state for a Silt program.
@@ -163,6 +207,10 @@ pub struct Runtime {
     // ── Timer manager ──────────────────────────────────────────
     /// Shared timer thread for `channel.timeout`.
     pub(crate) timer: TimerManager,
+
+    // ── I/O pool ────────────────────────────────────────────────
+    /// Thread pool for async I/O operations.
+    pub(crate) io_pool: IoPool,
 }
 
 // ── Regex cache ──────────────────────────────────────────────────
@@ -229,6 +277,8 @@ pub struct Vm {
     pub(crate) block_reason: Option<BlockReason>,
     /// True when this VM is running as a scheduled task (not on the main thread).
     pub(crate) is_scheduled_task: bool,
+    /// Pending I/O completion handle (persists across yield/re-execute).
+    pub(crate) pending_io: Option<Arc<IoCompletion>>,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, LRU-like eviction).
@@ -249,6 +299,11 @@ impl Vm {
                 foreign_fns: HashMap::new(),
                 scheduler: std::sync::Mutex::new(None),
                 timer: TimerManager::new(),
+                io_pool: IoPool::new(
+                    std::thread::available_parallelism()
+                        .map(|n| n.get().min(4))
+                        .unwrap_or(2),
+                ),
             }),
             frames: Vec::new(),
             stack: Vec::new(),
@@ -258,6 +313,7 @@ impl Vm {
             next_task_id: 0,
             block_reason: None,
             is_scheduled_task: false,
+            pending_io: None,
             regex_cache: RegexCache::new(),
         };
         vm.register_builtins();
@@ -384,6 +440,7 @@ impl Vm {
             next_task_id: self.next_task_id,
             block_reason: None,
             is_scheduled_task: false,
+            pending_io: None,
             regex_cache: RegexCache::new(),
         }
     }
