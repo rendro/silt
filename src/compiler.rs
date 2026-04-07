@@ -1393,6 +1393,10 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::QuestionMark, span);
             }
 
+            ExprKind::Ascription(inner, _) => {
+                self.compile_expr(inner)?;
+            }
+
             ExprKind::RecordCreate { name, fields } => {
                 // Push field values in order
                 let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();

@@ -609,6 +609,10 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             format!("{}?", format_expr(expr, depth))
         }
 
+        ExprKind::Ascription(expr, ty) => {
+            format!("{} as {}", format_expr(expr, depth), format_type_expr(ty))
+        }
+
         ExprKind::Call(callee, args) => {
             let callee_str = format_expr(callee, depth);
             // Trailing closure detection: if last arg is a lambda, format differently
