@@ -9,7 +9,8 @@ description: "silt's CSP concurrency model: parallel tasks, typed channels, sele
 Silt provides built-in concurrency based on CSP (Communicating Sequential
 Processes). Tasks communicate through channels. There is no shared mutable
 state -- every value in silt is immutable, so sending a value through a channel
-is always safe. Tasks run in parallel.
+is always safe. Tasks are lightweight and run in parallel on a fixed thread
+pool.
 
 All concurrency primitives live in two modules: `channel` and `task`. There are
 no concurrency keywords.
@@ -57,9 +58,12 @@ fit:
 | **Actors** | Each actor has private state, communicates via mailboxes | Untyped messages, hard to do request/response |
 | **CSP (silt)** | Independent tasks, typed channels, `channel.select` | No shared state (by design), real parallelism |
 
-Like Go's goroutines, `task.spawn` runs its function in parallel. Tasks
-coordinate through channels. Since all silt values are immutable, there are
-no data races — channels are the sole communication mechanism.
+Like Go's goroutines, `task.spawn` creates a lightweight task that runs in
+parallel. Tasks are multiplexed onto a fixed-size thread pool (one thread per
+CPU core), so spawning is cheap and you can run thousands of concurrent tasks
+efficiently. Tasks coordinate through channels. Since all silt values are
+immutable, there are no data races -- channels are the sole communication
+mechanism.
 
 
 ## 2. Channels
@@ -92,8 +96,9 @@ channel.send(ch, [1, 2, 3])
 ```
 
 `channel.send` places a value into the channel's buffer. If the buffer is full,
-the current task blocks: the scheduler runs other pending tasks to drain the
-channel, then retries. If the channel is closed, sending is an error.
+the current task is parked until space opens up. The OS thread is not blocked --
+it runs other tasks in the meantime. If the channel is closed, sending is an
+error.
 
 Returns `Unit`.
 
@@ -110,8 +115,9 @@ two variants:
 - `Closed` -- the channel is closed and the buffer is empty. No more values
   will ever arrive.
 
-If the buffer is empty but the channel is still open, the current task blocks:
-the scheduler runs other pending tasks to produce a value, then retries.
+If the buffer is empty but the channel is still open, the current task is
+parked until a value arrives. The OS thread is not blocked -- it runs other
+tasks in the meantime.
 
 Before attempting to receive, the scheduler yields to other tasks so that
 competing receivers get a fair turn (round-robin fan-out).
@@ -179,10 +185,11 @@ channel.each(ch) { msg ->
 
 `channel.each` calls a function for each value received from the channel and
 returns `Unit` when the channel closes. It is the channel equivalent of
-`list.each`.
+`list.each`. When the channel is empty, the task is parked until new data
+arrives.
 
 After processing each message, `channel.each` yields to the scheduler so that
-other tasks blocked on the same channel get a fair turn. This is the mechanism
+other tasks waiting on the same channel get a fair turn. This is the mechanism
 behind round-robin fan-out (see Section 5).
 
 ### Unbuffered channels
@@ -205,9 +212,9 @@ let handle = task.spawn(fn() {
 })
 ```
 
-`task.spawn` takes a zero-argument function and registers it as a concurrent
-task in the scheduler. It returns a `Handle` value immediately -- the task does
-not start executing until the scheduler runs it.
+`task.spawn` takes a zero-argument function and submits it as a lightweight task
+to the thread pool. Spawning is cheap -- it allocates a stack and frames, not an
+OS thread. It returns a `Handle` value immediately.
 
 The function is a closure: it captures variables from the surrounding scope.
 Since all values in silt are immutable, sharing captured variables between the
@@ -234,9 +241,9 @@ let h = task.spawn(fn() { 42 })
 let result = task.join(h)  -- result = 42
 ```
 
-`task.join` blocks the current task until the spawned task completes, then
+`task.join` parks the current task until the spawned task completes, then
 returns its result -- the value of the last expression in the spawned function's
-body. While waiting, the scheduler runs other pending tasks.
+body. While waiting, the OS thread runs other tasks.
 
 If the spawned task failed with a runtime error, `task.join` propagates the
 error.
@@ -333,11 +340,11 @@ match channel.select([ch1, ch2]) {
 
 ### How select works internally
 
-`channel.select` polls the channels in list order and returns the first one
-that has data. If no channel is ready, the scheduler runs pending tasks and
-tries again. When all channels are closed and empty, it returns
-`(channel, Closed)`. If no tasks can make progress and no channels have data,
-it detects a deadlock and reports an error.
+`channel.select` checks the channels in list order and returns the first one
+that has data. If no channel is ready, the task is parked until one of the
+channels receives a value (via waker-based notification). When all channels are
+closed and empty, it returns `(channel, Closed)`. If no tasks can make progress
+and no channels have data, it detects a deadlock and reports an error.
 
 Select only supports receive. You cannot select on send operations.
 
@@ -630,39 +637,47 @@ fn main() {
 
 ## 6. Runtime Model
 
-### Real parallelism
+### Lightweight tasks on a thread pool
 
-Each `task.spawn` call runs its function in parallel. Spawned tasks share
-the program's globals and type definitions with the parent, but have their
-own execution stack. Channels coordinate safely across tasks — every silt
-value is immutable, so sending a value through a channel never creates a
-data race.
+Tasks are lightweight -- each one is just a stack and frames, not an OS thread.
+`task.spawn` submits a task to a fixed-size thread pool (sized to the number of
+CPU cores). Many tasks are multiplexed onto a smaller number of OS threads, so
+you can run thousands of concurrent tasks efficiently.
 
 ```
-main thread                   spawned thread 1         spawned thread 2
-    |                              |                        |
-    |-- task.spawn(fn() {...}) --> |                        |
-    |-- task.spawn(fn() {...}) ------------------>          |
-    |                              |  (runs in parallel)    |  (runs in parallel)
-    |-- channel.receive(ch) ----> blocks until value arrives
-    |                              |-- channel.send(ch, v) -|
-    |<-- Message(v) --------------|                         |
-    |-- task.join(t1) ----------> blocks until t1 completes
+thread pool (N = CPU count)
+    ┌──────────────┬──────────────┬──────────────┐
+    │  OS thread 1 │  OS thread 2 │  OS thread N │
+    │              │              │              │
+    │  task A      │  task C      │  task E      │
+    │  task B      │  task D      │  task F      │
+    │  ...         │  ...         │  ...         │
+    └──────────────┴──────────────┴──────────────┘
 ```
+
+When a task performs a blocking operation (channel receive, select, join), it is
+parked -- the OS thread picks up another ready task instead of waiting. When the
+blocking condition is satisfied (e.g., a value arrives on the channel), the
+parked task is woken and rescheduled.
 
 ### Blocking operations
 
-| Operation | Blocks when |
+| Operation | Parks when |
 |---|---|
-| `channel.send(ch, val)` | Buffer is full — waits until space opens |
-| `channel.receive(ch)` | Buffer is empty — waits until a value arrives or the channel closes |
-| `task.join(handle)` | Task not yet complete — waits until the task finishes |
-| `channel.select([...])` | No channel has data — waits for any channel to become ready |
+| `channel.send(ch, val)` | Buffer is full -- resumes when space opens |
+| `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
+| `task.join(handle)` | Task not yet complete -- resumes when the task finishes |
+| `channel.select([...])` | No channel has data -- resumes when any channel becomes ready |
+
+None of these block the OS thread. The task is parked and the thread continues
+running other tasks.
 
 ### Implications of real parallelism
 
 - **True parallelism.** Multiple tasks execute simultaneously on different CPU
   cores. CPU-bound work benefits from spawning tasks.
+- **Lightweight spawning.** Spawning a task allocates a stack, not an OS
+  thread. You can have tens of thousands of concurrent tasks.
 - **Non-deterministic ordering.** The same inputs may produce different
   interleavings across runs.
 - **No data races.** All silt values are immutable, so sending a value
@@ -715,5 +730,5 @@ main thread                   spawned thread 1         spawned thread 2
 
 The mental model: tasks are independent workers, channels are the pipes between
 them, `channel.select` is a multiplexer, and `task.join` is a synchronization
-barrier. Currently, all of this runs cooperatively on a single thread -- tasks
-interleave at channel operations but never execute in parallel.
+barrier. Tasks are lightweight and multiplexed onto a fixed thread pool, giving
+you true parallelism without the cost of one OS thread per task.

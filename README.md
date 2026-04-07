@@ -40,7 +40,7 @@ fn eval(expr) {
 
 ## Parallelism
 
-Spawn tasks that run in parallel. Communicate through channels. Every value is immutable, so there are no data races to debug.
+Spawn lightweight tasks that run in parallel on a fixed thread pool. Communicate through channels. Every value is immutable, so there are no data races to debug.
 
 ```silt
 fn main() {

@@ -141,7 +141,7 @@ The `|>` operator passes the left value as the first argument of the right:
 
 ## 7. Concurrency
 
-Spawn tasks that run in parallel. Communicate through channels.
+Spawn lightweight tasks that run in parallel. Communicate through channels.
 
 ```silt
 fn main() {

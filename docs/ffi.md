@@ -132,7 +132,7 @@ vm.register_fn1("square", |x: i64| -> i64 { x * x });
 ## Thread Safety
 
 All registered functions must be `Send + Sync` since they may be called from
-spawned task threads. This is enforced by the type system:
+any thread in the task scheduler's pool. This is enforced by the type system:
 
 ```rust
 // This works:

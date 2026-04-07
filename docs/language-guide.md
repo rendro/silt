@@ -1048,8 +1048,10 @@ fn main() {
 }
 ```
 
-Tasks run in parallel. Channels coordinate between them. Any function can
-spawn, send, or receive — there is no function coloring.
+Tasks are lightweight and run in parallel on a fixed thread pool. Spawning a
+task is cheap, and you can have thousands running concurrently. Channels
+coordinate between them. Any function can spawn, send, or receive — there is
+no function coloring.
 
 For the full treatment, see [concurrency.md](concurrency.md).
 

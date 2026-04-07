@@ -27,8 +27,8 @@ Complete API reference for every built-in function in silt.
 | [regex](#regex) | 9 | Match, find, split, replace, and capture with regular expressions |
 | [json](#json) | 5 | Parse JSON into typed records/maps, serialize values to JSON |
 | [math](#math) | 11 + 2 | Trigonometry, logarithms, exponentiation, and constants |
-| [channel](#channel) | 8 | Bounded channels for cooperative concurrency |
-| [task](#task) | 3 | Spawn, join, and cancel cooperative tasks |
+| [channel](#channel) | 8 | Bounded channels for concurrent task communication |
+| [task](#task) | 3 | Spawn, join, and cancel lightweight tasks |
 | [time](#time) | 26 | Dates, times, instants, durations, formatting, parsing, and arithmetic |
 | [http](#http) | 4 | HTTP client and server |
 
@@ -3093,8 +3093,8 @@ fn main() {
 
 ## channel
 
-Bounded channels for cooperative concurrency. Channels provide communication
-between tasks spawned with `task.spawn`.
+Bounded channels for concurrent task communication. Channels provide
+communication between tasks spawned with `task.spawn`.
 
 ### Summary
 
@@ -3174,8 +3174,8 @@ channel.receive(ch: Channel) -> ChannelResult(a)
 ```
 
 Receives a value from the channel. Returns `Message(value)` when a value is
-available, or `Closed` when the channel is closed and empty. Cooperatively
-yields to other tasks while waiting.
+available, or `Closed` when the channel is closed and empty. Parks the task
+while waiting, allowing other tasks to run on the same thread.
 
 ```silt
 fn main() {
@@ -3196,7 +3196,7 @@ channel.select(channels: List(Channel)) -> (Channel, a)
 ```
 
 Waits until one of the channels has a message ready. Returns a tuple of
-`(channel, value)`. Cooperatively yields while waiting.
+`(channel, value)`. Parks the task until a channel becomes ready.
 
 ```silt
 fn main() {
@@ -3215,8 +3215,8 @@ fn main() {
 channel.send(ch: Channel, value: a) -> ()
 ```
 
-Sends a value into the channel. Blocks (cooperatively yields) if the buffer is
-full.
+Sends a value into the channel. Parks the task if the buffer is full, allowing
+other tasks to run until space opens up.
 
 ```silt
 fn main() {
@@ -3268,8 +3268,8 @@ fn main() {
 
 ## task
 
-Spawn and coordinate concurrent tasks. Tasks run in parallel and communicate
-through channels.
+Spawn and coordinate lightweight concurrent tasks. Tasks are multiplexed onto a
+fixed thread pool and run in parallel. They communicate through channels.
 
 ### Summary
 
@@ -3277,7 +3277,7 @@ through channels.
 |----------|-----------|-------------|
 | `cancel` | `(Handle) -> ()` | Cancel a running task |
 | `join` | `(Handle) -> a` | Wait for a task to complete |
-| `spawn` | `(() -> a) -> Handle` | Spawn a new cooperative task |
+| `spawn` | `(() -> a) -> Handle` | Spawn a new lightweight task |
 
 
 ### `task.cancel`
@@ -3305,8 +3305,8 @@ fn main() {
 task.join(handle: Handle) -> a
 ```
 
-Blocks until the task completes and returns its result. Cooperatively yields
-while waiting.
+Blocks until the task completes and returns its result. Parks the calling task
+while waiting, allowing other tasks to run.
 
 ```silt
 fn main() {
@@ -3323,8 +3323,9 @@ fn main() {
 task.spawn(f: () -> a) -> Handle
 ```
 
-Spawns a zero-argument function as a cooperative task. Returns a handle that can
-be used with `task.join` or `task.cancel`.
+Spawns a zero-argument function as a lightweight task on the thread pool.
+Spawning is cheap -- it allocates a stack, not an OS thread. Returns a handle
+that can be used with `task.join` or `task.cancel`.
 
 ```silt
 fn main() {
@@ -3770,7 +3771,7 @@ fn main() {
 time.sleep(duration: Duration) -> ()
 ```
 
-Blocks the current fiber for the given duration. Other fibers continue running.
+Blocks the current task for the given duration. Other tasks continue running.
 
 ```silt
 fn main() {
