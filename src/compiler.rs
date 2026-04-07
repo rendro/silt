@@ -2485,3 +2485,991 @@ impl Compiler {
         index as u8
     }
 }
+
+// ── Tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::Op;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    /// Compile declarations (no main call) and return all functions.
+    fn compile(input: &str) -> Vec<Function> {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        compiler.import_all_builtins();
+        compiler.compile_declarations(&program).unwrap()
+    }
+
+    /// Compile expecting an error, return the error.
+    fn compile_err(input: &str) -> CompileError {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        compiler.compile_declarations(&program).unwrap_err()
+    }
+
+    /// Compile without builtin imports (to test import gating).
+    fn compile_no_imports(input: &str) -> Result<Vec<Function>, CompileError> {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        compiler.compile_declarations(&program)
+    }
+
+    /// Check if a specific opcode byte appears in the chunk's bytecode.
+    fn has_op(chunk: &Chunk, op: Op) -> bool {
+        chunk.code.contains(&(op as u8))
+    }
+
+    /// Check if a string constant exists in the chunk.
+    fn has_string_constant(chunk: &Chunk, s: &str) -> bool {
+        chunk.constants.iter().any(|c| matches!(c, Value::String(v) if v == s))
+    }
+
+    /// Check if an int constant exists in the chunk.
+    fn has_int_constant(chunk: &Chunk, n: i64) -> bool {
+        chunk.constants.iter().any(|c| matches!(c, Value::Int(v) if *v == n))
+    }
+
+    /// Find a function by name in the compiled output.
+    /// Functions are embedded as VmClosure constants in the script's chunk,
+    /// so we search through all constants recursively.
+    fn find_fn<'a>(fns: &'a [Function], name: &str) -> &'a Function {
+        // First check top-level functions
+        for f in fns {
+            if f.name == name {
+                return f;
+            }
+        }
+        // Search VmClosure constants in each function's chunk
+        for f in fns {
+            if let Some(found) = find_fn_in_constants(&f.chunk, name) {
+                return found;
+            }
+        }
+        panic!("function '{name}' not found")
+    }
+
+    fn find_fn_in_constants<'a>(chunk: &'a Chunk, name: &str) -> Option<&'a Function> {
+        for constant in &chunk.constants {
+            if let Value::VmClosure(closure) = constant {
+                if closure.function.name == name {
+                    return Some(&closure.function);
+                }
+                // Recurse into nested closures
+                if let Some(found) = find_fn_in_constants(&closure.function.chunk, name) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    // ── Basic literal compilation ──────────────────────────────────
+
+    #[test]
+    fn test_compile_int_literal() {
+        let fns = compile("fn main() { 42 }");
+        let main = find_fn(&fns, "main");
+        assert!(has_int_constant(&main.chunk, 42));
+        assert!(has_op(&main.chunk, Op::Constant));
+        assert!(has_op(&main.chunk, Op::Return));
+    }
+
+    #[test]
+    fn test_compile_float_literal() {
+        let fns = compile("fn main() { 3.14 }");
+        let main = find_fn(&fns, "main");
+        assert!(main.chunk.constants.iter().any(|c| matches!(c, Value::Float(f) if (*f - 3.14).abs() < f64::EPSILON)));
+    }
+
+    #[test]
+    fn test_compile_bool_literals() {
+        let fns = compile("fn main() { true }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::True));
+
+        let fns = compile("fn main() { false }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::False));
+    }
+
+    #[test]
+    fn test_compile_string_literal() {
+        let fns = compile(r#"fn main() { "hello" }"#);
+        let main = find_fn(&fns, "main");
+        assert!(has_string_constant(&main.chunk, "hello"));
+    }
+
+    #[test]
+    fn test_compile_unit() {
+        let fns = compile("fn main() { () }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::Unit));
+    }
+
+    // ── Arithmetic & binary operations ─────────────────────────────
+
+    #[test]
+    fn test_compile_arithmetic() {
+        let fns = compile("fn add(a, b) { a + b }");
+        let f = find_fn(&fns, "add");
+        assert_eq!(f.arity, 2);
+        assert!(has_op(&f.chunk, Op::Add));
+
+        let fns = compile("fn sub(a, b) { a - b }");
+        assert!(has_op(&find_fn(&fns, "sub").chunk, Op::Sub));
+
+        let fns = compile("fn mul(a, b) { a * b }");
+        assert!(has_op(&find_fn(&fns, "mul").chunk, Op::Mul));
+
+        let fns = compile("fn div(a, b) { a / b }");
+        assert!(has_op(&find_fn(&fns, "div").chunk, Op::Div));
+
+        let fns = compile("fn modulo(a, b) { a % b }");
+        assert!(has_op(&find_fn(&fns, "modulo").chunk, Op::Mod));
+    }
+
+    #[test]
+    fn test_compile_comparison() {
+        let cases = [
+            ("a == b", Op::Eq),
+            ("a != b", Op::Neq),
+            ("a < b", Op::Lt),
+            ("a > b", Op::Gt),
+            ("a <= b", Op::Leq),
+            ("a >= b", Op::Geq),
+        ];
+        for (expr, expected_op) in cases {
+            let src = format!("fn cmp(a, b) {{ {expr} }}");
+            let fns = compile(&src);
+            let f = find_fn(&fns, "cmp");
+            assert!(has_op(&f.chunk, expected_op), "missing {expected_op:?} for {expr}");
+        }
+    }
+
+    #[test]
+    fn test_compile_short_circuit_and() {
+        let fns = compile("fn f(a, b) { a && b }");
+        let f = find_fn(&fns, "f");
+        // Short-circuit and uses Dup + JumpIfFalse + Pop
+        assert!(has_op(&f.chunk, Op::Dup));
+        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+    }
+
+    #[test]
+    fn test_compile_short_circuit_or() {
+        let fns = compile("fn f(a, b) { a || b }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::Dup));
+        assert!(has_op(&f.chunk, Op::JumpIfTrue));
+    }
+
+    // ── Unary operations ───────────────────────────────────────────
+
+    #[test]
+    fn test_compile_negate() {
+        let fns = compile("fn f(x) { -x }");
+        assert!(has_op(&find_fn(&fns, "f").chunk, Op::Negate));
+    }
+
+    #[test]
+    fn test_compile_not() {
+        let fns = compile("fn f(x) { !x }");
+        assert!(has_op(&find_fn(&fns, "f").chunk, Op::Not));
+    }
+
+    // ── Variable binding ───────────────────────────────────────────
+
+    #[test]
+    fn test_compile_local_variable() {
+        let fns = compile("fn f() { let x = 42\n x }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::SetLocal));
+        assert!(has_op(&f.chunk, Op::GetLocal));
+    }
+
+    #[test]
+    fn test_compile_global_let() {
+        let fns = compile("let x = 10\nfn main() { x }");
+        let script = &fns[0]; // script is first
+        assert_eq!(script.name, "<script>");
+        assert!(has_op(&script.chunk, Op::SetGlobal));
+    }
+
+    // ── Function compilation ───────────────────────────────────────
+
+    #[test]
+    fn test_compile_function_arity() {
+        let fns = compile("fn f(a, b, c) { a }");
+        let f = find_fn(&fns, "f");
+        assert_eq!(f.arity, 3);
+    }
+
+    #[test]
+    fn test_compile_function_zero_arity() {
+        let fns = compile("fn f() { 42 }");
+        let f = find_fn(&fns, "f");
+        assert_eq!(f.arity, 0);
+    }
+
+    #[test]
+    fn test_compile_multiple_functions() {
+        let fns = compile(
+            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }",
+        );
+        // Script + 3 functions (as closures in the script's constant pool)
+        assert_eq!(fns[0].name, "<script>");
+        // Functions are compiled as constants in the script, so we look for them there
+        assert!(has_string_constant(&fns[0].chunk, "add"));
+        assert!(has_string_constant(&fns[0].chunk, "sub"));
+        assert!(has_string_constant(&fns[0].chunk, "main"));
+    }
+
+    #[test]
+    fn test_compile_function_call() {
+        let fns = compile("fn id(x) { x }\nfn main() { let r = id(42)\n r }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::Call));
+    }
+
+    #[test]
+    fn test_compile_tail_call() {
+        // The body of a function in tail position should emit TailCall
+        let fns = compile("fn f(n) { f(n - 1) }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TailCall));
+    }
+
+    // ── Lambda / closure compilation ───────────────────────────────
+
+    #[test]
+    fn test_compile_lambda() {
+        let fns = compile("fn main() { let f = fn(x) { x + 1 }\n f(5) }");
+        let main = find_fn(&fns, "main");
+        // Lambda is compiled as a VmClosure constant
+        assert!(main.chunk.constants.iter().any(|c| matches!(c, Value::VmClosure(_))));
+    }
+
+    #[test]
+    fn test_compile_closure_with_upvalue() {
+        let fns = compile(
+            r#"
+fn make_adder(n) {
+    fn(x) { x + n }
+}
+"#,
+        );
+        let f = find_fn(&fns, "make_adder");
+        // The inner lambda captures `n` as an upvalue — should have MakeClosure
+        assert!(has_op(&f.chunk, Op::MakeClosure));
+    }
+
+    // ── Collection compilation ─────────────────────────────────────
+
+    #[test]
+    fn test_compile_list() {
+        let fns = compile("fn main() { [1, 2, 3] }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeList));
+    }
+
+    #[test]
+    fn test_compile_tuple() {
+        let fns = compile("fn main() { (1, 2) }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeTuple));
+    }
+
+    #[test]
+    fn test_compile_map() {
+        let fns = compile(r#"fn main() { #{ "a": 1, "b": 2 } }"#);
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeMap));
+    }
+
+    #[test]
+    fn test_compile_set() {
+        let fns = compile(r#"fn main() { #[1, 2, 3] }"#);
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeSet));
+    }
+
+    #[test]
+    fn test_compile_range() {
+        let fns = compile("fn main() { 1..10 }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeRange));
+    }
+
+    #[test]
+    fn test_compile_list_spread() {
+        let fns = compile("fn main() { let a = [1, 2]\n [..a, 3] }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::ListConcat));
+    }
+
+    // ── String interpolation ───────────────────────────────────────
+
+    #[test]
+    fn test_compile_string_interp() {
+        let fns = compile(r#"fn greet(name) { "hello {name}" }"#);
+        let f = find_fn(&fns, "greet");
+        assert!(has_op(&f.chunk, Op::StringConcat));
+        assert!(has_op(&f.chunk, Op::DisplayValue));
+    }
+
+    // ── Record compilation ─────────────────────────────────────────
+
+    #[test]
+    fn test_compile_record_create() {
+        let fns = compile(
+            r#"
+type User { name: String, age: Int }
+fn main() { User { name: "Alice", age: 30 } }
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::MakeRecord));
+    }
+
+    #[test]
+    fn test_compile_record_update() {
+        let fns = compile(
+            r#"
+type User { name: String, age: Int }
+fn main() {
+    let u = User { name: "Alice", age: 30 }
+    u.{ age: 31 }
+}
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::RecordUpdate));
+    }
+
+    #[test]
+    fn test_compile_field_access() {
+        let fns = compile(
+            r#"
+type User { name: String, age: Int }
+fn main() {
+    let u = User { name: "Alice", age: 30 }
+    u.name
+}
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::GetField));
+    }
+
+    // ── Enum type declarations ─────────────────────────────────────
+
+    #[test]
+    fn test_compile_enum_variants() {
+        let fns = compile(
+            r#"
+type Color { Red, Green, Blue }
+fn main() { Red }
+"#,
+        );
+        let script = &fns[0];
+        // Nullary variants are registered as Variant values
+        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::Variant(name, fields) if name == "Red" && fields.is_empty())));
+        assert!(has_string_constant(&script.chunk, "Red"));
+        assert!(has_string_constant(&script.chunk, "Green"));
+        assert!(has_string_constant(&script.chunk, "Blue"));
+    }
+
+    #[test]
+    fn test_compile_enum_variant_constructors() {
+        let fns = compile(
+            r#"
+type Shape { Circle(Float), Rect(Float, Float) }
+fn main() { Circle(1.0) }
+"#,
+        );
+        let script = &fns[0];
+        // Constructor variants are registered as VariantConstructor values
+        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Circle" && *arity == 1)));
+        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Rect" && *arity == 2)));
+    }
+
+    // ── Match compilation ──────────────────────────────────────────
+
+    #[test]
+    fn test_compile_match_literal_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        1 -> "one"
+        2 -> "two"
+        _ -> "other"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestEqual));
+        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+    }
+
+    #[test]
+    fn test_compile_match_bool_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        true -> "yes"
+        false -> "no"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestBool));
+    }
+
+    #[test]
+    fn test_compile_match_constructor_pattern() {
+        let fns = compile(
+            r#"
+type Opt { Some(Int), None }
+fn f(x) {
+    match x {
+        Some(v) -> v
+        None -> 0
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestTag));
+        assert!(has_op(&f.chunk, Op::DestructVariant));
+    }
+
+    #[test]
+    fn test_compile_match_tuple_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        (1, y) -> y
+        _ -> 0
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestTupleLen));
+    }
+
+    #[test]
+    fn test_compile_match_list_pattern() {
+        let fns = compile(
+            r#"
+fn f(xs) {
+    match xs {
+        [h, ..t] -> h
+        [] -> 0
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestListMin));
+        assert!(has_op(&f.chunk, Op::TestListExact));
+    }
+
+    #[test]
+    fn test_compile_match_range_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        1..10 -> "low"
+        _ -> "high"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestIntRange));
+    }
+
+    #[test]
+    fn test_compile_match_record_pattern() {
+        let fns = compile(
+            r#"
+type Point { x: Int, y: Int }
+fn f(p) {
+    match p {
+        Point { x, y } -> x + y
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestRecordTag));
+        assert!(has_op(&f.chunk, Op::DestructRecordField));
+    }
+
+    #[test]
+    fn test_compile_match_non_exhaustive_panic() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        1 -> "one"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::Panic));
+        assert!(has_string_constant(&f.chunk, "non-exhaustive match: no arm matched"));
+    }
+
+    #[test]
+    fn test_compile_guardless_match() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match {
+        x > 0 -> "positive"
+        _ -> "non-positive"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+    }
+
+    #[test]
+    fn test_compile_match_with_guard() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        n when n > 0 -> "positive"
+        _ -> "other"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        // Guard compiles to a condition + JumpIfFalse
+        assert!(has_op(&f.chunk, Op::Gt));
+        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+    }
+
+    // ── Pipe compilation ───────────────────────────────────────────
+
+    #[test]
+    fn test_compile_pipe_to_function() {
+        let fns = compile("fn double(x) { x * 2 }\nfn main() { 5 |> double }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::Call));
+    }
+
+    #[test]
+    fn test_compile_pipe_to_builtin() {
+        let fns = compile(
+            r#"
+import list
+fn main() { [3, 1, 2] |> list.length() }
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::CallBuiltin));
+    }
+
+    // ── Loop/Recur compilation ─────────────────────────────────────
+
+    #[test]
+    fn test_compile_loop_recur() {
+        let fns = compile(
+            r#"
+fn main() {
+    loop i = 0 {
+        match i >= 10 {
+            true -> i
+            false -> loop(i + 1)
+        }
+    }
+}
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::Recur));
+        assert!(has_op(&main.chunk, Op::JumpBack));
+    }
+
+    // ── Question mark ──────────────────────────────────────────────
+
+    #[test]
+    fn test_compile_question_mark() {
+        let fns = compile("fn f(x) { x? }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::QuestionMark));
+    }
+
+    // ── Return statement ───────────────────────────────────────────
+
+    #[test]
+    fn test_compile_explicit_return() {
+        let fns = compile("fn f(x) { return 42 }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::Return));
+        assert!(has_int_constant(&f.chunk, 42));
+    }
+
+    #[test]
+    fn test_compile_return_unit() {
+        let fns = compile("fn f() { return }");
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::Unit));
+        assert!(has_op(&f.chunk, Op::Return));
+    }
+
+    // ── Blocks ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compile_empty_block() {
+        let fns = compile("fn f() { { } }");
+        let f = find_fn(&fns, "f");
+        // Empty block evaluates to Unit
+        assert!(has_op(&f.chunk, Op::Unit));
+    }
+
+    #[test]
+    fn test_compile_block_with_let() {
+        let fns = compile(
+            r#"
+fn f() {
+    let x = 1
+    let y = 2
+    x + y
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::SetLocal));
+        assert!(has_op(&f.chunk, Op::GetLocal));
+        assert!(has_op(&f.chunk, Op::Add));
+    }
+
+    // ── Type ascription ────────────────────────────────────────────
+
+    #[test]
+    fn test_compile_ascription_is_transparent() {
+        // Ascription compiles to just the inner expression
+        let fns = compile("fn f() { 42 as Int }");
+        let f = find_fn(&fns, "f");
+        assert!(has_int_constant(&f.chunk, 42));
+        assert!(has_op(&f.chunk, Op::Constant));
+    }
+
+    // ── Trait impl compilation ─────────────────────────────────────
+
+    #[test]
+    fn test_compile_trait_impl() {
+        let fns = compile(
+            r#"
+type Color { Red, Green, Blue }
+trait Display for Color {
+    fn display(self) -> String {
+        "color"
+    }
+}
+"#,
+        );
+        let script = &fns[0];
+        // Trait method registered as "Color.display" global
+        assert!(has_string_constant(&script.chunk, "Color.display"));
+    }
+
+    // ── Import gating ──────────────────────────────────────────────
+
+    #[test]
+    fn test_import_gating_error() {
+        // Using a module without importing should error
+        let err = compile_err(
+            r#"
+fn main() {
+    list.length([1, 2])
+}
+"#,
+        );
+        assert!(
+            err.message.contains("not imported"),
+            "expected import error, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_import_gating_success() {
+        // With import, should compile fine
+        let result = compile_no_imports(
+            r#"
+import list
+fn main() {
+    list.length([1, 2])
+}
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    // ── Builtin module calls ───────────────────────────────────────
+
+    #[test]
+    fn test_compile_builtin_call() {
+        let fns = compile(
+            r#"
+import list
+fn main() { list.length([1, 2, 3]) }
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::CallBuiltin));
+        assert!(has_string_constant(&main.chunk, "list.length"));
+    }
+
+    // ── Method call compilation ────────────────────────────────────
+
+    #[test]
+    fn test_compile_method_call() {
+        let fns = compile(
+            r#"
+type Foo { x: Int }
+trait Display for Foo {
+    fn display(self) -> String { "foo" }
+}
+fn main() {
+    let f = Foo { x: 1 }
+    f.display()
+}
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::CallMethod));
+    }
+
+    // ── Tuple index access ─────────────────────────────────────────
+
+    #[test]
+    fn test_compile_tuple_index() {
+        let fns = compile("fn main() { let t = (1, 2)\n t.0 }");
+        let main = find_fn(&fns, "main");
+        assert!(has_op(&main.chunk, Op::GetIndex));
+    }
+
+    // ── compile_program vs compile_declarations ────────────────────
+
+    #[test]
+    fn test_compile_program_calls_main() {
+        let tokens = Lexer::new("fn main() { 42 }").tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let fns = compiler.compile_program(&program).unwrap();
+        let script = &fns[0];
+        // compile_program emits GetGlobal "main", Call 0, Return
+        assert!(has_string_constant(&script.chunk, "main"));
+        assert!(has_op(&script.chunk, Op::Call));
+    }
+
+    #[test]
+    fn test_compile_declarations_returns_unit() {
+        let fns = compile("fn main() { 42 }");
+        let script = &fns[0];
+        // compile_declarations emits Unit, Return (no main call)
+        assert!(has_op(&script.chunk, Op::Unit));
+        assert!(has_op(&script.chunk, Op::Return));
+    }
+
+    // ── Warnings ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_shadow_module_warning() {
+        let tokens = Lexer::new("fn main() { let list = 42\n list }").tokenize().unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        compiler.import_all_builtins();
+        compiler.compile_declarations(&program).unwrap();
+        assert!(
+            compiler.warnings().iter().any(|w| w.message.contains("shadows")),
+            "expected shadow warning"
+        );
+    }
+
+    // ── Selective import compilation ────────────────────────────────
+
+    #[test]
+    fn test_compile_selective_import() {
+        let result = compile_no_imports(
+            r#"
+import list.{ length, map }
+fn main() { length([1, 2]) }
+"#,
+        );
+        assert!(result.is_ok());
+        let fns = result.unwrap();
+        let script = &fns[0];
+        // Selective import creates aliases: "length" -> "list.length"
+        assert!(has_string_constant(&script.chunk, "list.length"));
+        assert!(has_string_constant(&script.chunk, "length"));
+    }
+
+    #[test]
+    fn test_compile_aliased_import() {
+        let result = compile_no_imports(
+            r#"
+import list as l
+fn main() { l.length([1]) }
+"#,
+        );
+        assert!(result.is_ok());
+    }
+
+    // ── Pattern destructuring in function params ───────────────────
+
+    #[test]
+    fn test_compile_destructured_lambda_param() {
+        let fns = compile(
+            r#"
+import list
+fn main() {
+    let pairs = [(1, 2)]
+    list.map(pairs) { (a, b) -> a + b }
+}
+"#,
+        );
+        let main = find_fn(&fns, "main");
+        // Lambda with destructured param is a VmClosure constant
+        let lambda = main.chunk.constants.iter().find_map(|c| {
+            if let Value::VmClosure(cl) = c {
+                if cl.function.name == "<lambda>" {
+                    return Some(&cl.function);
+                }
+            }
+            None
+        });
+        assert!(lambda.is_some(), "expected lambda in main's constants");
+        let lambda = lambda.unwrap();
+        assert!(has_op(&lambda.chunk, Op::DestructTuple));
+    }
+
+    // ── Map pattern in match ───────────────────────────────────────
+
+    #[test]
+    fn test_compile_match_map_pattern() {
+        let fns = compile(
+            r#"
+fn f(m) {
+    match m {
+        #{ "key": v } -> v
+        _ -> "default"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestMapHasKey));
+    }
+
+    // ── When statement compilation ─────────────────────────────────
+
+    #[test]
+    fn test_compile_when_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    when Some(v) = x else { return 0 }
+    v
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::TestTag));
+    }
+
+    #[test]
+    fn test_compile_when_bool() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    when x > 0 else { return 0 }
+    x
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        assert!(has_op(&f.chunk, Op::JumpIfFalse));
+    }
+
+    // ── Recur outside loop is an error ─────────────────────────────
+
+    #[test]
+    fn test_compile_recur_outside_loop() {
+        let err = compile_err("fn f() { loop(1) }");
+        assert!(err.message.contains("recur outside of loop"));
+    }
+
+    // ── Record field metadata ──────────────────────────────────────
+
+    #[test]
+    fn test_compile_record_field_metadata() {
+        let fns = compile("type User { name: String, age: Int }");
+        let script = &fns[0];
+        // Record field metadata is stored as __record_fields__User
+        assert!(has_string_constant(&script.chunk, "__record_fields__User"));
+    }
+
+    // ── Or-pattern in match ────────────────────────────────────────
+
+    #[test]
+    fn test_compile_or_pattern() {
+        let fns = compile(
+            r#"
+fn f(x) {
+    match x {
+        1 | 2 | 3 -> "small"
+        _ -> "big"
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        // Or-pattern has multiple TestEqual ops
+        let test_count = f.chunk.code.iter().filter(|&&b| b == Op::TestEqual as u8).count();
+        assert!(test_count >= 3, "expected at least 3 TestEqual ops for or-pattern, got {test_count}");
+    }
+
+    // ── Pin pattern in match ───────────────────────────────────────
+
+    #[test]
+    fn test_compile_pin_pattern() {
+        let fns = compile(
+            r#"
+fn f(expected, actual) {
+    match actual {
+        ^expected -> true
+        _ -> false
+    }
+}
+"#,
+        );
+        let f = find_fn(&fns, "f");
+        // Pin pattern uses Dup + GetLocal + Eq
+        assert!(has_op(&f.chunk, Op::Dup));
+        assert!(has_op(&f.chunk, Op::Eq));
+    }
+}

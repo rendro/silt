@@ -2282,4 +2282,940 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
     }
+
+    // ── Error-recovery helpers ──────────────────────────────────────
+
+    fn parse_err(input: &str) -> ParseError {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        Parser::new(tokens).parse_program().unwrap_err()
+    }
+
+    fn parse_recovering(input: &str) -> (Program, Vec<ParseError>) {
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        Parser::new(tokens).parse_program_recovering()
+    }
+
+    // ── 1. Error recovery ───────────────────────────────────────────
+
+    #[test]
+    fn test_recovery_skips_bad_decl_and_continues() {
+        let (prog, errs) = parse_recovering(
+            r#"
+            fn good1() { 1 }
+            fn { broken }
+            fn good2() { 2 }
+        "#,
+        );
+        assert!(errs.len() >= 1, "expected at least one error");
+        // Recovery should still produce at least the two valid decls
+        assert!(prog.decls.len() >= 2, "expected at least 2 decls, got {}", prog.decls.len());
+    }
+
+    #[test]
+    fn test_recovery_collects_multiple_errors() {
+        let (prog, errs) = parse_recovering(
+            r#"
+            fn { broken1 }
+            fn { broken2 }
+            fn ok() { 0 }
+        "#,
+        );
+        assert!(errs.len() >= 2, "expected at least 2 errors, got {}", errs.len());
+        assert!(prog.decls.len() >= 1);
+    }
+
+    // ── 2. Pattern parsing ──────────────────────────────────────────
+
+    #[test]
+    fn test_or_pattern() {
+        let prog = parse(
+            r#"
+            fn classify(n) {
+                match n {
+                    1 | 2 | 3 -> "small"
+                    _ -> "big"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                assert!(matches!(&arms[0].pattern, Pattern::Or(pats) if pats.len() == 3));
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_range_pattern() {
+        let prog = parse(
+            r#"
+            fn classify(n) {
+                match n {
+                    1..10 -> "small"
+                    _ -> "other"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                assert!(matches!(&arms[0].pattern, Pattern::Range(1, 10)));
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_pin_pattern() {
+        let prog = parse(
+            r#"
+            fn check(x, y) {
+                match y {
+                    ^x -> "equal"
+                    _ -> "different"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                assert!(matches!(&arms[0].pattern, Pattern::Pin(name) if name == "x"));
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_map_pattern() {
+        let prog = parse(
+            r#"
+            fn get_name(m) {
+                match m {
+                    #{ "key": v } -> v
+                    _ -> "none"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                if let Pattern::Map(ref entries) = arms[0].pattern {
+                    assert_eq!(entries.len(), 1);
+                    assert_eq!(entries[0].0, "key");
+                    assert!(matches!(entries[0].1, Pattern::Ident(ref v) if v == "v"));
+                } else {
+                    panic!("expected map pattern");
+                }
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_nested_constructor_pattern() {
+        let prog = parse(
+            r#"
+            fn extract(x) {
+                match x {
+                    Some((a, b)) -> a
+                    None -> 0
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                if let Pattern::Constructor(ref name, ref inner) = arms[0].pattern {
+                    assert_eq!(name, "Some");
+                    assert_eq!(inner.len(), 1);
+                    assert!(matches!(&inner[0], Pattern::Tuple(pats) if pats.len() == 2));
+                } else {
+                    panic!("expected constructor pattern, got {:?}", arms[0].pattern);
+                }
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_list_pattern_with_rest() {
+        let prog = parse(
+            r#"
+            fn head_tail(xs) {
+                match xs {
+                    [h, ..t] -> h
+                    [] -> 0
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                if let Pattern::List(ref pats, ref rest) = arms[0].pattern {
+                    assert_eq!(pats.len(), 1);
+                    assert!(matches!(&pats[0], Pattern::Ident(n) if n == "h"));
+                    assert!(rest.is_some());
+                    assert!(matches!(rest.as_deref().unwrap(), Pattern::Ident(n) if n == "t"));
+                } else {
+                    panic!("expected list pattern");
+                }
+                // Second arm: empty list
+                assert!(matches!(&arms[1].pattern, Pattern::List(pats, None) if pats.is_empty()));
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_record_shorthand_pattern() {
+        let prog = parse(
+            r#"
+            fn greet(u) {
+                match u {
+                    User { name, age } -> name
+                    _ -> "unknown"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                if let Pattern::Record {
+                    ref name,
+                    ref fields,
+                    has_rest,
+                } = arms[0].pattern
+                {
+                    assert_eq!(name.as_deref(), Some("User"));
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].0, "name");
+                    assert!(fields[0].1.is_none()); // shorthand
+                    assert_eq!(fields[1].0, "age");
+                    assert!(fields[1].1.is_none());
+                    assert!(!has_rest);
+                } else {
+                    panic!("expected record pattern");
+                }
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    // ── 3. Expression parsing ───────────────────────────────────────
+
+    #[test]
+    fn test_empty_list() {
+        let prog = parse(
+            r#"
+            fn main() {
+                []
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::List(ref elems) = expr.kind {
+                assert!(elems.is_empty());
+            } else {
+                panic!("expected empty list, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_map_literal() {
+        let prog = parse(
+            r#"
+            fn main() {
+                #{ "a": 1, "b": 2 }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Map(ref entries) = expr.kind {
+                assert_eq!(entries.len(), 2);
+            } else {
+                panic!("expected map literal, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_set_literal() {
+        let prog = parse(
+            r#"
+            fn main() {
+                #[1, 2, 3]
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::SetLit(ref elems) = expr.kind {
+                assert_eq!(elems.len(), 3);
+            } else {
+                panic!("expected set literal, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_range_expression() {
+        let prog = parse(
+            r#"
+            fn main() {
+                1..10
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            assert!(matches!(&expr.kind, ExprKind::Range(_, _)));
+        }
+    }
+
+    #[test]
+    fn test_nested_pipes() {
+        let prog = parse(
+            r#"
+            fn main() {
+                a |> f |> g
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            // Should be Pipe(Pipe(a, f), g) — left-associative
+            if let ExprKind::Pipe(ref left, ref right) = expr.kind {
+                assert!(matches!(&right.kind, ExprKind::Ident(n) if n == "g"));
+                assert!(matches!(&left.kind, ExprKind::Pipe(_, _)));
+            } else {
+                panic!("expected pipe expression, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_return_with_value() {
+        let prog = parse(
+            r#"
+            fn main() {
+                return 42
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Return(ref val) = expr.kind {
+                assert!(val.is_some());
+            } else {
+                panic!("expected return");
+            }
+        }
+    }
+
+    #[test]
+    fn test_return_without_value() {
+        let prog = parse(
+            r#"
+            fn main() {
+                return
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Return(ref val) = expr.kind {
+                assert!(val.is_none());
+            } else {
+                panic!("expected return");
+            }
+        }
+    }
+
+    #[test]
+    fn test_loop_with_bindings() {
+        let prog = parse(
+            r#"
+            fn main() {
+                loop i = 0, acc = 0 {
+                    loop(i + 1, acc + i)
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Loop { ref bindings, ref body } = expr.kind {
+                assert_eq!(bindings.len(), 2);
+                assert_eq!(bindings[0].0, "i");
+                assert_eq!(bindings[1].0, "acc");
+                // body should contain a Recur
+                if let ExprKind::Block(ref inner_stmts) = body.kind {
+                    let recur_expr = match inner_stmts.last().unwrap() {
+                        Stmt::Expr(e) => e,
+                        _ => panic!("expected expr in loop body"),
+                    };
+                    if let ExprKind::Recur(ref args) = recur_expr.kind {
+                        assert_eq!(args.len(), 2);
+                    } else {
+                        panic!("expected recur, got {:?}", recur_expr.kind);
+                    }
+                } else {
+                    panic!("expected block body");
+                }
+            } else {
+                panic!("expected loop, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_recur_in_loop() {
+        let prog = parse(
+            r#"
+            fn sum(n) {
+                loop i = 0, acc = 0 {
+                    match i == n {
+                        true -> acc
+                        _ -> loop(i + 1, acc + i)
+                    }
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+    }
+
+    // ── 4. Declaration parsing ──────────────────────────────────────
+
+    #[test]
+    fn test_pub_fn() {
+        let prog = parse(
+            r#"
+            pub fn add(a, b) { a + b }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            assert!(f.is_pub);
+            assert_eq!(f.name, "add");
+        } else {
+            panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_pub_type() {
+        let prog = parse(
+            r#"
+            pub type Color {
+                Red
+                Green
+                Blue
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Type(ref td) = prog.decls[0] {
+            assert!(td.is_pub);
+            assert_eq!(td.name, "Color");
+        } else {
+            panic!("expected type decl");
+        }
+    }
+
+    #[test]
+    fn test_let_decl() {
+        let prog = parse(
+            r#"
+            let x = 42
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Let {
+            ref pattern,
+            ref value,
+            is_pub,
+            ..
+        } = prog.decls[0]
+        {
+            assert!(!is_pub);
+            assert!(matches!(pattern, Pattern::Ident(n) if n == "x"));
+            assert!(matches!(&value.kind, ExprKind::Int(42)));
+        } else {
+            panic!("expected let decl");
+        }
+    }
+
+    #[test]
+    fn test_abstract_trait_with_multiple_methods() {
+        let prog = parse(
+            r#"
+            trait Comparable {
+                fn compare(self, other: Self) -> Int
+                fn equal(self, other: Self) -> Bool
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Trait(ref td) = prog.decls[0] {
+            assert_eq!(td.name, "Comparable");
+            assert_eq!(td.methods.len(), 2);
+            assert_eq!(td.methods[0].name, "compare");
+            assert_eq!(td.methods[1].name, "equal");
+        } else {
+            panic!("expected trait decl");
+        }
+    }
+
+    #[test]
+    fn test_multiple_imports() {
+        let prog = parse(
+            r#"
+            import io
+            import math.{ add, sub }
+            import http as h
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 3);
+        assert!(matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m)) if m == "io"));
+        assert!(matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if m == "math" && items.len() == 2));
+        assert!(matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if m == "http" && a == "h"));
+    }
+
+    // ── 5. Error cases ──────────────────────────────────────────────
+
+    #[test]
+    fn test_error_missing_closing_brace() {
+        let err = parse_err(
+            r#"
+            fn main() {
+                42
+        "#,
+        );
+        assert!(!err.message.is_empty());
+    }
+
+    #[test]
+    fn test_error_missing_closing_paren() {
+        let err = parse_err(
+            r#"
+            fn main(a, b {
+                a
+            }
+        "#,
+        );
+        assert!(!err.message.is_empty());
+    }
+
+    #[test]
+    fn test_error_invalid_token_in_expression() {
+        let err = parse_err(
+            r#"
+            fn main() {
+                ,,
+            }
+        "#,
+        );
+        assert!(!err.message.is_empty());
+    }
+
+    #[test]
+    fn test_error_missing_arrow_in_match_arm() {
+        let err = parse_err(
+            r#"
+            fn main() {
+                match x {
+                    1 "oops"
+                }
+            }
+        "#,
+        );
+        assert!(!err.message.is_empty());
+    }
+
+    // ── 6. Edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn test_fn_with_where_clause_and_return_type() {
+        let prog = parse(
+            r#"
+            fn show(x) -> String where x: Display {
+                x
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            assert_eq!(f.name, "show");
+            assert!(f.return_type.is_some());
+            assert_eq!(f.where_clauses.len(), 1);
+            assert_eq!(f.where_clauses[0], ("x".into(), "Display".into()));
+        } else {
+            panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_lambda_with_typed_params() {
+        let prog = parse(
+            r#"
+            fn main() {
+                fn(x: Int, y: Int) { x + y }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Lambda { ref params, .. } = expr.kind {
+                assert_eq!(params.len(), 2);
+                assert!(params[0].ty.is_some());
+                assert!(params[1].ty.is_some());
+            } else {
+                panic!("expected lambda, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_deeply_nested_blocks() {
+        let prog = parse(
+            r#"
+            fn main() {
+                {
+                    {
+                        {
+                            42
+                        }
+                    }
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+    }
+
+    #[test]
+    fn test_multiple_match_arms_with_guards() {
+        let prog = parse(
+            r#"
+            fn classify(n) {
+                match n {
+                    x when x < 0 -> "negative"
+                    0 -> "zero"
+                    x when x < 10 -> "small"
+                    x when x < 100 -> "medium"
+                    _ -> "large"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { ref arms, .. } = match_expr.kind {
+                assert_eq!(arms.len(), 5);
+                assert!(arms[0].guard.is_some());
+                assert!(arms[1].guard.is_none());
+                assert!(arms[2].guard.is_some());
+                assert!(arms[3].guard.is_some());
+                assert!(arms[4].guard.is_none());
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_pub_let_decl() {
+        let prog = parse(
+            r#"
+            pub let VERSION = "1.0"
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Let { is_pub, .. } = prog.decls[0] {
+            assert!(is_pub);
+        } else {
+            panic!("expected pub let decl");
+        }
+    }
+
+    #[test]
+    fn test_record_pattern_with_rest() {
+        let prog = parse(
+            r#"
+            fn name_only(u) {
+                match u {
+                    User { name, .. } -> name
+                    _ -> "unknown"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                if let Pattern::Record {
+                    ref name,
+                    ref fields,
+                    has_rest,
+                } = arms[0].pattern
+                {
+                    assert_eq!(name.as_deref(), Some("User"));
+                    assert_eq!(fields.len(), 1);
+                    assert!(has_rest);
+                } else {
+                    panic!("expected record pattern with rest");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_loop_zero_bindings() {
+        // loop { body } with no bindings
+        let prog = parse(
+            r#"
+            fn main() {
+                loop {
+                    loop()
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Loop { ref bindings, .. } = expr.kind {
+                assert!(bindings.is_empty());
+            } else {
+                panic!("expected loop, got {:?}", expr.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_bad_decl_keyword() {
+        let err = parse_err(
+            r#"
+            123
+        "#,
+        );
+        assert!(err.message.contains("expected declaration"));
+    }
+
+    #[test]
+    fn test_single_expression_fn() {
+        let prog = parse(
+            r#"
+            fn square(x) = x * x
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            assert_eq!(f.name, "square");
+            // Body should be a binary expression, not a block
+            assert!(matches!(&f.body.kind, ExprKind::Binary(_, BinOp::Mul, _)));
+        } else {
+            panic!("expected fn decl");
+        }
+    }
+
+    #[test]
+    fn test_negative_range_pattern() {
+        let prog = parse(
+            r#"
+            fn classify(n) {
+                match n {
+                    -10..10 -> "small"
+                    _ -> "big"
+                }
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let match_expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            if let ExprKind::Match { arms, .. } = &match_expr.kind {
+                assert!(matches!(&arms[0].pattern, Pattern::Range(-10, 10)));
+            } else {
+                panic!("expected match");
+            }
+        }
+    }
 }

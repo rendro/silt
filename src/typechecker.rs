@@ -7747,4 +7747,772 @@ fn main() {
         "#,
         );
     }
+
+    // ── Type narrowing after when/pattern match ────────────────────
+
+    #[test]
+    fn test_when_some_narrows_inner_type() {
+        // After `when Some(x) = opt`, x should have the inner type (Int)
+        assert_no_errors(
+            r#"
+fn get_value(opt) {
+  when Some(x) = opt else {
+    return 0
+  }
+  x + 1
+}
+
+fn main() {
+  get_value(Some(42))
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_when_ok_narrows_inner_type() {
+        // After `when Ok(v) = result`, v should have the ok type
+        assert_no_errors(
+            r#"
+fn process(result) {
+  when Ok(v) = result else {
+    return "error"
+  }
+  v + 10
+}
+
+fn main() {
+  process(Ok(5))
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_when_some_used_in_arithmetic() {
+        assert_no_errors(
+            r#"
+fn double_or_zero(opt) {
+  when Some(n) = opt else {
+    return 0
+  }
+  n * 2
+}
+
+fn main() {
+  double_or_zero(Some(21))
+}
+            "#,
+        );
+    }
+
+    // ── Generic type inference ──────────────────────────────────────
+
+    #[test]
+    fn test_generic_identity_multiple_types() {
+        // A generic function used with multiple types
+        assert_no_errors(
+            r#"
+fn identity(x) {
+  x
+}
+
+fn main() {
+  let a = identity(42)
+  let b = identity("hello")
+  let c = identity(true)
+  a + 1
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_nested_generic_list_of_options() {
+        // List<Option<Int>> — nested generic type
+        assert_no_errors(
+            r#"
+fn main() {
+  let xs = [Some(1), Some(2), None]
+  xs
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_generic_function_returning_generic() {
+        assert_no_errors(
+            r#"
+fn wrap(x) {
+  Some(x)
+}
+
+fn main() {
+  let a = wrap(42)
+  let b = wrap("hello")
+  match a {
+    Some(n) -> n
+    None -> 0
+  }
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_generic_pair_function() {
+        assert_no_errors(
+            r#"
+fn make_pair(a, b) {
+  (a, b)
+}
+
+fn main() {
+  let p1 = make_pair(1, "hello")
+  let p2 = make_pair(true, 3.14)
+  p1
+}
+            "#,
+        );
+    }
+
+    // ── Recursive functions ─────────────────────────────────────────
+
+    #[test]
+    fn test_recursive_function() {
+        assert_no_errors(
+            r#"
+fn factorial(n) {
+  match n {
+    0 -> 1
+    _ -> n * factorial(n - 1)
+  }
+}
+
+fn main() {
+  factorial(5)
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_recursive_list_function() {
+        assert_no_errors(
+            r#"
+fn sum(xs) {
+  match list.head(xs) {
+    None -> 0
+    Some(h) -> h + sum(list.tail(xs))
+  }
+}
+
+fn main() {
+  sum([1, 2, 3])
+}
+            "#,
+        );
+    }
+
+    // ── More exhaustiveness checking ────────────────────────────────
+
+    #[test]
+    fn test_match_int_without_wildcard_non_exhaustive() {
+        // Matching on Int literal patterns without wildcard should be non-exhaustive
+        assert_has_error(
+            r#"
+fn describe(n) {
+  match n {
+    0 -> "zero"
+    1 -> "one"
+  }
+}
+
+fn main() {
+  describe(2)
+}
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_string_without_wildcard_non_exhaustive() {
+        // Matching on String literal patterns without wildcard should be non-exhaustive
+        assert_has_error(
+            r#"
+fn greet(name) {
+  match name {
+    "alice" -> "hi alice"
+    "bob" -> "hi bob"
+  }
+}
+
+fn main() {
+  greet("carol")
+}
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_enum_one_variant_non_exhaustive() {
+        // Matching only one variant of a multi-variant enum
+        assert_has_error(
+            r#"
+type Shape {
+  Circle(Float)
+  Square(Float)
+  Triangle(Float, Float)
+}
+
+fn area(s) {
+  match s {
+    Circle(r) -> 3.14 * r * r
+  }
+}
+
+fn main() {
+  area(Circle(5.0))
+}
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_all_guards_non_exhaustive() {
+        // Guard arms don't count toward exhaustiveness
+        assert_has_error(
+            r#"
+fn classify(n) {
+  match n {
+    x when x > 0 -> "positive"
+    x when x < 0 -> "negative"
+    x when x == 0 -> "zero"
+  }
+}
+
+fn main() {
+  classify(5)
+}
+            "#,
+            "non-exhaustive",
+        );
+    }
+
+    #[test]
+    fn test_match_int_with_wildcard_exhaustive() {
+        // Adding a wildcard makes int matching exhaustive
+        assert_no_errors(
+            r#"
+fn describe(n) {
+  match n {
+    0 -> "zero"
+    1 -> "one"
+    _ -> "other"
+  }
+}
+
+fn main() {
+  describe(2)
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_match_string_with_wildcard_exhaustive() {
+        assert_no_errors(
+            r#"
+fn greet(name) {
+  match name {
+    "alice" -> "hi alice"
+    "bob" -> "hi bob"
+    _ -> "hi stranger"
+  }
+}
+
+fn main() {
+  greet("carol")
+}
+            "#,
+        );
+    }
+
+    // ── Error cases ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_wrong_number_of_arguments() {
+        assert_has_error(
+            r#"
+fn add(a, b) {
+  a + b
+}
+
+fn main() {
+  add(1, 2, 3)
+}
+            "#,
+            "argument",
+        );
+    }
+
+    #[test]
+    fn test_too_few_arguments() {
+        assert_has_error(
+            r#"
+fn add(a, b) {
+  a + b
+}
+
+fn main() {
+  add(1)
+}
+            "#,
+            "argument",
+        );
+    }
+
+    #[test]
+    fn test_access_nonexistent_record_field() {
+        assert_has_error(
+            r#"
+type Point { x: Int, y: Int }
+
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  p.z
+}
+            "#,
+            "no field",
+        );
+    }
+
+    #[test]
+    fn test_undefined_variable() {
+        assert_has_error(
+            r#"
+fn main() {
+  let x = 1
+  y + x
+}
+            "#,
+            "undefined variable",
+        );
+    }
+
+    #[test]
+    fn test_arithmetic_on_string_and_int() {
+        // String + Int should produce a type mismatch
+        assert_has_error(
+            r#"
+fn main() {
+  "hello" + 42
+}
+            "#,
+            "type mismatch",
+        );
+    }
+
+    #[test]
+    fn test_boolean_and_with_non_bool() {
+        assert_has_error(
+            r#"
+fn main() {
+  let x = "hello" && true
+  x
+}
+            "#,
+            "type mismatch",
+        );
+    }
+
+    #[test]
+    fn test_int_minus_string() {
+        assert_has_error(
+            r#"
+fn main() {
+  42 - "hello"
+}
+            "#,
+            "type mismatch",
+        );
+    }
+
+    // ── Set type inference ──────────────────────────────────────────
+
+    #[test]
+    fn test_set_literal_inference() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let s = #[1, 2, 3]
+  s
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_empty_set_literal() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let s = #[]
+  s
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_set_of_strings() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let s = #["hello", "world"]
+  s
+}
+            "#,
+        );
+    }
+
+    // ── Loop/recur ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_loop_basic() {
+        assert_no_errors(
+            r#"
+fn main() {
+  loop n = 0 {
+    match n > 10 {
+      true -> n
+      false -> loop(n + 1)
+    }
+  }
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_loop_with_accumulator() {
+        assert_no_errors(
+            r#"
+fn main() {
+  loop i = 0, acc = 0 {
+    match i >= 10 {
+      true -> acc
+      false -> loop(i + 1, acc + i)
+    }
+  }
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_loop_recur_arity_mismatch() {
+        // loop has 2 bindings, recur has 1 argument
+        let errors = check_program(
+            r#"
+fn main() {
+  loop i = 0, acc = 0 {
+    match i >= 10 {
+      true -> acc
+      false -> loop(i + 1)
+    }
+  }
+}
+            "#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("binding") || e.message.contains("argument")),
+            "expected recur arity warning, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    // ── Trait system edge cases ─────────────────────────────────────
+
+    #[test]
+    fn test_trait_impl_with_wrong_method_signature() {
+        // Impl that is missing one of the required methods
+        let errors = check_program(
+            r#"
+trait Describable {
+  fn describe(self) -> String { "default" }
+  fn summary(self) -> String { "summary" }
+}
+
+type Widget { label: String }
+
+trait Describable for Widget {
+  fn describe(self) -> String { "widget" }
+}
+
+fn main() { 0 }
+            "#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("missing method")),
+            "expected missing method error, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_trait_unknown_in_impl() {
+        assert_has_error(
+            r#"
+type Foo { x: Int }
+
+trait DoesNotExist for Foo {
+  fn bar(self) -> Int { 0 }
+}
+
+fn main() { 0 }
+            "#,
+            "not declared",
+        );
+    }
+
+    #[test]
+    fn test_where_clause_unknown_trait() {
+        let errors = check_program(
+            r#"
+fn do_thing(x) where x: FakeTrait {
+  x
+}
+
+fn main() { 0 }
+            "#,
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("FakeTrait")),
+            "expected unknown trait error, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_multiple_trait_impls_for_same_type() {
+        // Implementing two different traits for the same type should be fine
+        let errors = check_program(
+            r#"
+trait Printable {
+  fn print(self) -> String { "default" }
+}
+
+trait Serializable {
+  fn serialize(self) -> String { "default" }
+}
+
+type Item { name: String }
+
+trait Printable for Item {
+  fn print(self) -> String { "item" }
+}
+
+trait Serializable for Item {
+  fn serialize(self) -> String { "serialized" }
+}
+
+fn main() { 0 }
+            "#,
+        );
+        // Should not produce "not declared" or "missing method" errors
+        let bad_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("not declared") || e.message.contains("missing method"))
+            .collect();
+        assert!(
+            bad_errors.is_empty(),
+            "unexpected trait errors: {:?}",
+            bad_errors
+        );
+    }
+
+    // ── Ascription (as) ─────────────────────────────────────────────
+
+    #[test]
+    fn test_valid_ascription() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let x = 42 as Int
+  x
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_ascription_string() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let s = "hello" as String
+  s
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_ascription_incompatible_type() {
+        assert_has_error(
+            r#"
+fn main() {
+  let x = 42 as String
+  x
+}
+            "#,
+            "type mismatch",
+        );
+    }
+
+    // ── Import-dependent type checking ──────────────────────────────
+
+    #[test]
+    fn test_string_module_split() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let parts = string.split("a,b,c", ",")
+  parts
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_list_map_and_filter() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let xs = [1, 2, 3, 4, 5]
+  let doubled = list.map(xs, fn(x) { x * 2 })
+  let evens = list.filter(xs, fn(x) { x > 2 })
+  doubled
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_map_get_returns_option() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  let result = map.get(m, "a")
+  match result {
+    Some(v) -> v
+    None -> 0
+  }
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_chained_module_calls() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let s = "Hello World"
+  let result = s
+    |> string.to_lower
+    |> string.split(" ")
+    |> list.length
+  result
+}
+            "#,
+        );
+    }
+
+    // ── Additional edge cases ───────────────────────────────────────
+
+    #[test]
+    fn test_nested_match_exhaustive() {
+        // Nested Result<Option<Int>> fully covered
+        assert_no_errors(
+            r#"
+fn process(r) {
+  match r {
+    Ok(Some(x)) -> x
+    Ok(None) -> -1
+    Err(_) -> -2
+  }
+}
+
+fn main() {
+  process(Ok(Some(42)))
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_enum_match_all_variants_exhaustive() {
+        assert_no_errors(
+            r#"
+type Direction {
+  North
+  South
+  East
+  West
+}
+
+fn to_string(d) {
+  match d {
+    North -> "north"
+    South -> "south"
+    East -> "east"
+    West -> "west"
+  }
+}
+
+fn main() {
+  to_string(North)
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_record_update_type_checks() {
+        assert_no_errors(
+            r#"
+type Config {
+  host: String,
+  port: Int,
+}
+
+fn main() {
+  let c = Config { host: "localhost", port: 8080 }
+  let c2 = c.{ port: 9090 }
+  c2.host
+}
+            "#,
+        );
+    }
+
+    #[test]
+    fn test_question_mark_on_non_result() {
+        // Using ? on a non-Result/Option type should error
+        assert_has_error(
+            r#"
+fn main() -> Result {
+  let x = 42?
+  x
+}
+            "#,
+            "requires Result or Option",
+        );
+    }
 }
