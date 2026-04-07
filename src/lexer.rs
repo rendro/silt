@@ -807,6 +807,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_float() {
         assert_eq!(lex("3.14"), vec![Token::Float(3.14)]);
     }

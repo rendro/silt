@@ -55,6 +55,7 @@ Always available. No import or qualification needed.
 | `Message` | `(a) -> ChannelResult(a)` | Wraps a received channel value |
 | `Closed` | `ChannelResult(a)` | Channel is closed |
 | `Empty` | `ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
+| `Sent` | `ChannelResult(a)` | Value was sent successfully (select send) |
 | `Monday`..`Sunday` | `Weekday` | Day-of-week constructors (require `import time`) |
 
 Additionally, four **type descriptors** are in the global namespace for use with
@@ -252,6 +253,26 @@ Empty : ChannelResult(a)
 
 Indicates the channel buffer is currently empty but not closed. Only returned by
 `channel.try_receive` (the non-blocking variant).
+
+
+### `Sent`
+
+```
+Sent : ChannelResult(a)
+```
+
+Indicates a value was successfully sent to a channel. Returned by
+`channel.select` when a send operation completes.
+
+```silt
+fn main() {
+    let ch = channel.new(1)
+    match channel.select([(ch, 42)]) {
+        (_, Sent) -> println("sent!")
+        (_, Closed) -> println("closed")
+    }
+}
+```
 
 
 ## list
@@ -3102,10 +3123,11 @@ communication between tasks spawned with `task.spawn`.
 |----------|-----------|-------------|
 | `close` | `(Channel) -> ()` | Close the channel |
 | `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
-| `new` | `(Int) -> Channel` | Create a bounded channel |
+| `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
-| `select` | `(List(Channel)) -> (Channel, a)` | Wait on multiple channels |
+| `select` | `(List(Channel \| (Channel, a))) -> (Channel, ChannelResult(a))` | Wait on multiple operations |
 | `send` | `(Channel, a) -> ()` | Blocking send |
+| `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
 | `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
 | `try_send` | `(Channel, a) -> Bool` | Non-blocking send |
 
@@ -3154,15 +3176,19 @@ fn main() {
 ### `channel.new`
 
 ```
+channel.new() -> Channel
 channel.new(capacity: Int) -> Channel
 ```
 
-Creates a new bounded channel with the given buffer capacity. Sends block when
-the buffer is full; receives block when the buffer is empty.
+Creates a new channel. With no argument, creates a rendezvous channel
+(capacity 0) where the sender blocks until a receiver is ready and vice versa.
+With an integer argument, creates a buffered channel with that capacity --
+sends block when the buffer is full, receives block when the buffer is empty.
 
 ```silt
 fn main() {
-    let ch = channel.new(10)
+    let rendezvous = channel.new()    -- true rendezvous (capacity 0)
+    let buffered = channel.new(10)    -- buffered (capacity 10)
 }
 ```
 
@@ -3192,19 +3218,39 @@ fn main() {
 ### `channel.select`
 
 ```
-channel.select(channels: List(Channel)) -> (Channel, a)
+channel.select(ops: List(Channel | (Channel, a))) -> (Channel, ChannelResult(a))
 ```
 
-Waits until one of the channels has a message ready. Returns a tuple of
-`(channel, value)`. Parks the task until a channel becomes ready.
+Waits until one of the operations completes. Each element of the list is either
+a bare channel (receive) or a `(channel, value)` tuple (send). Returns a
+2-tuple of `(channel, result)` where `result` is `Message(val)` for a
+successful receive, `Sent` for a successful send, or `Closed` if the channel
+is closed.
 
 ```silt
 fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
     task.spawn(fn() { channel.send(ch2, "hello") })
-    let (ch, val) = channel.select([ch1, ch2])
-    println(val)  // "hello"
+    match channel.select([ch1, ch2]) {
+        (^ch2, Message(val)) -> println(val)  // "hello"
+        (_, Closed) -> println("closed")
+    }
+}
+```
+
+Send operations in select:
+
+```silt
+fn main() {
+    let input = channel.new(10)
+    let output = channel.new(10)
+    channel.send(input, 42)
+    match channel.select([input, (output, "result")]) {
+        (^input, Message(val)) -> println("received: {val}")
+        (^output, Sent) -> println("sent to output")
+        (_, Closed) -> println("closed")
+    }
 }
 ```
 
@@ -3222,6 +3268,28 @@ other tasks to run until space opens up.
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, "hello")
+}
+```
+
+
+### `channel.timeout`
+
+```
+channel.timeout(ms: Int) -> Channel
+```
+
+Creates a channel that automatically closes after the given number of
+milliseconds. The returned channel carries no values -- it simply closes when
+the duration elapses. This is useful for adding deadlines to `channel.select`.
+
+```silt
+fn main() {
+    let ch = channel.new(10)
+    let timer = channel.timeout(1000)  -- closes after 1 second
+    match channel.select([ch, timer]) {
+        (^ch, Message(val)) -> println("got: {val}")
+        (^timer, Closed) -> println("timed out")
+    }
 }
 ```
 

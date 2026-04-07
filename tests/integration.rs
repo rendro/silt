@@ -1439,6 +1439,7 @@ fn main() { list.enumerate(["a", "b"]) }"#);
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_float_min_max() {
     let result = run(r#"import float
 fn main() { (float.min(3.14, 2.71), float.max(3.14, 2.71)) }"#);
@@ -4732,6 +4733,7 @@ fn make_datetime(date: Value, time: Value) -> Value {
     make_record("DateTime", vec![("date", date), ("time", time)])
 }
 
+#[allow(dead_code)]
 fn make_duration(ns: i64) -> Value {
     make_record("Duration", vec![("ns", Value::Int(ns))])
 }
