@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use crate::value::Value;
+use crate::value::{TaskHandle, Value};
 use crate::vm::{BlockReason, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -1425,6 +1425,36 @@ fn extract_http_response(
     Ok((status, body, fields))
 }
 
+/// Extract a silt Response record and send it as an HTTP response.
+/// Used by the per-request handler threads in `http.serve`.
+#[cfg(feature = "http")]
+fn send_http_response(response_val: &Value, req: tiny_http::Request) {
+    match extract_http_response(response_val) {
+        Ok((status, resp_body, resp_fields)) => {
+            let mut response = tiny_http::Response::from_string(&resp_body)
+                .with_status_code(tiny_http::StatusCode(status));
+
+            if let Some(Value::Map(resp_headers)) = resp_fields.get("headers") {
+                for (k, v) in resp_headers.iter() {
+                    if let (Value::String(key), Value::String(val)) = (k, v)
+                        && let Ok(header) =
+                            tiny_http::Header::from_bytes(key.as_bytes(), val.as_bytes())
+                    {
+                        response = response.with_header(header);
+                    }
+                }
+            }
+
+            let _ = req.respond(response);
+        }
+        Err(e) => {
+            let resp = tiny_http::Response::from_string(format!("Internal Server Error: {e}"))
+                .with_status_code(tiny_http::StatusCode(500));
+            let _ = req.respond(resp);
+        }
+    }
+}
+
 #[cfg(feature = "http")]
 fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
@@ -1702,79 +1732,109 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 let handler = args[1].clone();
 
                 let addr = format!("0.0.0.0:{port}");
-                let server = tiny_http::Server::http(&addr)
-                    .map_err(|e| VmError::new(format!("http.serve: failed to bind: {e}")))?;
+                let server = Arc::new(
+                    tiny_http::Server::http(&addr)
+                        .map_err(|e| VmError::new(format!("http.serve: failed to bind: {e}")))?,
+                );
 
-                loop {
-                    let mut req = match server.recv() {
-                        Ok(req) => req,
-                        Err(e) => {
-                            return Err(VmError::new(format!("http.serve: recv error: {e}")));
-                        }
-                    };
+                // Create a template child VM for spawning per-request handlers.
+                // spawn_child() clones globals (which include builtins) and shares
+                // runtime via Arc, so each request handler gets a fully functional VM.
+                let template_vm = vm.spawn_child();
+                let task_id = vm.next_task_id();
+                let handle = Arc::new(TaskHandle::new(task_id));
+                let serve_handle = handle.clone();
 
-                    // Convert method to silt Method variant
-                    let method_str = match req.method() {
-                        tiny_http::Method::Get => "GET",
-                        tiny_http::Method::Post => "POST",
-                        tiny_http::Method::Put => "PUT",
-                        tiny_http::Method::Patch => "PATCH",
-                        tiny_http::Method::Delete => "DELETE",
-                        tiny_http::Method::Head => "HEAD",
-                        tiny_http::Method::Options => "OPTIONS",
-                        _ => {
-                            let resp = tiny_http::Response::from_string("Method Not Allowed")
-                                .with_status_code(tiny_http::StatusCode(405));
-                            let _ = req.respond(resp);
-                            continue;
-                        }
-                    };
+                // Spawn the accept loop on a dedicated OS thread so it doesn't
+                // block a scheduler worker or the main thread.
+                std::thread::spawn(move || {
+                    loop {
+                        let mut req = match server.recv() {
+                            Ok(req) => req,
+                            Err(_) => break,
+                        };
 
-                    // Parse URL into path and query
-                    let url = req.url().to_string();
-                    let (path, query) = match url.split_once('?') {
-                        Some((p, q)) => (p.to_string(), q.to_string()),
-                        None => (url, std::string::String::new()),
-                    };
+                        // For each accepted request, spawn a handler thread
+                        // with its own child VM for concurrent request handling.
+                        let handler = handler.clone();
+                        let mut request_vm = template_vm.spawn_child();
 
-                    // Collect headers
-                    let mut headers = BTreeMap::new();
-                    for header in req.headers() {
-                        headers.insert(
-                            Value::String(header.field.as_str().to_string()),
-                            Value::String(header.value.as_str().to_string()),
-                        );
-                    }
+                        std::thread::spawn(move || {
+                            // Parse the HTTP method
+                            let method_str = match req.method() {
+                                tiny_http::Method::Get => "GET",
+                                tiny_http::Method::Post => "POST",
+                                tiny_http::Method::Put => "PUT",
+                                tiny_http::Method::Patch => "PATCH",
+                                tiny_http::Method::Delete => "DELETE",
+                                tiny_http::Method::Head => "HEAD",
+                                tiny_http::Method::Options => "OPTIONS",
+                                _ => {
+                                    let resp =
+                                        tiny_http::Response::from_string("Method Not Allowed")
+                                            .with_status_code(tiny_http::StatusCode(405));
+                                    let _ = req.respond(resp);
+                                    return;
+                                }
+                            };
 
-                    // Read body
-                    let mut body = std::string::String::new();
-                    let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+                            // Parse URL into path and query
+                            let url = req.url().to_string();
+                            let (path, query) = match url.split_once('?') {
+                                Some((p, q)) => (p.to_string(), q.to_string()),
+                                None => (url, std::string::String::new()),
+                            };
 
-                    // Build Request record
-                    let request_val =
-                        make_http_request_value(method_str, &path, &query, headers, body);
-
-                    // Call handler
-                    let response_val = vm.invoke_callable(&handler, &[request_val])?;
-
-                    // Extract Response record and send
-                    let (status, resp_body, resp_fields) = extract_http_response(&response_val)?;
-
-                    let mut response = tiny_http::Response::from_string(&resp_body)
-                        .with_status_code(tiny_http::StatusCode(status));
-
-                    if let Some(Value::Map(resp_headers)) = resp_fields.get("headers") {
-                        for (k, v) in resp_headers.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v)
-                                && let Ok(header) =
-                                    tiny_http::Header::from_bytes(key.as_bytes(), val.as_bytes())
-                            {
-                                response = response.with_header(header);
+                            // Collect headers
+                            let mut headers = BTreeMap::new();
+                            for header in req.headers() {
+                                headers.insert(
+                                    Value::String(header.field.as_str().to_string()),
+                                    Value::String(header.value.as_str().to_string()),
+                                );
                             }
-                        }
-                    }
 
-                    let _ = req.respond(response);
+                            // Read body
+                            let mut body = std::string::String::new();
+                            let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+
+                            // Build Request record
+                            let request_val =
+                                make_http_request_value(method_str, &path, &query, headers, body);
+
+                            // Run the user's handler on the per-request child VM
+                            match request_vm.invoke_callable(&handler, &[request_val]) {
+                                Ok(response_val) => {
+                                    send_http_response(&response_val, req);
+                                }
+                                Err(e) => {
+                                    let resp = tiny_http::Response::from_string(format!(
+                                        "Internal Server Error: {e}"
+                                    ))
+                                    .with_status_code(tiny_http::StatusCode(500));
+                                    let _ = req.respond(resp);
+                                }
+                            }
+                        });
+                    }
+                    // Accept loop ended (server shut down) — complete the handle.
+                    serve_handle.complete(Ok(Value::Unit));
+                });
+
+                // If running as a scheduled task, yield and let the scheduler
+                // park us until the serve handle completes (i.e. server shuts down).
+                if vm.is_scheduled_task {
+                    vm.block_reason = Some(BlockReason::Join(handle.clone()));
+                    for arg in args {
+                        vm.push(arg.clone());
+                    }
+                    return Err(VmError::yield_signal());
+                }
+
+                // Main thread: block until the server shuts down.
+                match handle.join() {
+                    Ok(val) => Ok(val),
+                    Err(msg) => Err(VmError::new(format!("http.serve failed: {msg}"))),
                 }
             }
             #[cfg(not(feature = "http"))]

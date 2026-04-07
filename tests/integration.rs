@@ -6049,6 +6049,86 @@ fn main() {
     assert_eq!(result, Value::Int(4));
 }
 
+// ── http.serve concurrency ──────────────────────────────────────
+
+#[test]
+fn test_http_serve_non_blocking_in_task() {
+    // Spawn http.serve in a task; verify other tasks can still run.
+    // The accept loop runs on a dedicated OS thread and the silt task
+    // yields via BlockReason::Join, so scheduler workers stay free.
+    let input = r#"
+import http
+import task
+import channel
+
+fn main() {
+  let done = channel.new(1)
+  let server = task.spawn(fn() {
+    http.serve(19080, fn(req) {
+      Response { status: 200, body: "ok", headers: #{} }
+    })
+  })
+  let worker = task.spawn(fn() {
+    channel.send(done, "ready")
+  })
+  let result = channel.receive(done)
+  match result {
+    Message(v) -> v
+    _ -> "failed"
+  }
+}
+"#;
+    let result = run(input);
+    assert_eq!(result, Value::String("ready".into()));
+}
+
+#[test]
+fn test_http_serve_concurrent_requests() {
+    // Start a server on the main thread (it blocks), send concurrent
+    // HTTP requests from Rust threads, and verify all get correct
+    // responses — proving per-request concurrency.
+    use std::thread;
+    use std::time::Duration;
+
+    let port = 19081;
+
+    // Run the silt server in a background thread (http.serve blocks the main thread).
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: req.path, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    // Wait for the server to bind and start accepting
+    thread::sleep(Duration::from_millis(300));
+
+    // Send 5 concurrent requests
+    let mut request_handles = Vec::new();
+    for i in 0..5 {
+        request_handles.push(thread::spawn(move || {
+            let url = format!("http://127.0.0.1:{port}/path{i}");
+            match ureq::get(&url).call() {
+                Ok(mut resp) => resp.body_mut().read_to_string().unwrap_or_default(),
+                Err(e) => format!("error: {e}"),
+            }
+        }));
+    }
+
+    for (i, h) in request_handles.into_iter().enumerate() {
+        let body = h.join().unwrap();
+        assert_eq!(body, format!("/path{i}"), "request {i} got wrong response");
+    }
+}
+
 // ── Deadlock detection ──────────────────────────────────────────
 
 #[test]
