@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
 use std::sync::Arc;
+use regex::Regex;
 
 use crate::builtins;
 use crate::builtins::data::FieldType;
@@ -105,6 +106,10 @@ pub struct Vm {
     pub(crate) block_reason: Option<BlockReason>,
     /// True when this VM is running as a scheduled task (not on the main thread).
     pub(crate) is_scheduled_task: bool,
+
+    // ── Caches ──────────────────────────────────────────────────
+    /// Cache for compiled regex patterns (bounded to 256 entries).
+    pub(crate) regex_cache: HashMap<String, Regex>,
 }
 
 impl Vm {
@@ -123,6 +128,7 @@ impl Vm {
             next_task_id: 0,
             block_reason: None,
             is_scheduled_task: false,
+            regex_cache: HashMap::new(),
         };
         vm.register_builtins();
         vm
@@ -223,6 +229,7 @@ impl Vm {
             next_task_id: self.next_task_id,
             block_reason: None,
             is_scheduled_task: false,
+            regex_cache: HashMap::new(),
         }
     }
 
@@ -472,20 +479,31 @@ impl Vm {
                 // ── String interpolation ──────────────────────
                 Some(Op::DisplayValue) => {
                     let val = self.pop()?;
-                    let s = self.display_value(&val);
-                    self.push(Value::String(s));
+                    if matches!(&val, Value::String(_)) {
+                        self.push(val);
+                    } else {
+                        let s = self.display_value(&val);
+                        self.push(Value::String(s));
+                    }
                 }
                 Some(Op::StringConcat) => {
                     let count = self.read_u8()? as usize;
                     let start = self.stack.len() - count;
-                    let mut result = String::new();
+                    // Pre-calculate total capacity to avoid reallocations
+                    let mut total_len = 0;
                     for i in start..self.stack.len() {
                         if let Value::String(ref s) = self.stack[i] {
-                            result.push_str(s);
+                            total_len += s.len();
                         } else {
                             return Err(VmError::new(
                                 "StringConcat: non-string value on stack".to_string(),
                             ));
+                        }
+                    }
+                    let mut result = String::with_capacity(total_len);
+                    for i in start..self.stack.len() {
+                        if let Value::String(ref s) = self.stack[i] {
+                            result.push_str(s);
                         }
                     }
                     self.stack.truncate(start);
@@ -1414,18 +1432,29 @@ impl Vm {
             }
             Op::DisplayValue => {
                 let val = self.pop()?;
-                let s = self.display_value(&val);
-                self.push(Value::String(s));
+                if matches!(&val, Value::String(_)) {
+                    self.push(val);
+                } else {
+                    let s = self.display_value(&val);
+                    self.push(Value::String(s));
+                }
             }
             Op::StringConcat => {
                 let count = self.read_u8()? as usize;
                 let start = self.stack.len() - count;
-                let mut result = String::new();
+                // Pre-calculate total capacity to avoid reallocations
+                let mut total_len = 0;
+                for i in start..self.stack.len() {
+                    if let Value::String(ref s) = self.stack[i] {
+                        total_len += s.len();
+                    } else {
+                        return Err(VmError::new("StringConcat: non-string value on stack".into()));
+                    }
+                }
+                let mut result = String::with_capacity(total_len);
                 for i in start..self.stack.len() {
                     if let Value::String(ref s) = self.stack[i] {
                         result.push_str(s);
-                    } else {
-                        return Err(VmError::new("StringConcat: non-string value on stack".into()));
                     }
                 }
                 self.stack.truncate(start);
@@ -2098,7 +2127,26 @@ impl Vm {
     // ── Value display ─────────────────────────────────────────────
 
     pub(crate) fn display_value(&self, val: &Value) -> String {
-        format!("{val}")
+        match val {
+            Value::String(s) => s.clone(),
+            Value::Int(n) => n.to_string(),
+            Value::Bool(true) => "true".to_string(),
+            Value::Bool(false) => "false".to_string(),
+            Value::Float(f) => f.to_string(),
+            _ => format!("{val}"),
+        }
+    }
+
+    pub(crate) fn get_regex<'a>(cache: &'a mut HashMap<String, Regex>, pattern: &str) -> Result<&'a Regex, VmError> {
+        if !cache.contains_key(pattern) {
+            let re = Regex::new(pattern)
+                .map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            if cache.len() >= 256 {
+                cache.clear();
+            }
+            cache.insert(pattern.to_string(), re);
+        }
+        Ok(cache.get(pattern).unwrap())
     }
 
     fn type_name(&self, val: &Value) -> &'static str {

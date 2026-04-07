@@ -214,6 +214,42 @@ fn main() {
 }
     "#);
 
+    // ── Regex operations ────────────────────────────────────────────
+    println!("── Regex ──────────────────────────────────────────────────────");
+
+    bench("regex: is_match 1K (cached)", r#"
+import regex
+import list
+fn main() {
+  list.fold(1..1001, 0) { acc, n ->
+    match regex.is_match("\\d+", "{n}") {
+      true -> acc + 1
+      false -> acc
+    }
+  }
+}
+    "#);
+
+    bench("regex: find_all 1K", r#"
+import regex
+import list
+fn main() {
+  list.map(1..1001) { n ->
+    regex.find_all("[0-9]+", "abc{n}def{n}ghi") |> list.length
+  } |> list.fold(0) { acc, x -> acc + x }
+}
+    "#);
+
+    bench("regex: replace_all 1K", r#"
+import regex
+import list
+fn main() {
+  list.map(1..1001) { n ->
+    regex.replace_all("[aeiou]", "hello world {n}", "_")
+  } |> list.length
+}
+    "#);
+
     println!();
 
     // ── Pattern matching ────────────────────────────────────────────

@@ -618,7 +618,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.is_match requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             Ok(Value::Bool(re.is_match(text)))
         }
         "find" => {
@@ -628,7 +628,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.find requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.find(text) {
                 Some(m) => Ok(Value::Variant("Some".into(), vec![Value::String(m.as_str().to_string())])),
                 None => Ok(Value::Variant("None".into(), Vec::new())),
@@ -641,7 +641,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.find_all requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let matches: Vec<Value> = re.find_iter(text)
                 .map(|m| Value::String(m.as_str().to_string()))
                 .collect();
@@ -654,7 +654,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.split requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let parts: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
             Ok(Value::List(Arc::new(parts)))
         }
@@ -665,7 +665,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
                 return Err(VmError::new("regex.replace requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             Ok(Value::String(re.replace(text, replacement.as_str()).to_string()))
         }
         "replace_all" => {
@@ -675,7 +675,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
                 return Err(VmError::new("regex.replace_all requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
         }
         "replace_all_with" => {
@@ -689,7 +689,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                 return Err(VmError::new("regex.replace_all_with requires a string text".into()));
             };
             let callback = args[2].clone();
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?.clone();
             let mut result = std::string::String::new();
             let mut last_end = 0;
             for m in re.find_iter(text) {
@@ -711,7 +711,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.captures requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.captures(text) {
                 Some(caps) => {
                     let groups: Vec<Value> = caps.iter()
@@ -732,7 +732,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.captures_all requires string arguments".into()));
             };
-            let re = Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let all_captures: Vec<Value> = re.captures_iter(text)
                 .map(|caps| {
                     let groups: Vec<Value> = caps.iter()
