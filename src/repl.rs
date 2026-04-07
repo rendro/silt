@@ -11,6 +11,7 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
 use crate::compiler::Compiler;
+use crate::errors::SourceError;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::value::Value;
@@ -395,7 +396,8 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
     let functions = match compiler.compile_declarations(&program) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("compile error: {e}");
+            let source_err = SourceError::from_compile_error(&e, input, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };
@@ -430,7 +432,8 @@ fn eval_expression(vm: &mut Vm, input: &str) {
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("compile error: {e}");
+            let source_err = SourceError::from_compile_error(&e, &wrapped, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };

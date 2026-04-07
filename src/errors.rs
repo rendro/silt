@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::compiler::CompileError;
 use crate::lexer::{LexError, Span};
 use crate::parser::ParseError;
 use crate::typechecker::TypeError;
@@ -74,6 +75,18 @@ impl SourceError {
             source_line,
             file: Some(file.into()),
             is_warning,
+        }
+    }
+
+    pub fn from_compile_error(err: &CompileError, source: &str, file: impl Into<String>) -> Self {
+        let source_line = get_source_line(source, err.span.line);
+        Self {
+            kind: ErrorKind::Compile,
+            message: err.message.clone(),
+            span: err.span,
+            source_line,
+            file: Some(file.into()),
+            is_warning: false,
         }
     }
 

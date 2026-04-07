@@ -34,7 +34,7 @@ fn run_err(input: &str) -> String {
     let mut compiler = Compiler::new();
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
-        Err(e) => return e,
+        Err(e) => return e.message,
     };
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();

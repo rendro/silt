@@ -7,6 +7,7 @@
 //! plus all previous features (closures, upvalues, pipes, lambdas).
 
 use std::collections::HashSet;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -115,6 +116,20 @@ pub struct CompileWarning {
     pub span: Span,
 }
 
+// ── Compiler errors ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct CompileError {
+    pub message: String,
+    pub span: Span,
+}
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}:{}] {}", self.span.line, self.span.col, self.message)
+    }
+}
+
 // ── Compiler ──────────────────────────────────────────────────────────
 
 pub struct Compiler {
@@ -190,7 +205,7 @@ impl Compiler {
     ///
     /// The first function in the returned `Vec` is the top-level `<script>`,
     /// which ends with `GetGlobal "main" ; Call 0 ; Return`.
-    pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, String> {
+    pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
         // Push a top-level script context.
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
@@ -213,7 +228,7 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or("compiler bug: missing script context")?
+            .ok_or(CompileError { message: "compiler bug: missing script context".into(), span: Span::new(0, 0) })?
             .function;
 
         // Build the result: script first, then all compiled functions.
@@ -227,7 +242,7 @@ impl Compiler {
     /// Returns all compiled functions. The first is a `<script>` that
     /// registers globals and returns Unit.  Useful for test runners and the
     /// REPL where `main()` is not the entry-point.
-    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, String> {
+    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
@@ -243,7 +258,7 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or("compiler bug: missing script context")?
+            .ok_or(CompileError { message: "compiler bug: missing script context".into(), span: Span::new(0, 0) })?
             .function;
         let mut result = vec![script];
         result.append(&mut self.functions);
@@ -252,7 +267,7 @@ impl Compiler {
 
     // ── Declarations ──────────────────────────────────────────────
 
-    fn compile_decl(&mut self, decl: &Decl) -> Result<(), String> {
+    fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
         match decl {
             Decl::Fn(fn_decl) => {
                 let arity = fn_decl.params.len() as u8;
@@ -309,7 +324,7 @@ impl Compiler {
                 let ctx = self
                     .contexts
                     .pop()
-                    .ok_or("compiler bug: missing function context")?;
+                    .ok_or(CompileError { message: "compiler bug: missing function context".into(), span })?;
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
@@ -351,7 +366,7 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                     _ => {
-                        return Err("unsupported pattern in top-level let".into());
+                        return Err(CompileError { message: "unsupported pattern in top-level let".into(), span });
                     }
                 }
 
@@ -478,7 +493,7 @@ impl Compiler {
                     let ctx = self
                         .contexts
                         .pop()
-                        .ok_or("compiler bug: missing trait method context")?;
+                        .ok_or(CompileError { message: "compiler bug: missing trait method context".into(), span })?;
                     let func = ctx.function;
                     let vm_closure = Arc::new(VmClosure {
                         function: Arc::new(func),
@@ -510,7 +525,7 @@ impl Compiler {
 
     // ── Import compilation ─────────────────────────────────────────
 
-    fn compile_import(&mut self, target: &ImportTarget) -> Result<(), String> {
+    fn compile_import(&mut self, target: &ImportTarget) -> Result<(), CompileError> {
         match target {
             ImportTarget::Module(name) => {
                 // Builtin modules (io, string, list, ...) are already registered
@@ -601,7 +616,7 @@ impl Compiler {
     /// unit. Each public declaration is registered as a global named
     /// `"module_name.decl_name"`. Returns the list of public names exported by
     /// this module.
-    fn compile_file_module(&mut self, module_name: &str) -> Result<Vec<String>, String> {
+    fn compile_file_module(&mut self, module_name: &str) -> Result<Vec<String>, CompileError> {
         // Guard against double-compilation.
         if self.compiled_modules.contains(module_name) {
             return Ok(vec![]);
@@ -609,9 +624,10 @@ impl Compiler {
 
         // Detect circular imports.
         if self.compiling_modules.contains(module_name) {
-            return Err(format!(
-                "circular import detected: module '{module_name}' imports itself (directly or indirectly)"
-            ));
+            return Err(CompileError {
+                message: format!("circular import detected: module '{module_name}' imports itself (directly or indirectly)"),
+                span: Span::new(0, 0),
+            });
         }
         self.compiling_modules.insert(module_name.to_string());
 
@@ -626,25 +642,26 @@ impl Compiler {
 
     /// Inner implementation of file module compilation, separated so that
     /// the circular-import guard can wrap it cleanly.
-    fn compile_file_module_inner(&mut self, module_name: &str) -> Result<Vec<String>, String> {
+    fn compile_file_module_inner(&mut self, module_name: &str) -> Result<Vec<String>, CompileError> {
         let project_root = self.project_root.as_ref().ok_or_else(|| {
-            format!(
-                "cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"
-            )
+            CompileError {
+                message: format!("cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"),
+                span: Span::new(0, 0),
+            }
         })?;
 
         // Resolve, read, lex, parse the module file.
         let file_path = project_root.join(format!("{module_name}.silt"));
         let source = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("cannot load module '{module_name}': {e}"))?;
+            .map_err(|e| CompileError { message: format!("cannot load module '{module_name}': {e}"), span: Span::new(0, 0) })?;
 
         let tokens = Lexer::new(&source)
             .tokenize()
-            .map_err(|e| format!("module '{module_name}': lex error: {e}"))?;
+            .map_err(|e| CompileError { message: format!("module '{module_name}': lex error: {e}"), span: Span::new(0, 0) })?;
 
         let program = Parser::new(tokens)
             .parse_program()
-            .map_err(|e| format!("module '{module_name}': parse error: {e}"))?;
+            .map_err(|e| CompileError { message: format!("module '{module_name}': parse error: {e}"), span: Span::new(0, 0) })?;
 
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();
@@ -709,7 +726,7 @@ impl Compiler {
                     let ctx = self
                         .contexts
                         .pop()
-                        .ok_or("compiler bug: missing module function context")?;
+                        .ok_or(CompileError { message: "compiler bug: missing module function context".into(), span })?;
                     let func = ctx.function;
 
                     let vm_closure = Arc::new(VmClosure {
@@ -815,7 +832,7 @@ impl Compiler {
 
     // ── Statements ────────────────────────────────────────────────
 
-    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), String> {
+    fn compile_stmt(&mut self, stmt: &Stmt, is_last: bool) -> Result<(), CompileError> {
         match stmt {
             Stmt::Let { pattern, value, .. } => {
                 self.compile_expr(value)?;
@@ -928,7 +945,7 @@ impl Compiler {
 
     // ── Expressions ───────────────────────────────────────────────
 
-    fn compile_expr(&mut self, expr: &Expr) -> Result<(), String> {
+    fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
         let span = expr.span;
         let tail = self.in_tail_position;
         self.in_tail_position = false;
@@ -1050,7 +1067,7 @@ impl Compiler {
                     if let Some(required) = module::gated_constructor_module(name)
                         && !self.imported_builtin_modules.contains(required)
                     {
-                        return Err(format!("'{name}' requires `import {required}`"));
+                        return Err(CompileError { message: format!("'{name}' requires `import {required}`"), span });
                     }
                     let name_idx = self
                         .current_chunk()
@@ -1088,9 +1105,10 @@ impl Compiler {
                             if module::is_builtin_module(module)
                                 && !self.imported_builtin_modules.contains(module.as_str())
                             {
-                                return Err(format!(
-                                    "module '{module}' is not imported; add `import {module}` at the top of the file"
-                                ));
+                                return Err(CompileError {
+                                    message: format!("module '{module}' is not imported; add `import {module}` at the top of the file"),
+                                    span,
+                                });
                             }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
@@ -1155,9 +1173,10 @@ impl Compiler {
                         if module::is_builtin_module(name)
                             && !self.imported_builtin_modules.contains(name.as_str())
                         {
-                            return Err(format!(
-                                "module '{name}' is not imported; add `import {name}` at the top of the file"
-                            ));
+                            return Err(CompileError {
+                                message: format!("module '{name}' is not imported; add `import {name}` at the top of the file"),
+                                span,
+                            });
                         }
                         // Module-qualified global: list.map, string.length, etc.
                         let qualified = format!("{name}.{field}");
@@ -1261,7 +1280,7 @@ impl Compiler {
                 let ctx = self
                     .contexts
                     .pop()
-                    .ok_or("compiler bug: missing lambda context")?;
+                    .ok_or(CompileError { message: "compiler bug: missing lambda context".into(), span })?;
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
@@ -1443,16 +1462,15 @@ impl Compiler {
                     .ctx()
                     .loop_stack
                     .last()
-                    .ok_or_else(|| "recur outside of loop".to_string())?;
+                    .ok_or_else(|| CompileError { message: "recur outside of loop".into(), span })?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
-                    return Err(format!(
-                        "loop() expects {} argument(s), got {}",
-                        expected,
-                        args.len()
-                    ));
+                    return Err(CompileError {
+                        message: format!("loop() expects {} argument(s), got {}", expected, args.len()),
+                        span,
+                    });
                 }
 
                 for arg in args {
@@ -1483,7 +1501,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), CompileError> {
         // ── Guardless match (no scrutinee) ───────────────────────
         let Some(scrutinee) = scrutinee else {
             return self.compile_guardless_match(arms, span, tail);
@@ -1574,7 +1592,7 @@ impl Compiler {
         arms: &[MatchArm],
         span: Span,
         tail: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), CompileError> {
         let mut end_jumps = Vec::new();
 
         for arm in arms {
@@ -1623,7 +1641,7 @@ impl Compiler {
         &mut self,
         pattern: &Pattern,
         span: Span,
-    ) -> Result<Vec<usize>, String> {
+    ) -> Result<Vec<usize>, CompileError> {
         match pattern {
             Pattern::Wildcard | Pattern::Ident(_) => {
                 // Always matches, no test needed
@@ -1666,7 +1684,7 @@ impl Compiler {
                 if let Some(required) = module::gated_constructor_module(name)
                     && !self.imported_builtin_modules.contains(required)
                 {
-                    return Err(format!("'{name}' requires `import {required}`"));
+                    return Err(CompileError { message: format!("'{name}' requires `import {required}`"), span });
                 }
                 // Test: tag matches?
                 let idx = self
@@ -1916,7 +1934,7 @@ impl Compiler {
     // Where each GetLocal pushes a copy, Destruct pushes the element,
     // and the Ident bind dups it as the named local.
 
-    fn compile_pattern_bind(&mut self, pattern: &Pattern, span: Span) -> Result<(), String> {
+    fn compile_pattern_bind(&mut self, pattern: &Pattern, span: Span) -> Result<(), CompileError> {
         match pattern {
             Pattern::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
@@ -2055,7 +2073,7 @@ impl Compiler {
         &mut self,
         items: Vec<(BindDestructKind, Pattern)>,
         span: Span,
-    ) -> Result<(), String> {
+    ) -> Result<(), CompileError> {
         if items.is_empty() {
             return Ok(());
         }
@@ -2162,7 +2180,7 @@ impl Compiler {
 
     // ── Pipe compilation ─────────────────────────────────────────
 
-    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<(), String> {
+    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<(), CompileError> {
         // Compile the left value first
         self.compile_expr(left)?;
 
@@ -2228,7 +2246,7 @@ impl Compiler {
         bindings: &[(String, Expr)],
         body: &Expr,
         span: Span,
-    ) -> Result<(), String> {
+    ) -> Result<(), CompileError> {
         self.begin_scope();
 
         // Compile initial values and store in locals.
@@ -2275,7 +2293,7 @@ impl Compiler {
     /// If the callee is a module-qualified builtin (e.g., `list.map`),
     /// return the qualified name. Only returns Some if the ident is NOT a
     /// local/upvalue AND belongs to a known builtin module.
-    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, String> {
+    fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, CompileError> {
         if let ExprKind::FieldAccess(expr, field) = &callee.kind
             && let ExprKind::Ident(module) = &expr.kind
         {
@@ -2285,9 +2303,10 @@ impl Compiler {
                 && module::is_builtin_module(module)
             {
                 if !self.imported_builtin_modules.contains(module.as_str()) {
-                    return Err(format!(
-                        "module '{module}' is not imported; add `import {module}` at the top of the file"
-                    ));
+                    return Err(CompileError {
+                        message: format!("module '{module}' is not imported; add `import {module}` at the top of the file"),
+                        span: callee.span,
+                    });
                 }
                 return Ok(Some(format!("{module}.{field}")));
             }
