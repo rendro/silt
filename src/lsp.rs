@@ -78,6 +78,8 @@ fn position_to_offset(source: &str, pos: &Position) -> usize {
 struct Server {
     connection: Connection,
     documents: HashMap<Uri, Document>,
+    /// Cached builtin type signatures: "module.func" → type string.
+    builtin_sigs: HashMap<String, String>,
 }
 
 impl Server {
@@ -85,6 +87,7 @@ impl Server {
         Server {
             connection,
             documents: HashMap::new(),
+            builtin_sigs: typechecker::builtin_type_signatures(),
         }
     }
 
@@ -343,9 +346,11 @@ impl Server {
 
         // Builtins (globals + stdlib)
         for (name, kind) in BUILTINS {
+            let detail = self.builtin_sigs.get(*name).cloned();
             items.push(CompletionItem {
                 label: name.to_string(),
                 kind: Some(*kind),
+                detail,
                 ..CompletionItem::default()
             });
         }
@@ -388,12 +393,15 @@ impl Server {
     fn dot_completions(&self, doc: &Document, prefix: &str, cursor: usize) -> Vec<CompletionItem> {
         let mut items = Vec::new();
 
-        // 1. Builtin module → return its functions
+        // 1. Builtin module → return its functions with type signatures
         if module::is_builtin_module(prefix) {
             for func in module::builtin_module_functions(prefix) {
+                let qualified = format!("{prefix}.{func}");
+                let detail = self.builtin_sigs.get(&qualified).cloned();
                 items.push(CompletionItem {
                     label: func.to_string(),
                     kind: Some(CompletionItemKind::FUNCTION),
+                    detail,
                     ..CompletionItem::default()
                 });
             }
@@ -523,8 +531,10 @@ impl Server {
         // Look up in definitions first, then builtins.
         let (label, params_info) = if let Some(def) = doc.definitions.get(&fn_name) {
             build_signature_from_def(&fn_name, def)
+        } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
+            // Show builtin type signature (no individual param info)
+            (format!("{fn_name}: {sig}"), vec![])
         } else {
-            // For builtins, just show the name — no param info.
             return None;
         };
 

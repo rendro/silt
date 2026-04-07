@@ -5208,6 +5208,22 @@ pub fn check(program: &mut Program) -> Vec<TypeError> {
     checker.errors
 }
 
+/// Return a map of builtin qualified names to their type signature strings.
+/// Used by the LSP to show type info in completions.
+pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    let mut sigs = std::collections::HashMap::new();
+    for (name, scheme) in &env.bindings {
+        if name.contains('.') {
+            let ty = checker.instantiate(scheme);
+            sigs.insert(name.clone(), format!("{ty}"));
+        }
+    }
+    sigs
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
