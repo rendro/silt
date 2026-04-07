@@ -945,6 +945,21 @@ impl Parser {
                     continue;
                 }
 
+                // Type ascription: expr as Type
+                Token::As => {
+                    let bp = 95;
+                    if bp < min_bp {
+                        self.restore(saved);
+                        break;
+                    }
+                    self.advance();
+                    self.skip_nl();
+                    let type_expr = self.parse_type_expr()?;
+                    let span = left.span;
+                    left = Expr::new(ExprKind::Ascription(Box::new(left), type_expr), span);
+                    continue;
+                }
+
                 _ => {
                     self.restore(saved);
                     break;

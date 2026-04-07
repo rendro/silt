@@ -4891,6 +4891,13 @@ impl TypeChecker {
                 }
             }
 
+            ExprKind::Ascription(inner, type_expr) => {
+                let inner_ty = self.infer_expr(inner, env);
+                let declared = self.resolve_type_expr(type_expr, &mut HashMap::new());
+                self.unify(&inner_ty, &declared, span);
+                declared
+            }
+
             ExprKind::Call(callee, args) => {
                 // Capture callee name and arg spans before mutable inference
                 let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
@@ -5918,7 +5925,10 @@ impl TypeChecker {
                 self.resolve_expr_types(l);
                 self.resolve_expr_types(r);
             }
-            ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Return(Some(e)) => {
+            ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => {
                 self.resolve_expr_types(e);
             }
             ExprKind::Call(callee, args) => {

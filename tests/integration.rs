@@ -7559,3 +7559,64 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(0));
 }
+
+// ── Type ascription ─────────────────────────────────────────────────
+
+#[test]
+fn test_ascription_basic() {
+    let result = run(
+        r#"
+fn main() {
+  let x = 42 as Int
+  x
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_ascription_constrains_generic() {
+    let result = run(
+        r#"
+fn main() {
+  let x = None as Option(Int)
+  match x {
+    Some(n) -> n
+    None -> -1
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(-1));
+}
+
+#[test]
+fn test_ascription_in_pipe() {
+    let result = run(
+        r#"
+fn id(x: Int) -> Int { x }
+fn main() {
+  (42 |> id()) as Int
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_ascription_with_result() {
+    let result = run(
+        r#"
+import int
+fn main() {
+  let r = int.parse("42") as Result(Int, String)
+  match r {
+    Ok(n) -> n
+    Err(_) -> -1
+  }
+}
+    "#,
+    );
+    assert_eq!(result, Value::Int(42));
+}

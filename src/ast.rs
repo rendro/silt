@@ -54,6 +54,7 @@ pub enum ExprKind {
     Pipe(Box<Expr>, Box<Expr>),
     Range(Box<Expr>, Box<Expr>),
     QuestionMark(Box<Expr>),
+    Ascription(Box<Expr>, TypeExpr),
 
     // Function-related
     Call(Box<Expr>, Vec<Expr>),

@@ -1854,3 +1854,32 @@ fn main() { 42 }
     // If the typechecker produces an error, it should mention 'Self'.
     let _ = errs;
 }
+
+// ── Type ascription errors ──────────────────────────────────────────
+
+#[test]
+fn test_ascription_type_mismatch() {
+    assert_type_error(
+        r#"
+fn main() {
+  42 as String
+}
+    "#,
+        "type mismatch",
+    );
+}
+
+#[test]
+fn test_ascription_missing_type() {
+    let err = parse_err(
+        r#"
+fn main() {
+  42 as
+}
+    "#,
+    );
+    assert!(
+        !err.is_empty(),
+        "expected parse error for missing type after 'as'"
+    );
+}

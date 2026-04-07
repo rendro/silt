@@ -911,6 +911,7 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
         }
         ExprKind::Unary(_, e)
         | ExprKind::QuestionMark(e)
+        | ExprKind::Ascription(e, _)
         | ExprKind::Return(Some(e))
         | ExprKind::FieldAccess(e, _) => find_type_in_expr(e, cursor, best),
         ExprKind::Call(callee, args) => {
@@ -1061,7 +1062,10 @@ fn find_field_in_expr(
                 find_field_in_expr(l, source, cursor, result);
                 find_field_in_expr(r, source, cursor, result);
             }
-            ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Return(Some(e)) => {
+            ExprKind::Unary(_, e)
+            | ExprKind::QuestionMark(e)
+            | ExprKind::Ascription(e, _)
+            | ExprKind::Return(Some(e)) => {
                 find_field_in_expr(e, source, cursor, result);
             }
             ExprKind::Call(callee, args) => {
@@ -1215,6 +1219,7 @@ fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         }
         ExprKind::Unary(_, e)
         | ExprKind::QuestionMark(e)
+        | ExprKind::Ascription(e, _)
         | ExprKind::Return(Some(e))
         | ExprKind::FieldAccess(e, _) => f(e),
         ExprKind::Call(callee, args) => {
