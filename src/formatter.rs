@@ -1073,4 +1073,579 @@ fn c() = 3
         assert!(comments[0].text.contains("{- block"));
         assert!(comments[0].text.contains("comment -}"));
     }
+
+    // ── Idempotency tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_idempotent_simple_fn() {
+        let source = "fn add(a, b) = a + b\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_block_fn() {
+        let source = r#"fn main() {
+  let x = 42
+  println(x)
+  x
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_imports_sorted() {
+        let source = r#"import list
+import channel
+import string
+
+fn main() = 42
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+        // Verify imports are sorted alphabetically
+        let channel_pos = first.find("import channel").unwrap();
+        let list_pos = first.find("import list").unwrap();
+        let string_pos = first.find("import string").unwrap();
+        assert!(channel_pos < list_pos, "channel should come before list");
+        assert!(list_pos < string_pos, "list should come before string");
+    }
+
+    #[test]
+    fn test_idempotent_match_expression() {
+        let source = r#"fn classify(x) {
+  match x {
+    0 -> "zero"
+    1 -> "one"
+    _ -> "other"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_nested_match() {
+        let source = r#"type Shape {
+  Circle(Float),
+  Rect(Float, Float),
+}
+
+fn describe(s) {
+  match s {
+    Circle(r) -> match r > 10.0 {
+      true -> "big circle"
+      false -> "small circle"
+    }
+    Rect(w, h) -> match w == h {
+      true -> "square"
+      false -> "rectangle"
+    }
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_pipe_chain() {
+        let source = r#"import list
+
+fn main() {
+  [1, 2, 3]
+  |> list.map(fn(x) { x * 2 })
+  |> list.filter(fn(x) { x > 2 })
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_trait_and_impl() {
+        let source = r#"trait Printable {
+  fn show(self) -> String
+}
+
+trait Printable for Int {
+  fn show(self) = "{self}"
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_record_type() {
+        let source = r#"type User {
+  name: String,
+  age: Int,
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_lambda_in_call() {
+        let source = r#"import list
+
+fn main() {
+  list.map([1, 2, 3], fn(x) {
+    x * 2
+  })
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_where_clause() {
+        let source = "fn show(x) where x: Display = x.display()\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_complex_program() {
+        let source = r#"-- Module header comment
+import list
+import string
+
+-- A type definition
+type Color {
+  Red,
+  Green,
+  Blue,
+}
+
+-- Main function
+fn main() {
+  let colors = [Red, Green, Blue]
+  colors
+  |> list.map(fn(c) {
+    match c {
+      Red -> "red"
+      Green -> "green"
+      Blue -> "blue"
+    }
+  })
+  |> string.join(", ")
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting should be idempotent");
+    }
+
+    // ── Edge case tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_format_empty_source() {
+        let result = format("").unwrap();
+        assert_eq!(result, "\n");
+    }
+
+    #[test]
+    fn test_format_only_comments() {
+        let result = format("-- just a comment").unwrap();
+        assert!(result.contains("-- just a comment"));
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_format_only_block_comment() {
+        let result = format("{- a block comment -}").unwrap();
+        assert!(result.contains("{- a block comment -}"));
+        assert!(result.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_format_single_expression_fn() {
+        let result = format("fn add(a, b) = a + b\n").unwrap();
+        assert_eq!(result, "fn add(a, b) = a + b\n");
+    }
+
+    #[test]
+    fn test_format_empty_fn_body() {
+        let result = format("fn noop() {}\n").unwrap();
+        assert!(result.contains("fn noop()"));
+    }
+
+    #[test]
+    fn test_format_pub_fn() {
+        let result = format("pub fn add(a, b) = a + b\n").unwrap();
+        assert!(result.starts_with("pub fn add"));
+    }
+
+    #[test]
+    fn test_format_return_type_annotation() {
+        let result = format("fn add(a: Int, b: Int) -> Int = a + b\n").unwrap();
+        assert!(result.contains("-> Int"));
+        assert!(result.contains("a: Int, b: Int"));
+    }
+
+    // ── Complex expression formatting ──────────────────────────────
+
+    #[test]
+    fn test_format_nested_match() {
+        let source = r#"fn foo(x) {
+  match x {
+    Some(v) -> match v {
+      1 -> "one"
+      _ -> "other"
+    }
+    None -> "none"
+  }
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("match x"));
+        assert!(result.contains("Some(v) ->"));
+        assert!(result.contains("None ->"));
+    }
+
+    #[test]
+    fn test_format_pipe_chain() {
+        let source = r#"import list
+fn main() { [1, 2, 3] |> list.map(fn(x) { x * 2 }) |> list.filter(fn(x) { x > 2 }) }
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("|>"), "pipe operator should be preserved");
+    }
+
+    #[test]
+    fn test_format_trailing_closure() {
+        let source = r#"import list
+fn main() {
+  list.map([1, 2], fn(x) { x * 2 })
+}
+"#;
+        let result = format(source).unwrap();
+        // Should produce a trailing closure format
+        assert!(result.contains("list.map"));
+    }
+
+    #[test]
+    fn test_format_deeply_nested_block() {
+        let source = r#"fn main() {
+  let x = {
+    let y = {
+      let z = 42
+      z
+    }
+    y
+  }
+  x
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "deeply nested blocks should be idempotent");
+    }
+
+    #[test]
+    fn test_format_loop_expression() {
+        let source = "fn countdown(n) = loop i = n { match i { 0 -> 0 _ -> loop(i - 1) } }\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "loop formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_record_create() {
+        let source = r#"type Point { x: Int, y: Int }
+fn main() = Point { x: 1, y: 2 }
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("Point { x: 1, y: 2 }"));
+    }
+
+    #[test]
+    fn test_format_map_literal() {
+        let source = r#"fn main() = #{"a": 1, "b": 2}
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("#{ "));
+    }
+
+    #[test]
+    fn test_format_list_literal() {
+        let result = format("fn main() = [1, 2, 3]\n").unwrap();
+        assert!(result.contains("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn test_format_empty_list() {
+        let result = format("fn main() = []\n").unwrap();
+        assert!(result.contains("[]"));
+    }
+
+    #[test]
+    fn test_format_tuple() {
+        let result = format("fn main() = (1, 2, 3)\n").unwrap();
+        assert!(result.contains("(1, 2, 3)"));
+    }
+
+    #[test]
+    fn test_format_unary_ops() {
+        let result = format("fn main() = -42\n").unwrap();
+        assert!(result.contains("-42"));
+    }
+
+    #[test]
+    fn test_format_not_op() {
+        let result = format("fn main() = !true\n").unwrap();
+        assert!(result.contains("!true"));
+    }
+
+    #[test]
+    fn test_format_binary_precedence_parens() {
+        // Ensure parentheses are added when needed for precedence
+        let source = "fn main() = (1 + 2) * 3\n";
+        let result = format(source).unwrap();
+        assert!(result.contains("(1 + 2) * 3"));
+    }
+
+    #[test]
+    fn test_format_string_interpolation() {
+        let source = r#"fn greet(name) = "hello {name}"
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("{name}"));
+    }
+
+    #[test]
+    fn test_format_question_mark() {
+        let source = "fn try_it(x) = x?\n";
+        let result = format(source).unwrap();
+        assert!(result.contains("x?"));
+    }
+
+    #[test]
+    fn test_format_range() {
+        let result = format("fn main() = 1..10\n").unwrap();
+        assert!(result.contains("1..10"));
+    }
+
+    #[test]
+    fn test_format_when_bool_stmt() {
+        let source = r#"fn main() {
+  when true else {
+    return 0
+  }
+  42
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "when-bool formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_when_pattern_stmt() {
+        let source = r#"fn main() {
+  when Some(x) = Some(42) else {
+    return 0
+  }
+  x
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "when-pattern formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_enum_type() {
+        let result = format("type Color { Red, Green, Blue }\n").unwrap();
+        assert!(result.contains("Red"));
+        assert!(result.contains("Green"));
+        assert!(result.contains("Blue"));
+    }
+
+    #[test]
+    fn test_format_enum_with_fields() {
+        let source = "type Shape { Circle(Float), Rect(Float, Float) }\n";
+        let result = format(source).unwrap();
+        assert!(result.contains("Circle(Float)"));
+        assert!(result.contains("Rect(Float, Float)"));
+    }
+
+    #[test]
+    fn test_format_import_sorting() {
+        let source = r#"import string
+import list
+import channel
+
+fn main() = 1
+"#;
+        let result = format(source).unwrap();
+        let channel_pos = result.find("import channel").unwrap();
+        let list_pos = result.find("import list").unwrap();
+        let string_pos = result.find("import string").unwrap();
+        assert!(channel_pos < list_pos, "imports should be sorted alphabetically");
+        assert!(list_pos < string_pos, "imports should be sorted alphabetically");
+    }
+
+    #[test]
+    fn test_format_selective_import() {
+        let result = format("import list.{ map, filter }\nfn main() = 1\n").unwrap();
+        assert!(result.contains("import list.{ map, filter }"));
+    }
+
+    #[test]
+    fn test_format_alias_import() {
+        let result = format("import list as l\nfn main() = 1\n").unwrap();
+        assert!(result.contains("import list as l"));
+    }
+
+    #[test]
+    fn test_format_guardless_match() {
+        let source = r#"fn classify(x) {
+  match {
+    x > 100 -> "big"
+    x > 0 -> "positive"
+    _ -> "other"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "guardless match formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_match_with_guard() {
+        let source = r#"fn main() {
+  match 42 {
+    x when x > 0 -> "positive"
+    _ -> "non-positive"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "match with guard formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_record_update() {
+        let source = r#"type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  p.{ x: 10 }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "record update formatting should be idempotent");
+    }
+
+    #[test]
+    fn test_format_let_with_type() {
+        let source = r#"fn main() {
+  let x: Int = 42
+  x
+}
+"#;
+        let first = format(source).unwrap();
+        assert!(first.contains("let x: Int = 42"));
+        let second = format(&first).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_format_pub_let() {
+        let source = "pub let version = 1\n";
+        let result = format(source).unwrap();
+        assert!(result.contains("pub let version = 1"));
+    }
+
+    // ── Pattern formatting ──────────────────────────────────────────
+
+    #[test]
+    fn test_format_or_pattern() {
+        let source = r#"fn main() {
+  match 1 {
+    1 | 2 | 3 -> "low"
+    _ -> "high"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        assert!(first.contains("1 | 2 | 3"));
+        let second = format(&first).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_format_list_pattern() {
+        let source = r#"fn main() {
+  match [1, 2, 3] {
+    [h, ..rest] -> h
+    [] -> 0
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        assert!(first.contains("[h, ..rest]"));
+        let second = format(&first).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_format_pin_pattern() {
+        let source = r#"fn main() {
+  let x = 42
+  match 42 {
+    ^x -> "match"
+    _ -> "no match"
+  }
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("^x"));
+    }
+
+    #[test]
+    fn test_format_field_access() {
+        let result = format("fn main() = foo.bar.baz\n").unwrap();
+        assert!(result.contains("foo.bar.baz"));
+    }
+
+    #[test]
+    fn test_format_return_expression() {
+        let source = r#"fn main() {
+  return 42
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("return 42"));
+    }
+
+    #[test]
+    fn test_format_return_void() {
+        let source = r#"fn main() {
+  return
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(result.contains("return"));
+    }
 }

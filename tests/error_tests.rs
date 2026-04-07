@@ -1377,3 +1377,320 @@ fn test_parse_excessive_nesting() {
         err.message
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 9: CONCURRENCY RUNTIME ERRORS
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_runtime_send_non_channel() {
+    let err = run_err(r#"
+import channel
+fn main() {
+  channel.send(42, "hello")
+}
+    "#);
+    assert!(
+        err.contains("channel") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_receive_non_channel() {
+    let err = run_err(r#"
+import channel
+fn main() {
+  channel.receive("not a channel")
+}
+    "#);
+    assert!(
+        err.contains("channel") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_close_non_channel() {
+    let err = run_err(r#"
+import channel
+fn main() {
+  channel.close(42)
+}
+    "#);
+    assert!(
+        err.contains("channel") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_channel_new_no_args_creates_channel() {
+    // channel.new() with no args creates a default (unbuffered) channel
+    run_ok(r#"
+import channel
+fn main() {
+  let ch = channel.new()
+  channel.close(ch)
+}
+    "#);
+}
+
+#[test]
+fn test_runtime_channel_send_wrong_arg_count() {
+    let err = run_err(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.send(ch)
+}
+    "#);
+    assert!(
+        err.contains("argument") || err.contains("takes"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_task_join_non_handle() {
+    let err = run_err(r#"
+import task
+fn main() {
+  task.join(42)
+}
+    "#);
+    assert!(
+        err.contains("Handle") || err.contains("handle") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_task_cancel_non_handle() {
+    let err = run_err(r#"
+import task
+fn main() {
+  task.cancel("not a handle")
+}
+    "#);
+    assert!(
+        err.contains("Handle") || err.contains("handle") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_task_spawn_non_callable() {
+    let err = run_err(r#"
+import task
+fn main() {
+  task.spawn(42)
+}
+    "#);
+    assert!(
+        err.contains("callable") || err.contains("function") || err.contains("closure"),
+        "got: {err}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 10: TYPE ERRORS — TRAIT VIOLATIONS
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_type_missing_trait_impl_method() {
+    // Trait impl missing a required method
+    let errs = type_errors(r#"
+trait Greetable {
+  fn greet(self) -> String
+  fn farewell(self) -> String
+}
+
+trait Greetable for Int {
+  fn greet(self) = "hello"
+}
+
+fn main() { 42 }
+    "#);
+    // Should flag the missing `farewell` method, or at minimum not crash
+    let _ = errs;
+}
+
+#[test]
+fn test_type_wrong_return_type_in_trait_impl() {
+    // The typechecker currently does not catch mismatched return types in
+    // trait impls (it's a known gap). This test documents the behavior --
+    // it should at least not crash.
+    let errs = type_errors(r#"
+trait Numeric {
+  fn double(self) -> Int
+}
+
+trait Numeric for Int {
+  fn double(self) -> String = "wrong"
+}
+
+fn main() { 42 }
+    "#);
+    // If the typechecker improves, it will catch this. For now, just
+    // ensure we don't panic.
+    let _ = errs;
+}
+
+#[test]
+fn test_type_multiple_match_arm_types_mismatch() {
+    assert_type_error(
+        r#"
+fn check(x: Int) -> String {
+  match x {
+    0 -> "zero"
+    1 -> 1
+    _ -> "other"
+  }
+}
+fn main() { check(0) }
+        "#,
+        "mismatch",
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 11: IMPORT ERRORS
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_import_nonexistent_builtin_item() {
+    // Importing a non-existent item from a builtin module
+    let err = run_err(r#"
+import list.{ nonexistent_function }
+fn main() { nonexistent_function([1, 2]) }
+    "#);
+    // Should produce an error about the missing item
+    assert!(
+        err.contains("not found") || err.contains("no public item")
+            || err.contains("Undefined") || err.contains("undefined"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_call_wrong_arity() {
+    let err = run_err(r#"
+fn add(a, b) = a + b
+fn main() { add(1, 2, 3) }
+    "#);
+    assert!(
+        err.contains("argument") || err.contains("arity") || err.contains("expects"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_call_non_callable() {
+    let err = run_err(r#"
+fn main() {
+  let x = 42
+  x(1, 2)
+}
+    "#);
+    assert!(
+        err.contains("not callable") || err.contains("cannot call") || err.contains("callable"),
+        "got: {err}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PHASE 12: RUNTIME ERRORS — Builtin Arity Checks
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_runtime_list_map_wrong_arity() {
+    let err = run_err(r#"
+import list
+fn main() { list.map([1, 2]) }
+    "#);
+    assert!(
+        err.contains("argument") || err.contains("takes") || err.contains("expects"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_string_split_wrong_type() {
+    let err = run_err(r#"
+import string
+fn main() { string.split(42, ",") }
+    "#);
+    assert!(
+        err.contains("String") || err.contains("string") || err.contains("type"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_map_get_wrong_arity() {
+    let err = run_err(r#"
+import map
+fn main() { map.get(#{"a": 1}) }
+    "#);
+    assert!(
+        err.contains("argument") || err.contains("takes"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_io_read_file_nonexistent() {
+    let result = run(r#"
+import io
+fn main() { io.read_file("/tmp/silt_nonexistent_file_12345.txt") }
+    "#);
+    // Should return Err variant, not panic
+    match result {
+        Value::Variant(ref tag, _) if tag == "Err" => {}
+        other => panic!("expected Err variant for missing file, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_runtime_regex_wrong_arity() {
+    let err = run_err(r#"
+import regex
+fn main() { regex.is_match("[a-z]+") }
+    "#);
+    assert!(
+        err.contains("argument") || err.contains("takes"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_non_exhaustive_match_tuple() {
+    let err = run_err(r#"
+fn main() {
+  match (1, 2) {
+    (0, 0) -> "origin"
+  }
+}
+    "#);
+    assert!(
+        err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_runtime_non_exhaustive_match_variant() {
+    let err = run_err(r#"
+fn main() {
+  let x = Some(42)
+  match x {
+    None -> "none"
+  }
+}
+    "#);
+    assert!(
+        err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
+        "got: {err}"
+    );
+}
