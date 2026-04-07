@@ -1828,3 +1828,42 @@ fn main() {
         "got: {err}"
     );
 }
+
+// ── Unresolved type variable detection ─────────────────────────────
+
+#[test]
+fn test_unresolved_type_variable_error() {
+    // A nullary function with a fully polymorphic return type that can't
+    // be inferred at the call site.  Because the let binding is never used,
+    // the type checker should flag the unresolved type variable.
+    let input = r#"
+fn default() -> a { panic("no value") }
+fn main() { let x = default() }
+"#;
+    let errs = type_errors(input);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("could not") || e.contains("type annotation")),
+        "expected unresolved type variable error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_unresolved_type_variable_not_flagged_when_used() {
+    // Same function, but the binding is used later, so the type checker
+    // should NOT flag it (later usage constrains the type polymorphically).
+    let input = r#"
+fn default() -> a { panic("no value") }
+fn main() {
+  let x = default()
+  x
+}
+"#;
+    let errs = type_errors(input);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("could not") && e.contains("type annotation")),
+        "should not flag unresolved type when binding is used later, got: {errs:?}"
+    );
+}
