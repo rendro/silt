@@ -697,7 +697,7 @@ impl Vm {
 
     // ── Main execution loop ───────────────────────────────────────
 
-    fn execute(&mut self) -> Result<Value, VmError> {
+    pub(crate) fn execute(&mut self) -> Result<Value, VmError> {
         loop {
             let op_byte = self.read_byte()?;
             match Op::from_byte(op_byte) {
