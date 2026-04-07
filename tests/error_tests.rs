@@ -1883,3 +1883,37 @@ fn main() {
         "expected parse error for missing type after 'as'"
     );
 }
+
+// ── Unresolved type variable detection ─────────────────────────────
+
+#[test]
+fn test_unresolved_type_variable_error() {
+    let input = r#"
+fn default() -> a { panic("no value") }
+fn main() { let x = default() }
+"#;
+    let errs = type_errors(input);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("could not") || e.contains("type annotation")),
+        "expected unresolved type variable error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_unresolved_type_variable_not_flagged_when_used() {
+    let input = r#"
+fn default() -> a { panic("no value") }
+fn main() {
+  let x = default()
+  x
+}
+"#;
+    let errs = type_errors(input);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("could not") && e.contains("type annotation")),
+        "should not flag unresolved type when binding is used later, got: {errs:?}"
+    );
+}
