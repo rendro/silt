@@ -525,6 +525,33 @@ impl TypeChecker {
             }
         }
 
+        // Process imports: register selective/aliased import names in the type environment
+        for decl in &program.decls {
+            if let Decl::Import(ImportTarget::Items(module, items)) = decl {
+                if crate::module::is_builtin_module(module) {
+                    for item in items {
+                        let qualified = format!("{module}.{item}");
+                        if let Some(scheme) = env.lookup(&qualified).cloned() {
+                            env.define(item.clone(), scheme);
+                        }
+                        // Gated constructors (like Monday, GET) are already
+                        // registered under their bare name — no alias needed.
+                    }
+                }
+            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
+                if crate::module::is_builtin_module(module) {
+                    let functions = crate::module::builtin_module_functions(module);
+                    for func in functions {
+                        let qualified = format!("{module}.{func}");
+                        let aliased = format!("{alias}.{func}");
+                        if let Some(scheme) = env.lookup(&qualified).cloned() {
+                            env.define(aliased, scheme);
+                        }
+                    }
+                }
+            }
+        }
+
         // First pass: register all type declarations
         for decl in &program.decls {
             if let Decl::Type(td) = decl {
