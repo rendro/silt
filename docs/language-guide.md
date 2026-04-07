@@ -291,6 +291,18 @@ type Handler {
 }
 ```
 
+### Type Ascription
+
+When type inference cannot determine a type from context, use `as` to assert it:
+
+```silt
+let x = empty() as List(Int)
+let r = (parse("42") as Result(Int, String))?
+```
+
+`as` is a compile-time assertion — if the types conflict, you get a type error.
+At runtime it's a no-op.
+
 
 ## 4. Pattern Matching
 
@@ -886,6 +898,22 @@ trait Display for Shape {
 Circle(5.0).display()   -- "Circle(r=5)"
 ```
 
+### Self Type
+
+Use `Self` in trait method signatures to refer to the implementing type:
+
+```silt
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+  fn combine(a: Self, b: Self) -> Self { a + b }
+}
+```
+
 ### Built-in Traits
 
 | Trait     | Purpose                          |
@@ -918,6 +946,16 @@ fn f(x) where a: Display {
 
 The form `fn f(x) where a: Display` is an error because the compiler cannot
 determine which parameter `a` refers to.
+
+Multiple trait bounds use `+`:
+
+```silt
+fn dedup(xs: List(a)) -> List(a) where a: Equal + Hash {
+  ...
+}
+```
+
+This is equivalent to `where a: Equal, a: Hash`.
 
 
 ## 11. Modules
