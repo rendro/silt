@@ -3725,15 +3725,14 @@ impl TypeChecker {
                 if let Some(scheme) = env.lookup(&name) {
                     let scheme = scheme.clone();
                     self.instantiate(&scheme)
+                } else if name.contains('.') || name == "self" {
+                    // Module-qualified name or `self` — allow without error
+                    self.fresh_var()
                 } else {
-                    // Unknown variable - could be from an unresolved import
-                    // Warn unless it looks like a module-qualified name or `self`
-                    if !name.contains('.') && name != "self" {
-                        self.warning(
-                            format!("possibly undefined variable '{name}'"),
-                            span,
-                        );
-                    }
+                    self.error(
+                        format!("undefined variable '{name}'"),
+                        span,
+                    );
                     self.fresh_var()
                 }
             }
@@ -4108,7 +4107,7 @@ impl TypeChecker {
                             arg_types.len() == params.len()
                         };
                         if !arity_ok {
-                            self.warning(
+                            self.error(
                                 format!(
                                     "function expects {} argument(s), got {}",
                                     params.len(),
@@ -5716,9 +5715,9 @@ fn main() {
         assert_no_errors(r#"
 fn main() {
   [1, 2, 3, 4, 5]
-  |> filter { x -> x > 2 }
-  |> map { x -> x * 10 }
-  |> fold(0) { acc, x -> acc + x }
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
 }
         "#);
     }
@@ -5834,11 +5833,11 @@ fn main() {
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> find { l -> string.contains(l, "host=") } else {
+  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> find { l -> string.contains(l, "port=") } else {
+  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 
@@ -6302,9 +6301,9 @@ fn main() {
         assert_no_errors(r#"
 fn main() {
   let xs = [[1, 2], [3, 4], [5]]
-  let flat = flatten(xs)
-  let zipped = zip([1, 2, 3], ["a", "b", "c"])
-  let sorted = sort_by([3, 1, 2], fn(x) { x })
+  let flat = list.flatten(xs)
+  let zipped = list.zip([1, 2, 3], ["a", "b", "c"])
+  let sorted = list.sort_by([3, 1, 2], fn(x) { x })
   flat
 }
         "#);
@@ -6314,9 +6313,9 @@ fn main() {
     fn test_len_accepts_string_and_map() {
         assert_no_errors(r#"
 fn main() {
-  let list_len = len([1, 2, 3])
-  let str_len = len("hello")
-  let map_len = len(#{ "a": 1 })
+  let list_len = list.length([1, 2, 3])
+  let str_len = string.length("hello")
+  let map_len = map.length(#{ "a": 1 })
   list_len + str_len + map_len
 }
         "#);
@@ -6326,7 +6325,7 @@ fn main() {
     fn test_assert_ne_builtin() {
         assert_no_errors(r#"
 fn main() {
-  assert_ne(1, 2)
+  test.assert_ne(1, 2)
 }
         "#);
     }

@@ -20,16 +20,19 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 // ── Parser ───────────────────────────────────────────────────────────
 
+const MAX_DEPTH: usize = 256;
+
 pub struct Parser {
     tokens: Vec<SpannedToken>,
     pos: usize,
     in_match_scrutinee: bool,
     errors: Vec<ParseError>,
+    depth: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Self { tokens, pos: 0, in_match_scrutinee: false, errors: Vec::new() }
+        Self { tokens, pos: 0, in_match_scrutinee: false, errors: Vec::new(), depth: 0 }
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -650,6 +653,20 @@ impl Parser {
     }
 
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            self.depth -= 1;
+            return Err(ParseError {
+                message: "expression nesting exceeds maximum depth".into(),
+                span: self.span(),
+            });
+        }
+        let result = self.parse_expr_bp_inner(min_bp);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_expr_bp_inner(&mut self, min_bp: u8) -> Result<Expr> {
         let mut left = self.parse_unary()?;
 
         loop {
