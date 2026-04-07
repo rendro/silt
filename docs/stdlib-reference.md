@@ -30,7 +30,7 @@ Complete API reference for every built-in function in silt.
 | [channel](#channel) | 8 | Bounded channels for cooperative concurrency |
 | [task](#task) | 3 | Spawn, join, and cancel cooperative tasks |
 | [time](#time) | 26 | Dates, times, instants, durations, formatting, parsing, and arithmetic |
-| [http](#http) | 4 | HTTP client and server (requires `--features http`) |
+| [http](#http) | 4 | HTTP client and server |
 
 **Total: 199 names** (19 globals + 4 type descriptors + 176 module functions/constants)
 
@@ -3784,7 +3784,7 @@ fn main() {
 
 ## http
 
-HTTP client and server. Requires the `http` Cargo feature: `cargo build --features http`. Without the feature, `http.segments` still works but networking functions return a runtime error.
+HTTP client and server. Included by default. Exclude with `--no-default-features` for WASM or minimal builds (networking functions will return a runtime error, but `http.segments` still works).
 
 ### Types
 
@@ -3931,4 +3931,4 @@ http.segments("/")               -- []
 http.segments("//foo//bar/")     -- ["foo", "bar"]
 ```
 
-This function has no dependencies and works without the `http` Cargo feature.
+This function has no dependencies and works even with `--no-default-features`.

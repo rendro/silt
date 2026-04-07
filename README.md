@@ -107,8 +107,6 @@ fn main() {
 }
 ```
 
-Requires `cargo build --features http`.
-
 ## Type inference
 
 The type checker infers everything. You get static type safety without writing annotations. Define records, enums, and traits when you need structure.

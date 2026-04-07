@@ -961,7 +961,7 @@ files needed):
 | `channel` | `new`, `send`, `receive`, `close`, `select`, `each`         |
 | `task`    | `spawn`, `join`, `cancel`                                    |
 | `time`    | `now`, `today`, `date`, `format`, `parse`, `add_days`, `weekday`, `sleep` |
-| `http`    | `get`, `request`, `serve`, `segments` (requires `--features http`) |
+| `http`    | `get`, `request`, `serve`, `segments`                        |
 
 ### Notable Standard Library Details
 
@@ -977,8 +977,7 @@ files needed):
 - The `time` module provides `Instant`, `Date`, `Time`, `DateTime`, `Duration`,
   and `Weekday` types with nanosecond precision. Comparison operators (`<`, `>`)
   work correctly on all time types. Display shows ISO 8601 format.
-- The `http` module requires the `http` Cargo feature (`cargo build --features
-  http`). It provides `Method` (enum: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
+- The `http` module provides `Method` (enum: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`), `Request`, and `Response` record types. `http.get` and
   `http.request` return `Result(Response, String)`. `http.serve` takes a port
   and a handler function `Fn(Request) -> Response`. Pattern matching on

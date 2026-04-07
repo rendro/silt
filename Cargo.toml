@@ -16,7 +16,7 @@ name = "silt"
 path = "src/lib.rs"
 
 [features]
-default = ["repl", "lsp", "watch", "local-clock"]
+default = ["repl", "lsp", "watch", "local-clock", "http"]
 repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
