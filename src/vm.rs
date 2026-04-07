@@ -122,8 +122,7 @@ impl TimerManager {
 
                 // Fire all expired deadlines.
                 let now = Instant::now();
-                let expired: Vec<Instant> =
-                    deadlines.range(..=now).map(|(k, _)| *k).collect();
+                let expired: Vec<Instant> = deadlines.range(..=now).map(|(k, _)| *k).collect();
                 for key in expired {
                     if let Some(channels) = deadlines.remove(&key) {
                         for ch in channels {
