@@ -23,6 +23,10 @@ watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
 http = ["dep:ureq", "dep:tiny_http"]
 
+[[bench]]
+name = "vm_bench"
+harness = false
+
 [dependencies]
 lsp-server = { version = "0.7", optional = true }
 lsp-types = { version = "0.97", optional = true }

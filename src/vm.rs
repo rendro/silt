@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Condvar};
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 use regex::Regex;
@@ -4270,9 +4270,21 @@ impl Vm {
                     return Err(VmError::yield_signal());
                 }
 
-                // Main thread: spin with OS yield.
-                let max_retries = 100_000;
-                for _ in 0..max_retries {
+                // Main thread: block on a shared condvar until any channel has data.
+                let pair = Arc::new((Mutex::new(false), Condvar::new()));
+                // Register a waker on each non-closed channel that notifies our condvar.
+                for ch in &channel_refs {
+                    if !ch.is_closed() {
+                        let pair2 = pair.clone();
+                        ch.register_recv_waker(Box::new(move || {
+                            let (lock, cvar) = &*pair2;
+                            *lock.lock().unwrap() = true;
+                            cvar.notify_one();
+                        }));
+                    }
+                }
+                loop {
+                    // Check all channels.
                     let mut all_closed = true;
                     let mut first_closed_ch = None;
                     for ch in &channel_refs {
@@ -4301,9 +4313,15 @@ impl Vm {
                             Value::Variant("Closed".into(), vec![]),
                         ]));
                     }
-                    std::thread::yield_now();
+                    // Wait for a waker notification (with timeout as safety net).
+                    let (lock, cvar) = &*pair;
+                    let mut notified = lock.lock().unwrap();
+                    if !*notified {
+                        let result = cvar.wait_timeout(notified, std::time::Duration::from_secs(1)).unwrap();
+                        notified = result.0;
+                    }
+                    *notified = false;
                 }
-                Err(VmError::new("channel.select: exceeded maximum retries".into()))
             }
             "each" => {
                 if args.len() != 2 {
@@ -4314,8 +4332,7 @@ impl Vm {
                 };
                 let ch = ch.clone();
                 let callback = args[1].clone();
-                let max_total = 100_000;
-                for _ in 0..max_total {
+                loop {
                     match ch.try_receive() {
                         TryReceiveResult::Value(val) => {
                             self.invoke_callable(&callback, &[val])?;
@@ -4332,7 +4349,7 @@ impl Vm {
                             return Ok(Value::Unit);
                         }
                         TryReceiveResult::Empty => {
-                            // Channel empty — park via scheduler or spin.
+                            // Channel empty — park via scheduler or block.
                             if self.is_scheduled_task {
                                 self.block_reason = Some(BlockReason::Receive(ch));
                                 // Re-push args so the CallBuiltin re-executes channel.each.
@@ -4341,11 +4358,19 @@ impl Vm {
                                 }
                                 return Err(VmError::yield_signal());
                             }
-                            std::thread::yield_now();
+                            // Main thread: block on condvar until data or close.
+                            match ch.receive_blocking() {
+                                TryReceiveResult::Value(val) => {
+                                    self.invoke_callable(&callback, &[val])?;
+                                }
+                                TryReceiveResult::Closed => {
+                                    return Ok(Value::Unit);
+                                }
+                                TryReceiveResult::Empty => unreachable!(),
+                            }
                         }
                     }
                 }
-                Err(VmError::new("channel.each: exceeded maximum iterations".into()))
             }
             _ => Err(VmError::new(format!("unknown channel function: {name}"))),
         }
