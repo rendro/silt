@@ -5698,3 +5698,51 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(4));
 }
+
+// ── Deadlock detection ──────────────────────────────────────────
+
+#[test]
+fn test_deadlock_detected_single_task() {
+    // A spawned task blocks on receive from a channel that nobody sends to.
+    // The main thread joins the task. Deadlock detection should fire and
+    // report an error rather than hanging forever.
+    let err = run_err(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(1)
+  let h = task.spawn(fn() {
+    channel.receive(ch)
+  })
+  task.join(h)
+}
+    "#);
+    assert!(
+        err.contains("deadlock"),
+        "expected deadlock error, got: {err}"
+    );
+}
+
+#[test]
+fn test_deadlock_detected_two_tasks() {
+    // Two tasks each waiting on the other's channel — classic deadlock.
+    let err = run_err(r#"
+import channel
+import task
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  let t1 = task.spawn(fn() {
+    channel.receive(ch1)
+  })
+  let t2 = task.spawn(fn() {
+    channel.receive(ch2)
+  })
+  task.join(t1)
+}
+    "#);
+    assert!(
+        err.contains("deadlock"),
+        "expected deadlock error, got: {err}"
+    );
+}

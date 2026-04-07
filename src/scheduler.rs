@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use crate::value::{TaskHandle, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
@@ -45,6 +46,13 @@ struct SchedulerInner {
     shutdown: AtomicBool,
     /// Number of tasks that haven't yet completed (active + blocked + queued).
     live_tasks: AtomicUsize,
+    /// Number of tasks currently parked (blocked on channel/join).
+    blocked_tasks: AtomicUsize,
+    /// Set to true once a deadlock has been detected and reported.
+    deadlock_detected: AtomicBool,
+    /// Handles of tasks that are currently blocked. When deadlock is detected,
+    /// all of these are completed with a deadlock error so joiners unblock.
+    blocked_handles: Mutex<Vec<Arc<TaskHandle>>>,
 }
 
 impl Default for Scheduler {
@@ -62,6 +70,9 @@ impl Scheduler {
                 condvar: Condvar::new(),
                 shutdown: AtomicBool::new(false),
                 live_tasks: AtomicUsize::new(0),
+                blocked_tasks: AtomicUsize::new(0),
+                deadlock_detected: AtomicBool::new(false),
+                blocked_handles: Mutex::new(Vec::new()),
             }),
             workers: Mutex::new(None),
         }
@@ -87,6 +98,11 @@ impl Scheduler {
             }));
         }
         *guard = Some(handles);
+    }
+
+    /// Returns true if a deadlock has been detected.
+    pub fn deadlock_detected(&self) -> bool {
+        self.inner.deadlock_detected.load(Ordering::SeqCst)
     }
 
     /// Submit a runnable task to the scheduler.
@@ -124,7 +140,40 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 if let Some(task) = queue.pop_front() {
                     break task;
                 }
-                queue = inner.condvar.wait(queue).unwrap();
+                // Use a timeout so we can periodically check for deadlock.
+                let (new_queue, wait_result) = inner
+                    .condvar
+                    .wait_timeout(queue, Duration::from_secs(1))
+                    .unwrap();
+                queue = new_queue;
+                if wait_result.timed_out() {
+                    let live = inner.live_tasks.load(Ordering::SeqCst);
+                    let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
+                    if live > 0 && blocked >= live && queue.is_empty() {
+                        // All live tasks are blocked with no runnable work — deadlock.
+                        if !inner.deadlock_detected.swap(true, Ordering::SeqCst) {
+                            eprintln!(
+                                "deadlock: all {live} live tasks are blocked with nothing runnable"
+                            );
+                            // Complete all blocked task handles with a deadlock error
+                            // so that joiners (including the main thread) unblock.
+                            let handles: Vec<Arc<TaskHandle>> = {
+                                let mut guard = inner.blocked_handles.lock().unwrap();
+                                std::mem::take(&mut *guard)
+                            };
+                            for handle in handles {
+                                handle.complete(Err(
+                                    "deadlock: all tasks are blocked with no progress possible"
+                                        .to_string(),
+                                ));
+                            }
+                        }
+                        // Signal shutdown so all workers exit cleanly.
+                        inner.shutdown.store(true, Ordering::SeqCst);
+                        inner.condvar.notify_all();
+                        return;
+                    }
+                }
             }
         };
 
@@ -153,6 +202,20 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 let reason = vm.take_block_reason();
                 let task_slot: Arc<Mutex<Option<Task>>> =
                     Arc::new(Mutex::new(Some(Task { id, vm, handle })));
+
+                // Track that this task is now blocked (unless no block reason,
+                // which is treated as a yield and re-enqueued immediately).
+                if reason.is_some() {
+                    inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
+                    // Store the handle so we can complete it on deadlock.
+                    let handle_for_registry =
+                        task_slot.lock().unwrap().as_ref().unwrap().handle.clone();
+                    inner
+                        .blocked_handles
+                        .lock()
+                        .unwrap()
+                        .push(handle_for_registry);
+                }
 
                 match reason {
                     Some(BlockReason::Receive(ch)) => {
@@ -215,6 +278,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 
 /// Re-enqueue a parked task on the scheduler's run queue.
 fn requeue(inner: &Arc<SchedulerInner>, task: Task) {
+    inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+    // Remove this task's handle from the blocked registry.
+    {
+        let task_id = task.id;
+        let mut handles = inner.blocked_handles.lock().unwrap();
+        if let Some(pos) = handles.iter().position(|h| h.id == task_id) {
+            handles.swap_remove(pos);
+        }
+    }
     let mut queue = inner.run_queue.lock().unwrap();
     queue.push_back(task);
     inner.condvar.notify_one();
