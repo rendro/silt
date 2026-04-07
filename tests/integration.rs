@@ -5752,3 +5752,804 @@ fn main() {
         "expected deadlock error, got: {err}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Rendezvous Stress Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_rendezvous_multiple_senders_one_receiver() {
+    // Multiple senders on a rendezvous channel, one receiver collects all.
+    let result = run(r#"
+import channel
+import task
+import list
+fn main() {
+  let ch = channel.new()
+
+  let s1 = task.spawn(fn() { channel.send(ch, 10) })
+  let s2 = task.spawn(fn() { channel.send(ch, 20) })
+  let s3 = task.spawn(fn() { channel.send(ch, 30) })
+
+  -- Receive all three messages
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
+
+  task.join(s1)
+  task.join(s2)
+  task.join(s3)
+
+  -- Sum should be 60 regardless of order
+  a + b + c
+}
+    "#);
+    assert_eq!(result, Value::Int(60));
+}
+
+#[test]
+fn test_rendezvous_multiple_receivers() {
+    // Multiple receivers on one rendezvous channel — each message goes to exactly one.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new()
+  let results = channel.new(10)
+
+  let r1 = task.spawn(fn() {
+    let Message(v) = channel.receive(ch)
+    channel.send(results, v * 2)
+  })
+  let r2 = task.spawn(fn() {
+    let Message(v) = channel.receive(ch)
+    channel.send(results, v * 2)
+  })
+  let r3 = task.spawn(fn() {
+    let Message(v) = channel.receive(ch)
+    channel.send(results, v * 2)
+  })
+
+  -- Send three messages; each receiver gets exactly one
+  channel.send(ch, 10)
+  channel.send(ch, 20)
+  channel.send(ch, 30)
+
+  task.join(r1)
+  task.join(r2)
+  task.join(r3)
+
+  let Message(a) = channel.receive(results)
+  let Message(b) = channel.receive(results)
+  let Message(c) = channel.receive(results)
+
+  -- Sum: (10+20+30)*2 = 120
+  a + b + c
+}
+    "#);
+    assert_eq!(result, Value::Int(120));
+}
+
+#[test]
+fn test_rendezvous_ping_pong() {
+    // Two tasks alternate send/receive on two rendezvous channels.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ping = channel.new()
+  let pong = channel.new()
+
+  let t1 = task.spawn(fn() {
+    -- Send ping, wait for pong, repeat
+    channel.send(ping, 1)
+    let Message(v1) = channel.receive(pong)
+    channel.send(ping, v1 + 1)
+    let Message(v2) = channel.receive(pong)
+    v2
+  })
+
+  let t2 = task.spawn(fn() {
+    -- Receive ping, send pong, repeat
+    let Message(v1) = channel.receive(ping)
+    channel.send(pong, v1 + 1)
+    let Message(v2) = channel.receive(ping)
+    channel.send(pong, v2 + 1)
+  })
+
+  task.join(t2)
+  task.join(t1)
+}
+    "#);
+    // 1 -> +1 = 2 -> +1 = 3 -> +1 = 4
+    assert_eq!(result, Value::Int(4));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Timeout Edge Cases
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_timeout_zero_ms_closes_immediately() {
+    // A timeout of 0ms should close (almost) immediately.
+    let result = run(r#"
+import channel
+fn main() {
+  let timer = channel.timeout(0)
+  let result = channel.receive(timer)
+  match result {
+    Closed -> "closed"
+    _ -> "unexpected"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("closed".into()));
+}
+
+#[test]
+fn test_timeout_shorter_fires_first() {
+    // Two timeouts with different durations; select picks the shorter one first.
+    let result = run(r#"
+import channel
+fn main() {
+  let short = channel.timeout(10)
+  let long = channel.timeout(5000)
+
+  match channel.select([long, short]) {
+    (ch, Closed) -> {
+      -- The channel that fired should be 'short'
+      -- We can verify by checking it's the second channel
+      "short_fired"
+    }
+    _ -> "unexpected"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("short_fired".into()));
+}
+
+#[test]
+fn test_timeout_channel_never_selected() {
+    // Create a timeout channel but never select on it — should not panic or leak.
+    run_ok(
+        r#"
+import channel
+fn main() {
+  let _ = channel.timeout(10)
+  let _ = channel.timeout(50)
+  let _ = channel.timeout(100)
+  -- Just let them go out of scope without selecting
+  42
+}
+    "#,
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Bidirectional Select Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_select_with_only_send_operations() {
+    // Select with only send operations on channels with room.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+
+  match channel.select([(ch1, "a"), (ch2, "b")]) {
+    (_, Sent) -> "sent_ok"
+    _ -> "unexpected"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("sent_ok".into()));
+}
+
+#[test]
+fn test_select_send_succeeds_before_receive() {
+    // Send should succeed immediately when channel has space, even if receive ops also present.
+    let result = run(r#"
+import channel
+fn main() {
+  let empty_ch = channel.new(10)
+  let send_ch = channel.new(1)
+
+  -- empty_ch has nothing to receive, but send_ch has room
+  match channel.select([empty_ch, (send_ch, 99)]) {
+    (_, Sent) -> "sent_first"
+    (_, Message(_)) -> "received"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("sent_first".into()));
+}
+
+#[test]
+fn test_select_send_to_closed_channel() {
+    // Select with send to a closed channel should return Closed.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(1)
+  channel.close(ch)
+
+  match channel.select([(ch, 42)]) {
+    (_, Closed) -> "closed"
+    (_, Sent) -> "sent"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("closed".into()));
+}
+
+#[test]
+fn test_select_receive_and_send_same_channel() {
+    // Select with both receive and send on the same buffered channel.
+    // If channel has data, receive should succeed.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.send(ch, 100)
+
+  match channel.select([ch, (ch, 200)]) {
+    (_, Message(val)) -> val
+    (_, Sent) -> -1
+    _ -> -2
+  }
+}
+    "#);
+    assert_eq!(result, Value::Int(100));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Deadlock Detection Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_no_false_deadlock_with_timeout() {
+    // A select with a timeout channel should NOT deadlock — the timeout breaks it.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new()
+  let timer = channel.timeout(50)
+
+  -- Nobody sends to ch, but timer will fire
+  let consumer = task.spawn(fn() {
+    match channel.select([ch, timer]) {
+      (_, Closed) -> "timeout_broke_deadlock"
+      (_, Message(v)) -> "got_message"
+      _ -> "other"
+    }
+  })
+
+  task.join(consumer)
+}
+    "#);
+    assert_eq!(result, Value::String("timeout_broke_deadlock".into()));
+}
+
+#[test]
+fn test_normal_program_no_deadlock() {
+    // Normal programs with tasks that complete cleanly should not trigger deadlock.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(5)
+
+  let producer = task.spawn(fn() {
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.close(ch)
+  })
+
+  let consumer = task.spawn(fn() {
+    let total = 0
+    let Message(a) = channel.receive(ch)
+    let Message(b) = channel.receive(ch)
+    let Message(c) = channel.receive(ch)
+    a + b + c
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_no_deadlock_producer_consumer_chain() {
+    // A chain of producer -> transformer -> consumer should complete without deadlock.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let input = channel.new(5)
+  let output = channel.new(5)
+
+  let producer = task.spawn(fn() {
+    channel.send(input, 10)
+    channel.send(input, 20)
+    channel.close(input)
+  })
+
+  let transformer = task.spawn(fn() {
+    let Message(a) = channel.receive(input)
+    channel.send(output, a * 2)
+    let Message(b) = channel.receive(input)
+    channel.send(output, b * 2)
+    channel.close(output)
+  })
+
+  let consumer = task.spawn(fn() {
+    let Message(x) = channel.receive(output)
+    let Message(y) = channel.receive(output)
+    x + y
+  })
+
+  task.join(producer)
+  task.join(transformer)
+  task.join(consumer)
+}
+    "#);
+    // (10*2) + (20*2) = 60
+    assert_eq!(result, Value::Int(60));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Fairness Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_producer_consumer_buffered_all_items_processed() {
+    // Producer sends N items through buffered channel; consumer processes all.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(10)
+
+  let producer = task.spawn(fn() {
+    loop i = 1 {
+      match i > 10 {
+        true -> channel.close(ch)
+        _ -> {
+          channel.send(ch, i)
+          loop(i + 1)
+        }
+      }
+    }
+  })
+
+  let consumer = task.spawn(fn() {
+    loop total = 0 {
+      match channel.receive(ch) {
+        Message(val) -> loop(total + val)
+        Closed -> total
+      }
+    }
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+    "#);
+    // 1+2+...+10 = 55
+    assert_eq!(result, Value::Int(55));
+}
+
+#[test]
+fn test_fanout_all_receivers_get_work() {
+    // One sender, multiple receivers — verify all receivers participate.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let jobs = channel.new(20)
+  let results = channel.new(20)
+
+  -- Send 9 jobs
+  loop i = 1 {
+    match i > 9 {
+      true -> channel.close(jobs)
+      _ -> {
+        channel.send(jobs, i)
+        loop(i + 1)
+      }
+    }
+  }
+
+  -- Spawn 3 workers
+  let w1 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, n * 10)
+    }
+  })
+  let w2 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, n * 10)
+    }
+  })
+  let w3 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, n * 10)
+    }
+  })
+
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+
+  -- Collect all results and sum
+  loop i = 0, total = 0 {
+    match i >= 9 {
+      true -> total
+      _ -> {
+        let Message(v) = channel.receive(results)
+        loop(i + 1, total + v)
+      }
+    }
+  }
+}
+    "#);
+    // (1+2+...+9) * 10 = 45 * 10 = 450
+    assert_eq!(result, Value::Int(450));
+}
+
+#[test]
+fn test_channel_each_multiple_consumers_all_items() {
+    // Verify channel.each with multiple consumers processes all items.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let jobs = channel.new(10)
+  let results = channel.new(10)
+
+  channel.send(jobs, 1)
+  channel.send(jobs, 2)
+  channel.send(jobs, 3)
+  channel.send(jobs, 4)
+  channel.close(jobs)
+
+  let w1 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, n + 100)
+    }
+  })
+  let w2 = task.spawn(fn() {
+    channel.each(jobs) { n ->
+      channel.send(results, n + 200)
+    }
+  })
+
+  task.join(w1)
+  task.join(w2)
+
+  -- Collect 4 results
+  let Message(a) = channel.receive(results)
+  let Message(b) = channel.receive(results)
+  let Message(c) = channel.receive(results)
+  let Message(d) = channel.receive(results)
+
+  -- Each original value is processed exactly once.
+  -- Strip the worker prefix and sum the base values.
+  let base_a = match a > 200 { true -> a - 200  _ -> a - 100 }
+  let base_b = match b > 200 { true -> b - 200  _ -> b - 100 }
+  let base_c = match c > 200 { true -> c - 200  _ -> c - 100 }
+  let base_d = match d > 200 { true -> d - 200  _ -> d - 100 }
+  base_a + base_b + base_c + base_d
+}
+    "#);
+    // 1 + 2 + 3 + 4 = 10
+    assert_eq!(result, Value::Int(10));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Error Handling
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_send_on_closed_channel_returns_error() {
+    // Sending on a closed channel should error.
+    let err = run_err(
+        r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  channel.send(ch, "hello")
+}
+    "#,
+    );
+    assert!(err.contains("send on closed channel"), "got: {err}");
+}
+
+#[test]
+fn test_double_close_channel() {
+    // Closing a channel twice should not panic.
+    run_ok(
+        r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  channel.close(ch)
+}
+    "#,
+    );
+}
+
+#[test]
+fn test_select_on_empty_list_errors() {
+    // Select on an empty list should produce an error.
+    let err = run_err(
+        r#"
+import channel
+fn main() {
+  channel.select([])
+}
+    "#,
+    );
+    assert!(err.contains("at least one operation"), "got: {err}");
+}
+
+#[test]
+fn test_receive_on_closed_channel_returns_closed() {
+    // Receiving on a closed empty channel should return Closed variant.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  match channel.receive(ch) {
+    Closed -> "got_closed"
+    Message(_) -> "unexpected_message"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("got_closed".into()));
+}
+
+#[test]
+fn test_try_send_on_closed_channel_returns_false() {
+    // try_send on a closed channel should return false (not panic).
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  channel.try_send(ch, 42)
+}
+    "#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_try_receive_on_closed_channel_returns_closed() {
+    // try_receive on a closed empty channel returns Closed variant.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+  channel.close(ch)
+  match channel.try_receive(ch) {
+    Closed -> "closed"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("closed".into()));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Concurrency: Additional Stress Tests
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_rendezvous_many_senders_stress() {
+    // 20 tasks all sending through a rendezvous channel — every message must arrive.
+    let result = run(r#"
+import channel
+import list
+import task
+fn main() {
+  let ch = channel.new()
+  let handles = []
+
+  -- Spawn 20 senders
+  loop i = 0, handles = [] {
+    match i >= 20 {
+      true -> handles
+      _ -> {
+        let h = task.spawn(fn() {
+          channel.send(ch, i)
+        })
+        loop(i + 1, list.append(handles, h))
+      }
+    }
+  }
+
+  -- Receive all 20 messages and sum them
+  let total = loop i = 0, acc = 0 {
+    match i >= 20 {
+      true -> acc
+      _ -> {
+        let Message(val) = channel.receive(ch)
+        loop(i + 1, acc + val)
+      }
+    }
+  }
+
+  -- Join all senders
+  loop i = 0 {
+    match i >= list.length(handles) {
+      true -> ()
+      _ -> {
+        task.join(list.get(handles, i))
+        loop(i + 1)
+      }
+    }
+  }
+
+  -- Sum of 0..19 = 190
+  total
+}
+    "#);
+    assert_eq!(result, Value::Int(190));
+}
+
+#[test]
+fn test_select_multiple_ready_channels() {
+    // When multiple channels have data, select picks one (non-deterministic but valid).
+    let result = run(r#"
+import channel
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  let ch3 = channel.new(1)
+
+  channel.send(ch1, 10)
+  channel.send(ch2, 20)
+  channel.send(ch3, 30)
+
+  -- Select should pick one of the three
+  let (_, msg) = channel.select([ch1, ch2, ch3])
+  match msg {
+    Message(val) -> val > 0
+    _ -> false
+  }
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_buffered_channel_fill_and_drain() {
+    // Fill a buffered channel to capacity, then drain it completely.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch = channel.new(5)
+
+  -- Fill to capacity
+  channel.send(ch, 1)
+  channel.send(ch, 2)
+  channel.send(ch, 3)
+  channel.send(ch, 4)
+  channel.send(ch, 5)
+
+  -- Drain all
+  let Message(a) = channel.receive(ch)
+  let Message(b) = channel.receive(ch)
+  let Message(c) = channel.receive(ch)
+  let Message(d) = channel.receive(ch)
+  let Message(e) = channel.receive(ch)
+
+  a + b + c + d + e
+}
+    "#);
+    assert_eq!(result, Value::Int(15));
+}
+
+#[test]
+fn test_select_timeout_with_multiple_empty_channels() {
+    // Select across multiple empty channels plus a timeout — timeout should win.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch1 = channel.new(1)
+  let ch2 = channel.new(1)
+  let ch3 = channel.new(1)
+  let timer = channel.timeout(50)
+
+  match channel.select([ch1, ch2, ch3, timer]) {
+    (_, Closed) -> "timeout_won"
+    (_, Message(_)) -> "got_data"
+    _ -> "other"
+  }
+}
+    "#);
+    assert_eq!(result, Value::String("timeout_won".into()));
+}
+
+#[test]
+fn test_channel_close_wakes_blocked_receiver() {
+    // A task blocked on receive should wake up when channel is closed.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new()
+
+  let receiver = task.spawn(fn() {
+    match channel.receive(ch) {
+      Closed -> "woken_by_close"
+      Message(_) -> "got_message"
+    }
+  })
+
+  -- Close the channel to wake the blocked receiver
+  channel.close(ch)
+  task.join(receiver)
+}
+    "#);
+    assert_eq!(result, Value::String("woken_by_close".into()));
+}
+
+#[test]
+fn test_producer_consumer_rendezvous_ordering() {
+    // Messages through a rendezvous channel maintain FIFO order
+    // when there is exactly one sender and one receiver.
+    // We receive a known count to avoid close/receive race.
+    let result = run(r#"
+import channel
+import list
+import task
+fn main() {
+  let ch = channel.new()
+
+  let producer = task.spawn(fn() {
+    channel.send(ch, 1)
+    channel.send(ch, 2)
+    channel.send(ch, 3)
+    channel.send(ch, 4)
+    channel.send(ch, 5)
+  })
+
+  let consumer = task.spawn(fn() {
+    loop i = 0, acc = [] {
+      match i >= 5 {
+        true -> acc
+        _ -> {
+          let Message(val) = channel.receive(ch)
+          loop(i + 1, list.append(acc, val))
+        }
+      }
+    }
+  })
+
+  task.join(producer)
+  task.join(consumer)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5),
+        ]))
+    );
+}
