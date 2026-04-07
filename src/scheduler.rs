@@ -175,12 +175,19 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     }
                     Some(BlockReason::Select(ops)) => {
                         // Register waker on ALL channels. First waker to fire
-                        // wakes the task; the rest are no-ops (slot is empty).
+                        // wakes the task; the rest check the cancel token and
+                        // return early, dropping their Arc references promptly.
+                        let cancelled = Arc::new(AtomicBool::new(false));
                         for (ch, kind) in &ops {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
+                            let cancelled2 = cancelled.clone();
                             let waker = Box::new(move || {
+                                if cancelled2.load(Ordering::Acquire) {
+                                    return; // Another waker already fired
+                                }
                                 if let Some(task) = slot.lock().unwrap().take() {
+                                    cancelled2.store(true, Ordering::Release);
                                     requeue(&inner2, task);
                                 }
                             });
