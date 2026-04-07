@@ -245,11 +245,9 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             // Use capacity 1 so the timeout channel itself is buffered
             // (we close it, not send to it, so capacity doesn't matter much).
             let ch = Arc::new(Channel::new(id, 1));
-            let ch_clone = ch.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-                ch_clone.close();
-            });
+            vm.runtime
+                .timer
+                .schedule(std::time::Duration::from_millis(ms), ch.clone());
             Ok(Value::Channel(ch))
         }
         "each" => {

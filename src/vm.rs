@@ -8,6 +8,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::builtins;
 use crate::builtins::data::FieldType;
@@ -89,6 +90,61 @@ pub(crate) enum BlockReason {
     Join(Arc<TaskHandle>),
 }
 
+// ── Timer manager (shared single-thread timer wheel) ────────────
+
+/// Manages all pending channel timeouts on a single background thread.
+/// Instead of spawning one OS thread per `channel.timeout`, all deadlines
+/// are submitted here and fired from a single long-lived thread.
+pub(crate) struct TimerManager {
+    sender: std::sync::Mutex<std::sync::mpsc::Sender<(Instant, Arc<Channel>)>>,
+}
+
+impl TimerManager {
+    fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<(Instant, Arc<Channel>)>();
+        std::thread::spawn(move || {
+            let mut deadlines: BTreeMap<Instant, Vec<Arc<Channel>>> = BTreeMap::new();
+            loop {
+                // Calculate how long to sleep until the next deadline.
+                let timeout = deadlines
+                    .first_key_value()
+                    .map(|(deadline, _)| deadline.saturating_duration_since(Instant::now()))
+                    .unwrap_or(Duration::from_secs(60));
+
+                // Wait for a new timeout request or until the next deadline fires.
+                match rx.recv_timeout(timeout) {
+                    Ok((deadline, ch)) => {
+                        deadlines.entry(deadline).or_default().push(ch);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+
+                // Fire all expired deadlines.
+                let now = Instant::now();
+                let expired: Vec<Instant> =
+                    deadlines.range(..=now).map(|(k, _)| *k).collect();
+                for key in expired {
+                    if let Some(channels) = deadlines.remove(&key) {
+                        for ch in channels {
+                            ch.close();
+                        }
+                    }
+                }
+            }
+        });
+        TimerManager {
+            sender: std::sync::Mutex::new(tx),
+        }
+    }
+
+    /// Schedule a channel to be closed after `delay`.
+    pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
+        let deadline = Instant::now() + delay;
+        let _ = self.sender.lock().unwrap().send((deadline, ch));
+    }
+}
+
 // ── Runtime (shared state) ───────────────────────────────────────
 
 /// Shared, read-only-after-init state for a Silt program.
@@ -104,6 +160,10 @@ pub struct Runtime {
     // ── M:N scheduler ──────────────────────────────────────────
     /// The shared scheduler for spawned tasks (None until first task.spawn).
     scheduler: std::sync::Mutex<Option<Arc<Scheduler>>>,
+
+    // ── Timer manager ──────────────────────────────────────────
+    /// Shared timer thread for `channel.timeout`.
+    pub(crate) timer: TimerManager,
 }
 
 // ── Regex cache ──────────────────────────────────────────────────
@@ -189,6 +249,7 @@ impl Vm {
                 variant_types: HashMap::new(),
                 foreign_fns: HashMap::new(),
                 scheduler: std::sync::Mutex::new(None),
+                timer: TimerManager::new(),
             }),
             frames: Vec::new(),
             stack: Vec::new(),
