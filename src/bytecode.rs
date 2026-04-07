@@ -238,6 +238,7 @@ impl Op {
             b if b == Op::MakeVariant as u8 => Some(Op::MakeVariant),
             b if b == Op::RecordUpdate as u8 => Some(Op::RecordUpdate),
             b if b == Op::MakeRange as u8 => Some(Op::MakeRange),
+            b if b == Op::ListConcat as u8 => Some(Op::ListConcat),
             b if b == Op::GetField as u8 => Some(Op::GetField),
             b if b == Op::GetIndex as u8 => Some(Op::GetIndex),
             b if b == Op::Jump as u8 => Some(Op::Jump),

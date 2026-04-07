@@ -1368,6 +1368,308 @@ fn main() {
     );
 }
 
+// ── Spread in list literals ─────────────────────────────────────────
+
+#[test]
+fn test_list_spread_basic() {
+    let result = run(r#"
+fn main() {
+  let xs = [1, 2, 3]
+  [..xs, 4, 5]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_prepend() {
+    let result = run(r#"
+fn main() {
+  let xs = [3, 4, 5]
+  [1, 2, ..xs]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_middle() {
+    let result = run(r#"
+fn main() {
+  let xs = [2, 3, 4]
+  [1, ..xs, 5]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_multiple() {
+    let result = run(r#"
+fn main() {
+  let a = [1, 2]
+  let b = [3, 4]
+  [..a, ..b]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_multiple_with_elements_between() {
+    let result = run(r#"
+fn main() {
+  let a = [1, 2]
+  let b = [5, 6]
+  [..a, 3, 4, ..b]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5),
+            Value::Int(6)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_empty_list() {
+    let result = run(r#"
+fn main() {
+  let xs = []
+  [1, ..xs, 2]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]))
+    );
+}
+
+#[test]
+fn test_list_spread_into_empty() {
+    let result = run(r#"
+fn main() {
+  let xs = [1, 2, 3]
+  [..xs]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_nested() {
+    let result = run(r#"
+fn main() {
+  let inner = [2, 3]
+  let outer = [1, ..inner, 4]
+  [0, ..outer, 5]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_with_strings() {
+    let result = run(r#"
+fn main() {
+  let greetings = ["hello", "world"]
+  [..greetings, "!"]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("hello".into()),
+            Value::String("world".into()),
+            Value::String("!".into())
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_from_function_result() {
+    let result = run(r#"
+fn nums() { [1, 2, 3] }
+fn main() {
+  [0, ..nums(), 4]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_single_element_list() {
+    let result = run(r#"
+fn main() {
+  let xs = [42]
+  [..xs]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(42)]))
+    );
+}
+
+#[test]
+fn test_list_spread_both_empty() {
+    let result = run(r#"
+fn main() {
+  let a = []
+  let b = []
+  [..a, ..b]
+}
+    "#);
+    assert_eq!(result, Value::List(Arc::new(vec![])));
+}
+
+#[test]
+fn test_list_spread_preserves_order() {
+    let result = run(r#"
+import list
+fn main() {
+  let xs = [3, 1, 2]
+  let ys = [6, 4, 5]
+  list.length([..xs, ..ys])
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_list_spread_with_range() {
+    let result = run(r#"
+fn main() {
+  let r = 1..4
+  [0, ..r, 5]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+            Value::Int(5)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_three_lists() {
+    let result = run(r#"
+fn main() {
+  let a = [1]
+  let b = [2]
+  let c = [3]
+  [..a, ..b, ..c]
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_spread_in_function_arg() {
+    let result = run(r#"
+import list
+fn main() {
+  let xs = [1, 2]
+  list.length([..xs, 3, 4, 5])
+}
+    "#);
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn test_list_spread_non_list_error() {
+    let err = run_err(r#"
+fn main() {
+  let x = 42
+  [1, ..x]
+}
+    "#);
+    assert!(
+        err.contains("not a list") || err.contains("ListConcat"),
+        "expected list error, got: {err}"
+    );
+}
+
 // ── Stdlib: list.get, string.index_of, string.slice, etc. ──────────
 
 #[test]
