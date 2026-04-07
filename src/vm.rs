@@ -211,15 +211,26 @@ enum FiberSliceResult {
     Blocked,
 }
 
-// ── VM ────────────────────────────────────────────────────────────
+// ── Runtime (shared state) ───────────────────────────────────────
 
-pub struct Vm {
-    frames: Vec<CallFrame>,
-    stack: Vec<Value>,
-    globals: HashMap<String, Value>,
+/// Shared, read-only-after-init state for a Silt program.
+/// Created once during initialization, then shared across spawned tasks via `Arc`.
+pub struct Runtime {
     /// Maps variant tag names to their parent type name, for method dispatch.
     #[allow(dead_code)]
     variant_types: HashMap<String, String>,
+
+    // ── Foreign function interface ──────────────────────────────
+    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>>,
+}
+
+// ── VM ────────────────────────────────────────────────────────────
+
+pub struct Vm {
+    runtime: Arc<Runtime>,
+    frames: Vec<CallFrame>,
+    stack: Vec<Value>,
+    globals: HashMap<String, Value>,
     /// Maps record type names to their field definitions (name, type) for json.parse.
     record_types: HashMap<String, Vec<(String, FieldType)>>,
 
@@ -231,25 +242,24 @@ pub struct Vm {
     next_task_id: usize,
     /// Prevents nested `run_other_fibers_once()` calls during channel.each
     scheduling_fibers: bool,
-
-    // ── Foreign function interface ──────────────────────────────
-    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>>,
 }
 
 impl Vm {
     pub fn new() -> Self {
         let mut vm = Vm {
+            runtime: Arc::new(Runtime {
+                variant_types: HashMap::new(),
+                foreign_fns: HashMap::new(),
+            }),
             frames: Vec::new(),
             stack: Vec::new(),
             globals: HashMap::new(),
-            variant_types: HashMap::new(),
             record_types: HashMap::new(),
             fibers: Vec::new(),
             current_fiber: 0,
             next_channel_id: 0,
             next_task_id: 0,
             scheduling_fibers: false,
-            foreign_fns: HashMap::new(),
         };
         vm.register_builtins();
         vm
@@ -267,7 +277,10 @@ impl Vm {
         func: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
     ) {
         let name = name.into();
-        self.foreign_fns.insert(name.clone(), Arc::new(func));
+        Arc::get_mut(&mut self.runtime)
+            .expect("register_fn called after VM has been shared")
+            .foreign_fns
+            .insert(name.clone(), Arc::new(func));
         self.globals.insert(name.clone(), Value::BuiltinFn(name));
     }
 
@@ -333,21 +346,21 @@ impl Vm {
         });
     }
 
-    /// Create a child VM that shares globals, type metadata, and foreign functions.
+    /// Create a child VM that shares runtime state (variant types, foreign functions)
+    /// via Arc and clones per-task state (globals, record types cache).
     /// Used for thread-per-task spawning.
     fn spawn_child(&self) -> Self {
         Vm {
+            runtime: self.runtime.clone(), // Arc clone = cheap
             frames: Vec::new(),
             stack: Vec::new(),
             globals: self.globals.clone(),
-            variant_types: self.variant_types.clone(),
             record_types: self.record_types.clone(),
             fibers: Vec::new(),
             current_fiber: 0,
             next_channel_id: self.next_channel_id,
             next_task_id: self.next_task_id,
             scheduling_fibers: false,
-            foreign_fns: self.foreign_fns.clone(),
         }
     }
 
@@ -2258,7 +2271,7 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, VmError> {
         // Foreign functions take priority — lets embedders override builtins.
-        if let Some(f) = self.foreign_fns.get(name).cloned() {
+        if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
             return f(args);
         }
         if let Some((module, func)) = name.split_once('.') {
@@ -2282,7 +2295,7 @@ impl Vm {
                 "time" => self.dispatch_time(func, args),
                 "http" => self.dispatch_http(func, args),
                 _ => {
-                    if let Some(f) = self.foreign_fns.get(name).cloned() {
+                    if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
                         f(args)
                     } else {
                         Err(VmError::new(format!("unknown module: {module}")))
@@ -2320,7 +2333,7 @@ impl Vm {
                     Err(VmError::new(format!("panic: {msg}")))
                 }
                 _ => {
-                    if let Some(f) = self.foreign_fns.get(name).cloned() {
+                    if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
                         f(args)
                     } else {
                         Err(VmError::new(format!("unknown builtin: {name}")))
@@ -4434,7 +4447,7 @@ impl Vm {
     /// Get current epoch milliseconds. Uses `__wasm_epoch_ms` foreign function
     /// if registered (WASM), otherwise falls back to `SystemTime`.
     fn epoch_ms(&self) -> Result<i64, VmError> {
-        if let Some(f) = self.foreign_fns.get("__wasm_epoch_ms") {
+        if let Some(f) = self.runtime.foreign_fns.get("__wasm_epoch_ms") {
             match f(&[])? {
                 Value::Int(ms) => Ok(ms),
                 _ => Err(VmError::new("__wasm_epoch_ms returned non-Int".into())),

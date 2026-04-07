@@ -4767,3 +4767,56 @@ fn main() {
     "#);
     assert_eq!(result, Value::String("Wednesday".into()));
 }
+
+// ── Runtime/Vm split tests ──────────────────────────────────────────
+
+#[test]
+fn test_spawned_task_accesses_shared_builtins() {
+    let result = run(r#"
+import task
+import string
+fn main() {
+  let h = task.spawn(fn() {
+    string.length("hello")
+  })
+  task.join(h)
+}
+    "#);
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn test_multiple_spawned_tasks_share_state() {
+    let result = run(r#"
+import task
+fn add(a: Int, b: Int) -> Int { a + b }
+fn main() {
+  let h1 = task.spawn(fn() { add(1, 2) })
+  let h2 = task.spawn(fn() { add(10, 20) })
+  let h3 = task.spawn(fn() { add(100, 200) })
+  let r1 = task.join(h1)
+  let r2 = task.join(h2)
+  let r3 = task.join(h3)
+  r1 + r2 + r3
+}
+    "#);
+    assert_eq!(result, Value::Int(333));
+}
+
+#[test]
+fn test_spawned_task_accesses_globals_and_variants() {
+    let result = run(r#"
+import task
+fn main() {
+  let h = task.spawn(fn() {
+    let x = Some(42)
+    match x {
+      Some(n) -> n
+      None -> 0
+    }
+  })
+  task.join(h)
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
