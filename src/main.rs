@@ -279,7 +279,8 @@ fn vm_run_file(path: &str) {
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{path}: compile error: {e}");
+            let source_err = SourceError::from_compile_error(&e, &source, path);
+            eprintln!("{source_err}");
             process::exit(1);
         }
     };
@@ -375,7 +376,8 @@ fn disasm_file(path: &str) {
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("{path}: compile error: {e}");
+            let source_err = SourceError::from_compile_error(&e, &source, path);
+            eprintln!("{source_err}");
             process::exit(1);
         }
     };
@@ -550,7 +552,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let functions = match compiler.compile_declarations(&program) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("{path}: compile error: {e}");
+                let source_err = SourceError::from_compile_error(&e, &source, path);
+                eprintln!("{source_err}");
                 failed += 1;
                 continue;
             }

@@ -50,7 +50,7 @@ fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
                 Ok(_) => panic!("expected error but got success"),
             }
         }
-        Err(e) => e,
+        Err(e) => e.message,
     }
 }
 
