@@ -6,7 +6,7 @@
 
 use regex::Regex;
 use std::collections::HashMap;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use crate::builtins;
@@ -106,6 +106,50 @@ pub struct Runtime {
     scheduler: std::sync::Mutex<Option<Arc<Scheduler>>>,
 }
 
+// ── Regex cache ──────────────────────────────────────────────────
+
+/// Bounded cache for compiled regex patterns.
+///
+/// Tracks insertion order with a `VecDeque`. When the cache exceeds
+/// `MAX_ENTRIES`, the oldest 25% of entries are evicted instead of
+/// clearing the entire cache.
+pub(crate) struct RegexCache {
+    map: HashMap<String, Regex>,
+    order: VecDeque<String>,
+}
+
+impl RegexCache {
+    const MAX_ENTRIES: usize = 256;
+    const EVICT_COUNT: usize = 64; // 25% of MAX_ENTRIES
+
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    /// Return a reference to the cached `Regex` for `pattern`, compiling and
+    /// caching it if necessary.
+    fn get(&mut self, pattern: &str) -> Result<&Regex, VmError> {
+        if !self.map.contains_key(pattern) {
+            let re =
+                Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            if self.map.len() >= Self::MAX_ENTRIES {
+                // Evict the oldest 25% of entries.
+                for _ in 0..Self::EVICT_COUNT {
+                    if let Some(old_key) = self.order.pop_front() {
+                        self.map.remove(&old_key);
+                    }
+                }
+            }
+            self.order.push_back(pattern.to_string());
+            self.map.insert(pattern.to_string(), re);
+        }
+        Ok(self.map.get(pattern).unwrap())
+    }
+}
+
 // ── VM ────────────────────────────────────────────────────────────
 
 pub struct Vm {
@@ -128,8 +172,8 @@ pub struct Vm {
     pub(crate) is_scheduled_task: bool,
 
     // ── Caches ──────────────────────────────────────────────────
-    /// Cache for compiled regex patterns (bounded to 256 entries).
-    pub(crate) regex_cache: HashMap<String, Regex>,
+    /// Cache for compiled regex patterns (bounded, LRU-like eviction).
+    pub(crate) regex_cache: RegexCache,
 }
 
 impl Default for Vm {
@@ -154,7 +198,7 @@ impl Vm {
             next_task_id: 0,
             block_reason: None,
             is_scheduled_task: false,
-            regex_cache: HashMap::new(),
+            regex_cache: RegexCache::new(),
         };
         vm.register_builtins();
         vm
@@ -280,7 +324,7 @@ impl Vm {
             next_task_id: self.next_task_id,
             block_reason: None,
             is_scheduled_task: false,
-            regex_cache: HashMap::new(),
+            regex_cache: RegexCache::new(),
         }
     }
 
@@ -2451,18 +2495,10 @@ impl Vm {
     }
 
     pub(crate) fn get_regex<'a>(
-        cache: &'a mut HashMap<String, Regex>,
+        cache: &'a mut RegexCache,
         pattern: &str,
     ) -> Result<&'a Regex, VmError> {
-        if !cache.contains_key(pattern) {
-            let re =
-                Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
-            if cache.len() >= 256 {
-                cache.clear();
-            }
-            cache.insert(pattern.to_string(), re);
-        }
-        Ok(cache.get(pattern).unwrap())
+        cache.get(pattern)
     }
 
     fn type_name(&self, val: &Value) -> &'static str {
