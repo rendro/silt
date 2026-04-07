@@ -706,21 +706,22 @@ impl TypeChecker {
                 continue;
             }
 
-            // Check that all required methods are implemented with correct arity.
+            // Check that all required methods are implemented with correct signature.
             for (method_name, trait_method_type) in &trait_info.methods {
                 let key = (type_name.clone(), method_name.clone());
                 if let Some(entry) = self.method_table.get(&key) {
-                    let expected_arity = count_params(trait_method_type);
-                    let actual_arity = count_params(&entry.method_type);
-                    if actual_arity != expected_arity {
-                        self.error(
-                            format!(
-                                "method '{}' in trait impl '{}' for '{}' has wrong arity: expected {}, got {}",
-                                method_name, trait_name, type_name, expected_arity, actual_arity
-                            ),
-                            entry.span,
-                        );
-                    }
+                    let impl_type = entry.method_type.clone();
+                    let impl_span = entry.span;
+                    // Instantiate the trait method type with fresh variables so
+                    // that unification doesn't permanently bind trait-level vars
+                    // (which would break validation of other impls).
+                    let fvs = free_vars_in(trait_method_type);
+                    let mapping: HashMap<TyVar, Type> = fvs
+                        .into_iter()
+                        .map(|v| (v, self.fresh_var()))
+                        .collect();
+                    let expected = substitute_vars(trait_method_type, &mapping);
+                    self.unify(&impl_type, &expected, impl_span);
                 } else {
                     // Find a span for the error.
                     let span = self
@@ -4393,9 +4394,22 @@ impl TypeChecker {
                 // Each part is either a literal or an expression
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        let _t = self.infer_expr(e, env);
-                        // In principle, we should check that Display is implemented,
-                        // but we keep it lenient for now.
+                        let expr_span = e.span;
+                        let t = self.infer_expr(e, env);
+                        let resolved = self.apply(&t);
+                        if let Some(type_name) = self.type_name_for_impl(&resolved)
+                            && !self
+                                .trait_impl_set
+                                .contains(&("Display".into(), type_name.clone()))
+                        {
+                            self.error(
+                                format!(
+                                    "type '{}' does not implement Display (required for string interpolation)",
+                                    type_name
+                                ),
+                                expr_span,
+                            );
+                        }
                     }
                 }
                 Type::String
@@ -4470,8 +4484,8 @@ impl TypeChecker {
                 if let Some(scheme) = env.lookup(&name) {
                     let scheme = scheme.clone();
                     self.instantiate(&scheme)
-                } else if name.contains('.') || name == "self" {
-                    // Module-qualified name or `self` — allow without error
+                } else if name == "self" {
+                    // `self` is resolved at runtime — allow without error
                     self.fresh_var()
                 } else {
                     self.error(format!("undefined variable '{name}'"), span);
@@ -4842,8 +4856,12 @@ impl TypeChecker {
                     Type::Generic(name, args) if name == "Option" && args.len() == 1 => {
                         args[0].clone()
                     }
+                    Type::Var(_) => {
+                        // Unresolved type variable — stay lenient
+                        self.fresh_var()
+                    }
                     _ => {
-                        // Lenient: return fresh var
+                        self.error(format!("'?' operator requires Result or Option type, got '{inner_ty}'"), span);
                         self.fresh_var()
                     }
                 }
