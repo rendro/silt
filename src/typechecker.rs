@@ -3988,6 +3988,14 @@ impl TypeChecker {
                 let ret_type = self.resolve_type_expr(ret, param_vars);
                 Type::Fun(param_types, Box::new(ret_type))
             }
+            TypeExpr::SelfType => {
+                if let Some(ty) = param_vars.get("Self") {
+                    ty.clone()
+                } else {
+                    // Self used outside of a trait context
+                    self.fresh_var()
+                }
+            }
         }
     }
 
@@ -4046,11 +4054,13 @@ impl TypeChecker {
     // ── Register trait declarations ─────────────────────────────────
 
     fn register_trait_decl(&mut self, t: &TraitDecl) {
+        let self_var = self.fresh_var();
         let methods: Vec<(std::string::String, Type)> = t
             .methods
             .iter()
             .map(|m| {
                 let mut param_map = HashMap::new();
+                param_map.insert("Self".to_string(), self_var.clone());
                 let mut param_types = Vec::new();
                 for param in &m.params {
                     let ty = if let Some(te) = &param.ty {
@@ -4079,6 +4089,17 @@ impl TypeChecker {
     }
 
     // ── Register trait implementations ──────────────────────────────
+
+    /// Convert a type name string (like "Int", "Float", "MyRecord") to a Type.
+    fn type_from_name(name: &str) -> Type {
+        match name {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            "Bool" => Type::Bool,
+            "String" => Type::String,
+            _ => Type::Generic(name.to_string(), vec![]),
+        }
+    }
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
         let impl_key = (ti.trait_name.clone(), ti.target_type.clone());
@@ -4110,8 +4131,11 @@ impl TypeChecker {
 
         self.trait_impl_set.insert(impl_key);
 
+        let self_type = Self::type_from_name(&ti.target_type);
+
         for method in &ti.methods {
             let mut param_map = HashMap::new();
+            param_map.insert("Self".to_string(), self_type.clone());
             let mut param_types = Vec::new();
             for param in &method.params {
                 let ty = if let Some(te) = &param.ty {

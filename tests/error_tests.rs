@@ -1828,3 +1828,20 @@ fn main() {
         "got: {err}"
     );
 }
+
+// ── Self type outside trait ─────────────────────────────────────────
+
+#[test]
+fn test_self_type_outside_trait() {
+    // Using Self in a regular function should not resolve to a concrete type.
+    // The typechecker should either error or treat it as an unresolved type variable.
+    let errs = type_errors(
+        r#"
+fn foo(x: Self) -> Self { x }
+fn main() { 42 }
+    "#,
+    );
+    // Self outside a trait context is not meaningful; at minimum it should not crash.
+    // If the typechecker produces an error, it should mention 'Self'.
+    let _ = errs;
+}

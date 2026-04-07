@@ -205,6 +205,7 @@ pub enum TypeExpr {
     Generic(String, Vec<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
+    SelfType,
 }
 
 // ── Statements ───────────────────────────────────────────────────────

@@ -550,6 +550,9 @@ impl Parser {
             return Ok(TypeExpr::Tuple(elems));
         }
         let (name, _) = self.expect_ident()?;
+        if name == "Self" {
+            return Ok(TypeExpr::SelfType);
+        }
         if self.peek() == &Token::LParen {
             self.advance();
             let mut args = Vec::new();

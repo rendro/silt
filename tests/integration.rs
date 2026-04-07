@@ -6855,3 +6855,72 @@ fn main() {
         ]))
     );
 }
+
+// ── Self type in traits ─────────────────────────────────────────────
+
+#[test]
+fn test_self_type_in_trait() {
+    // Define a trait with Self in method signatures, impl for a type
+    let result = run(r#"
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+  fn combine(a: Self, b: Self) -> Self { a + b }
+}
+
+fn main() {
+  let x = Int.empty()
+  let y = Int.combine(3, 4)
+  x + y
+}
+    "#);
+    assert_eq!(result, Value::Int(7));
+}
+
+#[test]
+fn test_self_type_return() {
+    // Trait method that returns Self, verify the return type matches
+    let result = run(r#"
+trait Default {
+  fn default() -> Self
+}
+
+trait Default for String {
+  fn default() -> Self { "" }
+}
+
+fn main() {
+  String.default()
+}
+    "#);
+    assert_eq!(result, Value::String("".into()));
+}
+
+#[test]
+fn test_self_type_multiple_impls() {
+    // Same trait implemented for different types, Self resolves correctly for each
+    let result = run(r#"
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+trait Zero for Float {
+  fn zero() -> Self { 0.0 }
+}
+
+fn main() {
+  let a = Int.zero()
+  let b = Float.zero()
+  a
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
