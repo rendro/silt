@@ -314,10 +314,18 @@ fn format_fn(f: &FnDecl, depth: usize) -> String {
     let where_clause = if f.where_clauses.is_empty() {
         String::new()
     } else {
-        let clauses: Vec<String> = f
-            .where_clauses
+        // Group trait bounds by type param, preserving insertion order.
+        let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
+        for (name, trait_name) in &f.where_clauses {
+            if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
+                entry.1.push(trait_name.clone());
+            } else {
+                grouped.push((name.clone(), vec![trait_name.clone()]));
+            }
+        }
+        let clauses: Vec<String> = grouped
             .iter()
-            .map(|(name, trait_name)| format!("{name}: {trait_name}"))
+            .map(|(name, traits)| format!("{name}: {}", traits.join(" + ")))
             .collect();
         format!(" where {}", clauses.join(", "))
     };

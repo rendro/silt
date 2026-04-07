@@ -241,7 +241,13 @@ impl Parser {
                 let (type_param, _) = self.expect_ident()?;
                 self.expect(&Token::Colon)?;
                 let (trait_name, _) = self.expect_ident()?;
-                clauses.push((type_param, trait_name));
+                clauses.push((type_param.clone(), trait_name));
+                // Support multi-trait bounds: `where a: Equal + Hash`
+                while self.at(&Token::Plus) {
+                    self.advance(); // consume '+'
+                    let (trait_name, _) = self.expect_ident()?;
+                    clauses.push((type_param.clone(), trait_name));
+                }
                 self.skip_nl();
                 if self.at(&Token::Comma) {
                     self.advance();

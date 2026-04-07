@@ -2783,6 +2783,52 @@ fn main() {
     );
 }
 
+#[test]
+fn test_where_clause_multi_trait_bounds() {
+    run_ok(
+        r#"
+fn check(a: t, b: t) where t: Equal + Compare {
+  let eq = a == b
+  let lt = a < b
+  eq
+}
+
+fn main() {
+  check(1, 2)
+  check(3, 3)
+}
+    "#,
+    );
+}
+
+#[test]
+fn test_where_clause_multi_trait_bounds_mixed() {
+    run_ok(
+        r#"
+type Color { Red Blue }
+
+trait Display for Color {
+  fn display(self) -> String {
+    match self {
+      Red -> "Red"
+      Blue -> "Blue"
+    }
+  }
+}
+
+fn show_and_compare(a: t, b: u) where t: Equal + Compare, u: Display {
+  let eq = a == a
+  let lt = a < a
+  b.display()
+}
+
+fn main() {
+  println(show_and_compare(1, Red))
+}
+    "#,
+    );
+}
+
 // ── Typed AST verification ──────────────────────────────────────────
 
 #[test]

@@ -540,6 +540,15 @@ fn main() {
     let _ = errs;
 }
 
+#[test]
+fn test_where_clause_trailing_plus() {
+    let err = parse_err("fn f(x: a) where a: Equal + = x");
+    assert!(
+        err.contains("expected identifier"),
+        "expected identifier error, got: {err}"
+    );
+}
+
 // ════════════════════════════════════════════════════════════════════
 // PHASE 4: RUNTIME ERRORS — Arithmetic & Types
 // ════════════════════════════════════════════════════════════════════
