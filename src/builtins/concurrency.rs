@@ -1,6 +1,6 @@
 //! Concurrency builtin functions (`channel.*`, `task.*`).
 
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, Vm, VmError};
@@ -13,7 +13,11 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 0 => 0,
                 1 => match &args[0] {
                     Value::Int(n) if *n >= 0 => *n as usize,
-                    _ => return Err(VmError::new("channel.new capacity must be a non-negative integer".into())),
+                    _ => {
+                        return Err(VmError::new(
+                            "channel.new capacity must be a non-negative integer".into(),
+                        ));
+                    }
                 },
                 _ => return Err(VmError::new("channel.new takes 0 or 1 arguments".into())),
             };
@@ -22,10 +26,14 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         }
         "send" => {
             if args.len() != 2 {
-                return Err(VmError::new("channel.send takes 2 arguments (channel, value)".into()));
+                return Err(VmError::new(
+                    "channel.send takes 2 arguments (channel, value)".into(),
+                ));
             }
             let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new("channel.send requires a channel as first argument".into()));
+                return Err(VmError::new(
+                    "channel.send requires a channel as first argument".into(),
+                ));
             };
             let val = args[1].clone();
             let ch = ch.clone();
@@ -60,10 +68,14 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         }
         "receive" => {
             if args.len() != 1 {
-                return Err(VmError::new("channel.receive takes 1 argument (channel)".into()));
+                return Err(VmError::new(
+                    "channel.receive takes 1 argument (channel)".into(),
+                ));
             }
             let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new("channel.receive requires a channel argument".into()));
+                return Err(VmError::new(
+                    "channel.receive requires a channel argument".into(),
+                ));
             };
             let ch = ch.clone();
             // Try non-blocking first.
@@ -87,12 +99,8 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             }
             // Main thread: fall back to condvar-based blocking.
             match ch.receive_blocking() {
-                TryReceiveResult::Value(val) => {
-                    Ok(Value::Variant("Message".into(), vec![val]))
-                }
-                TryReceiveResult::Closed => {
-                    Ok(Value::Variant("Closed".into(), vec![]))
-                }
+                TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
+                TryReceiveResult::Closed => Ok(Value::Variant("Closed".into(), vec![])),
                 TryReceiveResult::Empty => {
                     unreachable!("receive_blocking should not return Empty")
                 }
@@ -100,10 +108,14 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         }
         "close" => {
             if args.len() != 1 {
-                return Err(VmError::new("channel.close takes 1 argument (channel)".into()));
+                return Err(VmError::new(
+                    "channel.close takes 1 argument (channel)".into(),
+                ));
             }
             let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new("channel.close requires a channel argument".into()));
+                return Err(VmError::new(
+                    "channel.close requires a channel argument".into(),
+                ));
             };
             ch.close();
             Ok(Value::Unit)
@@ -125,7 +137,9 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 return Err(VmError::new("channel.try_receive takes 1 argument".into()));
             }
             let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new("channel.try_receive requires a channel".into()));
+                return Err(VmError::new(
+                    "channel.try_receive requires a channel".into(),
+                ));
             };
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
@@ -135,20 +149,28 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         }
         "select" => {
             if args.len() != 1 {
-                return Err(VmError::new("channel.select takes 1 argument (list of channels)".into()));
+                return Err(VmError::new(
+                    "channel.select takes 1 argument (list of channels)".into(),
+                ));
             }
             let Value::List(channels) = &args[0] else {
-                return Err(VmError::new("channel.select argument must be a list of channels".into()));
+                return Err(VmError::new(
+                    "channel.select argument must be a list of channels".into(),
+                ));
             };
             let channel_refs: Vec<Arc<Channel>> = channels
                 .iter()
                 .map(|v| match v {
                     Value::Channel(ch) => Ok(ch.clone()),
-                    _ => Err(VmError::new("channel.select list must contain only channels".into())),
+                    _ => Err(VmError::new(
+                        "channel.select list must contain only channels".into(),
+                    )),
                 })
                 .collect::<Result<_, _>>()?;
             if channel_refs.is_empty() {
-                return Err(VmError::new("channel.select requires at least one channel".into()));
+                return Err(VmError::new(
+                    "channel.select requires at least one channel".into(),
+                ));
             }
 
             // Try all channels non-blocking first.
@@ -238,7 +260,9 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 let (lock, cvar) = &*pair;
                 let mut notified = lock.lock().unwrap();
                 if !*notified {
-                    let result = cvar.wait_timeout(notified, std::time::Duration::from_secs(1)).unwrap();
+                    let result = cvar
+                        .wait_timeout(notified, std::time::Duration::from_secs(1))
+                        .unwrap();
                     notified = result.0;
                 }
                 *notified = false;
@@ -246,10 +270,14 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
         }
         "each" => {
             if args.len() != 2 {
-                return Err(VmError::new("channel.each takes 2 arguments (channel, function)".into()));
+                return Err(VmError::new(
+                    "channel.each takes 2 arguments (channel, function)".into(),
+                ));
             }
             let Value::Channel(ch) = &args[0] else {
-                return Err(VmError::new("channel.each requires a channel as first argument".into()));
+                return Err(VmError::new(
+                    "channel.each requires a channel as first argument".into(),
+                ));
             };
             let ch = ch.clone();
             let callback = args[1].clone();
@@ -302,10 +330,14 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
     match name {
         "spawn" => {
             if args.len() != 1 {
-                return Err(VmError::new("task.spawn takes 1 argument (a function)".into()));
+                return Err(VmError::new(
+                    "task.spawn takes 1 argument (a function)".into(),
+                ));
             }
             let Value::VmClosure(closure) = &args[0] else {
-                return Err(VmError::new("task.spawn requires a function argument".into()));
+                return Err(VmError::new(
+                    "task.spawn requires a function argument".into(),
+                ));
             };
             let task_id = vm.next_task_id();
             let handle = Arc::new(TaskHandle::new(task_id));
@@ -391,7 +423,9 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("task.cancel takes 1 argument (handle)".into()));
             }
             let Value::Handle(handle) = &args[0] else {
-                return Err(VmError::new("task.cancel requires a handle argument".into()));
+                return Err(VmError::new(
+                    "task.cancel requires a handle argument".into(),
+                ));
             };
             handle.complete(Err("cancelled".to_string()));
             Ok(Value::Unit)

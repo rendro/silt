@@ -35,11 +35,17 @@ fn encode_type_expr(te: &TypeExpr) -> String {
         },
         TypeExpr::Generic(name, args) => match name.as_str() {
             "List" => {
-                let inner = args.first().map(encode_type_expr).unwrap_or_else(|| "String".into());
+                let inner = args
+                    .first()
+                    .map(encode_type_expr)
+                    .unwrap_or_else(|| "String".into());
                 format!("List:{inner}")
             }
             "Option" => {
-                let inner = args.first().map(encode_type_expr).unwrap_or_else(|| "String".into());
+                let inner = args
+                    .first()
+                    .map(encode_type_expr)
+                    .unwrap_or_else(|| "String".into());
                 format!("Option:{inner}")
             }
             _ => "String".to_string(),
@@ -128,6 +134,12 @@ pub struct Compiler {
     in_tail_position: bool,
 }
 
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Self {
@@ -163,8 +175,10 @@ impl Compiler {
 
     /// Mark all builtin modules as imported (used by the REPL).
     pub fn import_all_builtins(&mut self) {
-        for name in &["io", "string", "int", "float", "list", "map", "result",
-                       "option", "test", "channel", "task", "regex", "json", "set", "math"] {
+        for name in &[
+            "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel",
+            "task", "regex", "json", "set", "math",
+        ] {
             self.imported_builtin_modules.insert(name.to_string());
         }
     }
@@ -177,7 +191,8 @@ impl Compiler {
     /// which ends with `GetGlobal "main" ; Call 0 ; Return`.
     pub fn compile_program(&mut self, program: &Program) -> Result<Vec<Function>, String> {
         // Push a top-level script context.
-        self.contexts.push(CompileContext::new("<script>".into(), 0));
+        self.contexts
+            .push(CompileContext::new("<script>".into(), 0));
 
         for decl in &program.decls {
             self.compile_decl(decl)?;
@@ -185,7 +200,9 @@ impl Compiler {
 
         // Emit: GetGlobal "main", Call 0, Return
         let span = Span::new(0, 0);
-        let name_idx = self.current_chunk().add_constant(Value::String("main".into()));
+        let name_idx = self
+            .current_chunk()
+            .add_constant(Value::String("main".into()));
         self.current_chunk().emit_op(Op::GetGlobal, span);
         self.current_chunk().emit_u16(name_idx, span);
         self.current_chunk().emit_op(Op::Call, span);
@@ -210,7 +227,8 @@ impl Compiler {
     /// registers globals and returns Unit.  Useful for test runners and the
     /// REPL where `main()` is not the entry-point.
     pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, String> {
-        self.contexts.push(CompileContext::new("<script>".into(), 0));
+        self.contexts
+            .push(CompileContext::new("<script>".into(), 0));
 
         for decl in &program.decls {
             self.compile_decl(decl)?;
@@ -324,8 +342,9 @@ impl Compiler {
 
                 match pattern {
                     Pattern::Ident(name) => {
-                        let name_idx =
-                            self.current_chunk().add_constant(Value::String(name.clone()));
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(name.clone()));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -358,15 +377,21 @@ impl Compiler {
                                 self.current_chunk().emit_op(Op::Constant, span);
                                 self.current_chunk().emit_u16(val_idx, span);
                             }
-                            let name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                            let name_idx = self
+                                .current_chunk()
+                                .add_constant(Value::String(name.clone()));
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(name_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
 
                             // Register variant -> type mapping for method dispatch.
                             let mapping_key = format!("__type_of__{name}");
-                            let key_idx = self.current_chunk().add_constant(Value::String(mapping_key));
-                            let type_val_idx = self.current_chunk().add_constant(Value::String(type_decl.name.clone()));
+                            let key_idx = self
+                                .current_chunk()
+                                .add_constant(Value::String(mapping_key));
+                            let type_val_idx = self
+                                .current_chunk()
+                                .add_constant(Value::String(type_decl.name.clone()));
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(type_val_idx, span);
                             self.current_chunk().emit_op(Op::SetGlobal, span);
@@ -380,7 +405,9 @@ impl Compiler {
                         let val_idx = self.current_chunk().add_constant(val);
                         self.current_chunk().emit_op(Op::Constant, span);
                         self.current_chunk().emit_u16(val_idx, span);
-                        let name_idx = self.current_chunk().add_constant(Value::String(type_decl.name.clone()));
+                        let name_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(type_decl.name.clone()));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -389,18 +416,24 @@ impl Compiler {
                         // Format: list of alternating [field_name, type_encoding, ...]
                         let field_count = fields.len();
                         for f in fields {
-                            let fname = self.current_chunk().add_constant(Value::String(f.name.clone()));
+                            let fname = self
+                                .current_chunk()
+                                .add_constant(Value::String(f.name.clone()));
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(fname, span);
-                            let ftype = self.current_chunk().add_constant(Value::String(encode_type_expr(&f.ty)));
+                            let ftype = self
+                                .current_chunk()
+                                .add_constant(Value::String(encode_type_expr(&f.ty)));
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(ftype, span);
                         }
                         self.current_chunk().emit_op(Op::MakeList, span);
-                        self.current_chunk().emit_u16((field_count * 2) as u16, span);
-                        let meta_key = self.current_chunk().add_constant(
-                            Value::String(format!("__record_fields__{}", type_decl.name))
-                        );
+                        self.current_chunk()
+                            .emit_u16((field_count * 2) as u16, span);
+                        let meta_key = self.current_chunk().add_constant(Value::String(format!(
+                            "__record_fields__{}",
+                            type_decl.name
+                        )));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(meta_key, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -416,7 +449,8 @@ impl Compiler {
                     let qualified_name = format!("{}.{}", trait_impl.target_type, method.name);
                     let span = method.span;
 
-                    self.contexts.push(CompileContext::new(qualified_name.clone(), arity));
+                    self.contexts
+                        .push(CompileContext::new(qualified_name.clone(), arity));
 
                     // Add parameters as locals.
                     for (i, param) in method.params.iter().enumerate() {
@@ -454,7 +488,9 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::Constant, span);
                     self.current_chunk().emit_u16(fi, span);
 
-                    let name_idx = self.current_chunk().add_constant(Value::String(qualified_name));
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(qualified_name));
                     self.current_chunk().emit_op(Op::SetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -467,9 +503,7 @@ impl Compiler {
                 Ok(())
             }
 
-            Decl::Import(target) => {
-                self.compile_import(target)
-            }
+            Decl::Import(target) => self.compile_import(target),
         }
     }
 
@@ -497,7 +531,9 @@ impl Compiler {
                         let qi = self.current_chunk().add_constant(Value::String(qualified));
                         self.current_chunk().emit_op(Op::GetGlobal, span);
                         self.current_chunk().emit_u16(qi, span);
-                        let bare_i = self.current_chunk().add_constant(Value::String(item.clone()));
+                        let bare_i = self
+                            .current_chunk()
+                            .add_constant(Value::String(item.clone()));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(bare_i, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -513,7 +549,9 @@ impl Compiler {
                     let qi = self.current_chunk().add_constant(Value::String(qualified));
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(qi, span);
-                    let bare_i = self.current_chunk().add_constant(Value::String(item.clone()));
+                    let bare_i = self
+                        .current_chunk()
+                        .add_constant(Value::String(item.clone()));
                     self.current_chunk().emit_op(Op::SetGlobal, span);
                     self.current_chunk().emit_u16(bare_i, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -570,7 +608,9 @@ impl Compiler {
 
         // Detect circular imports.
         if self.compiling_modules.contains(module_name) {
-            return Err(format!("circular import detected: module '{module_name}' imports itself (directly or indirectly)"));
+            return Err(format!(
+                "circular import detected: module '{module_name}' imports itself (directly or indirectly)"
+            ));
         }
         self.compiling_modules.insert(module_name.to_string());
 
@@ -594,9 +634,8 @@ impl Compiler {
 
         // Resolve, read, lex, parse the module file.
         let file_path = project_root.join(format!("{module_name}.silt"));
-        let source = std::fs::read_to_string(&file_path).map_err(|e| {
-            format!("cannot load module '{module_name}': {e}")
-        })?;
+        let source = std::fs::read_to_string(&file_path)
+            .map_err(|e| format!("cannot load module '{module_name}': {e}"))?;
 
         let tokens = Lexer::new(&source)
             .tokenize()
@@ -684,9 +723,7 @@ impl Compiler {
                     if public_fns.contains(&fn_decl.name) {
                         // Register as "module_name.fn_name"
                         let qualified = format!("{module_name}.{}", fn_decl.name);
-                        let name_idx = self
-                            .current_chunk()
-                            .add_constant(Value::String(qualified));
+                        let name_idx = self.current_chunk().add_constant(Value::String(qualified));
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -712,15 +749,14 @@ impl Compiler {
                         crate::ast::TypeBody::Enum(variants) => {
                             for variant in variants {
                                 // Copy bare "VariantName" -> "module.VariantName"
-                                let bare_idx = self.current_chunk().add_constant(
-                                    Value::String(variant.name.clone()),
-                                );
+                                let bare_idx = self
+                                    .current_chunk()
+                                    .add_constant(Value::String(variant.name.clone()));
                                 self.current_chunk().emit_op(Op::GetGlobal, span);
                                 self.current_chunk().emit_u16(bare_idx, span);
                                 let qual = format!("{module_name}.{}", variant.name);
-                                let qual_idx = self.current_chunk().add_constant(
-                                    Value::String(qual),
-                                );
+                                let qual_idx =
+                                    self.current_chunk().add_constant(Value::String(qual));
                                 self.current_chunk().emit_op(Op::SetGlobal, span);
                                 self.current_chunk().emit_u16(qual_idx, span);
                                 self.current_chunk().emit_op(Op::Pop, span);
@@ -733,24 +769,21 @@ impl Compiler {
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(type_val_idx, span);
                             let qual_type = format!("{module_name}.{}", type_decl.name);
-                            let qual_type_idx = self.current_chunk().add_constant(
-                                Value::String(qual_type),
-                            );
+                            let qual_type_idx =
+                                self.current_chunk().add_constant(Value::String(qual_type));
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(qual_type_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
                         }
                         crate::ast::TypeBody::Record(_) => {
                             // Copy bare type name -> "module.TypeName"
-                            let bare_idx = self.current_chunk().add_constant(
-                                Value::String(type_decl.name.clone()),
-                            );
+                            let bare_idx = self
+                                .current_chunk()
+                                .add_constant(Value::String(type_decl.name.clone()));
                             self.current_chunk().emit_op(Op::GetGlobal, span);
                             self.current_chunk().emit_u16(bare_idx, span);
                             let qual = format!("{module_name}.{}", type_decl.name);
-                            let qual_idx = self.current_chunk().add_constant(
-                                Value::String(qual),
-                            );
+                            let qual_idx = self.current_chunk().add_constant(Value::String(qual));
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(qual_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
@@ -834,7 +867,9 @@ impl Compiler {
             } => {
                 // Compile condition, jump to else if false
                 self.compile_expr(condition)?;
-                let else_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, condition.span);
+                let else_jump = self
+                    .current_chunk()
+                    .emit_jump(Op::JumpIfFalse, condition.span);
 
                 // Condition was true — skip else block
                 let end_jump = self.current_chunk().emit_jump(Op::Jump, condition.span);
@@ -1011,15 +1046,14 @@ impl Compiler {
                     self.current_chunk().emit_u8(idx, span);
                 } else {
                     // Gate constructors that require module imports
-                    if let Some(required) = module::gated_constructor_module(name) {
-                        if !self.imported_builtin_modules.contains(required) {
-                            return Err(format!(
-                                "'{name}' requires `import {required}`"
-                            ));
-                        }
+                    if let Some(required) = module::gated_constructor_module(name)
+                        && !self.imported_builtin_modules.contains(required)
+                    {
+                        return Err(format!("'{name}' requires `import {required}`"));
                     }
-                    let name_idx =
-                        self.current_chunk().add_constant(Value::String(name.clone()));
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(name.clone()));
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -1050,14 +1084,17 @@ impl Compiler {
                     if is_module_call {
                         if let ExprKind::Ident(module) = &receiver.kind {
                             // Gate: require import for builtin modules
-                            if module::is_builtin_module(module) && !self.imported_builtin_modules.contains(module.as_str()) {
+                            if module::is_builtin_module(module)
+                                && !self.imported_builtin_modules.contains(module.as_str())
+                            {
                                 return Err(format!(
                                     "module '{module}' is not imported; add `import {module}` at the top of the file"
                                 ));
                             }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
-                            let name_idx = self.current_chunk().add_constant(Value::String(qualified));
+                            let name_idx =
+                                self.current_chunk().add_constant(Value::String(qualified));
                             self.current_chunk().emit_op(Op::GetGlobal, span);
                             self.current_chunk().emit_u16(name_idx, span);
                             for arg in args {
@@ -1081,7 +1118,9 @@ impl Compiler {
                             self.compile_expr(arg)?;
                         }
                         let argc = (args.len() + 1) as u8; // receiver + args
-                        let method_idx = self.current_chunk().add_constant(Value::String(method.clone()));
+                        let method_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(method.clone()));
                         self.current_chunk().emit_op(Op::CallMethod, span);
                         self.current_chunk().emit_u16(method_idx, span);
                         self.current_chunk().emit_u8(argc, span);
@@ -1108,19 +1147,20 @@ impl Compiler {
                 // Check if this is a module-qualified name like list.map
                 // But only if the identifier is NOT a known local or upvalue.
                 if let ExprKind::Ident(name) = &expr.kind {
-                    let is_local = self.resolve_local(name).is_some()
-                        || self.resolve_upvalue(name).is_some();
+                    let is_local =
+                        self.resolve_local(name).is_some() || self.resolve_upvalue(name).is_some();
                     if !is_local {
                         // Gate: require import for builtin modules
-                        if module::is_builtin_module(name) && !self.imported_builtin_modules.contains(name.as_str()) {
+                        if module::is_builtin_module(name)
+                            && !self.imported_builtin_modules.contains(name.as_str())
+                        {
                             return Err(format!(
                                 "module '{name}' is not imported; add `import {name}` at the top of the file"
                             ));
                         }
                         // Module-qualified global: list.map, string.length, etc.
                         let qualified = format!("{name}.{field}");
-                        let name_idx =
-                            self.current_chunk().add_constant(Value::String(qualified));
+                        let name_idx = self.current_chunk().add_constant(Value::String(qualified));
                         self.current_chunk().emit_op(Op::GetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         return Ok(());
@@ -1134,8 +1174,9 @@ impl Compiler {
                 } else {
                     // Compile the expression and access field
                     self.compile_expr(expr)?;
-                    let name_idx =
-                        self.current_chunk().add_constant(Value::String(field.clone()));
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(field.clone()));
                     self.current_chunk().emit_op(Op::GetField, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -1146,8 +1187,7 @@ impl Compiler {
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let idx =
-                                self.current_chunk().add_constant(Value::String(s.clone()));
+                            let idx = self.current_chunk().add_constant(Value::String(s.clone()));
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(idx, span);
                             count += 1;
@@ -1202,15 +1242,13 @@ impl Compiler {
                 }
 
                 // Emit destructuring for non-Ident lambda parameter patterns.
-                for maybe_destruct in &lambda_param_slots {
-                    if let Some((slot, pattern)) = maybe_destruct {
-                        self.current_chunk().emit_op(Op::GetLocal, span);
-                        self.current_chunk().emit_u16(*slot, span);
-                        let _hidden = self.add_local("__param_copy__".into());
-                        self.current_chunk().emit_op(Op::SetLocal, span);
-                        self.current_chunk().emit_u16(_hidden, span);
-                        self.compile_pattern_bind(pattern, span)?;
-                    }
+                for (slot, pattern) in lambda_param_slots.iter().flatten() {
+                    self.current_chunk().emit_op(Op::GetLocal, span);
+                    self.current_chunk().emit_u16(*slot, span);
+                    let _hidden = self.add_local("__param_copy__".into());
+                    self.current_chunk().emit_op(Op::SetLocal, span);
+                    self.current_chunk().emit_u16(_hidden, span);
+                    self.compile_pattern_bind(pattern, span)?;
                 }
 
                 // Compile the lambda body in tail position for TCO.
@@ -1241,9 +1279,11 @@ impl Compiler {
                     // Has upvalues: emit MakeClosure with descriptors.
                     self.current_chunk().emit_op(Op::MakeClosure, span);
                     self.current_chunk().emit_u16(fi, span);
-                    self.current_chunk().emit_u8(upvalue_descs.len() as u8, span);
+                    self.current_chunk()
+                        .emit_u8(upvalue_descs.len() as u8, span);
                     for desc in &upvalue_descs {
-                        self.current_chunk().emit_u8(if desc.is_local { 1 } else { 0 }, span);
+                        self.current_chunk()
+                            .emit_u8(if desc.is_local { 1 } else { 0 }, span);
                         self.current_chunk().emit_u8(desc.index, span);
                     }
                 }
@@ -1262,7 +1302,9 @@ impl Compiler {
                     match elem {
                         ListElem::Single(e) => self.compile_expr(e)?,
                         ListElem::Spread(_) => {
-                            return Err("spread in list literals not yet supported in compiler".into());
+                            return Err(
+                                "spread in list literals not yet supported in compiler".into()
+                            );
                         }
                     }
                 }
@@ -1313,12 +1355,16 @@ impl Compiler {
                 for (_, val) in fields {
                     self.compile_expr(val)?;
                 }
-                let type_name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                let type_name_idx = self
+                    .current_chunk()
+                    .add_constant(Value::String(name.clone()));
                 self.current_chunk().emit_op(Op::MakeRecord, span);
                 self.current_chunk().emit_u16(type_name_idx, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
                 for fname in &field_names {
-                    let field_idx = self.current_chunk().add_constant(Value::String(fname.clone()));
+                    let field_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(fname.clone()));
                     self.current_chunk().emit_u16(field_idx, span);
                 }
             }
@@ -1332,7 +1378,9 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::RecordUpdate, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
                 for fname in &field_names {
-                    let field_idx = self.current_chunk().add_constant(Value::String(fname.clone()));
+                    let field_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(fname.clone()));
                     self.current_chunk().emit_u16(field_idx, span);
                 }
             }
@@ -1342,7 +1390,10 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
-                let loop_info = self.ctx().loop_stack.last()
+                let loop_info = self
+                    .ctx()
+                    .loop_stack
+                    .last()
                     .ok_or_else(|| "recur outside of loop".to_string())?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
@@ -1350,7 +1401,8 @@ impl Compiler {
                 if args.len() != expected {
                     return Err(format!(
                         "loop() expects {} argument(s), got {}",
-                        expected, args.len()
+                        expected,
+                        args.len()
                     ));
                 }
 
@@ -1367,10 +1419,8 @@ impl Compiler {
                 let jump_back_dist = current_offset + 3 - loop_start; // +3 for opcode + u16
                 self.current_chunk().emit_op(Op::JumpBack, span);
                 self.current_chunk().emit_u16(jump_back_dist as u16, span);
-            }
-
-            // All expression kinds are handled above. If new ones are added,
-            // the match will become non-exhaustive and the compiler will error.
+            } // All expression kinds are handled above. If new ones are added,
+              // the match will become non-exhaustive and the compiler will error.
         }
 
         Ok(())
@@ -1452,9 +1502,9 @@ impl Compiler {
         }
 
         // No arm matched — panic
-        let msg_idx = self.current_chunk().add_constant(
-            Value::String("non-exhaustive match: no arm matched".into()),
-        );
+        let msg_idx = self
+            .current_chunk()
+            .add_constant(Value::String("non-exhaustive match: no arm matched".into()));
         self.current_chunk().emit_op(Op::Constant, span);
         self.current_chunk().emit_u16(msg_idx, span);
         self.current_chunk().emit_op(Op::Panic, span);
@@ -1500,9 +1550,9 @@ impl Compiler {
         }
 
         // No arm matched — panic
-        let msg_idx = self.current_chunk().add_constant(
-            Value::String("non-exhaustive match: no condition was true".into()),
-        );
+        let msg_idx = self.current_chunk().add_constant(Value::String(
+            "non-exhaustive match: no condition was true".into(),
+        ));
         self.current_chunk().emit_op(Op::Constant, span);
         self.current_chunk().emit_u16(msg_idx, span);
         self.current_chunk().emit_op(Op::Panic, span);
@@ -1564,15 +1614,15 @@ impl Compiler {
 
             Pattern::Constructor(name, fields) => {
                 // Gate constructors that require module imports
-                if let Some(required) = module::gated_constructor_module(name) {
-                    if !self.imported_builtin_modules.contains(required) {
-                        return Err(format!(
-                            "'{name}' requires `import {required}`"
-                        ));
-                    }
+                if let Some(required) = module::gated_constructor_module(name)
+                    && !self.imported_builtin_modules.contains(required)
+                {
+                    return Err(format!("'{name}' requires `import {required}`"));
                 }
                 // Test: tag matches?
-                let idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                let idx = self
+                    .current_chunk()
+                    .add_constant(Value::String(name.clone()));
                 self.current_chunk().emit_op(Op::TestTag, span);
                 self.current_chunk().emit_u16(idx, span);
                 let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -1641,14 +1691,14 @@ impl Compiler {
                 }
 
                 // Test rest pattern if it's refutable
-                if let Some(rest_pat) = rest {
-                    if !self.pattern_is_irrefutable(rest_pat) {
-                        self.current_chunk().emit_op(Op::DestructListRest, span);
-                        self.current_chunk().emit_u8(elem_count, span);
-                        let sub_fails = self.compile_pattern_test(rest_pat, span)?;
-                        self.current_chunk().emit_op(Op::Pop, span);
-                        all_jumps.extend(sub_fails);
-                    }
+                if let Some(rest_pat) = rest
+                    && !self.pattern_is_irrefutable(rest_pat)
+                {
+                    self.current_chunk().emit_op(Op::DestructListRest, span);
+                    self.current_chunk().emit_u8(elem_count, span);
+                    let sub_fails = self.compile_pattern_test(rest_pat, span)?;
+                    self.current_chunk().emit_op(Op::Pop, span);
+                    all_jumps.extend(sub_fails);
                 }
 
                 Ok(all_jumps)
@@ -1659,7 +1709,9 @@ impl Compiler {
 
                 // Test tag if present
                 if let Some(type_name) = name {
-                    let idx = self.current_chunk().add_constant(Value::String(type_name.clone()));
+                    let idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(type_name.clone()));
                     self.current_chunk().emit_op(Op::TestRecordTag, span);
                     self.current_chunk().emit_u16(idx, span);
                     let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -1673,7 +1725,9 @@ impl Compiler {
                         None => continue, // shorthand binding {name} — always matches
                     };
                     if !self.pattern_is_irrefutable(sub_pattern) {
-                        let field_idx = self.current_chunk().add_constant(Value::String(field_name.clone()));
+                        let field_idx = self
+                            .current_chunk()
+                            .add_constant(Value::String(field_name.clone()));
                         self.current_chunk().emit_op(Op::DestructRecordField, span);
                         self.current_chunk().emit_u16(field_idx, span);
                         let sub_fails = self.compile_pattern_test(sub_pattern, span)?;
@@ -1752,7 +1806,9 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    let name_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                    let name_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(name.clone()));
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -1769,7 +1825,9 @@ impl Compiler {
 
                 for (key, sub_pat) in entries {
                     // Test if key exists
-                    let key_idx = self.current_chunk().add_constant(Value::String(key.clone()));
+                    let key_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(key.clone()));
                     self.current_chunk().emit_op(Op::TestMapHasKey, span);
                     self.current_chunk().emit_u16(key_idx, span);
                     let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
@@ -1777,7 +1835,9 @@ impl Compiler {
 
                     // Test sub-pattern if refutable
                     if !self.pattern_is_irrefutable(sub_pat) {
-                        let key_idx2 = self.current_chunk().add_constant(Value::String(key.clone()));
+                        let key_idx2 = self
+                            .current_chunk()
+                            .add_constant(Value::String(key.clone()));
                         self.current_chunk().emit_op(Op::DestructMapValue, span);
                         self.current_chunk().emit_u16(key_idx2, span);
                         let sub_fails = self.compile_pattern_test(sub_pat, span)?;
@@ -1807,11 +1867,7 @@ impl Compiler {
     // Where each GetLocal pushes a copy, Destruct pushes the element,
     // and the Ident bind dups it as the named local.
 
-    fn compile_pattern_bind(
-        &mut self,
-        pattern: &Pattern,
-        span: Span,
-    ) -> Result<(), String> {
+    fn compile_pattern_bind(&mut self, pattern: &Pattern, span: Span) -> Result<(), String> {
         match pattern {
             Pattern::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
@@ -1823,37 +1879,57 @@ impl Compiler {
             }
 
             Pattern::Constructor(_, fields) => {
-                self.compile_compound_bind(fields.iter().enumerate().filter_map(|(i, pat)| {
-                    if self.pattern_has_bindings(pat) {
-                        Some((BindDestructKind::Variant(i as u8), pat.clone()))
-                    } else {
-                        None
-                    }
-                }).collect(), span)?;
+                self.compile_compound_bind(
+                    fields
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, pat)| {
+                            if self.pattern_has_bindings(pat) {
+                                Some((BindDestructKind::Variant(i as u8), pat.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    span,
+                )?;
             }
 
             Pattern::Tuple(pats) => {
-                self.compile_compound_bind(pats.iter().enumerate().filter_map(|(i, pat)| {
-                    if self.pattern_has_bindings(pat) {
-                        Some((BindDestructKind::Tuple(i as u8), pat.clone()))
-                    } else {
-                        None
-                    }
-                }).collect(), span)?;
+                self.compile_compound_bind(
+                    pats.iter()
+                        .enumerate()
+                        .filter_map(|(i, pat)| {
+                            if self.pattern_has_bindings(pat) {
+                                Some((BindDestructKind::Tuple(i as u8), pat.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    span,
+                )?;
             }
 
             Pattern::List(elements, rest) => {
-                let mut items: Vec<(BindDestructKind, Pattern)> = elements.iter().enumerate().filter_map(|(i, pat)| {
-                    if self.pattern_has_bindings(pat) {
-                        Some((BindDestructKind::List(i as u8), pat.clone()))
-                    } else {
-                        None
-                    }
-                }).collect();
-                if let Some(rest_pat) = rest {
-                    if self.pattern_has_bindings(rest_pat) {
-                        items.push((BindDestructKind::ListRest(elements.len() as u8), (**rest_pat).clone()));
-                    }
+                let mut items: Vec<(BindDestructKind, Pattern)> = elements
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, pat)| {
+                        if self.pattern_has_bindings(pat) {
+                            Some((BindDestructKind::List(i as u8), pat.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if let Some(rest_pat) = rest
+                    && self.pattern_has_bindings(rest_pat)
+                {
+                    items.push((
+                        BindDestructKind::ListRest(elements.len() as u8),
+                        (**rest_pat).clone(),
+                    ));
                 }
                 self.compile_compound_bind(items, span)?;
             }
@@ -1864,12 +1940,18 @@ impl Compiler {
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
-                                items.push((BindDestructKind::RecordField(field_name.clone()), pat.clone()));
+                                items.push((
+                                    BindDestructKind::RecordField(field_name.clone()),
+                                    pat.clone(),
+                                ));
                             }
                         }
                         None => {
                             // Shorthand: { name } binds field to local with same name
-                            items.push((BindDestructKind::RecordField(field_name.clone()), Pattern::Ident(field_name.clone())));
+                            items.push((
+                                BindDestructKind::RecordField(field_name.clone()),
+                                Pattern::Ident(field_name.clone()),
+                            ));
                         }
                     }
                 }
@@ -1877,13 +1959,16 @@ impl Compiler {
             }
 
             Pattern::Map(entries) => {
-                let items: Vec<(BindDestructKind, Pattern)> = entries.iter().filter_map(|(key, sub_pat)| {
-                    if self.pattern_has_bindings(sub_pat) {
-                        Some((BindDestructKind::MapValue(key.clone()), sub_pat.clone()))
-                    } else {
-                        None
-                    }
-                }).collect();
+                let items: Vec<(BindDestructKind, Pattern)> = entries
+                    .iter()
+                    .filter_map(|(key, sub_pat)| {
+                        if self.pattern_has_bindings(sub_pat) {
+                            Some((BindDestructKind::MapValue(key.clone()), sub_pat.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 self.compile_compound_bind(items, span)?;
             }
 
@@ -1963,12 +2048,16 @@ impl Compiler {
                     self.current_chunk().emit_u8(*start, span);
                 }
                 BindDestructKind::RecordField(name) => {
-                    let field_idx = self.current_chunk().add_constant(Value::String(name.clone()));
+                    let field_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(name.clone()));
                     self.current_chunk().emit_op(Op::DestructRecordField, span);
                     self.current_chunk().emit_u16(field_idx, span);
                 }
                 BindDestructKind::MapValue(key) => {
-                    let key_idx = self.current_chunk().add_constant(Value::String(key.clone()));
+                    let key_idx = self
+                        .current_chunk()
+                        .add_constant(Value::String(key.clone()));
                     self.current_chunk().emit_op(Op::DestructMapValue, span);
                     self.current_chunk().emit_u16(key_idx, span);
                 }
@@ -1990,10 +2079,7 @@ impl Compiler {
 
     /// Returns true if the pattern always matches (no runtime test needed).
     fn pattern_is_irrefutable(&self, pattern: &Pattern) -> bool {
-        match pattern {
-            Pattern::Wildcard | Pattern::Ident(_) => true,
-            _ => false,
-        }
+        matches!(pattern, Pattern::Wildcard | Pattern::Ident(_))
     }
 
     /// Returns true if the pattern (or any sub-pattern) binds any variable.
@@ -2012,7 +2098,7 @@ impl Compiler {
             Pattern::Tuple(pats) => pats.iter().any(|p| self.pattern_has_bindings(p)),
             Pattern::List(elems, rest) => {
                 elems.iter().any(|p| self.pattern_has_bindings(p))
-                    || rest.as_ref().map_or(false, |r| self.pattern_has_bindings(r))
+                    || rest.as_ref().is_some_and(|r| self.pattern_has_bindings(r))
             }
             Pattern::Record { fields, .. } => fields.iter().any(|(_, p)| {
                 match p {
@@ -2027,12 +2113,7 @@ impl Compiler {
 
     // ── Pipe compilation ─────────────────────────────────────────
 
-    fn compile_pipe(
-        &mut self,
-        left: &Expr,
-        right: &Expr,
-        span: Span,
-    ) -> Result<(), String> {
+    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<(), String> {
         // Compile the left value first
         self.compile_expr(left)?;
 
@@ -2146,20 +2227,20 @@ impl Compiler {
     /// return the qualified name. Only returns Some if the ident is NOT a
     /// local/upvalue AND belongs to a known builtin module.
     fn extract_builtin_name(&self, callee: &Expr) -> Result<Option<String>, String> {
-        if let ExprKind::FieldAccess(expr, field) = &callee.kind {
-            if let ExprKind::Ident(module) = &expr.kind {
-                // Check if it's a local or upvalue first
-                if self.resolve_local(module).is_none()
-                    && self.resolve_upvalue_peek(module).is_none()
-                    && module::is_builtin_module(module)
-                {
-                    if !self.imported_builtin_modules.contains(module.as_str()) {
-                        return Err(format!(
-                            "module '{module}' is not imported; add `import {module}` at the top of the file"
-                        ));
-                    }
-                    return Ok(Some(format!("{module}.{field}")));
+        if let ExprKind::FieldAccess(expr, field) = &callee.kind
+            && let ExprKind::Ident(module) = &expr.kind
+        {
+            // Check if it's a local or upvalue first
+            if self.resolve_local(module).is_none()
+                && self.resolve_upvalue_peek(module).is_none()
+                && module::is_builtin_module(module)
+            {
+                if !self.imported_builtin_modules.contains(module.as_str()) {
+                    return Err(format!(
+                        "module '{module}' is not imported; add `import {module}` at the top of the file"
+                    ));
                 }
+                return Ok(Some(format!("{module}.{field}")));
             }
         }
         Ok(None)
@@ -2187,12 +2268,7 @@ impl Compiler {
         let depth = self.ctx().scope_depth;
         // Pop locals belonging to the scope we are leaving.
         let mut pop_count: u8 = 0;
-        while self
-            .ctx()
-            .locals
-            .last()
-            .map_or(false, |l| l.depth >= depth)
-        {
+        while self.ctx().locals.last().is_some_and(|l| l.depth >= depth) {
             self.ctx_mut().locals.pop();
             pop_count += 1;
         }
@@ -2209,7 +2285,12 @@ impl Compiler {
     fn add_local(&mut self, name: String) -> u16 {
         let depth = self.ctx().scope_depth;
         let slot = self.ctx().locals.len() as u16;
-        self.ctx_mut().locals.push(Local { name, depth, slot, captured: false });
+        self.ctx_mut().locals.push(Local {
+            name,
+            depth,
+            slot,
+            captured: false,
+        });
         slot
     }
 
@@ -2282,9 +2363,11 @@ impl Compiler {
         // Check if the variable is a local in the immediately enclosing context.
         let local_slot = {
             let enclosing = &self.contexts[enclosing_idx];
-            enclosing.locals.iter().rev().find_map(|l| {
-                if l.name == name { Some(l.slot) } else { None }
-            })
+            enclosing.locals.iter().rev().find_map(
+                |l| {
+                    if l.name == name { Some(l.slot) } else { None }
+                },
+            )
         };
 
         if let Some(slot) = local_slot {
@@ -2294,19 +2377,25 @@ impl Compiler {
                 local.captured = true;
             }
             // Add an upvalue descriptor to the current context.
-            return Some(self.add_upvalue(context_index, UpvalueDesc {
-                is_local: true,
-                index: slot as u8,
-            }));
+            return Some(self.add_upvalue(
+                context_index,
+                UpvalueDesc {
+                    is_local: true,
+                    index: slot as u8,
+                },
+            ));
         }
 
         // Not a local in the enclosing scope -- try recursively as an upvalue.
         if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx) {
             // The enclosing scope has it as an upvalue. Chain it.
-            return Some(self.add_upvalue(context_index, UpvalueDesc {
-                is_local: false,
-                index: parent_upvalue_idx,
-            }));
+            return Some(self.add_upvalue(
+                context_index,
+                UpvalueDesc {
+                    is_local: false,
+                    index: parent_upvalue_idx,
+                },
+            ));
         }
 
         None

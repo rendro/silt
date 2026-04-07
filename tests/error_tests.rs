@@ -183,7 +183,10 @@ fn test_lex_semicolon_helpful_message() {
 #[test]
 fn test_lex_lone_ampersand() {
     let err = lex_err("let x = true & false");
-    assert!(err.contains("&&"), "should suggest && instead of &, got: {err}");
+    assert!(
+        err.contains("&&"),
+        "should suggest && instead of &, got: {err}"
+    );
 }
 
 #[test]
@@ -195,10 +198,7 @@ fn test_lex_unterminated_triple_quoted_string() {
 #[test]
 fn test_lex_unterminated_escape_at_eof() {
     let err = lex_err(r#""hello\"#);
-    assert!(
-        err.contains("unterminated"),
-        "got: {err}"
-    );
+    assert!(err.contains("unterminated"), "got: {err}");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -209,7 +209,8 @@ fn test_lex_unterminated_escape_at_eof() {
 fn test_parse_missing_closing_paren() {
     let errs = parse_errors("fn main() { (1 + 2 }");
     assert!(
-        errs.iter().any(|e| e.contains("expected") || e.contains(")")),
+        errs.iter()
+            .any(|e| e.contains("expected") || e.contains(")")),
         "got: {errs:?}"
     );
 }
@@ -218,7 +219,8 @@ fn test_parse_missing_closing_paren() {
 fn test_parse_missing_closing_bracket() {
     let errs = parse_errors("fn main() { [1, 2, 3 }");
     assert!(
-        errs.iter().any(|e| e.contains("expected") || e.contains("]")),
+        errs.iter()
+            .any(|e| e.contains("expected") || e.contains("]")),
         "got: {errs:?}"
     );
 }
@@ -233,7 +235,8 @@ fn test_parse_missing_closing_brace() {
 fn test_parse_let_without_value() {
     let errs = parse_errors("fn main() { let x }");
     assert!(
-        errs.iter().any(|e| e.contains("expected") || e.contains("=")),
+        errs.iter()
+            .any(|e| e.contains("expected") || e.contains("=")),
         "got: {errs:?}"
     );
 }
@@ -243,20 +246,26 @@ fn test_parse_fn_missing_body() {
     // `fn foo()` is valid in Silt (single-expression function).
     // Test something that actually fails: a function with no name.
     let errs = parse_errors("fn () { }");
-    assert!(!errs.is_empty(), "fn without name should error, got: {errs:?}");
+    assert!(
+        !errs.is_empty(),
+        "fn without name should error, got: {errs:?}"
+    );
 }
 
 #[test]
 fn test_parse_match_missing_arrow() {
-    let errs = parse_errors(r#"
+    let errs = parse_errors(
+        r#"
 fn main() {
   match 1 {
     1 "hello"
   }
 }
-    "#);
+    "#,
+    );
     assert!(
-        errs.iter().any(|e| e.contains("->") || e.contains("expected")),
+        errs.iter()
+            .any(|e| e.contains("->") || e.contains("expected")),
         "got: {errs:?}"
     );
 }
@@ -264,13 +273,19 @@ fn main() {
 #[test]
 fn test_parse_type_missing_body() {
     let errs = parse_errors("type Foo");
-    assert!(!errs.is_empty(), "type without body should error, got: {errs:?}");
+    assert!(
+        !errs.is_empty(),
+        "type without body should error, got: {errs:?}"
+    );
 }
 
 #[test]
 fn test_parse_import_missing_module_name() {
     let errs = parse_errors("import");
-    assert!(!errs.is_empty(), "import without name should error, got: {errs:?}");
+    assert!(
+        !errs.is_empty(),
+        "import without name should error, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -282,7 +297,10 @@ fn test_parse_double_comma_in_args() {
 #[test]
 fn test_parse_trailing_operator() {
     let errs = parse_errors("fn main() { 1 + }");
-    assert!(!errs.is_empty(), "trailing operator should error, got: {errs:?}");
+    assert!(
+        !errs.is_empty(),
+        "trailing operator should error, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -347,22 +365,26 @@ fn main() { foo(true) }
 fn test_type_arithmetic_on_string() {
     // String + Int should be a type error (unless caught at runtime)
     // Check if the typechecker catches it
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 fn main() {
   let x: String = "hello"
   x - 1
 }
-    "#);
+    "#,
+    );
     // This may or may not be caught by the typechecker; it's OK if it's a runtime error
     // Just ensure it doesn't silently succeed at both levels
     if errs.is_empty() {
         // If typechecker doesn't catch it, runtime should
-        let runtime_err = run_err(r#"
+        let runtime_err = run_err(
+            r#"
 fn main() {
   let x = "hello"
   x - 1
 }
-        "#);
+        "#,
+        );
         assert!(
             runtime_err.contains("cannot apply") || runtime_err.contains("unsupported"),
             "got: {runtime_err}"
@@ -373,17 +395,16 @@ fn main() {
 #[test]
 fn test_type_bool_arithmetic() {
     // Using + on booleans
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 fn main() {
   true + false
 }
-    "#);
+    "#,
+    );
     if errs.is_empty() {
         let runtime_err = run_err("fn main() { true + false }");
-        assert!(
-            runtime_err.contains("cannot apply"),
-            "got: {runtime_err}"
-        );
+        assert!(runtime_err.contains("cannot apply"), "got: {runtime_err}");
     }
 }
 
@@ -425,34 +446,46 @@ fn main() { name(Red) }
 
 #[test]
 fn test_type_undefined_variable() {
-    assert_type_error(r#"
+    assert_type_error(
+        r#"
 fn main() { x + 1 }
-    "#, "undefined");
+    "#,
+        "undefined",
+    );
 }
 
 #[test]
 fn test_type_undefined_function() {
-    assert_type_error(r#"
+    assert_type_error(
+        r#"
 fn main() { foo(1, 2) }
-    "#, "undefined");
+    "#,
+        "undefined",
+    );
 }
 
 // ── Wrong arity ─────────────────────────────────────────────────────
 
 #[test]
 fn test_type_wrong_arity_too_few() {
-    assert_type_error(r#"
+    assert_type_error(
+        r#"
 fn add(a, b) = a + b
 fn main() { add(1) }
-    "#, "argument");
+    "#,
+        "argument",
+    );
 }
 
 #[test]
 fn test_type_wrong_arity_too_many() {
-    assert_type_error(r#"
+    assert_type_error(
+        r#"
 fn add(a, b) = a + b
 fn main() { add(1, 2, 3) }
-    "#, "argument");
+    "#,
+        "argument",
+    );
 }
 
 // ── Bad field access ────────────────────────────────────────────────
@@ -476,11 +509,13 @@ fn main() {
 #[test]
 fn test_type_duplicate_function() {
     // Define the same function twice
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 fn foo() = 1
 fn foo() = 2
 fn main() { foo() }
-    "#);
+    "#,
+    );
     // May or may not be an error — at minimum, should not crash
     let _ = errs;
 }
@@ -490,12 +525,14 @@ fn main() { foo() }
 #[test]
 fn test_type_where_clause_violation() {
     // where clause requires Display but passing something that might not have it
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 fn show(x) where x: Display = x.display()
 fn main() {
   show(fn() { 1 })
 }
-    "#);
+    "#,
+    );
     // Closures may not implement Display
     // This test documents the behavior — whether it's caught at type time or runtime
     let _ = errs;
@@ -554,13 +591,19 @@ fn test_runtime_negate_list() {
 #[test]
 fn test_runtime_not_on_int() {
     let err = run_err("fn main() { !42 }");
-    assert!(err.contains("cannot apply 'not'") || err.contains("not"), "got: {err}");
+    assert!(
+        err.contains("cannot apply 'not'") || err.contains("not"),
+        "got: {err}"
+    );
 }
 
 #[test]
 fn test_runtime_not_on_string() {
     let err = run_err(r#"fn main() { !"hello" }"#);
-    assert!(err.contains("cannot apply 'not'") || err.contains("not"), "got: {err}");
+    assert!(
+        err.contains("cannot apply 'not'") || err.contains("not"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -731,17 +774,22 @@ fn main() {
 #[test]
 fn test_runtime_regex_invalid_pattern() {
     // Invalid regex produces a runtime error (not a Result variant)
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import regex
 fn main() { regex.is_match("[invalid(", "test") }
-    "#);
+    "#,
+    );
     assert!(err.contains("invalid regex"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_range_non_integer() {
     let err = run_err(r#"fn main() { 1.0..5.0 }"#);
-    assert!(err.contains("range requires two integers") || err.contains("integer"), "got: {err}");
+    assert!(
+        err.contains("range requires two integers") || err.contains("integer"),
+        "got: {err}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -750,28 +798,32 @@ fn test_runtime_range_non_integer() {
 
 #[test]
 fn test_runtime_send_on_closed_channel() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   let ch = channel.new(10)
   channel.close(ch)
   channel.send(ch, "hello")
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("send on closed channel"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_double_close_channel() {
     // Closing a channel twice is a no-op (returns ())
-    run_ok(r#"
+    run_ok(
+        r#"
 import channel
 fn main() {
   let ch = channel.new(10)
   channel.close(ch)
   channel.close(ch)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -788,7 +840,7 @@ fn main() {
     // Should return None (channel closed, no more messages)
     match result {
         Value::Variant(ref tag, _) if tag == "None" => {} // expected
-        Value::Unit => {}                                   // also acceptable
+        Value::Unit => {}                                 // also acceptable
         other => {
             // If it's something else, just make sure it's not a crash
             let _ = other;
@@ -847,25 +899,29 @@ fn test_runtime_panic_message() {
 
 #[test]
 fn test_runtime_panic_with_interpolation() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = 42
   panic("bad value: {x}")
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("bad value: 42"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_question_mark_on_non_result() {
     // Using ? on something that's not a Result or Option
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn foo() {
   let x = 42?
   x
 }
 fn main() { foo() }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("non-Result") || err.contains("non-variant") || err.contains("?"),
         "got: {err}"
@@ -874,12 +930,14 @@ fn main() { foo() }
 
 #[test]
 fn test_runtime_record_update_on_non_record() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = 42
   x.{ y: 1 }
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("non-record") || err.contains("record update") || err.contains("cannot"),
         "got: {err}"
@@ -888,12 +946,14 @@ fn main() {
 
 #[test]
 fn test_runtime_field_access_on_int() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = 42
   x.name
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("cannot access field") || err.contains("field"),
         "got: {err}"
@@ -902,12 +962,14 @@ fn main() {
 
 #[test]
 fn test_runtime_field_access_on_list() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let xs = [1, 2, 3]
   xs.name
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("cannot access field") || err.contains("method") || err.contains("field"),
         "got: {err}"
@@ -916,19 +978,22 @@ fn main() {
 
 #[test]
 fn test_runtime_stack_overflow() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn deep(n) {
   1 + deep(n + 1)
 }
 fn main() { deep(0) }
-    "#);
+    "#,
+    );
     assert!(err.contains("stack overflow"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_tco_does_not_overflow() {
     // Tail-recursive function should NOT stack overflow
-    run_ok(r#"
+    run_ok(
+        r#"
 fn countdown(n) {
   match n {
     0 -> 0
@@ -936,45 +1001,54 @@ fn countdown(n) {
   }
 }
 fn main() { countdown(1000000) }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_runtime_loop_arity_mismatch() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   loop x = 0, y = 0 {
     loop(1)
   }
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("expects 2 argument(s)"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_assert_failure() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() { test.assert(false) }
-    "#);
+    "#,
+    );
     assert!(err.contains("assert"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_assert_eq_failure() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() { test.assert_eq(1, 2) }
-    "#);
+    "#,
+    );
     assert!(err.contains("1") && err.contains("2"), "got: {err}");
 }
 
 #[test]
 fn test_runtime_assert_ne_failure() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() { test.assert_ne(5, 5) }
-    "#);
+    "#,
+    );
     assert!(err.contains("5"), "got: {err}");
 }
 
@@ -982,13 +1056,15 @@ fn main() { test.assert_ne(5, 5) }
 
 #[test]
 fn test_runtime_when_else_panic() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn positive(n) {
   when n > 0 else { panic("must be positive") }
   n
 }
 fn main() { positive(-5) }
-    "#);
+    "#,
+    );
     assert!(err.contains("must be positive"), "got: {err}");
 }
 
@@ -1008,9 +1084,11 @@ fn main() { abs(-42) }
 
 #[test]
 fn test_runtime_undefined_global() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { nonexistent_function() }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("undefined") || err.contains("Undefined"),
         "got: {err}"
@@ -1073,18 +1151,21 @@ fn test_large_list_literal() {
 
 #[test]
 fn test_string_interpolation_in_error() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let name = "world"
   panic("hello {name}!")
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("hello world!"), "got: {err}");
 }
 
 #[test]
 fn test_nested_match_all_arms_diverge() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn process(x) {
   match x {
     0 -> panic("zero")
@@ -1092,7 +1173,8 @@ fn process(x) {
   }
 }
 fn main() { process(1) }
-    "#);
+    "#,
+    );
     assert!(err.contains("nonzero"), "got: {err}");
 }
 
@@ -1132,7 +1214,8 @@ fn test_integer_overflow_wraps() {
 
 #[test]
 fn test_empty_string_operations() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import string
 fn main() {
   let s = ""
@@ -1145,12 +1228,14 @@ fn main() {
   let _ = string.starts_with(s, "")
   let _ = string.ends_with(s, "")
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_empty_list_operations() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import list
 fn main() {
   let xs = []
@@ -1161,12 +1246,14 @@ fn main() {
   let _ = list.head(xs)
   let _ = list.reverse(xs)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_empty_map_operations() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import map
 fn main() {
   let m = #{}
@@ -1175,7 +1262,8 @@ fn main() {
   let _ = map.entries(m)
   let _ = map.length(m)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -1242,10 +1330,12 @@ fn main() {
 #[test]
 fn test_pipe_into_wrong_arity() {
     // Piping a value into a function that takes 0 args
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn no_args() = 42
 fn main() { 1 |> no_args() }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("arity") || err.contains("expects"),
         "got: {err}"
@@ -1362,7 +1452,9 @@ fn test_parse_excessive_nesting() {
                 input.push(')');
             }
             input.push_str(" }");
-            let tokens = silt::lexer::Lexer::new(&input).tokenize().expect("lexer error");
+            let tokens = silt::lexer::Lexer::new(&input)
+                .tokenize()
+                .expect("lexer error");
             silt::parser::Parser::new(tokens).parse_program()
         })
         .expect("failed to spawn thread")
@@ -1384,12 +1476,14 @@ fn test_parse_excessive_nesting() {
 
 #[test]
 fn test_runtime_send_non_channel() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   channel.send(42, "hello")
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("channel") || err.contains("expected"),
         "got: {err}"
@@ -1398,12 +1492,14 @@ fn main() {
 
 #[test]
 fn test_runtime_receive_non_channel() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   channel.receive("not a channel")
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("channel") || err.contains("expected"),
         "got: {err}"
@@ -1412,12 +1508,14 @@ fn main() {
 
 #[test]
 fn test_runtime_close_non_channel() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   channel.close(42)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("channel") || err.contains("expected"),
         "got: {err}"
@@ -1427,24 +1525,28 @@ fn main() {
 #[test]
 fn test_runtime_channel_new_no_args_creates_channel() {
     // channel.new() with no args creates a default (unbuffered) channel
-    run_ok(r#"
+    run_ok(
+        r#"
 import channel
 fn main() {
   let ch = channel.new()
   channel.close(ch)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_runtime_channel_send_wrong_arg_count() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   let ch = channel.new(1)
   channel.send(ch)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("takes"),
         "got: {err}"
@@ -1453,12 +1555,14 @@ fn main() {
 
 #[test]
 fn test_runtime_task_join_non_handle() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import task
 fn main() {
   task.join(42)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("Handle") || err.contains("handle") || err.contains("expected"),
         "got: {err}"
@@ -1467,12 +1571,14 @@ fn main() {
 
 #[test]
 fn test_runtime_task_cancel_non_handle() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import task
 fn main() {
   task.cancel("not a handle")
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("Handle") || err.contains("handle") || err.contains("expected"),
         "got: {err}"
@@ -1481,12 +1587,14 @@ fn main() {
 
 #[test]
 fn test_runtime_task_spawn_non_callable() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import task
 fn main() {
   task.spawn(42)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("callable") || err.contains("function") || err.contains("closure"),
         "got: {err}"
@@ -1500,7 +1608,8 @@ fn main() {
 #[test]
 fn test_type_missing_trait_impl_method() {
     // Trait impl missing a required method
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 trait Greetable {
   fn greet(self) -> String
   fn farewell(self) -> String
@@ -1511,7 +1620,8 @@ trait Greetable for Int {
 }
 
 fn main() { 42 }
-    "#);
+    "#,
+    );
     // Should flag the missing `farewell` method, or at minimum not crash
     let _ = errs;
 }
@@ -1521,7 +1631,8 @@ fn test_type_wrong_return_type_in_trait_impl() {
     // The typechecker currently does not catch mismatched return types in
     // trait impls (it's a known gap). This test documents the behavior --
     // it should at least not crash.
-    let errs = type_errors(r#"
+    let errs = type_errors(
+        r#"
 trait Numeric {
   fn double(self) -> Int
 }
@@ -1531,7 +1642,8 @@ trait Numeric for Int {
 }
 
 fn main() { 42 }
-    "#);
+    "#,
+    );
     // If the typechecker improves, it will catch this. For now, just
     // ensure we don't panic.
     let _ = errs;
@@ -1561,24 +1673,30 @@ fn main() { check(0) }
 #[test]
 fn test_import_nonexistent_builtin_item() {
     // Importing a non-existent item from a builtin module
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import list.{ nonexistent_function }
 fn main() { nonexistent_function([1, 2]) }
-    "#);
+    "#,
+    );
     // Should produce an error about the missing item
     assert!(
-        err.contains("not found") || err.contains("no public item")
-            || err.contains("Undefined") || err.contains("undefined"),
+        err.contains("not found")
+            || err.contains("no public item")
+            || err.contains("Undefined")
+            || err.contains("undefined"),
         "got: {err}"
     );
 }
 
 #[test]
 fn test_runtime_call_wrong_arity() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn add(a, b) = a + b
 fn main() { add(1, 2, 3) }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("arity") || err.contains("expects"),
         "got: {err}"
@@ -1587,12 +1705,14 @@ fn main() { add(1, 2, 3) }
 
 #[test]
 fn test_runtime_call_non_callable() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = 42
   x(1, 2)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("not callable") || err.contains("cannot call") || err.contains("callable"),
         "got: {err}"
@@ -1605,10 +1725,12 @@ fn main() {
 
 #[test]
 fn test_runtime_list_map_wrong_arity() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import list
 fn main() { list.map([1, 2]) }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("takes") || err.contains("expects"),
         "got: {err}"
@@ -1617,10 +1739,12 @@ fn main() { list.map([1, 2]) }
 
 #[test]
 fn test_runtime_string_split_wrong_type() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import string
 fn main() { string.split(42, ",") }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("String") || err.contains("string") || err.contains("type"),
         "got: {err}"
@@ -1629,10 +1753,12 @@ fn main() { string.split(42, ",") }
 
 #[test]
 fn test_runtime_map_get_wrong_arity() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import map
 fn main() { map.get(#{"a": 1}) }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("takes"),
         "got: {err}"
@@ -1654,10 +1780,12 @@ fn main() { io.read_file("/tmp/silt_nonexistent_file_12345.txt") }
 
 #[test]
 fn test_runtime_regex_wrong_arity() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import regex
 fn main() { regex.is_match("[a-z]+") }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("argument") || err.contains("takes"),
         "got: {err}"
@@ -1666,13 +1794,15 @@ fn main() { regex.is_match("[a-z]+") }
 
 #[test]
 fn test_runtime_non_exhaustive_match_tuple() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   match (1, 2) {
     (0, 0) -> "origin"
   }
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
         "got: {err}"
@@ -1681,14 +1811,16 @@ fn main() {
 
 #[test]
 fn test_runtime_non_exhaustive_match_variant() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = Some(42)
   match x {
     None -> "none"
   }
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
         "got: {err}"

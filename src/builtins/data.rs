@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
-use regex::Regex;
 
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
@@ -192,9 +191,18 @@ fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
     if name != "Date" {
         return Err(VmError::new(format!("expected Date, got {name}")));
     }
-    let y = match fields.get("year") { Some(Value::Int(n)) => *n as i32, _ => 0 };
-    let m = match fields.get("month") { Some(Value::Int(n)) => *n as u32, _ => 1 };
-    let d = match fields.get("day") { Some(Value::Int(n)) => *n as u32, _ => 1 };
+    let y = match fields.get("year") {
+        Some(Value::Int(n)) => *n as i32,
+        _ => 0,
+    };
+    let m = match fields.get("month") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 1,
+    };
+    let d = match fields.get("day") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 1,
+    };
     NaiveDate::from_ymd_opt(y, m, d)
         .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
 }
@@ -207,10 +215,22 @@ fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
     if name != "Time" {
         return Err(VmError::new(format!("expected Time, got {name}")));
     }
-    let h = match fields.get("hour") { Some(Value::Int(n)) => *n as u32, _ => 0 };
-    let m = match fields.get("minute") { Some(Value::Int(n)) => *n as u32, _ => 0 };
-    let s = match fields.get("second") { Some(Value::Int(n)) => *n as u32, _ => 0 };
-    let ns = match fields.get("ns") { Some(Value::Int(n)) => *n as u32, _ => 0 };
+    let h = match fields.get("hour") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 0,
+    };
+    let m = match fields.get("minute") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 0,
+    };
+    let s = match fields.get("second") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 0,
+    };
+    let ns = match fields.get("ns") {
+        Some(Value::Int(n)) => *n as u32,
+        _ => 0,
+    };
     NaiveTime::from_hms_nano_opt(h, m, s, ns)
         .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
 }
@@ -223,8 +243,12 @@ fn extract_datetime(v: &Value) -> Result<NaiveDateTime, VmError> {
     if name != "DateTime" {
         return Err(VmError::new(format!("expected DateTime, got {name}")));
     }
-    let date = fields.get("date").ok_or_else(|| VmError::new("DateTime missing date field".into()))?;
-    let time = fields.get("time").ok_or_else(|| VmError::new("DateTime missing time field".into()))?;
+    let date = fields
+        .get("date")
+        .ok_or_else(|| VmError::new("DateTime missing date field".into()))?;
+    let time = fields
+        .get("time")
+        .ok_or_else(|| VmError::new("DateTime missing time field".into()))?;
     let d = extract_date(date)?;
     let t = extract_time(time)?;
     Ok(NaiveDateTime::new(d, t))
@@ -261,7 +285,10 @@ fn extract_duration(v: &Value) -> Result<i64, VmError> {
 // ── JSON helpers ────────────────────────────────────────────────────
 
 /// Load record field info from the `__record_fields__<type>` global metadata.
-fn load_record_fields(vm: &mut Vm, type_name: &str) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
+fn load_record_fields(
+    vm: &mut Vm,
+    type_name: &str,
+) -> Result<Vec<(std::string::String, FieldType)>, VmError> {
     // Check cache first
     if let Some(fields) = vm.record_types.get(type_name) {
         return Ok(fields.clone());
@@ -279,10 +306,13 @@ fn load_record_fields(vm: &mut Vm, type_name: &str) -> Result<Vec<(std::string::
                 }
                 i += 2;
             }
-            vm.record_types.insert(type_name.to_string(), fields.clone());
+            vm.record_types
+                .insert(type_name.to_string(), fields.clone());
             Ok(fields)
         }
-        _ => Err(VmError::new(format!("json.parse: unknown record type '{type_name}'"))),
+        _ => Err(VmError::new(format!(
+            "json.parse: unknown record type '{type_name}'"
+        ))),
     }
 }
 
@@ -296,7 +326,8 @@ fn json_to_record(
         return Ok(Value::Variant(
             "Err".into(),
             vec![Value::String(format!(
-                "json.parse({type_name}): expected JSON object, got {}", json_type_name(json)
+                "json.parse({type_name}): expected JSON object, got {}",
+                json_type_name(json)
             ))],
         ));
     };
@@ -336,7 +367,10 @@ fn json_to_record(
     }
     Ok(Value::Variant(
         "Ok".into(),
-        vec![Value::Record(type_name.to_string(), Arc::new(record_fields))],
+        vec![Value::Record(
+            type_name.to_string(),
+            Arc::new(record_fields),
+        )],
     ))
 }
 
@@ -350,7 +384,8 @@ fn json_to_record_list(
         return Ok(Value::Variant(
             "Err".into(),
             vec![Value::String(format!(
-                "json.parse_list({type_name}): expected JSON array, got {}", json_type_name(json)
+                "json.parse_list({type_name}): expected JSON array, got {}",
+                json_type_name(json)
             ))],
         ));
     };
@@ -394,16 +429,13 @@ fn json_to_record_list(
     ))
 }
 
-fn json_to_map(
-    vm: &mut Vm,
-    value_type: &str,
-    json: &serde_json::Value,
-) -> Result<Value, VmError> {
+fn json_to_map(vm: &mut Vm, value_type: &str, json: &serde_json::Value) -> Result<Value, VmError> {
     let serde_json::Value::Object(obj) = json else {
         return Ok(Value::Variant(
             "Err".into(),
             vec![Value::String(format!(
-                "json.parse_map: expected JSON object, got {}", json_type_name(json)
+                "json.parse_map: expected JSON object, got {}",
+                json_type_name(json)
             ))],
         ));
     };
@@ -436,16 +468,14 @@ fn json_to_map(
                 return Ok(Value::Variant(
                     "Err".into(),
                     vec![Value::String(format!(
-                        "json.parse_map: key '{key}': {}", e.message
+                        "json.parse_map: key '{key}': {}",
+                        e.message
                     ))],
                 ));
             }
         }
     }
-    Ok(Value::Variant(
-        "Ok".into(),
-        vec![Value::Map(Arc::new(map))],
-    ))
+    Ok(Value::Variant("Ok".into(), vec![Value::Map(Arc::new(map))]))
 }
 
 fn json_to_typed_value(
@@ -531,7 +561,7 @@ fn json_to_typed_value(
         FieldType::Date => match json {
             serde_json::Value::String(s) => {
                 NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                    .map(|d| make_date(d))
+                    .map(make_date)
                     .map_err(|e| VmError::new(format!(
                         "json.parse({parent_type}): field '{field_name}': invalid date '{s}' (expected YYYY-MM-DD): {e}"
                     )))
@@ -545,7 +575,7 @@ fn json_to_typed_value(
             serde_json::Value::String(s) => {
                 NaiveTime::parse_from_str(s, "%H:%M:%S")
                     .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
-                    .map(|t| make_time(t))
+                    .map(make_time)
                     .map_err(|e| VmError::new(format!(
                         "json.parse({parent_type}): field '{field_name}': invalid time '{s}' (expected HH:MM:SS): {e}"
                     )))
@@ -569,7 +599,7 @@ fn json_to_typed_value(
                     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
                         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
                         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
-                        .map(|dt| make_datetime(dt))
+                        .map(make_datetime)
                         .map_err(|_| VmError::new(format!(
                             "json.parse({parent_type}): field '{field_name}': invalid datetime '{s}'"
                         )))
@@ -613,80 +643,121 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
     match name {
         "is_match" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.is_match takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.is_match takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.is_match requires string arguments".into()));
+                return Err(VmError::new(
+                    "regex.is_match requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             Ok(Value::Bool(re.is_match(text)))
         }
         "find" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.find takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.find takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.find requires string arguments".into()));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.find(text) {
-                Some(m) => Ok(Value::Variant("Some".into(), vec![Value::String(m.as_str().to_string())])),
+                Some(m) => Ok(Value::Variant(
+                    "Some".into(),
+                    vec![Value::String(m.as_str().to_string())],
+                )),
                 None => Ok(Value::Variant("None".into(), Vec::new())),
             }
         }
         "find_all" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.find_all takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.find_all takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.find_all requires string arguments".into()));
+                return Err(VmError::new(
+                    "regex.find_all requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            let matches: Vec<Value> = re.find_iter(text)
+            let matches: Vec<Value> = re
+                .find_iter(text)
                 .map(|m| Value::String(m.as_str().to_string()))
                 .collect();
             Ok(Value::List(Arc::new(matches)))
         }
         "split" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.split takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.split takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("regex.split requires string arguments".into()));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            let parts: Vec<Value> = re.split(text).map(|s| Value::String(s.to_string())).collect();
+            let parts: Vec<Value> = re
+                .split(text)
+                .map(|s| Value::String(s.to_string()))
+                .collect();
             Ok(Value::List(Arc::new(parts)))
         }
         "replace" => {
             if args.len() != 3 {
-                return Err(VmError::new("regex.replace takes 3 arguments (pattern, text, replacement)".into()));
+                return Err(VmError::new(
+                    "regex.replace takes 3 arguments (pattern, text, replacement)".into(),
+                ));
             }
-            let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
-                return Err(VmError::new("regex.replace requires string arguments".into()));
+            let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
+                (&args[0], &args[1], &args[2])
+            else {
+                return Err(VmError::new(
+                    "regex.replace requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            Ok(Value::String(re.replace(text, replacement.as_str()).to_string()))
+            Ok(Value::String(
+                re.replace(text, replacement.as_str()).to_string(),
+            ))
         }
         "replace_all" => {
             if args.len() != 3 {
-                return Err(VmError::new("regex.replace_all takes 3 arguments (pattern, text, replacement)".into()));
+                return Err(VmError::new(
+                    "regex.replace_all takes 3 arguments (pattern, text, replacement)".into(),
+                ));
             }
-            let (Value::String(pattern), Value::String(text), Value::String(replacement)) = (&args[0], &args[1], &args[2]) else {
-                return Err(VmError::new("regex.replace_all requires string arguments".into()));
+            let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
+                (&args[0], &args[1], &args[2])
+            else {
+                return Err(VmError::new(
+                    "regex.replace_all requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            Ok(Value::String(re.replace_all(text, replacement.as_str()).to_string()))
+            Ok(Value::String(
+                re.replace_all(text, replacement.as_str()).to_string(),
+            ))
         }
         "replace_all_with" => {
             if args.len() != 3 {
-                return Err(VmError::new("regex.replace_all_with takes 3 arguments (pattern, text, fn)".into()));
+                return Err(VmError::new(
+                    "regex.replace_all_with takes 3 arguments (pattern, text, fn)".into(),
+                ));
             }
             let Value::String(pattern) = &args[0] else {
-                return Err(VmError::new("regex.replace_all_with requires a string pattern".into()));
+                return Err(VmError::new(
+                    "regex.replace_all_with requires a string pattern".into(),
+                ));
             };
             let Value::String(text) = &args[1] else {
-                return Err(VmError::new("regex.replace_all_with requires a string text".into()));
+                return Err(VmError::new(
+                    "regex.replace_all_with requires a string text".into(),
+                ));
             };
             let callback = args[2].clone();
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?.clone();
@@ -694,10 +765,15 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             let mut last_end = 0;
             for m in re.find_iter(text) {
                 result.push_str(&text[last_end..m.start()]);
-                let replacement = vm.invoke_callable(&callback, &[Value::String(m.as_str().to_string())])?;
+                let replacement =
+                    vm.invoke_callable(&callback, &[Value::String(m.as_str().to_string())])?;
                 match replacement {
                     Value::String(s) => result.push_str(&s),
-                    _ => return Err(VmError::new("regex.replace_all_with callback must return a string".into())),
+                    _ => {
+                        return Err(VmError::new(
+                            "regex.replace_all_with callback must return a string".into(),
+                        ));
+                    }
                 }
                 last_end = m.end();
             }
@@ -706,36 +782,50 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
         }
         "captures" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.captures takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.captures takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.captures requires string arguments".into()));
+                return Err(VmError::new(
+                    "regex.captures requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.captures(text) {
                 Some(caps) => {
-                    let groups: Vec<Value> = caps.iter()
+                    let groups: Vec<Value> = caps
+                        .iter()
                         .map(|m| match m {
                             Some(m) => Value::String(m.as_str().to_string()),
                             None => Value::String(std::string::String::new()),
                         })
                         .collect();
-                    Ok(Value::Variant("Some".into(), vec![Value::List(Arc::new(groups))]))
+                    Ok(Value::Variant(
+                        "Some".into(),
+                        vec![Value::List(Arc::new(groups))],
+                    ))
                 }
                 None => Ok(Value::Variant("None".into(), Vec::new())),
             }
         }
         "captures_all" => {
             if args.len() != 2 {
-                return Err(VmError::new("regex.captures_all takes 2 arguments (pattern, text)".into()));
+                return Err(VmError::new(
+                    "regex.captures_all takes 2 arguments (pattern, text)".into(),
+                ));
             }
             let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.captures_all requires string arguments".into()));
+                return Err(VmError::new(
+                    "regex.captures_all requires string arguments".into(),
+                ));
             };
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            let all_captures: Vec<Value> = re.captures_iter(text)
+            let all_captures: Vec<Value> = re
+                .captures_iter(text)
                 .map(|caps| {
-                    let groups: Vec<Value> = caps.iter()
+                    let groups: Vec<Value> = caps
+                        .iter()
                         .map(|m| match m {
                             Some(m) => Value::String(m.as_str().to_string()),
                             None => Value::String(std::string::String::new()),
@@ -757,14 +847,20 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
     match name {
         "parse" => {
             if args.len() != 2 {
-                return Err(VmError::new("json.parse takes 2 arguments: (Type, String)".into()));
+                return Err(VmError::new(
+                    "json.parse takes 2 arguments: (Type, String)".into(),
+                ));
             }
             let Value::RecordDescriptor(type_name) = &args[0] else {
-                return Err(VmError::new("json.parse: first argument must be a record type".into()));
+                return Err(VmError::new(
+                    "json.parse: first argument must be a record type".into(),
+                ));
             };
             let type_name = type_name.clone();
             let Value::String(s) = &args[1] else {
-                return Err(VmError::new("json.parse: second argument must be a string".into()));
+                return Err(VmError::new(
+                    "json.parse: second argument must be a string".into(),
+                ));
             };
             let s = s.clone();
             let fields = load_record_fields(vm, &type_name)?;
@@ -778,14 +874,20 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         }
         "parse_list" => {
             if args.len() != 2 {
-                return Err(VmError::new("json.parse_list takes 2 arguments: (Type, String)".into()));
+                return Err(VmError::new(
+                    "json.parse_list takes 2 arguments: (Type, String)".into(),
+                ));
             }
             let Value::RecordDescriptor(type_name) = &args[0] else {
-                return Err(VmError::new("json.parse_list: first argument must be a record type".into()));
+                return Err(VmError::new(
+                    "json.parse_list: first argument must be a record type".into(),
+                ));
             };
             let type_name = type_name.clone();
             let Value::String(s) = &args[1] else {
-                return Err(VmError::new("json.parse_list: second argument must be a string".into()));
+                return Err(VmError::new(
+                    "json.parse_list: second argument must be a string".into(),
+                ));
             };
             let s = s.clone();
             let fields = load_record_fields(vm, &type_name)?;
@@ -799,7 +901,9 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         }
         "parse_map" => {
             if args.len() != 2 {
-                return Err(VmError::new("json.parse_map takes 2 arguments: (ValueType, String)".into()));
+                return Err(VmError::new(
+                    "json.parse_map takes 2 arguments: (ValueType, String)".into(),
+                ));
             }
             let value_type = match &args[0] {
                 Value::PrimitiveDescriptor(name) => name.clone(),
@@ -809,7 +913,9 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 )),
             };
             let Value::String(s) = &args[1] else {
-                return Err(VmError::new("json.parse_map: second argument must be a string".into()));
+                return Err(VmError::new(
+                    "json.parse_map: second argument must be a string".into(),
+                ));
             };
             let s = s.clone();
             match serde_json::from_str::<serde_json::Value>(&s) {
@@ -832,7 +938,9 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("json.pretty takes 1 argument".into()));
             }
             let j = value_to_json(&args[0]);
-            Ok(Value::String(serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string())))
+            Ok(Value::String(
+                serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string()),
+            ))
         }
         _ => Err(VmError::new(format!("unknown json function: {name}"))),
     }
@@ -872,37 +980,47 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "date" => {
             if args.len() != 3 {
-                return Err(VmError::new("time.date takes 3 arguments (year, month, day)".into()));
+                return Err(VmError::new(
+                    "time.date takes 3 arguments (year, month, day)".into(),
+                ));
             }
-            let (Value::Int(y), Value::Int(m), Value::Int(d)) = (&args[0], &args[1], &args[2]) else {
+            let (Value::Int(y), Value::Int(m), Value::Int(d)) = (&args[0], &args[1], &args[2])
+            else {
                 return Err(VmError::new("time.date requires Int arguments".into()));
             };
             match NaiveDate::from_ymd_opt(*y as i32, *m as u32, *d as u32) {
                 Some(date) => Ok(Value::Variant("Ok".into(), vec![make_date(date)])),
-                None => Ok(Value::Variant("Err".into(), vec![
-                    Value::String(format!("invalid date: {y}-{m}-{d}")),
-                ])),
+                None => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(format!("invalid date: {y}-{m}-{d}"))],
+                )),
             }
         }
 
         "time" => {
             if args.len() != 3 {
-                return Err(VmError::new("time.time takes 3 arguments (hour, min, sec)".into()));
+                return Err(VmError::new(
+                    "time.time takes 3 arguments (hour, min, sec)".into(),
+                ));
             }
-            let (Value::Int(h), Value::Int(m), Value::Int(s)) = (&args[0], &args[1], &args[2]) else {
+            let (Value::Int(h), Value::Int(m), Value::Int(s)) = (&args[0], &args[1], &args[2])
+            else {
                 return Err(VmError::new("time.time requires Int arguments".into()));
             };
             match NaiveTime::from_hms_opt(*h as u32, *m as u32, *s as u32) {
                 Some(t) => Ok(Value::Variant("Ok".into(), vec![make_time(t)])),
-                None => Ok(Value::Variant("Err".into(), vec![
-                    Value::String(format!("invalid time: {h}:{m}:{s}")),
-                ])),
+                None => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(format!("invalid time: {h}:{m}:{s}"))],
+                )),
             }
         }
 
         "datetime" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.datetime takes 2 arguments (date, time)".into()));
+                return Err(VmError::new(
+                    "time.datetime takes 2 arguments (date, time)".into(),
+                ));
             }
             let d = extract_date(&args[0])?;
             let t = extract_time(&args[1])?;
@@ -911,7 +1029,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "to_datetime" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.to_datetime takes 2 arguments (instant, offset_minutes)".into()));
+                return Err(VmError::new(
+                    "time.to_datetime takes 2 arguments (instant, offset_minutes)".into(),
+                ));
             }
             let epoch_ns = extract_instant(&args[0])?;
             let Value::Int(offset_min) = &args[1] else {
@@ -929,7 +1049,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "to_instant" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.to_instant takes 2 arguments (datetime, offset_minutes)".into()));
+                return Err(VmError::new(
+                    "time.to_instant takes 2 arguments (datetime, offset_minutes)".into(),
+                ));
             }
             let dt = extract_datetime(&args[0])?;
             let Value::Int(offset_min) = &args[1] else {
@@ -937,14 +1059,18 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             let offset = chrono::Duration::minutes(*offset_min);
             let utc_dt = dt - offset;
-            let epoch_ns = utc_dt.and_utc().timestamp_nanos_opt()
+            let epoch_ns = utc_dt
+                .and_utc()
+                .timestamp_nanos_opt()
                 .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
             Ok(make_instant(epoch_ns))
         }
 
         "to_utc" => {
             if args.len() != 1 {
-                return Err(VmError::new("time.to_utc takes 1 argument (instant)".into()));
+                return Err(VmError::new(
+                    "time.to_utc takes 1 argument (instant)".into(),
+                ));
             }
             let epoch_ns = extract_instant(&args[0])?;
             let epoch_secs = epoch_ns / 1_000_000_000;
@@ -957,17 +1083,23 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "from_utc" => {
             if args.len() != 1 {
-                return Err(VmError::new("time.from_utc takes 1 argument (datetime)".into()));
+                return Err(VmError::new(
+                    "time.from_utc takes 1 argument (datetime)".into(),
+                ));
             }
             let dt = extract_datetime(&args[0])?;
-            let epoch_ns = dt.and_utc().timestamp_nanos_opt()
+            let epoch_ns = dt
+                .and_utc()
+                .timestamp_nanos_opt()
                 .ok_or_else(|| VmError::new("datetime out of range for nanosecond epoch".into()))?;
             Ok(make_instant(epoch_ns))
         }
 
         "format" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.format takes 2 arguments (datetime, pattern)".into()));
+                return Err(VmError::new(
+                    "time.format takes 2 arguments (datetime, pattern)".into(),
+                ));
             }
             let dt = extract_datetime(&args[0])?;
             let Value::String(pattern) = &args[1] else {
@@ -978,36 +1110,47 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "format_date" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.format_date takes 2 arguments (date, pattern)".into()));
+                return Err(VmError::new(
+                    "time.format_date takes 2 arguments (date, pattern)".into(),
+                ));
             }
             let d = extract_date(&args[0])?;
             let Value::String(pattern) = &args[1] else {
-                return Err(VmError::new("time.format_date requires a String pattern".into()));
+                return Err(VmError::new(
+                    "time.format_date requires a String pattern".into(),
+                ));
             };
             Ok(Value::String(d.format(pattern).to_string()))
         }
 
         "parse" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.parse takes 2 arguments (string, pattern)".into()));
+                return Err(VmError::new(
+                    "time.parse takes 2 arguments (string, pattern)".into(),
+                ));
             }
             let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("time.parse requires String arguments".into()));
             };
             match NaiveDateTime::parse_from_str(s, pattern) {
                 Ok(dt) => Ok(Value::Variant("Ok".into(), vec![make_datetime(dt)])),
-                Err(e) => Ok(Value::Variant("Err".into(), vec![
-                    Value::String(format!("parse error: {e}")),
-                ])),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(format!("parse error: {e}"))],
+                )),
             }
         }
 
         "parse_date" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.parse_date takes 2 arguments (string, pattern)".into()));
+                return Err(VmError::new(
+                    "time.parse_date takes 2 arguments (string, pattern)".into(),
+                ));
             }
             let (Value::String(s), Value::String(pattern)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("time.parse_date requires String arguments".into()));
+                return Err(VmError::new(
+                    "time.parse_date requires String arguments".into(),
+                ));
             };
             // Parse as NaiveDateTime with a dummy time appended, then extract the date.
             let padded = format!("{s}T00:00:00");
@@ -1018,9 +1161,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     // Fallback: try direct NaiveDate parse (works on native)
                     match NaiveDate::parse_from_str(s, pattern) {
                         Ok(d) => Ok(Value::Variant("Ok".into(), vec![make_date(d)])),
-                        Err(e) => Ok(Value::Variant("Err".into(), vec![
-                            Value::String(format!("parse error: {e}")),
-                        ])),
+                        Err(e) => Ok(Value::Variant(
+                            "Err".into(),
+                            vec![Value::String(format!("parse error: {e}"))],
+                        )),
                     }
                 }
             }
@@ -1028,7 +1172,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "add_days" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.add_days takes 2 arguments (date, days)".into()));
+                return Err(VmError::new(
+                    "time.add_days takes 2 arguments (date, days)".into(),
+                ));
             }
             let d = extract_date(&args[0])?;
             let Value::Int(days) = &args[1] else {
@@ -1040,7 +1186,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "add_months" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.add_months takes 2 arguments (date, months)".into()));
+                return Err(VmError::new(
+                    "time.add_months takes 2 arguments (date, months)".into(),
+                ));
             }
             let d = extract_date(&args[0])?;
             let Value::Int(months) = &args[1] else {
@@ -1055,15 +1203,19 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let max_day = days_in_month(target_year, target_month);
             let target_day = d.day().min(max_day);
             let result = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
-                .ok_or_else(|| VmError::new(format!(
-                    "add_months overflow: {target_year}-{target_month}-{target_day}"
-                )))?;
+                .ok_or_else(|| {
+                    VmError::new(format!(
+                        "add_months overflow: {target_year}-{target_month}-{target_day}"
+                    ))
+                })?;
             Ok(make_date(result))
         }
 
         "add" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.add takes 2 arguments (instant, duration)".into()));
+                return Err(VmError::new(
+                    "time.add takes 2 arguments (instant, duration)".into(),
+                ));
             }
             let epoch_ns = extract_instant(&args[0])?;
             let dur_ns = extract_duration(&args[1])?;
@@ -1072,7 +1224,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "since" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.since takes 2 arguments (from, to)".into()));
+                return Err(VmError::new(
+                    "time.since takes 2 arguments (from, to)".into(),
+                ));
             }
             let from_ns = extract_instant(&args[0])?;
             let to_ns = extract_instant(&args[1])?;
@@ -1138,7 +1292,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "days_between" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.days_between takes 2 arguments (from, to)".into()));
+                return Err(VmError::new(
+                    "time.days_between takes 2 arguments (from, to)".into(),
+                ));
             }
             let from = extract_date(&args[0])?;
             let to = extract_date(&args[1])?;
@@ -1148,10 +1304,14 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "days_in_month" => {
             if args.len() != 2 {
-                return Err(VmError::new("time.days_in_month takes 2 arguments (year, month)".into()));
+                return Err(VmError::new(
+                    "time.days_in_month takes 2 arguments (year, month)".into(),
+                ));
             }
             let (Value::Int(y), Value::Int(m)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("time.days_in_month requires Int arguments".into()));
+                return Err(VmError::new(
+                    "time.days_in_month requires Int arguments".into(),
+                ));
             };
             Ok(Value::Int(days_in_month(*y as i32, *m as u32) as i64))
         }
@@ -1170,7 +1330,9 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
         "sleep" => {
             if args.len() != 1 {
-                return Err(VmError::new("time.sleep takes 1 argument (duration)".into()));
+                return Err(VmError::new(
+                    "time.sleep takes 1 argument (duration)".into(),
+                ));
             }
             let dur_ns = extract_duration(&args[0])?;
             if dur_ns <= 0 {
@@ -1186,7 +1348,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 // On native, sleep in small increments to stay responsive
                 #[cfg(not(target_arch = "wasm32"))]
                 std::thread::sleep(std::time::Duration::from_millis(
-                    (remaining_ms as u64).min(1)
+                    (remaining_ms as u64).min(1),
                 ));
             }
             Ok(Value::Unit)
@@ -1199,7 +1361,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 // ── HTTP dispatch ───────────────────────────────────────────────────
 
 #[cfg(feature = "http")]
-fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: std::string::String) -> Value {
+fn make_http_response(
+    status: u16,
+    headers: BTreeMap<Value, Value>,
+    body: std::string::String,
+) -> Value {
     let mut fields = BTreeMap::new();
     fields.insert("status".into(), Value::Int(status as i64));
     fields.insert("body".into(), Value::String(body));
@@ -1209,8 +1375,11 @@ fn make_http_response(status: u16, headers: BTreeMap<Value, Value>, body: std::s
 
 #[cfg(feature = "http")]
 fn make_http_request_value(
-    method: &str, path: &str, query: &str,
-    headers: BTreeMap<Value, Value>, body: std::string::String,
+    method: &str,
+    path: &str,
+    query: &str,
+    headers: BTreeMap<Value, Value>,
+    body: std::string::String,
 ) -> Value {
     let mut fields = BTreeMap::new();
     fields.insert("method".into(), Value::Variant(method.into(), vec![]));
@@ -1222,12 +1391,23 @@ fn make_http_request_value(
 }
 
 #[cfg(feature = "http")]
-fn extract_http_response(val: &Value) -> Result<(u16, std::string::String, &BTreeMap<std::string::String, Value>), VmError> {
+fn extract_http_response(
+    val: &Value,
+) -> Result<
+    (
+        u16,
+        std::string::String,
+        &BTreeMap<std::string::String, Value>,
+    ),
+    VmError,
+> {
     let Value::Record(name, fields) = val else {
         return Err(VmError::new("handler must return a Response record".into()));
     };
     if name != "Response" {
-        return Err(VmError::new(format!("handler must return Response, got {name}")));
+        return Err(VmError::new(format!(
+            "handler must return Response, got {name}"
+        )));
     }
     let status = match fields.get("status") {
         Some(Value::Int(n)) => *n as u16,
@@ -1241,7 +1421,9 @@ fn extract_http_response(val: &Value) -> Result<(u16, std::string::String, &BTre
 }
 
 #[cfg(feature = "http")]
-fn ureq_response_to_value(mut response: ureq::http::Response<ureq::Body>) -> Result<Value, VmError> {
+fn ureq_response_to_value(
+    mut response: ureq::http::Response<ureq::Body>,
+) -> Result<Value, VmError> {
     let status = response.status().as_u16();
     let mut headers = BTreeMap::new();
     for (name, value) in response.headers().iter() {
@@ -1252,7 +1434,9 @@ fn ureq_response_to_value(mut response: ureq::http::Response<ureq::Body>) -> Res
             );
         }
     }
-    let body = response.body_mut().read_to_string()
+    let body = response
+        .body_mut()
+        .read_to_string()
         .map_err(|e| VmError::new(format!("http: failed to read body: {e}")))?;
     Ok(make_http_response(status, headers, body))
 }
@@ -1278,9 +1462,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         let resp = ureq_response_to_value(response)?;
                         Ok(Value::Variant("Ok".into(), vec![resp]))
                     }
-                    Err(e) => {
-                        Ok(Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]))
-                    }
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("{e}"))],
+                    )),
                 }
             }
             #[cfg(not(feature = "http"))]
@@ -1295,11 +1480,13 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             {
                 if args.len() != 4 {
                     return Err(VmError::new(
-                        "http.request takes 4 arguments (method, url, body, headers)".into()
+                        "http.request takes 4 arguments (method, url, body, headers)".into(),
                     ));
                 }
                 let Value::Variant(method_tag, method_args) = &args[0] else {
-                    return Err(VmError::new("http.request: first argument must be a Method".into()));
+                    return Err(VmError::new(
+                        "http.request: first argument must be a Method".into(),
+                    ));
                 };
                 if !method_args.is_empty() {
                     return Err(VmError::new("http.request: invalid Method variant".into()));
@@ -1328,7 +1515,11 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                                 req = req.header(key.as_str(), val.as_str());
                             }
                         }
-                        if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        if body.is_empty() {
+                            req.send_empty()
+                        } else {
+                            req.send(body.as_str())
+                        }
                     }
                     "PUT" => {
                         let mut req = agent.put(url);
@@ -1337,7 +1528,11 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                                 req = req.header(key.as_str(), val.as_str());
                             }
                         }
-                        if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        if body.is_empty() {
+                            req.send_empty()
+                        } else {
+                            req.send(body.as_str())
+                        }
                     }
                     "PATCH" => {
                         let mut req = agent.patch(url);
@@ -1346,7 +1541,11 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                                 req = req.header(key.as_str(), val.as_str());
                             }
                         }
-                        if body.is_empty() { req.send_empty() } else { req.send(body.as_str()) }
+                        if body.is_empty() {
+                            req.send_empty()
+                        } else {
+                            req.send(body.as_str())
+                        }
                     }
                     "GET" => {
                         let mut req = agent.get(url);
@@ -1385,7 +1584,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         req.call()
                     }
                     other => {
-                        return Err(VmError::new(format!("http.request: unknown method: {other}")));
+                        return Err(VmError::new(format!(
+                            "http.request: unknown method: {other}"
+                        )));
                     }
                 };
 
@@ -1394,15 +1595,18 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         let resp = ureq_response_to_value(response)?;
                         Ok(Value::Variant("Ok".into(), vec![resp]))
                     }
-                    Err(e) => {
-                        Ok(Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]))
-                    }
+                    Err(e) => Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(format!("{e}"))],
+                    )),
                 }
             }
             #[cfg(not(feature = "http"))]
             {
                 let _ = args;
-                Err(VmError::new("http.request requires the 'http' feature".into()))
+                Err(VmError::new(
+                    "http.request requires the 'http' feature".into(),
+                ))
             }
         }
 
@@ -1410,7 +1614,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             #[cfg(feature = "http")]
             {
                 if args.len() != 2 {
-                    return Err(VmError::new("http.serve takes 2 arguments (port, handler)".into()));
+                    return Err(VmError::new(
+                        "http.serve takes 2 arguments (port, handler)".into(),
+                    ));
                 }
                 let Value::Int(port) = &args[0] else {
                     return Err(VmError::new("http.serve: port must be an Int".into()));
@@ -1467,9 +1673,8 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
 
                     // Build Request record
-                    let request_val = make_http_request_value(
-                        method_str, &path, &query, headers, body,
-                    );
+                    let request_val =
+                        make_http_request_value(method_str, &path, &query, headers, body);
 
                     // Call handler
                     let response_val = vm.invoke_callable(&handler, &[request_val])?;
@@ -1482,12 +1687,11 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 
                     if let Some(Value::Map(resp_headers)) = resp_fields.get("headers") {
                         for (k, v) in resp_headers.iter() {
-                            if let (Value::String(key), Value::String(val)) = (k, v) {
-                                if let Ok(header) = tiny_http::Header::from_bytes(
-                                    key.as_bytes(), val.as_bytes()
-                                ) {
-                                    response = response.with_header(header);
-                                }
+                            if let (Value::String(key), Value::String(val)) = (k, v)
+                                && let Ok(header) =
+                                    tiny_http::Header::from_bytes(key.as_bytes(), val.as_bytes())
+                            {
+                                response = response.with_header(header);
                             }
                         }
                     }
@@ -1498,7 +1702,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             #[cfg(not(feature = "http"))]
             {
                 let _ = args;
-                Err(VmError::new("http.serve requires the 'http' feature".into()))
+                Err(VmError::new(
+                    "http.serve requires the 'http' feature".into(),
+                ))
             }
         }
 

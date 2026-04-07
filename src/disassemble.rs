@@ -270,9 +270,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         | Op::TaskSpawn
         | Op::TaskJoin
         | Op::TaskCancel
-        | Op::Yield => {
-            (format!("{offset:04}  {name}"), offset + 1)
-        }
+        | Op::Yield => (format!("{offset:04}  {name}"), offset + 1),
 
         // ── u8 operand ────────────────────────────────────────
         Op::StringConcat
@@ -298,23 +296,39 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         Op::Recur => {
             let arg_count = code[offset + 1];
             let first_slot = read_u16(code, offset + 2);
-            (format!("{offset:04}  {name:<20} {arg_count}  slot {first_slot}"), offset + 4)
+            (
+                format!("{offset:04}  {name:<20} {arg_count}  slot {first_slot}"),
+                offset + 4,
+            )
         }
 
         // TestBool: u8 (0=false, 1=true)
         Op::TestBool => {
             let operand = code[offset + 1];
             let val = if operand == 0 { "false" } else { "true" };
-            (format!("{offset:04}  {name:<20} {operand}    ; {val}"), offset + 2)
+            (
+                format!("{offset:04}  {name:<20} {operand}    ; {val}"),
+                offset + 2,
+            )
         }
 
         // ── u16 operand with constant comment ─────────────────
-        Op::Constant | Op::GetGlobal | Op::SetGlobal | Op::TestTag
-        | Op::TestEqual | Op::GetField | Op::DestructRecordField
-        | Op::TestRecordTag | Op::TestMapHasKey | Op::DestructMapValue => {
+        Op::Constant
+        | Op::GetGlobal
+        | Op::SetGlobal
+        | Op::TestTag
+        | Op::TestEqual
+        | Op::GetField
+        | Op::DestructRecordField
+        | Op::TestRecordTag
+        | Op::TestMapHasKey
+        | Op::DestructMapValue => {
             let index = read_u16(code, offset + 1);
             let comment = constant_comment(chunk, index);
-            (format!("{offset:04}  {name:<20} {index:<5} ; {comment}"), offset + 3)
+            (
+                format!("{offset:04}  {name:<20} {index:<5} ; {comment}"),
+                offset + 3,
+            )
         }
 
         // ── u16 operand (slot, no constant comment) ───────────
@@ -335,20 +349,31 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             let hi_index = read_u16(code, offset + 3);
             let lo_comment = constant_comment(chunk, lo_index);
             let hi_comment = constant_comment(chunk, hi_index);
-            (format!("{offset:04}  {name:<20} {lo_index:<5} {hi_index:<5} ; {lo_comment}..{hi_comment}"), offset + 5)
+            (
+                format!(
+                    "{offset:04}  {name:<20} {lo_index:<5} {hi_index:<5} ; {lo_comment}..{hi_comment}"
+                ),
+                offset + 5,
+            )
         }
 
         // ── Jump instructions: show target offset ─────────────
         Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue => {
             let jump_offset = read_u16(code, offset + 1) as usize;
             let target = offset + 3 + jump_offset;
-            (format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"), offset + 3)
+            (
+                format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"),
+                offset + 3,
+            )
         }
 
         Op::JumpBack => {
             let jump_offset = read_u16(code, offset + 1) as usize;
             let target = offset + 3 - jump_offset;
-            (format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"), offset + 3)
+            (
+                format!("{offset:04}  {name:<20} {jump_offset:<5} -> {target:04}"),
+                offset + 3,
+            )
         }
 
         // ── u16 + u8: CallMethod(method_name_index, argc) ─────
@@ -389,9 +414,8 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             let func_index = read_u16(code, offset + 1);
             let upvalue_count = code[offset + 3];
             let comment = constant_comment(chunk, func_index);
-            let mut line = format!(
-                "{offset:04}  {name:<20} {func_index:<5} {upvalue_count:<3} ; {comment}"
-            );
+            let mut line =
+                format!("{offset:04}  {name:<20} {func_index:<5} {upvalue_count:<3} ; {comment}");
             let mut next = offset + 4;
             for _ in 0..upvalue_count {
                 let is_local = code[next];
@@ -415,7 +439,11 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             for _ in 0..field_count {
                 let field_name_index = read_u16(code, next);
                 let field_comment = constant_comment(chunk, field_name_index);
-                write!(line, "\n      |  field {field_name_index:<5} ; {field_comment}").unwrap();
+                write!(
+                    line,
+                    "\n      |  field {field_name_index:<5} ; {field_comment}"
+                )
+                .unwrap();
                 next += 2;
             }
             (line, next)
@@ -429,7 +457,11 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             for _ in 0..field_count {
                 let field_name_index = read_u16(code, next);
                 let field_comment = constant_comment(chunk, field_name_index);
-                write!(line, "\n      |  field {field_name_index:<5} ; {field_comment}").unwrap();
+                write!(
+                    line,
+                    "\n      |  field {field_name_index:<5} ; {field_comment}"
+                )
+                .unwrap();
                 next += 2;
             }
             (line, next)
@@ -524,10 +556,10 @@ mod tests {
         let mut chunk = Chunk::new();
         let span = dummy_span();
         // Pad with some ops so we can jump back
-        chunk.emit_op(Op::Unit, span);   // 0000
-        chunk.emit_op(Op::Pop, span);    // 0001
-        chunk.emit_op(Op::Unit, span);   // 0002
-        chunk.emit_op(Op::Pop, span);    // 0003
+        chunk.emit_op(Op::Unit, span); // 0000
+        chunk.emit_op(Op::Pop, span); // 0001
+        chunk.emit_op(Op::Unit, span); // 0002
+        chunk.emit_op(Op::Pop, span); // 0003
         // JumpBack at offset 4, with offset 5 -> target = 4 + 3 - 5 = 2
         chunk.emit_op(Op::JumpBack, span);
         chunk.emit_u16(5, span);
@@ -659,35 +691,94 @@ mod tests {
     fn test_op_from_byte_roundtrip() {
         // Every Op variant should round-trip through its u8 discriminant.
         let all_ops = [
-            Op::Constant, Op::Unit, Op::True, Op::False,
-            Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Mod,
-            Op::Eq, Op::Neq, Op::Lt, Op::Gt, Op::Leq, Op::Geq,
-            Op::Negate, Op::Not, Op::And, Op::Or,
-            Op::StringConcat, Op::DisplayValue,
-            Op::GetLocal, Op::SetLocal, Op::GetGlobal, Op::SetGlobal,
+            Op::Constant,
+            Op::Unit,
+            Op::True,
+            Op::False,
+            Op::Add,
+            Op::Sub,
+            Op::Mul,
+            Op::Div,
+            Op::Mod,
+            Op::Eq,
+            Op::Neq,
+            Op::Lt,
+            Op::Gt,
+            Op::Leq,
+            Op::Geq,
+            Op::Negate,
+            Op::Not,
+            Op::And,
+            Op::Or,
+            Op::StringConcat,
+            Op::DisplayValue,
+            Op::GetLocal,
+            Op::SetLocal,
+            Op::GetGlobal,
+            Op::SetGlobal,
             Op::GetUpvalue,
-            Op::Call, Op::TailCall, Op::Return, Op::CallBuiltin,
+            Op::Call,
+            Op::TailCall,
+            Op::Return,
+            Op::CallBuiltin,
             Op::MakeClosure,
-            Op::MakeTuple, Op::MakeList, Op::MakeMap, Op::MakeSet,
-            Op::MakeRecord, Op::MakeVariant, Op::RecordUpdate, Op::MakeRange,
-            Op::GetField, Op::GetIndex,
-            Op::Jump, Op::JumpBack, Op::JumpIfFalse, Op::JumpIfTrue,
-            Op::Pop, Op::PopN, Op::Dup,
-            Op::TestTag, Op::TestEqual, Op::TestTupleLen, Op::TestListMin,
-            Op::TestListExact, Op::TestIntRange, Op::TestFloatRange, Op::TestBool,
-            Op::DestructTuple, Op::DestructVariant, Op::DestructList,
-            Op::DestructListRest, Op::DestructRecordField,
-            Op::TestRecordTag, Op::TestMapHasKey, Op::DestructMapValue,
-            Op::LoopSetup, Op::Recur,
-            Op::QuestionMark, Op::Panic,
-            Op::ChanNew, Op::ChanSend, Op::ChanRecv, Op::ChanClose,
-            Op::ChanTrySend, Op::ChanTryRecv, Op::ChanSelect,
-            Op::TaskSpawn, Op::TaskJoin, Op::TaskCancel, Op::Yield,
+            Op::MakeTuple,
+            Op::MakeList,
+            Op::MakeMap,
+            Op::MakeSet,
+            Op::MakeRecord,
+            Op::MakeVariant,
+            Op::RecordUpdate,
+            Op::MakeRange,
+            Op::GetField,
+            Op::GetIndex,
+            Op::Jump,
+            Op::JumpBack,
+            Op::JumpIfFalse,
+            Op::JumpIfTrue,
+            Op::Pop,
+            Op::PopN,
+            Op::Dup,
+            Op::TestTag,
+            Op::TestEqual,
+            Op::TestTupleLen,
+            Op::TestListMin,
+            Op::TestListExact,
+            Op::TestIntRange,
+            Op::TestFloatRange,
+            Op::TestBool,
+            Op::DestructTuple,
+            Op::DestructVariant,
+            Op::DestructList,
+            Op::DestructListRest,
+            Op::DestructRecordField,
+            Op::TestRecordTag,
+            Op::TestMapHasKey,
+            Op::DestructMapValue,
+            Op::LoopSetup,
+            Op::Recur,
+            Op::QuestionMark,
+            Op::Panic,
+            Op::ChanNew,
+            Op::ChanSend,
+            Op::ChanRecv,
+            Op::ChanClose,
+            Op::ChanTrySend,
+            Op::ChanTryRecv,
+            Op::ChanSelect,
+            Op::TaskSpawn,
+            Op::TaskJoin,
+            Op::TaskCancel,
+            Op::Yield,
         ];
         for op in all_ops {
             let byte = op as u8;
             let decoded = op_from_byte(byte);
-            assert_eq!(decoded, Some(op), "round-trip failed for {op:?} (byte {byte})");
+            assert_eq!(
+                decoded,
+                Some(op),
+                "round-trip failed for {op:?} (byte {byte})"
+            );
         }
         // Invalid byte should return None.
         assert_eq!(op_from_byte(255), None);

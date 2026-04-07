@@ -150,7 +150,11 @@ pub struct Span {
 
 impl Span {
     pub fn new(line: usize, col: usize) -> Self {
-        Self { line, col, offset: 0 }
+        Self {
+            line,
+            col,
+            offset: 0,
+        }
     }
 
     pub fn with_offset(line: usize, col: usize, offset: usize) -> Self {
@@ -294,7 +298,11 @@ impl Lexer {
         Ok(())
     }
 
-    fn scan_string(&mut self, is_continuation: bool, start: Span) -> Result<SpannedToken, LexError> {
+    fn scan_string(
+        &mut self,
+        is_continuation: bool,
+        start: Span,
+    ) -> Result<SpannedToken, LexError> {
         let mut text = String::new();
 
         loop {
@@ -603,14 +611,14 @@ impl Lexer {
 
             '}' => {
                 // Check if this closes a string interpolation
-                if let Some(&interp_depth) = self.interp_stack.last() {
-                    if self.brace_depth == interp_depth + 1 {
-                        self.interp_stack.pop();
-                        self.brace_depth -= 1;
-                        // Resume scanning the string
-                        let cont_start = self.span();
-                        return self.scan_string(true, cont_start);
-                    }
+                if let Some(&interp_depth) = self.interp_stack.last()
+                    && self.brace_depth == interp_depth + 1
+                {
+                    self.interp_stack.pop();
+                    self.brace_depth -= 1;
+                    // Resume scanning the string
+                    let cont_start = self.span();
+                    return self.scan_string(true, cont_start);
                 }
                 self.brace_depth = self.brace_depth.saturating_sub(1);
                 Ok((Token::RBrace, start))
@@ -702,7 +710,8 @@ impl Lexer {
             }
 
             ';' => Err(LexError {
-                message: "semicolons are not used in silt — use a newline to separate statements".to_string(),
+                message: "semicolons are not used in silt — use a newline to separate statements"
+                    .to_string(),
                 span: start,
             }),
             _ => Err(LexError {
@@ -729,17 +738,31 @@ mod tests {
 
     #[test]
     fn test_basic_tokens() {
-        assert_eq!(lex("let x = 42"), vec![
-            Token::Let, Token::Ident("x".into()), Token::Eq, Token::Int(42),
-        ]);
+        assert_eq!(
+            lex("let x = 42"),
+            vec![
+                Token::Let,
+                Token::Ident("x".into()),
+                Token::Eq,
+                Token::Int(42),
+            ]
+        );
     }
 
     #[test]
     fn test_operators() {
-        assert_eq!(lex("|> -> .. == != <= >="), vec![
-            Token::Pipe, Token::Arrow, Token::DotDot,
-            Token::EqEq, Token::NotEq, Token::LtEq, Token::GtEq,
-        ]);
+        assert_eq!(
+            lex("|> -> .. == != <= >="),
+            vec![
+                Token::Pipe,
+                Token::Arrow,
+                Token::DotDot,
+                Token::EqEq,
+                Token::NotEq,
+                Token::LtEq,
+                Token::GtEq,
+            ]
+        );
     }
 
     #[test]
@@ -750,28 +773,37 @@ mod tests {
     #[test]
     fn test_string_interpolation() {
         let tokens = lex(r#""hello {name}""#);
-        assert_eq!(tokens, vec![
-            Token::StringStart("hello ".into()),
-            Token::Ident("name".into()),
-            Token::StringEnd(String::new()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::StringStart("hello ".into()),
+                Token::Ident("name".into()),
+                Token::StringEnd(String::new()),
+            ]
+        );
     }
 
     #[test]
     fn test_string_multi_interp() {
         let tokens = lex(r#""a {x} b {y} c""#);
-        assert_eq!(tokens, vec![
-            Token::StringStart("a ".into()),
-            Token::Ident("x".into()),
-            Token::StringMiddle(" b ".into()),
-            Token::Ident("y".into()),
-            Token::StringEnd(" c".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::StringStart("a ".into()),
+                Token::Ident("x".into()),
+                Token::StringMiddle(" b ".into()),
+                Token::Ident("y".into()),
+                Token::StringEnd(" c".into()),
+            ]
+        );
     }
 
     #[test]
     fn test_number_and_range() {
-        assert_eq!(lex("1..101"), vec![Token::Int(1), Token::DotDot, Token::Int(101)]);
+        assert_eq!(
+            lex("1..101"),
+            vec![Token::Int(1), Token::DotDot, Token::Int(101)]
+        );
     }
 
     #[test]
@@ -796,9 +828,16 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        assert_eq!(lex("fn let match when return"), vec![
-            Token::Fn, Token::Let, Token::Match, Token::When, Token::Return,
-        ]);
+        assert_eq!(
+            lex("fn let match when return"),
+            vec![
+                Token::Fn,
+                Token::Let,
+                Token::Match,
+                Token::When,
+                Token::Return,
+            ]
+        );
     }
 
     #[test]
@@ -808,9 +847,10 @@ mod tests {
 
     #[test]
     fn test_escaped_brace_in_string() {
-        assert_eq!(lex(r#""\{not interp\}""#), vec![
-            Token::StringLit("{not interp}".into()),
-        ]);
+        assert_eq!(
+            lex(r#""\{not interp\}""#),
+            vec![Token::StringLit("{not interp}".into()),]
+        );
     }
 
     #[test]
@@ -820,46 +860,49 @@ mod tests {
 
     #[test]
     fn test_triple_quoted_basic() {
-        assert_eq!(lex(r#""""hello""""#), vec![Token::StringLit("hello".into())]);
+        assert_eq!(
+            lex(r#""""hello""""#),
+            vec![Token::StringLit("hello".into())]
+        );
     }
 
     #[test]
     fn test_triple_quoted_multiline_with_indent_stripping() {
         let input = "    let x = \"\"\"\n      hello\n      world\n      \"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::Let,
-            Token::Ident("x".into()),
-            Token::Eq,
-            Token::StringLit("hello\nworld".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Let,
+                Token::Ident("x".into()),
+                Token::Eq,
+                Token::StringLit("hello\nworld".into()),
+            ]
+        );
     }
 
     #[test]
     fn test_triple_quoted_embedded_quotes() {
         let input = "\"\"\"she said \"hi\" to me\"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::StringLit("she said \"hi\" to me".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![Token::StringLit("she said \"hi\" to me".into()),]
+        );
     }
 
     #[test]
     fn test_triple_quoted_no_interpolation() {
         let input = "\"\"\"{name} and {age}\"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::StringLit("{name} and {age}".into()),
-        ]);
+        assert_eq!(tokens, vec![Token::StringLit("{name} and {age}".into()),]);
     }
 
     #[test]
     fn test_triple_quoted_no_escape_processing() {
         let input = r#""""\n\t\\""" "#;
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::StringLit(r"\n\t\\".into()),
-        ]);
+        assert_eq!(tokens, vec![Token::StringLit(r"\n\t\\".into()),]);
     }
 
     #[test]
@@ -872,12 +915,15 @@ mod tests {
         // Simulates the motivating use case
         let input = "let json = \"\"\"\n  {\n    \"name\": \"Alice\"\n  }\n  \"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::Let,
-            Token::Ident("json".into()),
-            Token::Eq,
-            Token::StringLit("{\n  \"name\": \"Alice\"\n}".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Let,
+                Token::Ident("json".into()),
+                Token::Eq,
+                Token::StringLit("{\n  \"name\": \"Alice\"\n}".into()),
+            ]
+        );
     }
 
     #[test]
@@ -885,9 +931,10 @@ mod tests {
         // Closing """ has 4 spaces of indent; content lines have 4+ spaces
         let input = "    \"\"\"\n    line1\n      indented\n    line3\n    \"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::StringLit("line1\n  indented\nline3".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![Token::StringLit("line1\n  indented\nline3".into()),]
+        );
     }
 
     #[test]
@@ -895,8 +942,6 @@ mod tests {
         // Opening and content on separate lines but single content line
         let input = "\"\"\"\nhello\n\"\"\"";
         let tokens = lex(input);
-        assert_eq!(tokens, vec![
-            Token::StringLit("hello".into()),
-        ]);
+        assert_eq!(tokens, vec![Token::StringLit("hello".into()),]);
     }
 }

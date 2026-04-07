@@ -4,10 +4,10 @@
 //! Phase 2: full function calls (VmClosure + builtins), many builtin
 //! dispatches, variant constructors, and end-to-end program execution.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::collections::HashMap;
-use std::sync::Arc;
 use regex::Regex;
+use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::builtins;
 use crate::builtins::data::FieldType;
@@ -15,6 +15,9 @@ use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
 use crate::scheduler::{Scheduler, SliceResult};
 use crate::value::{Channel, FromValue, IntoValue, TaskHandle, Value};
+
+/// Type alias for foreign (Rust-side) functions registered with the VM.
+type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
 
 // ── Error type ────────────────────────────────────────────────────
 
@@ -31,11 +34,21 @@ pub struct VmError {
 
 impl VmError {
     pub fn new(message: String) -> Self {
-        VmError { message, is_yield: false, span: None, call_stack: Vec::new() }
+        VmError {
+            message,
+            is_yield: false,
+            span: None,
+            call_stack: Vec::new(),
+        }
     }
 
     pub(crate) fn yield_signal() -> Self {
-        VmError { message: String::new(), is_yield: true, span: None, call_stack: Vec::new() }
+        VmError {
+            message: String::new(),
+            is_yield: true,
+            span: None,
+            call_stack: Vec::new(),
+        }
     }
 }
 
@@ -79,7 +92,7 @@ pub struct Runtime {
     variant_types: HashMap<String, String>,
 
     // ── Foreign function interface ──────────────────────────────
-    foreign_fns: HashMap<String, Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>>,
+    foreign_fns: HashMap<String, ForeignFn>,
 
     // ── M:N scheduler ──────────────────────────────────────────
     /// The shared scheduler for spawned tasks (None until first task.spawn).
@@ -110,6 +123,12 @@ pub struct Vm {
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded to 256 entries).
     pub(crate) regex_cache: HashMap<String, Regex>,
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Vm {
@@ -155,13 +174,18 @@ impl Vm {
 
     /// Register a 0-argument foreign function with automatic marshalling.
     pub fn register_fn0<R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn() -> R + Send + Sync + 'static,
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn() -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
             if !args.is_empty() {
-                return Err(VmError::new(format!("{n2} expects 0 arguments, got {}", args.len())));
+                return Err(VmError::new(format!(
+                    "{n2} expects 0 arguments, got {}",
+                    args.len()
+                )));
             }
             Ok(func().into_value())
         });
@@ -169,13 +193,18 @@ impl Vm {
 
     /// Register a 1-argument foreign function with automatic marshalling.
     pub fn register_fn1<A: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A) -> R + Send + Sync + 'static,
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(A) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
             if args.len() != 1 {
-                return Err(VmError::new(format!("{n2} expects 1 argument, got {}", args.len())));
+                return Err(VmError::new(format!(
+                    "{n2} expects 1 argument, got {}",
+                    args.len()
+                )));
             }
             let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
             Ok(func(a).into_value())
@@ -184,33 +213,48 @@ impl Vm {
 
     /// Register a 2-argument foreign function with automatic marshalling.
     pub fn register_fn2<A: FromValue, B: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A, B) -> R + Send + Sync + 'static,
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(A, B) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
             if args.len() != 2 {
-                return Err(VmError::new(format!("{n2} expects 2 arguments, got {}", args.len())));
+                return Err(VmError::new(format!(
+                    "{n2} expects 2 arguments, got {}",
+                    args.len()
+                )));
             }
-            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
-            let b = B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
+            let a =
+                A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
+            let b =
+                B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
             Ok(func(a, b).into_value())
         });
     }
 
     /// Register a 3-argument foreign function with automatic marshalling.
     pub fn register_fn3<A: FromValue, B: FromValue, C: FromValue, R: IntoValue>(
-        &mut self, name: impl Into<String>, func: impl Fn(A, B, C) -> R + Send + Sync + 'static,
+        &mut self,
+        name: impl Into<String>,
+        func: impl Fn(A, B, C) -> R + Send + Sync + 'static,
     ) {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
             if args.len() != 3 {
-                return Err(VmError::new(format!("{n2} expects 3 arguments, got {}", args.len())));
+                return Err(VmError::new(format!(
+                    "{n2} expects 3 arguments, got {}",
+                    args.len()
+                )));
             }
-            let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
-            let b = B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
-            let c = C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
+            let a =
+                A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
+            let b =
+                B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
+            let c =
+                C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
             Ok(func(a, b, c).into_value())
         });
     }
@@ -267,100 +311,262 @@ impl Vm {
     /// Register all builtin functions and variant constructors in globals.
     fn register_builtins(&mut self) {
         // Variant constructors
-        self.globals.insert("Ok".into(), Value::VariantConstructor("Ok".into(), 1));
-        self.globals.insert("Err".into(), Value::VariantConstructor("Err".into(), 1));
-        self.globals.insert("Some".into(), Value::VariantConstructor("Some".into(), 1));
-        self.globals.insert("None".into(), Value::Variant("None".into(), Vec::new()));
-        self.globals.insert("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
-        self.globals.insert("Continue".into(), Value::VariantConstructor("Continue".into(), 1));
-        self.globals.insert("Message".into(), Value::VariantConstructor("Message".into(), 1));
-        self.globals.insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
-        self.globals.insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
-        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
-            self.globals.insert(day.into(), Value::Variant(day.into(), Vec::new()));
+        self.globals
+            .insert("Ok".into(), Value::VariantConstructor("Ok".into(), 1));
+        self.globals
+            .insert("Err".into(), Value::VariantConstructor("Err".into(), 1));
+        self.globals
+            .insert("Some".into(), Value::VariantConstructor("Some".into(), 1));
+        self.globals
+            .insert("None".into(), Value::Variant("None".into(), Vec::new()));
+        self.globals
+            .insert("Stop".into(), Value::VariantConstructor("Stop".into(), 1));
+        self.globals.insert(
+            "Continue".into(),
+            Value::VariantConstructor("Continue".into(), 1),
+        );
+        self.globals.insert(
+            "Message".into(),
+            Value::VariantConstructor("Message".into(), 1),
+        );
+        self.globals
+            .insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
+        self.globals
+            .insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
+        for day in [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ] {
+            self.globals
+                .insert(day.into(), Value::Variant(day.into(), Vec::new()));
         }
         for method in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
-            self.globals.insert(method.into(), Value::Variant(method.into(), Vec::new()));
+            self.globals
+                .insert(method.into(), Value::Variant(method.into(), Vec::new()));
         }
 
         // Primitive type descriptors
-        self.globals.insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
-        self.globals.insert("Float".into(), Value::PrimitiveDescriptor("Float".into()));
-        self.globals.insert("String".into(), Value::PrimitiveDescriptor("String".into()));
-        self.globals.insert("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
+        self.globals
+            .insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
+        self.globals
+            .insert("Float".into(), Value::PrimitiveDescriptor("Float".into()));
+        self.globals
+            .insert("String".into(), Value::PrimitiveDescriptor("String".into()));
+        self.globals
+            .insert("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
 
         // Math constants
-        self.globals.insert("math.pi".into(), Value::Float(std::f64::consts::PI));
-        self.globals.insert("math.e".into(), Value::Float(std::f64::consts::E));
+        self.globals
+            .insert("math.pi".into(), Value::Float(std::f64::consts::PI));
+        self.globals
+            .insert("math.e".into(), Value::Float(std::f64::consts::E));
 
         // All builtin function names
         let builtin_names = [
-            "print", "println", "io.inspect", "panic",
-            "list.map", "list.filter", "list.each", "list.fold",
-            "list.find", "list.zip", "list.flatten", "list.sort_by",
-            "list.flat_map", "list.filter_map", "list.any", "list.all",
-            "list.fold_until", "list.unfold",
-            "list.head", "list.tail", "list.last", "list.reverse",
-            "list.sort", "list.unique", "list.contains", "list.length",
-            "list.append", "list.prepend", "list.concat",
-            "list.get", "list.set", "list.take", "list.drop",
-            "list.enumerate", "list.group_by",
-            "result.unwrap_or", "result.map_ok", "result.map_err",
-            "result.flatten", "result.flat_map", "result.is_ok", "result.is_err",
-            "option.map", "option.unwrap_or", "option.to_result",
-            "option.is_some", "option.is_none", "option.flat_map",
+            "print",
+            "println",
+            "io.inspect",
+            "panic",
+            "list.map",
+            "list.filter",
+            "list.each",
+            "list.fold",
+            "list.find",
+            "list.zip",
+            "list.flatten",
+            "list.sort_by",
+            "list.flat_map",
+            "list.filter_map",
+            "list.any",
+            "list.all",
+            "list.fold_until",
+            "list.unfold",
+            "list.head",
+            "list.tail",
+            "list.last",
+            "list.reverse",
+            "list.sort",
+            "list.unique",
+            "list.contains",
+            "list.length",
+            "list.append",
+            "list.prepend",
+            "list.concat",
+            "list.get",
+            "list.set",
+            "list.take",
+            "list.drop",
+            "list.enumerate",
+            "list.group_by",
+            "result.unwrap_or",
+            "result.map_ok",
+            "result.map_err",
+            "result.flatten",
+            "result.flat_map",
+            "result.is_ok",
+            "result.is_err",
+            "option.map",
+            "option.unwrap_or",
+            "option.to_result",
+            "option.is_some",
+            "option.is_none",
+            "option.flat_map",
             "string.from",
-            "string.split", "string.trim", "string.trim_start", "string.trim_end",
-            "string.char_code", "string.from_char_code",
-            "string.contains", "string.replace", "string.join",
-            "string.length", "string.to_upper", "string.to_lower",
-            "string.starts_with", "string.ends_with", "string.chars",
-            "string.repeat", "string.index_of", "string.slice",
-            "string.pad_left", "string.pad_right",
-            "string.is_empty", "string.is_alpha", "string.is_digit",
-            "string.is_upper", "string.is_lower", "string.is_alnum",
+            "string.split",
+            "string.trim",
+            "string.trim_start",
+            "string.trim_end",
+            "string.char_code",
+            "string.from_char_code",
+            "string.contains",
+            "string.replace",
+            "string.join",
+            "string.length",
+            "string.to_upper",
+            "string.to_lower",
+            "string.starts_with",
+            "string.ends_with",
+            "string.chars",
+            "string.repeat",
+            "string.index_of",
+            "string.slice",
+            "string.pad_left",
+            "string.pad_right",
+            "string.is_empty",
+            "string.is_alpha",
+            "string.is_digit",
+            "string.is_upper",
+            "string.is_lower",
+            "string.is_alnum",
             "string.is_whitespace",
-            "int.parse", "int.abs", "int.min", "int.max",
-            "int.to_float", "int.to_string",
-            "float.parse", "float.round", "float.ceil", "float.floor",
-            "float.abs", "float.to_string", "float.to_int",
-            "float.min", "float.max",
-            "map.get", "map.set", "map.delete", "map.contains",
-            "map.keys", "map.values", "map.length", "map.merge",
-            "map.filter", "map.map", "map.entries", "map.from_entries",
-            "map.each", "map.update",
-            "set.new", "set.from_list", "set.to_list", "set.contains",
-            "set.insert", "set.remove", "set.length",
-            "set.union", "set.intersection", "set.difference", "set.is_subset",
-            "set.map", "set.filter", "set.each", "set.fold",
-            "io.read_file", "io.write_file", "io.read_line", "io.args",
+            "int.parse",
+            "int.abs",
+            "int.min",
+            "int.max",
+            "int.to_float",
+            "int.to_string",
+            "float.parse",
+            "float.round",
+            "float.ceil",
+            "float.floor",
+            "float.abs",
+            "float.to_string",
+            "float.to_int",
+            "float.min",
+            "float.max",
+            "map.get",
+            "map.set",
+            "map.delete",
+            "map.contains",
+            "map.keys",
+            "map.values",
+            "map.length",
+            "map.merge",
+            "map.filter",
+            "map.map",
+            "map.entries",
+            "map.from_entries",
+            "map.each",
+            "map.update",
+            "set.new",
+            "set.from_list",
+            "set.to_list",
+            "set.contains",
+            "set.insert",
+            "set.remove",
+            "set.length",
+            "set.union",
+            "set.intersection",
+            "set.difference",
+            "set.is_subset",
+            "set.map",
+            "set.filter",
+            "set.each",
+            "set.fold",
+            "io.read_file",
+            "io.write_file",
+            "io.read_line",
+            "io.args",
             "fs.exists",
-            "test.assert", "test.assert_eq", "test.assert_ne",
-            "math.sqrt", "math.pow", "math.log", "math.log10",
-            "math.sin", "math.cos", "math.tan",
-            "math.asin", "math.acos", "math.atan", "math.atan2",
-            "regex.is_match", "regex.find", "regex.find_all", "regex.split",
-            "regex.replace", "regex.replace_all", "regex.replace_all_with",
-            "regex.captures", "regex.captures_all",
-            "json.parse", "json.parse_list", "json.parse_map",
-            "json.stringify", "json.pretty",
-            "channel.new", "channel.send", "channel.receive", "channel.close",
-            "channel.try_send", "channel.try_receive", "channel.select", "channel.each",
-            "task.spawn", "task.join", "task.cancel",
-            "time.now", "time.today",
-            "time.date", "time.time", "time.datetime",
-            "time.to_datetime", "time.to_instant", "time.to_utc", "time.from_utc",
-            "time.format", "time.format_date", "time.parse", "time.parse_date",
-            "time.add_days", "time.add_months",
-            "time.add", "time.since",
-            "time.hours", "time.minutes", "time.seconds", "time.ms",
-            "time.weekday", "time.days_between", "time.days_in_month", "time.is_leap_year",
+            "test.assert",
+            "test.assert_eq",
+            "test.assert_ne",
+            "math.sqrt",
+            "math.pow",
+            "math.log",
+            "math.log10",
+            "math.sin",
+            "math.cos",
+            "math.tan",
+            "math.asin",
+            "math.acos",
+            "math.atan",
+            "math.atan2",
+            "regex.is_match",
+            "regex.find",
+            "regex.find_all",
+            "regex.split",
+            "regex.replace",
+            "regex.replace_all",
+            "regex.replace_all_with",
+            "regex.captures",
+            "regex.captures_all",
+            "json.parse",
+            "json.parse_list",
+            "json.parse_map",
+            "json.stringify",
+            "json.pretty",
+            "channel.new",
+            "channel.send",
+            "channel.receive",
+            "channel.close",
+            "channel.try_send",
+            "channel.try_receive",
+            "channel.select",
+            "channel.each",
+            "task.spawn",
+            "task.join",
+            "task.cancel",
+            "time.now",
+            "time.today",
+            "time.date",
+            "time.time",
+            "time.datetime",
+            "time.to_datetime",
+            "time.to_instant",
+            "time.to_utc",
+            "time.from_utc",
+            "time.format",
+            "time.format_date",
+            "time.parse",
+            "time.parse_date",
+            "time.add_days",
+            "time.add_months",
+            "time.add",
+            "time.since",
+            "time.hours",
+            "time.minutes",
+            "time.seconds",
+            "time.ms",
+            "time.weekday",
+            "time.days_between",
+            "time.days_in_month",
+            "time.is_leap_year",
             "time.sleep",
-            "http.get", "http.request", "http.serve", "http.segments",
+            "http.get",
+            "http.request",
+            "http.serve",
+            "http.segments",
         ];
 
         for name in builtin_names {
-            self.globals.insert(name.into(), Value::BuiltinFn(name.into()));
+            self.globals
+                .insert(name.into(), Value::BuiltinFn(name.into()));
         }
     }
 
@@ -429,7 +635,7 @@ impl Vm {
                             return Err(VmError::new(format!(
                                 "cannot negate {}",
                                 self.type_name(&other)
-                            )))
+                            )));
                         }
                     }
                 }
@@ -441,7 +647,7 @@ impl Vm {
                             return Err(VmError::new(format!(
                                 "cannot apply 'not' to {}",
                                 self.type_name(&other)
-                            )))
+                            )));
                         }
                     }
                 }
@@ -457,7 +663,7 @@ impl Vm {
                         _ => {
                             return Err(VmError::new(
                                 "logical 'and' requires two booleans".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -471,7 +677,7 @@ impl Vm {
                         _ => {
                             return Err(VmError::new(
                                 "logical 'or' requires two booleans".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -531,9 +737,11 @@ impl Vm {
                 Some(Op::GetGlobal) => {
                     let name_index = self.read_u16()? as usize;
                     let name = self.read_constant_string(name_index)?;
-                    let value = self.globals.get(&name).cloned().ok_or_else(|| {
-                        VmError::new(format!("undefined global: {name}"))
-                    })?;
+                    let value = self
+                        .globals
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| VmError::new(format!("undefined global: {name}")))?;
                     self.push(value);
                 }
                 Some(Op::SetGlobal) => {
@@ -595,7 +803,11 @@ impl Vm {
                     }
                     // Discard the callee's stack window including the function slot.
                     // base_slot = func_slot + 1, so func_slot = base_slot - 1.
-                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                    let func_slot = if finished_base > 0 {
+                        finished_base - 1
+                    } else {
+                        0
+                    };
                     self.stack.truncate(func_slot);
                     self.push(result);
                 }
@@ -725,9 +937,7 @@ impl Vm {
                     match base {
                         Value::Record(type_name, existing) => {
                             let mut fields = (*existing).clone();
-                            for (name, val) in
-                                field_names.into_iter().zip(new_values.into_iter())
-                            {
+                            for (name, val) in field_names.into_iter().zip(new_values.into_iter()) {
                                 fields.insert(name, val);
                             }
                             self.push(Value::Record(type_name, Arc::new(fields)));
@@ -745,14 +955,11 @@ impl Vm {
                     let start = self.pop()?;
                     match (&start, &end) {
                         (Value::Int(a), Value::Int(b)) => {
-                            let items: Vec<Value> =
-                                (*a..*b).map(Value::Int).collect();
+                            let items: Vec<Value> = (*a..*b).map(Value::Int).collect();
                             self.push(Value::List(Arc::new(items)));
                         }
                         _ => {
-                            return Err(VmError::new(
-                                "range requires two integers".to_string(),
-                            ));
+                            return Err(VmError::new("range requires two integers".to_string()));
                         }
                     }
                 }
@@ -771,9 +978,10 @@ impl Vm {
                         }
                         Value::Map(ref map) => {
                             let key = Value::String(name.clone());
-                            let val = map.get(&key).cloned().ok_or_else(|| {
-                                VmError::new(format!("map has no key '{name}'"))
-                            })?;
+                            let val = map
+                                .get(&key)
+                                .cloned()
+                                .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
                             self.push(val);
                         }
                         other => {
@@ -887,9 +1095,7 @@ impl Vm {
                     let hi = self.read_constant(hi_index)?;
                     let val = self.peek()?;
                     let result = match (val, &lo, &hi) {
-                        (Value::Int(n), Value::Int(lo), Value::Int(hi)) => {
-                            *n >= *lo && *n <= *hi
-                        }
+                        (Value::Int(n), Value::Int(lo), Value::Int(hi)) => *n >= *lo && *n <= *hi,
                         _ => false,
                     };
                     self.push(Value::Bool(result));
@@ -921,11 +1127,7 @@ impl Vm {
                         Value::Tuple(elems) => {
                             self.push(elems[index].clone());
                         }
-                        _ => {
-                            return Err(VmError::new(
-                                "DestructTuple on non-tuple".to_string(),
-                            ))
-                        }
+                        _ => return Err(VmError::new("DestructTuple on non-tuple".to_string())),
                     }
                 }
                 Some(Op::DestructVariant) => {
@@ -936,9 +1138,7 @@ impl Vm {
                             self.push(fields[index].clone());
                         }
                         _ => {
-                            return Err(VmError::new(
-                                "DestructVariant on non-variant".to_string(),
-                            ))
+                            return Err(VmError::new("DestructVariant on non-variant".to_string()));
                         }
                     }
                 }
@@ -949,11 +1149,7 @@ impl Vm {
                         Value::List(xs) => {
                             self.push(xs[index].clone());
                         }
-                        _ => {
-                            return Err(VmError::new(
-                                "DestructList on non-list".to_string(),
-                            ))
-                        }
+                        _ => return Err(VmError::new("DestructList on non-list".to_string())),
                     }
                 }
                 Some(Op::DestructListRest) => {
@@ -964,11 +1160,7 @@ impl Vm {
                             let rest: Vec<Value> = xs[start..].to_vec();
                             self.push(Value::List(Arc::new(rest)));
                         }
-                        _ => {
-                            return Err(VmError::new(
-                                "DestructListRest on non-list".to_string(),
-                            ))
-                        }
+                        _ => return Err(VmError::new("DestructListRest on non-list".to_string())),
                     }
                 }
                 Some(Op::DestructRecordField) => {
@@ -985,7 +1177,7 @@ impl Vm {
                         _ => {
                             return Err(VmError::new(
                                 "DestructRecordField on non-record".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -1012,16 +1204,15 @@ impl Vm {
                     let val = self.peek()?.clone();
                     match val {
                         Value::Map(map) => {
-                            let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| {
-                                VmError::new(format!("map has no key '{key_name}'"))
-                            })?;
+                            let value = map
+                                .get(&Value::String(key_name.clone()))
+                                .cloned()
+                                .ok_or_else(|| {
+                                    VmError::new(format!("map has no key '{key_name}'"))
+                                })?;
                             self.push(value);
                         }
-                        _ => {
-                            return Err(VmError::new(
-                                "DestructMapValue on non-map".to_string(),
-                            ))
-                        }
+                        _ => return Err(VmError::new("DestructMapValue on non-map".to_string())),
                     }
                 }
 
@@ -1070,7 +1261,11 @@ impl Vm {
                                     }
                                     // Truncate to the func_slot (base - 1) to
                                     // clean up the callee's stack window.
-                                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                                    let func_slot = if finished_base > 0 {
+                                        finished_base - 1
+                                    } else {
+                                        0
+                                    };
                                     self.stack.truncate(func_slot);
                                     self.push(result);
                                 }
@@ -1113,7 +1308,9 @@ impl Vm {
                     } else {
                         let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
                         // Try built-in trait methods (display, equal, compare)
-                        if let Some(result) = self.dispatch_trait_method(&receiver, &method_name, &extra_args) {
+                        if let Some(result) =
+                            self.dispatch_trait_method(&receiver, &method_name, &extra_args)
+                        {
                             self.stack.truncate(receiver_slot);
                             self.push(result?);
                         } else if let Value::Record(_, ref fields) = receiver {
@@ -1192,7 +1389,11 @@ impl Vm {
                     if self.frames.is_empty() {
                         return SliceResult::Completed(result);
                     }
-                    let func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                    let func_slot = if finished_base > 0 {
+                        finished_base - 1
+                    } else {
+                        0
+                    };
                     self.stack.truncate(func_slot);
                     self.push(result);
                 }
@@ -1226,7 +1427,12 @@ impl Vm {
 
     // ── Call a value ──────────────────────────────────────────────
 
-    fn call_value(&mut self, func_val: Value, argc: usize, func_slot: usize) -> Result<(), VmError> {
+    fn call_value(
+        &mut self,
+        func_val: Value,
+        argc: usize,
+        func_slot: usize,
+    ) -> Result<(), VmError> {
         const MAX_FRAMES: usize = 100_000;
         match func_val {
             Value::VmClosure(closure) => {
@@ -1274,23 +1480,27 @@ impl Vm {
                 self.push(Value::Variant(name, fields));
                 Ok(())
             }
-            _ => {
-                Err(VmError::new(format!(
-                    "cannot call value of type {}",
-                    self.type_name(&func_val)
-                )))
-            }
+            _ => Err(VmError::new(format!(
+                "cannot call value of type {}",
+                self.type_name(&func_val)
+            ))),
         }
     }
 
     /// Call a callable Value and return its result. Used for higher-order builtins.
-    pub(crate) fn invoke_callable(&mut self, func: &Value, args: &[Value]) -> Result<Value, VmError> {
+    pub(crate) fn invoke_callable(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+    ) -> Result<Value, VmError> {
         match func {
             Value::VmClosure(closure) => {
                 if args.len() != closure.function.arity as usize {
                     return Err(VmError::new(format!(
                         "function '{}' expects {} arguments, got {}",
-                        closure.function.name, closure.function.arity, args.len()
+                        closure.function.name,
+                        closure.function.arity,
+                        args.len()
                     )));
                 }
                 // Save state
@@ -1316,7 +1526,9 @@ impl Vm {
                             self.frames.pop();
                             if self.frames.len() < saved_frame_count {
                                 // This shouldn't happen
-                                return Err(VmError::new("frame underflow in invoke_callable".into()));
+                                return Err(VmError::new(
+                                    "frame underflow in invoke_callable".into(),
+                                ));
                             }
                             if self.frames.len() == saved_frame_count {
                                 // We've returned from our closure
@@ -1324,7 +1536,11 @@ impl Vm {
                                 return Ok(result);
                             }
                             // Otherwise, it's an inner return (nested calls)
-                            let inner_func_slot = if finished_base > 0 { finished_base - 1 } else { 0 };
+                            let inner_func_slot = if finished_base > 0 {
+                                finished_base - 1
+                            } else {
+                                0
+                            };
                             self.stack.truncate(inner_func_slot);
                             self.push(result);
                         }
@@ -1349,9 +1565,7 @@ impl Vm {
                     }
                 }
             }
-            Value::BuiltinFn(name) => {
-                self.dispatch_builtin(name, args)
-            }
+            Value::BuiltinFn(name) => self.dispatch_builtin(name, args),
             Value::VariantConstructor(name, arity) => {
                 if args.len() != *arity {
                     return Err(VmError::new(format!(
@@ -1361,9 +1575,9 @@ impl Vm {
                 }
                 Ok(Value::Variant(name.clone(), args.to_vec()))
             }
-            _ => {
-                Err(VmError::new(format!("cannot call value in invoke_callable")))
-            }
+            _ => Err(VmError::new(
+                "cannot call value in invoke_callable".to_string(),
+            )),
         }
     }
 
@@ -1404,21 +1618,33 @@ impl Vm {
                 match val {
                     Value::Int(n) => self.push(Value::Int(-n)),
                     Value::Float(n) => self.push(Value::Float(-n)),
-                    other => return Err(VmError::new(format!("cannot negate {}", self.type_name(&other)))),
+                    other => {
+                        return Err(VmError::new(format!(
+                            "cannot negate {}",
+                            self.type_name(&other)
+                        )));
+                    }
                 }
             }
             Op::Not => {
                 let val = self.pop()?;
                 match val {
                     Value::Bool(b) => self.push(Value::Bool(!b)),
-                    other => return Err(VmError::new(format!("cannot apply 'not' to {}", self.type_name(&other)))),
+                    other => {
+                        return Err(VmError::new(format!(
+                            "cannot apply 'not' to {}",
+                            self.type_name(&other)
+                        )));
+                    }
                 }
             }
             Op::And => {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 match (&a, &b) {
-                    (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val && *b_val)),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => {
+                        self.push(Value::Bool(*a_val && *b_val))
+                    }
                     _ => return Err(VmError::new("logical 'and' requires two booleans".into())),
                 }
             }
@@ -1426,7 +1652,9 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 match (&a, &b) {
-                    (Value::Bool(a_val), Value::Bool(b_val)) => self.push(Value::Bool(*a_val || *b_val)),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => {
+                        self.push(Value::Bool(*a_val || *b_val))
+                    }
                     _ => return Err(VmError::new("logical 'or' requires two booleans".into())),
                 }
             }
@@ -1448,7 +1676,9 @@ impl Vm {
                     if let Value::String(ref s) = self.stack[i] {
                         total_len += s.len();
                     } else {
-                        return Err(VmError::new("StringConcat: non-string value on stack".into()));
+                        return Err(VmError::new(
+                            "StringConcat: non-string value on stack".into(),
+                        ));
                     }
                 }
                 let mut result = String::with_capacity(total_len);
@@ -1479,9 +1709,11 @@ impl Vm {
             Op::GetGlobal => {
                 let name_index = self.read_u16()? as usize;
                 let name = self.read_constant_string(name_index)?;
-                let value = self.globals.get(&name).cloned().ok_or_else(|| {
-                    VmError::new(format!("undefined global: {name}"))
-                })?;
+                let value = self
+                    .globals
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| VmError::new(format!("undefined global: {name}")))?;
                 self.push(value);
             }
             Op::SetGlobal => {
@@ -1656,24 +1888,42 @@ impl Vm {
                 let target = self.pop()?;
                 match target {
                     Value::Record(_, ref fields) => {
-                        let val = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                        let val = fields
+                            .get(&name)
+                            .cloned()
+                            .ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
                         self.push(val);
                     }
                     Value::Map(ref map) => {
-                        let val = map.get(&Value::String(name.clone())).cloned().ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
+                        let val = map
+                            .get(&Value::String(name.clone()))
+                            .cloned()
+                            .ok_or_else(|| VmError::new(format!("map has no key '{name}'")))?;
                         self.push(val);
                     }
-                    other => return Err(VmError::new(format!("cannot access field '{}' on {}", name, self.type_name(&other)))),
+                    other => {
+                        return Err(VmError::new(format!(
+                            "cannot access field '{}' on {}",
+                            name,
+                            self.type_name(&other)
+                        )));
+                    }
                 }
             }
             Op::GetIndex => {
                 let index = self.read_u8()? as usize;
                 let target = self.pop()?;
                 if let Value::Tuple(ref elems) = target {
-                    let val = elems.get(index).cloned().ok_or_else(|| VmError::new(format!("tuple index out of bounds")))?;
+                    let val = elems
+                        .get(index)
+                        .cloned()
+                        .ok_or_else(|| VmError::new("tuple index out of bounds".to_string()))?;
                     self.push(val);
                 } else {
-                    return Err(VmError::new(format!("cannot index into {}", self.type_name(&target))));
+                    return Err(VmError::new(format!(
+                        "cannot index into {}",
+                        self.type_name(&target)
+                    )));
                 }
             }
             Op::Jump => {
@@ -1698,7 +1948,9 @@ impl Vm {
                     self.current_frame_mut()?.ip += offset;
                 }
             }
-            Op::Pop => { self.pop()?; }
+            Op::Pop => {
+                self.pop()?;
+            }
             Op::PopN => {
                 let count = self.read_u8()? as usize;
                 let new_len = self.stack.len().saturating_sub(count);
@@ -1773,35 +2025,52 @@ impl Vm {
             Op::DestructTuple => {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::Tuple(elems) = val { self.push(elems[index].clone()); }
-                else { return Err(VmError::new("DestructTuple on non-tuple".into())); }
+                if let Value::Tuple(elems) = val {
+                    self.push(elems[index].clone());
+                } else {
+                    return Err(VmError::new("DestructTuple on non-tuple".into()));
+                }
             }
             Op::DestructVariant => {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::Variant(_, fields) = val { self.push(fields[index].clone()); }
-                else { return Err(VmError::new("DestructVariant on non-variant".into())); }
+                if let Value::Variant(_, fields) = val {
+                    self.push(fields[index].clone());
+                } else {
+                    return Err(VmError::new("DestructVariant on non-variant".into()));
+                }
             }
             Op::DestructList => {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::List(xs) = val { self.push(xs[index].clone()); }
-                else { return Err(VmError::new("DestructList on non-list".into())); }
+                if let Value::List(xs) = val {
+                    self.push(xs[index].clone());
+                } else {
+                    return Err(VmError::new("DestructList on non-list".into()));
+                }
             }
             Op::DestructListRest => {
                 let start = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
-                if let Value::List(xs) = val { self.push(Value::List(Arc::new(xs[start..].to_vec()))); }
-                else { return Err(VmError::new("DestructListRest on non-list".into())); }
+                if let Value::List(xs) = val {
+                    self.push(Value::List(Arc::new(xs[start..].to_vec())));
+                } else {
+                    return Err(VmError::new("DestructListRest on non-list".into()));
+                }
             }
             Op::DestructRecordField => {
                 let ni = self.read_u16()? as usize;
                 let name = self.read_constant_string(ni)?;
                 let val = self.peek()?.clone();
                 if let Value::Record(_, fields) = val {
-                    let field = fields.get(&name).cloned().ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
+                    let field = fields
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
                     self.push(field);
-                } else { return Err(VmError::new("DestructRecordField on non-record".into())); }
+                } else {
+                    return Err(VmError::new("DestructRecordField on non-record".into()));
+                }
             }
             Op::TestRecordTag => {
                 let ni = self.read_u16()? as usize;
@@ -1825,11 +2094,18 @@ impl Vm {
                 let key_name = self.read_constant_string(ci)?;
                 let val = self.peek()?.clone();
                 if let Value::Map(map) = val {
-                    let value = map.get(&Value::String(key_name.clone())).cloned().ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
+                    let value = map
+                        .get(&Value::String(key_name.clone()))
+                        .cloned()
+                        .ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
                     self.push(value);
-                } else { return Err(VmError::new("DestructMapValue on non-map".into())); }
+                } else {
+                    return Err(VmError::new("DestructMapValue on non-map".into()));
+                }
             }
-            Op::LoopSetup => { let _ = self.read_u8()?; }
+            Op::LoopSetup => {
+                let _ = self.read_u8()?;
+            }
             Op::Recur => {
                 let arg_count = self.read_u8()? as usize;
                 let first_slot = self.read_u16()? as usize;
@@ -1847,7 +2123,11 @@ impl Vm {
                     Value::Variant(ref tag, ref fields) => match tag.as_str() {
                         "Ok" | "Some" => {
                             self.pop()?;
-                            self.push(if fields.len() == 1 { fields[0].clone() } else { Value::Unit });
+                            self.push(if fields.len() == 1 {
+                                fields[0].clone()
+                            } else {
+                                Value::Unit
+                            });
                         }
                         "Err" | "None" => {
                             let result = self.pop()?;
@@ -1862,7 +2142,12 @@ impl Vm {
                         }
                         _ => return Err(VmError::new(format!("? on non-Result/Option: {tag}"))),
                     },
-                    _ => return Err(VmError::new(format!("? on non-variant: {}", self.type_name(&val)))),
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "? on non-variant: {}",
+                            self.type_name(&val)
+                        )));
+                    }
                 }
             }
             Op::Panic => {
@@ -1885,7 +2170,9 @@ impl Vm {
                 } else {
                     let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
                     // Try built-in trait methods (display, equal, compare)
-                    if let Some(result) = self.dispatch_trait_method(&receiver, &method_name, &extra_args) {
+                    if let Some(result) =
+                        self.dispatch_trait_method(&receiver, &method_name, &extra_args)
+                    {
                         self.stack.truncate(receiver_slot);
                         self.push(result?);
                     } else if let Value::Record(_, ref fields) = receiver {
@@ -1906,10 +2193,20 @@ impl Vm {
                     }
                 }
             }
-            Op::ChanNew | Op::ChanSend | Op::ChanRecv | Op::ChanClose
-            | Op::ChanTrySend | Op::ChanTryRecv | Op::ChanSelect
-            | Op::TaskSpawn | Op::TaskJoin | Op::TaskCancel | Op::Yield => {
-                return Err(VmError::new("concurrency opcodes not yet implemented".into()));
+            Op::ChanNew
+            | Op::ChanSend
+            | Op::ChanRecv
+            | Op::ChanClose
+            | Op::ChanTrySend
+            | Op::ChanTryRecv
+            | Op::ChanSelect
+            | Op::TaskSpawn
+            | Op::TaskJoin
+            | Op::TaskCancel
+            | Op::Yield => {
+                return Err(VmError::new(
+                    "concurrency opcodes not yet implemented".into(),
+                ));
             }
         }
         Ok(())
@@ -1938,16 +2235,19 @@ impl Vm {
     // ── Bytecode reading ──────────────────────────────────────────
 
     fn read_byte(&mut self) -> Result<u8, VmError> {
-        let frame = self.frames.last().ok_or_else(|| {
-            VmError::new("internal: no call frame in read_byte".to_string())
-        })?;
+        let frame = self
+            .frames
+            .last()
+            .ok_or_else(|| VmError::new("internal: no call frame in read_byte".to_string()))?;
         let ip = frame.ip;
-        let byte = *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
-            VmError::new(format!("internal: bytecode out of bounds at ip={ip}"))
-        })?;
-        self.frames.last_mut().ok_or_else(|| {
-            VmError::new("internal: no call frame in read_byte".to_string())
-        })?.ip = ip + 1;
+        let byte =
+            *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
+                VmError::new(format!("internal: bytecode out of bounds at ip={ip}"))
+            })?;
+        self.frames
+            .last_mut()
+            .ok_or_else(|| VmError::new("internal: no call frame in read_byte".to_string()))?
+            .ip = ip + 1;
         Ok(byte)
     }
 
@@ -1963,9 +2263,14 @@ impl Vm {
 
     fn read_constant(&self, index: usize) -> Result<Value, VmError> {
         let frame = self.current_frame()?;
-        frame.closure.function.chunk.constants.get(index).cloned().ok_or_else(|| {
-            VmError::new(format!("internal: constant index {index} out of bounds"))
-        })
+        frame
+            .closure
+            .function
+            .chunk
+            .constants
+            .get(index)
+            .cloned()
+            .ok_or_else(|| VmError::new(format!("internal: constant index {index} out of bounds")))
     }
 
     fn read_constant_string(&self, index: usize) -> Result<String, VmError> {
@@ -1982,15 +2287,15 @@ impl Vm {
     // ── Frame access ──────────────────────────────────────────────
 
     fn current_frame(&self) -> Result<&CallFrame, VmError> {
-        self.frames.last().ok_or_else(|| {
-            VmError::new("internal: no call frame".to_string())
-        })
+        self.frames
+            .last()
+            .ok_or_else(|| VmError::new("internal: no call frame".to_string()))
     }
 
     fn current_frame_mut(&mut self) -> Result<&mut CallFrame, VmError> {
-        self.frames.last_mut().ok_or_else(|| {
-            VmError::new("internal: no call frame".to_string())
-        })
+        self.frames
+            .last_mut()
+            .ok_or_else(|| VmError::new("internal: no call frame".to_string()))
     }
 
     #[allow(dead_code)]
@@ -2073,7 +2378,8 @@ impl Vm {
                 let a_type = self.type_name(&a);
                 let b_type = self.type_name(&b);
                 // Special error for Int/Float mixing
-                if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int") {
+                if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int")
+                {
                     return Err(VmError::new(
                         "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion".to_string()
                     ));
@@ -2092,9 +2398,9 @@ impl Vm {
         let a = self.pop()?;
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => a
-                .partial_cmp(b)
-                .unwrap_or(std::cmp::Ordering::Equal),
+            (Value::Float(a), Value::Float(b)) => {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
             (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
@@ -2137,10 +2443,13 @@ impl Vm {
         }
     }
 
-    pub(crate) fn get_regex<'a>(cache: &'a mut HashMap<String, Regex>, pattern: &str) -> Result<&'a Regex, VmError> {
+    pub(crate) fn get_regex<'a>(
+        cache: &'a mut HashMap<String, Regex>,
+        pattern: &str,
+    ) -> Result<&'a Regex, VmError> {
         if !cache.contains_key(pattern) {
-            let re = Regex::new(pattern)
-                .map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            let re =
+                Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
             if cache.len() >= 256 {
                 cache.clear();
             }
@@ -2266,7 +2575,9 @@ impl Vm {
                 let other = &extra_args[0];
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
-                    (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+                    (Value::Float(a), Value::Float(b)) => {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    }
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     _ => {
@@ -2290,11 +2601,7 @@ impl Vm {
 
     // ── Builtin dispatch ──────────────────────────────────────────
 
-    fn dispatch_builtin(
-        &mut self,
-        name: &str,
-        args: &[Value],
-    ) -> Result<Value, VmError> {
+    fn dispatch_builtin(&mut self, name: &str, args: &[Value]) -> Result<Value, VmError> {
         // Foreign functions take priority -- lets embedders override builtins.
         if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
             return f(args);
@@ -2368,7 +2675,6 @@ impl Vm {
         }
     }
 
-
     /// Get current epoch milliseconds. Uses `__wasm_epoch_ms` foreign function
     /// if registered (WASM), otherwise falls back to `SystemTime`.
     pub(crate) fn epoch_ms(&self) -> Result<i64, VmError> {
@@ -2379,7 +2685,8 @@ impl Vm {
             }
         } else {
             use std::time::{SystemTime, UNIX_EPOCH};
-            let dur = SystemTime::now().duration_since(UNIX_EPOCH)
+            let dur = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
                 .map_err(|e| VmError::new(format!("clock failed: {e}")))?;
             Ok(dur.as_millis() as i64)
         }
@@ -2397,9 +2704,7 @@ mod tests {
     use crate::parser::Parser;
 
     /// Helper: build a Function from raw bytecode construction.
-    fn make_function(
-        build: impl FnOnce(&mut Chunk),
-    ) -> Arc<Function> {
+    fn make_function(build: impl FnOnce(&mut Chunk)) -> Arc<Function> {
         let mut func = Function::new("<test>".to_string(), 0);
         build(&mut func.chunk);
         Arc::new(func)
@@ -2419,7 +2724,6 @@ mod tests {
         let mut vm = Vm::new();
         vm.run(script).unwrap()
     }
-
 
     // ── Phase 1 bytecode-level tests ──────────────────────────────
 
@@ -2795,47 +3099,56 @@ mod tests {
 
     #[test]
     fn test_e2e_function_call() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn add(a, b) { a + b }
             fn main() { add(10, 20) }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_e2e_let_binding() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = 42
                 x
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_e2e_let_and_string_interp() {
-        run_vm(r#"
+        run_vm(
+            r#"
             fn main() {
                 let x = 42
                 println("x = {x}")
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_e2e_multiple_functions() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn double(n) { n * 2 }
             fn add_one(n) { n + 1 }
             fn main() { add_one(double(5)) }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(11));
     }
 
     #[test]
     fn test_e2e_recursion() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn factorial(n) {
                 match n {
                     0 -> 1
@@ -2843,60 +3156,70 @@ mod tests {
                 }
             }
             fn main() { factorial(5) }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(120));
     }
 
     #[test]
     fn test_e2e_string_operations() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import string
 
             fn main() {
                 let s = "hello, world"
                 string.length(s)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(12));
     }
 
     #[test]
     fn test_e2e_list_operations() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let xs = [1, 2, 3, 4, 5]
                 list.length(xs)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(5));
     }
 
     #[test]
     fn test_e2e_test_assert() {
-        run_vm(r#"
+        run_vm(
+            r#"
             import test
 
             fn main() {
                 test.assert_eq(2 + 2, 4)
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_e2e_nested_calls() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn f(x) { x + 1 }
             fn g(x) { f(x) * 2 }
             fn main() { g(10) }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(22));
     }
 
     #[test]
     fn test_e2e_match_int() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn classify(n) {
                 match n {
                     0 -> "zero"
@@ -2905,73 +3228,93 @@ mod tests {
                 }
             }
             fn main() { classify(1) }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("one".into()));
     }
 
     #[test]
     fn test_e2e_boolean_logic() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let a = true
                 let b = false
                 a && !b
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Bool(true));
     }
 
     #[test]
     fn test_e2e_builtin_println_call() {
         // Test that println works when called as a regular function via globals
-        run_vm(r#"
+        run_vm(
+            r#"
             fn main() {
                 println("testing 1 2 3")
             }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_e2e_variant_constructor() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = Some(42)
                 x
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(42)]));
     }
 
     #[test]
     fn test_e2e_int_to_string() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import int
 
             fn main() {
                 int.to_string(42)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("42".into()));
     }
 
     #[test]
     fn test_e2e_list_append() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let xs = [1, 2, 3]
                 list.append(xs, 4)
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+                Value::Int(4)
+            ]))
+        );
     }
 
     // ── Phase 3: Closures and upvalue capture ────────────────────────
 
     #[test]
     fn test_closure_capture() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn make_adder(n) {
                 fn(x) { x + n }
             }
@@ -2979,26 +3322,37 @@ mod tests {
                 let add5 = make_adder(5)
                 add5(10)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(15));
     }
 
     #[test]
     fn test_closure_in_map() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let factor = 10
                 [1, 2, 3] |> list.map(fn(x) { x * factor })
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Int(10),
+                Value::Int(20),
+                Value::Int(30)
+            ]))
+        );
     }
 
     #[test]
     fn test_higher_order() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn apply_twice(f, x) {
                 f(f(x))
             }
@@ -3006,14 +3360,16 @@ mod tests {
                 let double = fn(x) { x * 2 }
                 apply_twice(double, 3)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(12));
     }
 
     #[test]
     fn test_closure_counter() {
         // Tests that closures capture values, not references
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
@@ -3022,13 +3378,22 @@ mod tests {
                 })
                 fns |> list.map(fn(f) { f() })
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Int(10),
+                Value::Int(20),
+                Value::Int(30)
+            ]))
+        );
     }
 
     #[test]
     fn test_closure_multiple_captures() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn make_linear(a, b) {
                 fn(x) { a * x + b }
             }
@@ -3036,14 +3401,16 @@ mod tests {
                 let f = make_linear(3, 7)
                 f(10)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(37));
     }
 
     #[test]
     fn test_closure_transitive_capture() {
         // outer -> middle -> inner: transitive upvalue chaining
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn outer(x) {
                 let make_inner = fn() {
                     fn() { x }
@@ -3054,74 +3421,89 @@ mod tests {
                 let f = outer(42)
                 f()
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_closure_no_capture() {
         // Lambda that doesn't capture anything (no upvalues needed)
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let f = fn(x) { x + 1 }
                 f(10)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(11));
     }
 
     #[test]
     fn test_closure_with_filter() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let threshold = 3
                 [1, 2, 3, 4, 5] |> list.filter(fn(x) { x > threshold })
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)]))
+        );
     }
 
     #[test]
     fn test_closure_with_fold() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let offset = 100
                 [1, 2, 3] |> list.fold(offset, fn(acc, x) { acc + x })
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(106));
     }
 
     #[test]
     fn test_let_tuple_destructure() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let (a, b) = (10, 20)
                 a + b
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_let_tuple_destructure_three() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let (a, b, c) = (1, 2, 3)
                 a * 100 + b * 10 + c
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(123));
     }
 
     #[test]
     fn test_closure_returned_from_fn() {
         // A named function returns a closure that captures a parameter
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn multiplier(factor) {
                 fn(x) { x * factor }
             }
@@ -3130,54 +3512,75 @@ mod tests {
                 let times7 = multiplier(7)
                 times3(10) + times7(5)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(65));
     }
 
     #[test]
     fn test_closure_with_pipe_and_fn_syntax() {
         // Pipe with explicit fn(x) { ... } closure
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let base = 5
                 [1, 2, 3] |> list.map(fn(x) { x + base })
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(6), Value::Int(7), Value::Int(8)]))
+        );
     }
 
     #[test]
     fn test_trailing_closure_with_capture() {
         // Pipe with trailing closure syntax { x -> ... }
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let factor = 10
                 [1, 2, 3] |> list.map { x -> x * factor }
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![
+                Value::Int(10),
+                Value::Int(20),
+                Value::Int(30)
+            ]))
+        );
     }
 
     #[test]
     fn test_trailing_closure_filter_with_capture() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let limit = 3
                 [1, 2, 3, 4, 5] |> list.filter { x -> x > limit }
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)]))
+        );
     }
 
     #[test]
     fn test_chained_pipes_with_closures() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
@@ -3187,209 +3590,257 @@ mod tests {
                     |> list.map(fn(x) { x + offset })
                     |> list.filter(fn(x) { x > cutoff })
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(14), Value::Int(15)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(14), Value::Int(15)]))
+        );
     }
 
     // ── Phase 4: Full pattern matching ──────────────────────────────
 
     #[test]
     fn test_match_int_literal() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() { match 42 { 42 -> "yes" _ -> "no" } }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("yes".into()));
     }
 
     #[test]
     fn test_match_int_fallthrough() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() { match 99 { 42 -> "yes" _ -> "no" } }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("no".into()));
     }
 
     #[test]
     fn test_match_string_literal() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() { match "hello" { "hello" -> 1 _ -> 0 } }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(1));
     }
 
     #[test]
     fn test_match_bool_literal() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() { match true { true -> "yes" false -> "no" } }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("yes".into()));
     }
 
     #[test]
     fn test_match_float_literal() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() { match 3.14 { 3.14 -> "pi" _ -> "other" } }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("pi".into()));
     }
 
     #[test]
     fn test_match_tuple() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (1, 2) { (1, y) -> y * 10  _ -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(20));
     }
 
     #[test]
     fn test_match_tuple_wildcard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (1, 2) { (_, y) -> y + 100  _ -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(102));
     }
 
     #[test]
     fn test_match_tuple_len_mismatch() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (1, 2, 3) { (a, b) -> a + b  _ -> 99 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(99));
     }
 
     #[test]
     fn test_match_list_exact() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [1, 2, 3] { [a, b, c] -> a + b + c  _ -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(6));
     }
 
     #[test]
     fn test_match_list_exact_mismatch() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [1, 2] { [a, b, c] -> a + b + c  _ -> 99 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(99));
     }
 
     #[test]
     fn test_match_list_head_rest() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [10, 20, 30] { [h, ..t] -> h  _ -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(10));
     }
 
     #[test]
     fn test_match_list_rest_value() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [10, 20, 30] { [_, ..t] -> t  _ -> [] }
             }
-        "#);
-        assert_eq!(result, Value::List(Arc::new(vec![Value::Int(20), Value::Int(30)])));
+        "#,
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(20), Value::Int(30)]))
+        );
     }
 
     #[test]
     fn test_match_list_empty_rest() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [10] { [h, ..t] -> t  _ -> [99] }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::List(Arc::new(vec![])));
     }
 
     #[test]
     fn test_match_constructor_simple() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some(42) { Some(n) -> n  None -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_match_constructor_none() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match None { Some(n) -> n  None -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(0));
     }
 
     #[test]
     fn test_match_constructor_ok_err() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let v = Ok(42)
                 match v { Ok(n) -> n  Err(_) -> -1 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_match_nested_constructor_tuple() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some((1, 2)) { Some((a, b)) -> a + b  None -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(3));
     }
 
     #[test]
     fn test_match_nested_constructor_list() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some([10, 20]) {
                     Some([h, ..t]) -> h
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(10));
     }
 
     #[test]
     fn test_match_or_pattern() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 2 { 1 | 2 | 3 -> "small" _ -> "big" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("small".into()));
     }
 
     #[test]
     fn test_match_or_pattern_no_match() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 5 { 1 | 2 | 3 -> "small" _ -> "big" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("big".into()));
     }
 
     #[test]
     fn test_match_guard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 42 {
                     n when n > 100 -> "big"
@@ -3397,13 +3848,15 @@ mod tests {
                     _ -> "other"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("positive".into()));
     }
 
     #[test]
     fn test_match_guard_all_fail() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match -5 {
                     n when n > 100 -> "big"
@@ -3411,98 +3864,116 @@ mod tests {
                     _ -> "other"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("other".into()));
     }
 
     #[test]
     fn test_match_range() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 5 { 1..10 -> "in range" _ -> "out" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("in range".into()));
     }
 
     #[test]
     fn test_match_range_boundary() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 10 { 1..10 -> "in range" _ -> "out" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("in range".into()));
     }
 
     #[test]
     fn test_match_range_out() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 11 { 1..10 -> "in range" _ -> "out" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("out".into()));
     }
 
     #[test]
     fn test_guardless_match() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = 5
                 match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("positive".into()));
     }
 
     #[test]
     fn test_guardless_match_default() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = -5
                 match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("other".into()));
     }
 
     #[test]
     fn test_let_tuple_destructure_nested() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let (a, (b, c)) = (1, (2, 3))
                 a + b + c
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(6));
     }
 
     #[test]
     fn test_let_list_destructure() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let [a, b, c] = [10, 20, 30]
                 a + b + c
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(60));
     }
 
     #[test]
     fn test_let_list_head_rest() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let [h, ..t] = [1, 2, 3, 4]
                 h
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(1));
     }
 
     #[test]
     fn test_match_multiple_arms() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn classify(n) {
                 match n {
                     0 -> "zero"
@@ -3514,33 +3985,39 @@ mod tests {
             fn main() {
                 classify(2)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("two".into()));
     }
 
     #[test]
     fn test_match_ident_binding() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 42 { x -> x + 1 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(43));
     }
 
     #[test]
     fn test_match_wildcard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 42 { _ -> "matched" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("matched".into()));
     }
 
     #[test]
     fn test_match_constructor_with_guard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some(5) {
                     Some(n) when n > 10 -> "big"
@@ -3548,13 +4025,15 @@ mod tests {
                     None -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(10));
     }
 
     #[test]
     fn test_when_bool_guard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn safe_div(a, b) {
                 when b != 0 else { return Err("div by zero") }
                 Ok(a / b)
@@ -3562,13 +4041,15 @@ mod tests {
             fn main() {
                 match safe_div(10, 2) { Ok(n) -> n  Err(_) -> -1 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(5));
     }
 
     #[test]
     fn test_when_bool_guard_fails() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn safe_div(a, b) {
                 when b != 0 else { return Err("div by zero") }
                 Ok(a / b)
@@ -3576,98 +4057,114 @@ mod tests {
             fn main() {
                 match safe_div(10, 0) { Ok(n) -> n  Err(_) -> -1 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(-1));
     }
 
     #[test]
     fn test_match_list_two_elems_with_rest() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [1, 2, 3, 4, 5] {
                     [a, b, ..rest] -> a + b
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(3));
     }
 
     #[test]
     fn test_match_tuple_three() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (10, 20, 30) {
                     (a, b, c) -> a + b + c
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(60));
     }
 
     #[test]
     fn test_match_nested_tuple_in_list() {
         // Match a list where elements are extracted as simple ints
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [1, 2] {
                     [a, b] -> a * 100 + b
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(102));
     }
 
     #[test]
     fn test_match_constructor_wildcard_field() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Ok(42) { Ok(_) -> "is ok" Err(_) -> "is err" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("is ok".into()));
     }
 
     #[test]
     fn test_match_or_pattern_constructor() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match None { Some(_) -> "has value"  None -> "empty" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("empty".into()));
     }
 
     #[test]
     fn test_match_deeply_nested() {
         // Some((a, [h, ..t]))
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some((1, [10, 20, 30])) {
                     Some((a, [h, ..t])) -> a + h
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(11));
     }
 
     #[test]
     fn test_guardless_match_first_branch() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = 50
                 match { x > 10 -> "big"  x > 0 -> "positive"  _ -> "other" }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("big".into()));
     }
 
     #[test]
     fn test_match_in_function() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn describe(opt) {
                 match opt {
                     Some(n) when n > 0 -> "positive"
@@ -3679,13 +4176,15 @@ mod tests {
             fn main() {
                 describe(Some(0))
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("zero".into()));
     }
 
     #[test]
     fn test_match_float_range() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 3.14 {
                     0.0..1.0 -> "small"
@@ -3693,13 +4192,15 @@ mod tests {
                     _ -> "large"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("medium".into()));
     }
 
     #[test]
     fn test_match_float_range_out() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 10.0 {
                     0.0..1.0 -> "small"
@@ -3707,14 +4208,16 @@ mod tests {
                     _ -> "large"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("large".into()));
     }
 
     #[test]
     fn test_match_recursive_list_sum() {
         // Use match to destructure a list recursively
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn sum(xs) {
                 match xs {
                     [] -> 0
@@ -3724,13 +4227,15 @@ mod tests {
             fn main() {
                 sum([1, 2, 3, 4, 5])
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(15));
     }
 
     #[test]
     fn test_match_map_pattern() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let m = #{"name": "Alice", "age": "30"}
                 match m {
@@ -3738,13 +4243,15 @@ mod tests {
                     _ -> "unknown"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("Alice".into()));
     }
 
     #[test]
     fn test_match_constructor_nested_or() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match 42 {
                     1 | 2 | 3 -> "tiny"
@@ -3752,50 +4259,58 @@ mod tests {
                     _ -> "other"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("big".into()));
     }
 
     #[test]
     fn test_match_tuple_nested_wildcard() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (1, (2, 3)) {
                     (1, (_, c)) -> c * 10
                     _ -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_match_list_empty() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match [] {
                     [] -> "empty"
                     _ -> "not empty"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("empty".into()));
     }
 
     #[test]
     fn test_let_constructor_destructure() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let x = Ok(42)
                 match x { Ok(n) -> n  Err(_) -> 0 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_match_multiple_constructors_sequence() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn process(items) {
                 match items {
                     [] -> 0
@@ -3805,13 +4320,15 @@ mod tests {
             fn main() {
                 process([10, 20, 30])
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(60));
     }
 
     #[test]
     fn test_match_pin_pattern() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let expected = 42
                 match 42 {
@@ -3819,13 +4336,15 @@ mod tests {
                     _ -> "nope"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("matched".into()));
     }
 
     #[test]
     fn test_match_pin_pattern_no_match() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let expected = 42
                 match 99 {
@@ -3833,13 +4352,15 @@ mod tests {
                     _ -> "nope"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("nope".into()));
     }
 
     #[test]
     fn test_when_pattern_match() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn extract(val) {
                 when Some(n) = val else { return -1 }
                 n
@@ -3847,13 +4368,15 @@ mod tests {
             fn main() {
                 extract(Some(42))
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
     #[test]
     fn test_when_pattern_match_fails() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn extract(val) {
                 when Some(n) = val else { return -1 }
                 n
@@ -3861,34 +4384,39 @@ mod tests {
             fn main() {
                 extract(None)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(-1));
     }
 
     #[test]
     fn test_match_or_pattern_with_binding() {
         // Or-patterns where each alt binds the same variable
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match Some(5) {
                     Some(n) -> n * 2
                     None -> 0
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(10));
     }
 
     #[test]
     fn test_match_guard_with_tuple() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 match (3, 4) {
                     (a, b) when a + b > 10 -> "big"
                     (a, b) -> a + b
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(7));
     }
 
@@ -3896,7 +4424,8 @@ mod tests {
 
     #[test]
     fn test_loop_sum() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 loop x = 0, sum = 0 {
                     match x >= 10 {
@@ -3905,13 +4434,15 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(45));
     }
 
     #[test]
     fn test_loop_factorial() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 loop n = 10, acc = 1 {
                     match n <= 1 {
@@ -3920,64 +4451,74 @@ mod tests {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(3628800));
     }
 
     #[test]
     fn test_record_create_and_access() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type User { name: String, age: Int }
             fn main() {
                 let u = User { name: "Alice", age: 30 }
                 u.age
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_record_update() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type User { name: String, age: Int }
             fn main() {
                 let u = User { name: "Alice", age: 30 }
                 let u2 = u.{ age: 31 }
                 u2.age
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(31));
     }
 
     #[test]
     fn test_range_expression() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import list
 
             fn main() {
                 let nums = 1..6
                 nums |> list.fold(0) { acc, n -> acc + n }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(15));
     }
 
     #[test]
     fn test_set_literal() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import set
 
             fn main() {
                 let s = #[1, 2, 3, 2, 1]
                 set.length(s)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(3));
     }
 
     #[test]
     fn test_question_mark_ok() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import int
 
             fn parse_add(a, b) {
@@ -3991,13 +4532,15 @@ mod tests {
                     Err(_) -> -1
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_question_mark_err() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import int
 
             fn parse_add(a, b) {
@@ -4011,25 +4554,29 @@ mod tests {
                     Err(_) -> -1
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(-1));
     }
 
     #[test]
     fn test_type_decl_variant_constructors() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type Color { Red, Green, Blue }
             fn main() {
                 let c = Red
                 match c { Red -> 1  Green -> 2  Blue -> 3 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(1));
     }
 
     #[test]
     fn test_type_decl_variant_with_fields() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type Shape { Circle(Float), Rect(Float, Float) }
             fn main() {
                 let s = Circle(5.0)
@@ -4038,13 +4585,15 @@ mod tests {
                     Rect(w, h) -> w + h
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Float(5.0));
     }
 
     #[test]
     fn test_custom_display_trait() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type Shape { Circle(Float), Rect(Float, Float) }
             trait Display for Shape {
                 fn display(self) -> String {
@@ -4058,24 +4607,28 @@ mod tests {
                 let s = Circle(5.0)
                 s.display()
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::String("Circle".to_string()));
     }
 
     #[test]
     fn test_tuple_index_access() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn main() {
                 let pair = (10, 20)
                 pair.0 + pair.1
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(30));
     }
 
     #[test]
     fn test_recursive_variant_eval() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             type Expr { Num(Int), Add(Expr, Expr) }
             fn eval(expr) {
                 match expr {
@@ -4086,13 +4639,15 @@ mod tests {
             fn main() {
                 eval(Add(Num(3), Num(5)))
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(8));
     }
 
     #[test]
     fn test_loop_in_function() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             fn sum_to(n) {
                 loop i = 0, acc = 0 {
                     match i > n {
@@ -4104,7 +4659,8 @@ mod tests {
             fn main() {
                 sum_to(100)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(5050));
     }
 
@@ -4112,14 +4668,16 @@ mod tests {
 
     #[test]
     fn test_spawn_join() {
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import task
 
             fn main() {
                 let t = task.spawn(fn() { 42 })
                 task.join(t)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
@@ -4127,7 +4685,8 @@ mod tests {
     fn test_spawn_join_already_completed() {
         // Ensure task.join works when the fiber has already completed
         // before join is called (the original deadlock scenario).
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import channel
             import task
 
@@ -4142,14 +4701,16 @@ mod tests {
                 -- Now the fiber should already be completed
                 task.join(t)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(99));
     }
 
     #[test]
     fn test_spawn_join_multiple_completed() {
         // Multiple fibers that complete before join is called
-        let result = run_vm(r#"
+        let result = run_vm(
+            r#"
             import channel
             import task
 
@@ -4177,7 +4738,8 @@ mod tests {
                 let c = task.join(t3)
                 a + b + c
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(60));
     }
 
@@ -4254,22 +4816,33 @@ mod tests {
     fn test_foreign_fn_returns_result() {
         let mut vm = Vm::new();
         vm.register_fn1("safe_div", |x: i64| -> Result<i64, String> {
-            if x != 0 { Ok(100 / x) } else { Err("division by zero".into()) }
+            if x != 0 {
+                Ok(100 / x)
+            } else {
+                Err("division by zero".into())
+            }
         });
         let result = run_vm_with(&mut vm, "fn main() { safe_div(5) }");
         assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(20)]));
         let result = run_vm_with(&mut vm, "fn main() { safe_div(0) }");
-        assert_eq!(result, Value::Variant("Err".into(), vec![Value::String("division by zero".into())]));
+        assert_eq!(
+            result,
+            Value::Variant("Err".into(), vec![Value::String("division by zero".into())])
+        );
     }
 
     #[test]
     fn test_foreign_fn_higher_order() {
         let mut vm = Vm::new();
         vm.register_fn1("square", |x: i64| -> i64 { x * x });
-        let result = run_vm_with(&mut vm, "import list\nfn main() { [1, 2, 3] |> list.map(square) }");
-        assert_eq!(result, Value::List(Arc::new(vec![
-            Value::Int(1), Value::Int(4), Value::Int(9),
-        ])));
+        let result = run_vm_with(
+            &mut vm,
+            "import list\nfn main() { [1, 2, 3] |> list.map(square) }",
+        );
+        assert_eq!(
+            result,
+            Value::List(Arc::new(vec![Value::Int(1), Value::Int(4), Value::Int(9),]))
+        );
     }
 
     #[test]
@@ -4277,12 +4850,15 @@ mod tests {
         let mut vm = Vm::new();
         vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 });
         // Module-qualified names go through GetGlobal + Call, not CallBuiltin
-        let result = run_vm_with(&mut vm, r#"
+        let result = run_vm_with(
+            &mut vm,
+            r#"
             fn main() {
                 let f = mylib.double
                 f(21)
             }
-        "#);
+        "#,
+        );
         assert_eq!(result, Value::Int(42));
     }
 
@@ -4290,7 +4866,9 @@ mod tests {
     fn test_foreign_fn_type_error() {
         let mut vm = Vm::new();
         vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
-        let tokens = Lexer::new(r#"fn main() { double("hello") }"#).tokenize().unwrap();
+        let tokens = Lexer::new(r#"fn main() { double("hello") }"#)
+            .tokenize()
+            .unwrap();
         let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         let functions = compiler.compile_program(&program).unwrap();

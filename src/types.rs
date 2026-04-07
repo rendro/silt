@@ -241,9 +241,13 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             fvs
         }
         Type::Set(inner) => free_vars_in(inner),
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error | Type::Never => {
-            Vec::new()
-        }
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Error
+        | Type::Never => Vec::new(),
     }
 }
 
@@ -258,10 +262,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             }
         }
         Type::Fun(params, ret) => {
-            let params = params
-                .iter()
-                .map(|p| substitute_vars(p, mapping))
-                .collect();
+            let params = params.iter().map(|p| substitute_vars(p, mapping)).collect();
             let ret = Box::new(substitute_vars(ret, mapping));
             Type::Fun(params, ret)
         }
@@ -318,9 +319,11 @@ pub fn substitute_enum_params(
             let ret = Box::new(substitute_enum_params(ret, param_names, type_args));
             Type::Fun(params, ret)
         }
-        Type::List(inner) => {
-            Type::List(Box::new(substitute_enum_params(inner, param_names, type_args)))
-        }
+        Type::List(inner) => Type::List(Box::new(substitute_enum_params(
+            inner,
+            param_names,
+            type_args,
+        ))),
         Type::Tuple(elems) => Type::Tuple(
             elems
                 .iter()

@@ -13,7 +13,7 @@ use crate::ast::*;
 use crate::lexer::Span;
 use crate::types::*;
 
-pub use crate::types::{Type, TyVar, Scheme, Severity, TypeError};
+pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
 
 // ── Type environment ────────────────────────────────────────────────
 
@@ -118,7 +118,6 @@ struct MethodEntry {
     is_auto_derived: bool,
 }
 
-
 // ── The type checker ────────────────────────────────────────────────
 
 pub struct TypeChecker {
@@ -144,6 +143,12 @@ pub struct TypeChecker {
     /// Tracks the number of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity can be validated.
     loop_binding_count: Option<usize>,
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TypeChecker {
@@ -189,9 +194,7 @@ impl TypeChecker {
                 Type::Fun(params, ret)
             }
             Type::List(inner) => Type::List(Box::new(self.apply(inner))),
-            Type::Tuple(elems) => {
-                Type::Tuple(elems.iter().map(|e| self.apply(e)).collect())
-            }
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
             Type::Record(name, fields) => {
                 let fields = fields
                     .iter()
@@ -207,9 +210,7 @@ impl TypeChecker {
                 let args = args.iter().map(|a| self.apply(a)).collect();
                 Type::Generic(name.clone(), args)
             }
-            Type::Map(k, v) => {
-                Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v)))
-            }
+            Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
             _ => ty.clone(),
         }
@@ -233,10 +234,7 @@ impl TypeChecker {
 
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {
-                    self.error(
-                        format!("infinite type: ?{v} occurs in {t}"),
-                        span,
-                    );
+                    self.error(format!("infinite type: ?{v} occurs in {t}"), span);
                 } else {
                     self.subst[*v] = Some(t.clone());
                 }
@@ -313,10 +311,7 @@ impl TypeChecker {
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
-                    self.error(
-                        format!("type mismatch: expected {n2}, got {n1}"),
-                        span,
-                    );
+                    self.error(format!("type mismatch: expected {n2}, got {n1}"), span);
                 } else if a1.len() != a2.len() {
                     self.error(
                         format!(
@@ -335,10 +330,7 @@ impl TypeChecker {
 
             (Type::Variant(n1, a1), Type::Variant(n2, a2)) => {
                 if n1 != n2 {
-                    self.error(
-                        format!("variant mismatch: expected {n1}, got {n2}"),
-                        span,
-                    );
+                    self.error(format!("variant mismatch: expected {n1}, got {n2}"), span);
                 } else if a1.len() != a2.len() {
                     self.error(
                         format!(
@@ -356,10 +348,7 @@ impl TypeChecker {
             }
 
             _ => {
-                self.error(
-                    format!("type mismatch: expected {t2}, got {t1}"),
-                    span,
-                );
+                self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
             }
         }
     }
@@ -376,7 +365,11 @@ impl TypeChecker {
             .into_iter()
             .filter(|v| !env_fvs.contains(v))
             .collect();
-        Scheme { vars, ty, constraints: vec![] }
+        Scheme {
+            vars,
+            ty,
+            constraints: vec![],
+        }
     }
 
     /// Instantiate a scheme by replacing quantified variables with fresh ones.
@@ -392,12 +385,14 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         let ty = substitute_vars(&scheme.ty, &mapping);
-        let constraints = scheme.constraints.iter().map(|(v, trait_name)| {
-            match mapping.get(v) {
+        let constraints = scheme
+            .constraints
+            .iter()
+            .map(|(v, trait_name)| match mapping.get(v) {
                 Some(Type::Var(new_v)) => (*new_v, trait_name.clone()),
                 _ => (*v, trait_name.clone()),
-            }
-        }).collect();
+            })
+            .collect();
         (ty, constraints)
     }
 
@@ -431,12 +426,20 @@ impl TypeChecker {
     // ── Error reporting ─────────────────────────────────────────────
 
     fn error(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError { message, span, severity: Severity::Error });
+        self.errors.push(TypeError {
+            message,
+            span,
+            severity: Severity::Error,
+        });
     }
 
     #[allow(dead_code)]
     fn warning(&mut self, message: std::string::String, span: Span) {
-        self.errors.push(TypeError { message, span, severity: Severity::Warning });
+        self.errors.push(TypeError {
+            message,
+            span,
+            severity: Severity::Warning,
+        });
     }
 
     // ── Check a full program ────────────────────────────────────────
@@ -450,51 +453,98 @@ impl TypeChecker {
         // Register built-in traits
         {
             let display_self = self.fresh_var();
-            self.traits.insert("Display".into(), TraitInfo {
-                _name: "Display".into(),
-                methods: vec![("display".into(), Type::Fun(vec![display_self], Box::new(Type::String)))],
-            });
+            self.traits.insert(
+                "Display".into(),
+                TraitInfo {
+                    _name: "Display".into(),
+                    methods: vec![(
+                        "display".into(),
+                        Type::Fun(vec![display_self], Box::new(Type::String)),
+                    )],
+                },
+            );
         }
         {
             let compare_a = self.fresh_var();
             let compare_b = self.fresh_var();
-            self.traits.insert("Compare".into(), TraitInfo {
-                _name: "Compare".into(),
-                methods: vec![("compare".into(), Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)))],
-            });
+            self.traits.insert(
+                "Compare".into(),
+                TraitInfo {
+                    _name: "Compare".into(),
+                    methods: vec![(
+                        "compare".into(),
+                        Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
+                    )],
+                },
+            );
         }
         {
             let equal_a = self.fresh_var();
             let equal_b = self.fresh_var();
-            self.traits.insert("Equal".into(), TraitInfo {
-                _name: "Equal".into(),
-                methods: vec![("equal".into(), Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)))],
-            });
+            self.traits.insert(
+                "Equal".into(),
+                TraitInfo {
+                    _name: "Equal".into(),
+                    methods: vec![(
+                        "equal".into(),
+                        Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
+                    )],
+                },
+            );
         }
         {
             let hash_self = self.fresh_var();
-            self.traits.insert("Hash".into(), TraitInfo {
-                _name: "Hash".into(),
-                methods: vec![("hash".into(), Type::Fun(vec![hash_self], Box::new(Type::Int)))],
-            });
+            self.traits.insert(
+                "Hash".into(),
+                TraitInfo {
+                    _name: "Hash".into(),
+                    methods: vec![(
+                        "hash".into(),
+                        Type::Fun(vec![hash_self], Box::new(Type::Int)),
+                    )],
+                },
+            );
         }
 
         // Register builtin trait implementations for primitive types.
         // These allow where clauses like `where a: Equal` to resolve
         // when `a` is Int, String, Bool, etc.
         {
-            let dummy_span = Span { line: 0, col: 0, offset: 0 };
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
             let primitive_types = ["Int", "Float", "Bool", "String", "()"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
-                ("display", Type::Fun(vec![self.fresh_var()], Box::new(Type::String))),
-                ("equal", Type::Fun(vec![self.fresh_var(), self.fresh_var()], Box::new(Type::Bool))),
-                ("compare", Type::Fun(vec![self.fresh_var(), self.fresh_var()], Box::new(Type::Int))),
-                ("hash", Type::Fun(vec![self.fresh_var()], Box::new(Type::Int))),
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
             ];
             for type_name in &primitive_types {
                 for trait_name in &all_traits {
-                    self.trait_impl_set.insert((trait_name.to_string(), type_name.to_string()));
+                    self.trait_impl_set
+                        .insert((trait_name.to_string(), type_name.to_string()));
                 }
                 // Register method entries for each builtin trait method
                 for (method_name, method_type) in trait_methods {
@@ -510,7 +560,8 @@ impl TypeChecker {
             }
             for type_name in &["List", "Tuple", "Map", "Set"] {
                 for trait_name in &all_traits {
-                    self.trait_impl_set.insert((trait_name.to_string(), type_name.to_string()));
+                    self.trait_impl_set
+                        .insert((trait_name.to_string(), type_name.to_string()));
                 }
                 for (method_name, method_type) in trait_methods {
                     self.method_table.insert(
@@ -538,15 +589,15 @@ impl TypeChecker {
                         // registered under their bare name — no alias needed.
                     }
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
-                if crate::module::is_builtin_module(module) {
-                    let functions = crate::module::builtin_module_functions(module);
-                    for func in functions {
-                        let qualified = format!("{module}.{func}");
-                        let aliased = format!("{alias}.{func}");
-                        if let Some(scheme) = env.lookup(&qualified).cloned() {
-                            env.define(aliased, scheme);
-                        }
+            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl
+                && crate::module::is_builtin_module(module)
+            {
+                let functions = crate::module::builtin_module_functions(module);
+                for func in functions {
+                    let qualified = format!("{module}.{func}");
+                    let aliased = format!("{alias}.{func}");
+                    if let Some(scheme) = env.lookup(&qualified).cloned() {
+                        env.define(aliased, scheme);
                     }
                 }
             }
@@ -579,10 +630,18 @@ impl TypeChecker {
         // the value expression can call functions, and before function body
         // checking so functions can reference the constants).
         for i in 0..program.decls.len() {
-            if let Decl::Let { ref mut value, ref pattern, ref ty, span, .. } = program.decls[i] {
+            if let Decl::Let {
+                ref mut value,
+                ref pattern,
+                ref ty,
+                span,
+                ..
+            } = program.decls[i]
+            {
                 let val_ty = self.infer_expr(value, &mut env);
                 if let Some(te) = ty {
-                    let declared = self.resolve_type_expr(te, &mut std::collections::HashMap::new());
+                    let declared =
+                        self.resolve_type_expr(te, &mut std::collections::HashMap::new());
                     self.unify(&val_ty, &declared, span);
                 }
                 let scheme = self.generalize(&env, &val_ty);
@@ -626,19 +685,20 @@ impl TypeChecker {
         for (trait_name, type_name) in &impl_pairs {
             // Check that the trait exists first.
             let Some(trait_info) = self.traits.get(trait_name).cloned() else {
-                let span = self.method_table.iter()
+                let span = self
+                    .method_table
+                    .iter()
                     .find(|((t, _), _)| t == type_name)
                     .map(|(_, e)| e.span)
                     .unwrap_or(Span::new(0, 0));
-                self.error(
-                    format!("trait '{trait_name}' is not declared"),
-                    span,
-                );
+                self.error(format!("trait '{trait_name}' is not declared"), span);
                 continue;
             };
 
             // Skip auto-derived impls (builtin traits on all types).
-            let is_auto = trait_info.methods.first()
+            let is_auto = trait_info
+                .methods
+                .first()
                 .and_then(|(m, _)| self.method_table.get(&(type_name.clone(), m.clone())))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(false);
@@ -663,7 +723,9 @@ impl TypeChecker {
                     }
                 } else {
                     // Find a span for the error.
-                    let span = self.method_table.iter()
+                    let span = self
+                        .method_table
+                        .iter()
                         .find(|((t, _), _)| t == type_name)
                         .map(|(_, e)| e.span)
                         .unwrap_or(Span::new(0, 0));
@@ -685,7 +747,10 @@ impl TypeChecker {
     /// its TyVar id.
     fn fresh_tv(&mut self) -> (Type, TyVar) {
         let t = self.fresh_var();
-        let v = match &t { Type::Var(v) => *v, _ => unreachable!() };
+        let v = match &t {
+            Type::Var(v) => *v,
+            _ => unreachable!(),
+        };
         (t, v)
     }
 
@@ -694,29 +759,38 @@ impl TypeChecker {
         // Accept any type (the runtime uses Display for formatting).
         {
             let (a, av) = self.fresh_tv();
-            env.define("print".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "print".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
         {
             let (a, av) = self.fresh_tv();
-            env.define("println".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "println".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── panic: String -> a ─────────────────────────────────────────
         {
             let (a, av) = self.fresh_tv();
-            env.define("panic".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![Type::String], Box::new(a)),
-                constraints: vec![],
-            });
+            env.define(
+                "panic".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::String], Box::new(a)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── Variant constructors ───────────────────────────────────────
@@ -725,48 +799,60 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("Ok".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![a.clone()],
-                    Box::new(Type::Generic("Result".into(), vec![a, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Ok".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![a.clone()],
+                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
         // Err(e) -> Result(a, e)
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("Err".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![e.clone()],
-                    Box::new(Type::Generic("Result".into(), vec![a, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Err".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![e.clone()],
+                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
         // Some(a) -> Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("Some".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a.clone()],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Some".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![a.clone()],
+                        Box::new(Type::Generic("Option".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
         // None : Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("None".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Generic("Option".into(), vec![a]),
-                constraints: vec![],
-            });
+            env.define(
+                "None".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic("Option".into(), vec![a]),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── Builtin enum info for Option and Result ────────────────────
@@ -818,34 +904,47 @@ impl TypeChecker {
                 _name: "Step".into(),
                 params: vec!["a".into()],
                 variants: vec![
-                    VariantInfo { name: "Stop".into(), field_types: vec![Type::Var(0)] },
-                    VariantInfo { name: "Continue".into(), field_types: vec![Type::Var(0)] },
+                    VariantInfo {
+                        name: "Stop".into(),
+                        field_types: vec![Type::Var(0)],
+                    },
+                    VariantInfo {
+                        name: "Continue".into(),
+                        field_types: vec![Type::Var(0)],
+                    },
                 ],
             },
         );
         self.variant_to_enum.insert("Stop".into(), "Step".into());
-        self.variant_to_enum.insert("Continue".into(), "Step".into());
+        self.variant_to_enum
+            .insert("Continue".into(), "Step".into());
         {
             let (a, av) = self.fresh_tv();
-            env.define("Stop".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a.clone()],
-                    Box::new(Type::Generic("Step".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Stop".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![a.clone()],
+                        Box::new(Type::Generic("Step".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
         {
             let (a, av) = self.fresh_tv();
-            env.define("Continue".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a.clone()],
-                    Box::new(Type::Generic("Step".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Continue".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![a.clone()],
+                        Box::new(Type::Generic("Step".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ChannelResult enum: Message(a) / Closed — for channel.receive
@@ -855,43 +954,60 @@ impl TypeChecker {
                 _name: "ChannelResult".into(),
                 params: vec!["a".into()],
                 variants: vec![
-                    VariantInfo { name: "Message".into(), field_types: vec![Type::Var(0)] },
-                    VariantInfo { name: "Closed".into(), field_types: vec![] },
+                    VariantInfo {
+                        name: "Message".into(),
+                        field_types: vec![Type::Var(0)],
+                    },
+                    VariantInfo {
+                        name: "Closed".into(),
+                        field_types: vec![],
+                    },
                 ],
             },
         );
-        self.variant_to_enum.insert("Message".into(), "ChannelResult".into());
-        self.variant_to_enum.insert("Closed".into(), "ChannelResult".into());
+        self.variant_to_enum
+            .insert("Message".into(), "ChannelResult".into());
+        self.variant_to_enum
+            .insert("Closed".into(), "ChannelResult".into());
         // Also register Empty as a standalone (used in try_receive alongside Message/Closed)
-        self.variant_to_enum.insert("Empty".into(), "ChannelResult".into());
+        self.variant_to_enum
+            .insert("Empty".into(), "ChannelResult".into());
         {
             let (a, av) = self.fresh_tv();
-            env.define("Message".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a.clone()],
-                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "Message".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![a.clone()],
+                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
         {
             let (a, av) = self.fresh_tv();
-            env.define("Closed".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Generic("ChannelResult".into(), vec![a]),
-                constraints: vec![],
-            });
+            env.define(
+                "Closed".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    constraints: vec![],
+                },
+            );
         }
         {
             let (a, av) = self.fresh_tv();
-            env.define("Empty".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Generic("ChannelResult".into(), vec![a]),
-                constraints: vec![],
-            });
+            env.define(
+                "Empty".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    constraints: vec![],
+                },
+            );
         }
-
 
         // ── task module ────────────────────────────────────────────────
 
@@ -899,92 +1015,132 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let (h, hv) = self.fresh_tv();
-            env.define("task.spawn".into(), Scheme {
-                vars: vec![av, hv],
-                ty: Type::Fun(
-                    vec![Type::Fun(vec![], Box::new(a))],
-                    Box::new(h),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "task.spawn".into(),
+                Scheme {
+                    vars: vec![av, hv],
+                    ty: Type::Fun(vec![Type::Fun(vec![], Box::new(a))], Box::new(h)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // task.join: (Handle) -> a
         {
             let (h, hv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("task.join".into(), Scheme {
-                vars: vec![hv, av],
-                ty: Type::Fun(vec![h], Box::new(a)),
-                constraints: vec![],
-            });
+            env.define(
+                "task.join".into(),
+                Scheme {
+                    vars: vec![hv, av],
+                    ty: Type::Fun(vec![h], Box::new(a)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // task.cancel: (Handle) -> Unit
         {
             let (h, hv) = self.fresh_tv();
-            env.define("task.cancel".into(), Scheme {
-                vars: vec![hv],
-                ty: Type::Fun(vec![h], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "task.cancel".into(),
+                Scheme {
+                    vars: vec![hv],
+                    ty: Type::Fun(vec![h], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── regex module ────────────────────────────────────────────────
 
         // regex.is_match: (String, String) -> Bool
-        env.define("regex.is_match".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "regex.is_match".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Bool),
+            )),
+        );
 
         // regex.find: (String, String) -> Option(String)
-        env.define("regex.find".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Option".into(), vec![Type::String])),
-        )));
+        env.define(
+            "regex.find".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic("Option".into(), vec![Type::String])),
+            )),
+        );
 
         // regex.find_all: (String, String) -> List(String)
-        env.define("regex.find_all".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "regex.find_all".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
 
         // regex.split: (String, String) -> List(String)
-        env.define("regex.split".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "regex.split".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
 
         // regex.replace: (String, String, String) -> String
-        env.define("regex.replace".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String, Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "regex.replace".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String, Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // regex.replace_all: (String, String, String) -> String
-        env.define("regex.replace_all".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String, Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "regex.replace_all".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String, Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // regex.replace_all_with: (String, String, (String) -> String) -> String
-        env.define("regex.replace_all_with".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String, Type::Fun(vec![Type::String], Box::new(Type::String))],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "regex.replace_all_with".into(),
+            Scheme::mono(Type::Fun(
+                vec![
+                    Type::String,
+                    Type::String,
+                    Type::Fun(vec![Type::String], Box::new(Type::String)),
+                ],
+                Box::new(Type::String),
+            )),
+        );
 
         // regex.captures: (String, String) -> Option(List(String))
-        env.define("regex.captures".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Option".into(), vec![Type::List(Box::new(Type::String))])),
-        )));
+        env.define(
+            "regex.captures".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic(
+                    "Option".into(),
+                    vec![Type::List(Box::new(Type::String))],
+                )),
+            )),
+        );
 
         // regex.captures_all: (String, String) -> List(List(String))
-        env.define("regex.captures_all".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::List(Box::new(Type::List(Box::new(Type::String))))),
-        )));
+        env.define(
+            "regex.captures_all".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::List(Box::new(Type::List(Box::new(Type::String))))),
+            )),
+        );
 
         // ── json module ─────────────────────────────────────────────────
 
@@ -993,74 +1149,77 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let result_ty = Type::Generic("Result".into(), vec![a.clone(), Type::String]);
-            env.define("json.parse".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a, Type::String],
-                    Box::new(result_ty),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "json.parse".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // json.parse_list: (T, String) -> Result(List(T), String)
         {
             let (a, av) = self.fresh_tv();
-            let result_ty = Type::Generic("Result".into(), vec![
-                Type::List(Box::new(a.clone())),
-                Type::String,
-            ]);
-            env.define("json.parse_list".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a, Type::String],
-                    Box::new(result_ty),
-                ),
-                constraints: vec![],
-            });
+            let result_ty = Type::Generic(
+                "Result".into(),
+                vec![Type::List(Box::new(a.clone())), Type::String],
+            );
+            env.define(
+                "json.parse_list".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // json.parse_map: (V, String) -> Result(Map(String, V), String)
         {
             let (a, av) = self.fresh_tv();
-            let result_ty = Type::Generic("Result".into(), vec![
-                Type::Map(Box::new(Type::String), Box::new(a.clone())),
-                Type::String,
-            ]);
-            env.define("json.parse_map".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a, Type::String],
-                    Box::new(result_ty),
-                ),
-                constraints: vec![],
-            });
+            let result_ty = Type::Generic(
+                "Result".into(),
+                vec![
+                    Type::Map(Box::new(Type::String), Box::new(a.clone())),
+                    Type::String,
+                ],
+            );
+            env.define(
+                "json.parse_map".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // json.stringify: (a) -> String
         {
             let (a, av) = self.fresh_tv();
-            env.define("json.stringify".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a],
-                    Box::new(Type::String),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "json.stringify".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a], Box::new(Type::String)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // json.pretty: (a) -> String
         {
             let (a, av) = self.fresh_tv();
-            env.define("json.pretty".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![a],
-                    Box::new(Type::String),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "json.pretty".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a], Box::new(Type::String)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── Primitive type descriptors (for json.parse_map etc.) ──────
@@ -1074,11 +1233,14 @@ impl TypeChecker {
                 "Bool" => Type::Bool,
                 _ => unreachable!(),
             };
-            env.define(name.to_string(), Scheme {
-                vars: vec![],
-                ty,
-                constraints: vec![],
-            });
+            env.define(
+                name.to_string(),
+                Scheme {
+                    vars: vec![],
+                    ty,
+                    constraints: vec![],
+                },
+            );
         }
 
         // ── Per-module registrations ───────────────────────────────────
@@ -1104,468 +1266,561 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(b.clone())),
-                    ],
-                    Box::new(Type::List(Box::new(b))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(b.clone())),
+                        ],
+                        Box::new(Type::List(Box::new(b))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.filter: (List(a), (a -> Bool)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.filter".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.filter".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.fold: (List(a), b, (b, a) -> b) -> b
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.fold".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        b.clone(),
-                        Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
-                    ],
-                    Box::new(b),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.fold".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            b.clone(),
+                            Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
+                        ],
+                        Box::new(b),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.each: (List(a), (a -> ())) -> ()
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.each".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(Type::Unit)),
-                    ],
-                    Box::new(Type::Unit),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.each".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(Type::Unit)),
+                        ],
+                        Box::new(Type::Unit),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.find: (List(a), (a -> Bool)) -> Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.find".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.find".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::Generic("Option".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.zip: (List(a), List(b)) -> List((a, b))
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.zip".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::List(Box::new(b.clone())),
-                    ],
-                    Box::new(Type::List(Box::new(Type::Tuple(vec![a, b])))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.zip".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::List(Box::new(b.clone())),
+                        ],
+                        Box::new(Type::List(Box::new(Type::Tuple(vec![a, b])))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.flatten: (List(List(a))) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.flatten".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(Type::List(Box::new(a.clone()))))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.flatten".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(Type::List(Box::new(a.clone()))))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.sort_by: (List(a), (a -> b)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.sort_by".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a.clone()], Box::new(b)),
-                    ],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.sort_by".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a.clone()], Box::new(b)),
+                        ],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.flat_map: (List(a), (a -> List(b))) -> List(b)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.flat_map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(Type::List(Box::new(b.clone())))),
-                    ],
-                    Box::new(Type::List(Box::new(b))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.flat_map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(Type::List(Box::new(b.clone())))),
+                        ],
+                        Box::new(Type::List(Box::new(b))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.filter_map: (List(a), (a -> Option(b))) -> List(b)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.filter_map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(
-                            Type::Generic("Option".into(), vec![b.clone()])
-                        )),
-                    ],
-                    Box::new(Type::List(Box::new(b))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.filter_map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(
+                                vec![a],
+                                Box::new(Type::Generic("Option".into(), vec![b.clone()])),
+                            ),
+                        ],
+                        Box::new(Type::List(Box::new(b))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.any: (List(a), (a -> Bool)) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.any".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.any".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.all: (List(a), (a -> Bool)) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.all".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.all".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.fold_until: (List(a), b, (b, a) -> Step(b)) -> b
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.fold_until".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        b.clone(),
-                        Type::Fun(vec![b.clone(), a], Box::new(
-                            Type::Generic("Step".into(), vec![b.clone()])
-                        )),
-                    ],
-                    Box::new(b),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.fold_until".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            b.clone(),
+                            Type::Fun(
+                                vec![b.clone(), a],
+                                Box::new(Type::Generic("Step".into(), vec![b.clone()])),
+                            ),
+                        ],
+                        Box::new(b),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.unfold: (a, (a) -> Option((b, a))) -> List(b)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("list.unfold".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        a.clone(),
-                        Type::Fun(
-                            vec![a.clone()],
-                            Box::new(Type::Generic("Option".into(), vec![
-                                Type::Tuple(vec![b.clone(), a]),
-                            ])),
-                        ),
-                    ],
-                    Box::new(Type::List(Box::new(b))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.unfold".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            a.clone(),
+                            Type::Fun(
+                                vec![a.clone()],
+                                Box::new(Type::Generic(
+                                    "Option".into(),
+                                    vec![Type::Tuple(vec![b.clone(), a])],
+                                )),
+                            ),
+                        ],
+                        Box::new(Type::List(Box::new(b))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.append: (List(a), a) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.append".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), a.clone()],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.append".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), a.clone()],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.prepend: (List(a), a) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.prepend".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), a.clone()],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.prepend".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), a.clone()],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.concat: (List(a), List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.concat".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::List(Box::new(a.clone())),
-                    ],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.concat".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::List(Box::new(a.clone())),
+                        ],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.get: (List(a), Int) -> Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.get".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), Type::Int],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.get".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), Type::Int],
+                        Box::new(Type::Generic("Option".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.set: (List(a), Int, a) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.set".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), Type::Int, a.clone()],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.set".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), Type::Int, a.clone()],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.take: (List(a), Int) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.take".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), Type::Int],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.take".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), Type::Int],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.drop: (List(a), Int) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.drop".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), Type::Int],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.drop".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), Type::Int],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.enumerate: (List(a)) -> List((Int, a))
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.enumerate".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(Type::Tuple(vec![Type::Int, a])))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.enumerate".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(Type::Tuple(vec![Type::Int, a])))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.head: (List(a)) -> Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.head".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.head".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::Generic("Option".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.tail: (List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.tail".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.tail".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.last: (List(a)) -> Option(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.last".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::Generic("Option".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.last".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::Generic("Option".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.reverse: (List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.reverse".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.reverse".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.sort: (List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.sort".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.sort".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.unique: (List(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.unique".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.unique".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.contains: (List(a), a) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.contains".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone())), a],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.contains".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone())), a],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.length: (List(a)) -> Int
         {
             let (a, av) = self.fresh_tv();
-            env.define("list.length".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a))],
-                    Box::new(Type::Int),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.length".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::List(Box::new(a))], Box::new(Type::Int)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // list.group_by: (List(a), (a -> k)) -> Map(k, List(a))
         {
             let (a, av) = self.fresh_tv();
             let (k, kv) = self.fresh_tv();
-            env.define("list.group_by".into(), Scheme {
-                vars: vec![av, kv],
-                ty: Type::Fun(
-                    vec![
-                        Type::List(Box::new(a.clone())),
-                        Type::Fun(vec![a.clone()], Box::new(k.clone())),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(Type::List(Box::new(a))))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "list.group_by".into(),
+                Scheme {
+                    vars: vec![av, kv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::List(Box::new(a.clone())),
+                            Type::Fun(vec![a.clone()], Box::new(k.clone())),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(Type::List(Box::new(a))))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -1573,272 +1828,332 @@ impl TypeChecker {
         // string.from: (a) -> String
         {
             let (a, av) = self.fresh_tv();
-            env.define("string.from".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a], Box::new(Type::String)),
-                constraints: vec![],
-            });
+            env.define(
+                "string.from".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a], Box::new(Type::String)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // string.split: (String, String) -> List(String)
-        env.define("string.split".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "string.split".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
 
         // string.join: (List(String), String) -> String
-        env.define("string.join".into(), Scheme::mono(Type::Fun(
-            vec![Type::List(Box::new(Type::String)), Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.join".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::List(Box::new(Type::String)), Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.trim: (String) -> String
-        env.define("string.trim".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.trim".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        );
 
         // string.trim_start: (String) -> String
-        env.define("string.trim_start".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.trim_start".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        );
 
         // string.trim_end: (String) -> String
-        env.define("string.trim_end".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.trim_end".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        );
 
         // string.char_code: (String) -> Int
-        env.define("string.char_code".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "string.char_code".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
+        );
 
         // string.from_char_code: (Int) -> String
-        env.define("string.from_char_code".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.from_char_code".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
+        );
 
         // string.contains: (String, String) -> Bool
-        env.define("string.contains".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.contains".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Bool),
+            )),
+        );
 
         // string.replace: (String, String, String) -> String
-        env.define("string.replace".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String, Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.replace".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String, Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.length: (String) -> Int
-        env.define("string.length".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "string.length".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
+        );
 
         // string.to_upper: (String) -> String
-        env.define("string.to_upper".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.to_upper".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        );
 
         // string.to_lower: (String) -> String
-        env.define("string.to_lower".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.to_lower".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
+        );
 
         // string.starts_with: (String, String) -> Bool
-        env.define("string.starts_with".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.starts_with".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Bool),
+            )),
+        );
 
         // string.ends_with: (String, String) -> Bool
-        env.define("string.ends_with".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.ends_with".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Bool),
+            )),
+        );
 
         // string.chars: (String) -> List(String)
-        env.define("string.chars".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "string.chars".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
 
         // string.repeat: (String, Int) -> String
-        env.define("string.repeat".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::Int],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.repeat".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::Int],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.index_of: (String, String) -> Option(Int)
-        env.define("string.index_of".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Option".into(), vec![Type::Int])),
-        )));
+        env.define(
+            "string.index_of".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic("Option".into(), vec![Type::Int])),
+            )),
+        );
 
         // string.slice: (String, Int, Int) -> String
-        env.define("string.slice".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::Int, Type::Int],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.slice".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::Int, Type::Int],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.pad_left: (String, Int, String) -> String
-        env.define("string.pad_left".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::Int, Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.pad_left".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::Int, Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.pad_right: (String, Int, String) -> String
-        env.define("string.pad_right".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::Int, Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "string.pad_right".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::Int, Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // string.is_empty: (String) -> Bool
-        env.define("string.is_empty".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_empty".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_alpha: (String) -> Bool
-        env.define("string.is_alpha".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_alpha".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_digit: (String) -> Bool
-        env.define("string.is_digit".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_digit".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_upper: (String) -> Bool
-        env.define("string.is_upper".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_upper".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_lower: (String) -> Bool
-        env.define("string.is_lower".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_lower".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_alnum: (String) -> Bool
-        env.define("string.is_alnum".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_alnum".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
 
         // string.is_whitespace: (String) -> Bool
-        env.define("string.is_whitespace".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "string.is_whitespace".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
     }
 
     fn register_int_builtins(&mut self, env: &mut TypeEnv) {
         // int.parse: (String) -> Result(Int, String)
-        env.define("int.parse".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Generic("Result".into(), vec![Type::Int, Type::String])),
-        )));
+        env.define(
+            "int.parse".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![Type::Int, Type::String],
+                )),
+            )),
+        );
 
         // int.abs: (Int) -> Int
-        env.define("int.abs".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "int.abs".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
+        );
 
         // int.min: (Int, Int) -> Int
-        env.define("int.min".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int, Type::Int],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "int.min".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        );
 
         // int.max: (Int, Int) -> Int
-        env.define("int.max".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int, Type::Int],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "int.max".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        );
 
         // int.to_float: (Int) -> Float
-        env.define("int.to_float".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "int.to_float".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Float))),
+        );
 
         // int.to_string: (Int) -> String
-        env.define("int.to_string".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "int.to_string".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
+        );
     }
 
     fn register_float_builtins(&mut self, env: &mut TypeEnv) {
         // float.parse: (String) -> Result(Float, String)
-        env.define("float.parse".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Generic("Result".into(), vec![Type::Float, Type::String])),
-        )));
+        env.define(
+            "float.parse".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![Type::Float, Type::String],
+                )),
+            )),
+        );
 
         // float.round: (Float) -> Float
-        env.define("float.round".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.round".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
+        );
 
         // float.ceil: (Float) -> Float
-        env.define("float.ceil".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.ceil".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
+        );
 
         // float.floor: (Float) -> Float
-        env.define("float.floor".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.floor".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
+        );
 
         // float.abs: (Float) -> Float
-        env.define("float.abs".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.abs".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
+        );
 
         // float.min: (Float, Float) -> Float
-        env.define("float.min".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float, Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.min".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::Float, Type::Float],
+                Box::new(Type::Float),
+            )),
+        );
 
         // float.max: (Float, Float) -> Float
-        env.define("float.max".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float, Type::Float],
-            Box::new(Type::Float),
-        )));
+        env.define(
+            "float.max".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::Float, Type::Float],
+                Box::new(Type::Float),
+            )),
+        );
 
         // float.to_string: (Float, Int) -> String
         // The second argument (decimal places) is optional at runtime;
         // registering the 2-arg form lets the typechecker validate both
         // arguments.  The 1-arg call still passes the arity check because
         // module-qualified calls go through FieldAccess which permits ±1.
-        env.define("float.to_string".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float, Type::Int],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "float.to_string".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::Float, Type::Int],
+                Box::new(Type::String),
+            )),
+        );
 
         // float.to_int: (Float) -> Int
-        env.define("float.to_int".into(), Scheme::mono(Type::Fun(
-            vec![Type::Float],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "float.to_int".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Int))),
+        );
     }
 
     fn register_map_builtins(&mut self, env: &mut TypeEnv) {
@@ -1846,145 +2161,166 @@ impl TypeChecker {
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.get".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        k,
-                    ],
-                    Box::new(Type::Generic("Option".into(), vec![v])),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.get".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k.clone()), Box::new(v.clone())), k],
+                        Box::new(Type::Generic("Option".into(), vec![v])),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.set: (Map(k, v), k, v) -> Map(k, v)  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.set".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        k.clone(),
-                        v.clone(),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.set".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            k.clone(),
+                            v.clone(),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.delete: (Map(k, v), k) -> Map(k, v)  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.delete".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        k.clone(),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.delete".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            k.clone(),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.contains: (Map(k, v), k) -> Bool  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.contains".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v)),
-                        k,
-                    ],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.contains".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k.clone()), Box::new(v)), k],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.keys: (Map(k, v)) -> List(k)  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.keys".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![Type::Map(Box::new(k.clone()), Box::new(v))],
-                    Box::new(Type::List(Box::new(k))),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.keys".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k.clone()), Box::new(v))],
+                        Box::new(Type::List(Box::new(k))),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.values: (Map(k, v)) -> List(v)  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.values".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![Type::Map(Box::new(k), Box::new(v.clone()))],
-                    Box::new(Type::List(Box::new(v))),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.values".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k), Box::new(v.clone()))],
+                        Box::new(Type::List(Box::new(v))),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.merge: (Map(k, v), Map(k, v)) -> Map(k, v)  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.merge".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.merge".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.length: (Map(k, v)) -> Int  where k: Hash
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.length".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![Type::Map(Box::new(k), Box::new(v))],
-                    Box::new(Type::Int),
-                ),
-                constraints: vec![(kv, "Hash".into())],
-            });
+            env.define(
+                "map.length".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k), Box::new(v))],
+                        Box::new(Type::Int),
+                    ),
+                    constraints: vec![(kv, "Hash".into())],
+                },
+            );
         }
 
         // map.filter: (Map(k, v), (k, v) -> Bool) -> Map(k, v)
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.filter".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::Fun(vec![k.clone(), v.clone()], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.filter".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            Type::Fun(vec![k.clone(), v.clone()], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // map.map: (Map(k, v), (k, v) -> (k2, v2)) -> Map(k2, v2)
@@ -1993,81 +2329,102 @@ impl TypeChecker {
             let (v, vv) = self.fresh_tv();
             let (k2, k2v) = self.fresh_tv();
             let (v2, v2v) = self.fresh_tv();
-            env.define("map.map".into(), Scheme {
-                vars: vec![kv, vv, k2v, v2v],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::Fun(vec![k, v], Box::new(Type::Tuple(vec![k2.clone(), v2.clone()]))),
-                    ],
-                    Box::new(Type::Map(Box::new(k2), Box::new(v2))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.map".into(),
+                Scheme {
+                    vars: vec![kv, vv, k2v, v2v],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            Type::Fun(
+                                vec![k, v],
+                                Box::new(Type::Tuple(vec![k2.clone(), v2.clone()])),
+                            ),
+                        ],
+                        Box::new(Type::Map(Box::new(k2), Box::new(v2))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // map.entries: (Map(k, v)) -> List((k, v))
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.entries".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![Type::Map(Box::new(k.clone()), Box::new(v.clone()))],
-                    Box::new(Type::List(Box::new(Type::Tuple(vec![k, v])))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.entries".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::Map(Box::new(k.clone()), Box::new(v.clone()))],
+                        Box::new(Type::List(Box::new(Type::Tuple(vec![k, v])))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // map.from_entries: (List((k, v))) -> Map(k, v)
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.from_entries".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(Type::Tuple(vec![k.clone(), v.clone()])))],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.from_entries".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(Type::Tuple(vec![
+                            k.clone(),
+                            v.clone(),
+                        ])))],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // map.each: (Map(k, v), (k, v) -> ()) -> ()
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.each".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        Type::Fun(vec![k, v], Box::new(Type::Unit)),
-                    ],
-                    Box::new(Type::Unit),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.each".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            Type::Fun(vec![k, v], Box::new(Type::Unit)),
+                        ],
+                        Box::new(Type::Unit),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // map.update: (Map(k, v), k, v, (v) -> v) -> Map(k, v)
         {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
-            env.define("map.update".into(), Scheme {
-                vars: vec![kv, vv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Map(Box::new(k.clone()), Box::new(v.clone())),
-                        k.clone(),
-                        v.clone(),
-                        Type::Fun(vec![v.clone()], Box::new(v.clone())),
-                    ],
-                    Box::new(Type::Map(Box::new(k), Box::new(v))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "map.update".into(),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Map(Box::new(k.clone()), Box::new(v.clone())),
+                            k.clone(),
+                            v.clone(),
+                            Type::Fun(vec![v.clone()], Box::new(v.clone())),
+                        ],
+                        Box::new(Type::Map(Box::new(k), Box::new(v))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -2075,220 +2432,262 @@ impl TypeChecker {
         // set.new: () -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.new".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![], Box::new(Type::Set(Box::new(a)))),
-                constraints: vec![],
-            });
+            env.define(
+                "set.new".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![], Box::new(Type::Set(Box::new(a)))),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.from_list: (List(a)) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.from_list".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(a.clone()))],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.from_list".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(a.clone()))],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.to_list: (Set(a)) -> List(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.to_list".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Set(Box::new(a.clone()))],
-                    Box::new(Type::List(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.to_list".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Set(Box::new(a.clone()))],
+                        Box::new(Type::List(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.contains: (Set(a), a) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.contains".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Set(Box::new(a.clone())), a],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.contains".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Set(Box::new(a.clone())), a],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.insert: (Set(a), a) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.insert".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Set(Box::new(a.clone())), a.clone()],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.insert".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Set(Box::new(a.clone())), a.clone()],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.remove: (Set(a), a) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.remove".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Set(Box::new(a.clone())), a.clone()],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.remove".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Set(Box::new(a.clone())), a.clone()],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.length: (Set(a)) -> Int
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.length".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Set(Box::new(a))],
-                    Box::new(Type::Int),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.length".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::Set(Box::new(a))], Box::new(Type::Int)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.union: (Set(a), Set(a)) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.union".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Set(Box::new(a.clone())),
-                    ],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.union".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Set(Box::new(a.clone())),
+                        ],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.intersection: (Set(a), Set(a)) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.intersection".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Set(Box::new(a.clone())),
-                    ],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.intersection".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Set(Box::new(a.clone())),
+                        ],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.difference: (Set(a), Set(a)) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.difference".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Set(Box::new(a.clone())),
-                    ],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.difference".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Set(Box::new(a.clone())),
+                        ],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.is_subset: (Set(a), Set(a)) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.is_subset".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Set(Box::new(a.clone())),
-                    ],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.is_subset".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Set(Box::new(a.clone())),
+                        ],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.map: (Set(a), (a -> b)) -> Set(b)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("set.map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(b.clone())),
-                    ],
-                    Box::new(Type::Set(Box::new(b))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(b.clone())),
+                        ],
+                        Box::new(Type::Set(Box::new(b))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.filter: (Set(a), (a -> Bool)) -> Set(a)
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.filter".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
-                    ],
-                    Box::new(Type::Set(Box::new(a))),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.filter".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
+                        ],
+                        Box::new(Type::Set(Box::new(a))),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.each: (Set(a), (a -> ())) -> ()
         {
             let (a, av) = self.fresh_tv();
-            env.define("set.each".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        Type::Fun(vec![a], Box::new(Type::Unit)),
-                    ],
-                    Box::new(Type::Unit),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.each".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(Type::Unit)),
+                        ],
+                        Box::new(Type::Unit),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // set.fold: (Set(a), b, (b, a) -> b) -> b
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("set.fold".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Set(Box::new(a.clone())),
-                        b.clone(),
-                        Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
-                    ],
-                    Box::new(b),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "set.fold".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Set(Box::new(a.clone())),
+                            b.clone(),
+                            Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
+                        ],
+                        Box::new(b),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -2298,34 +2697,40 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.map_ok".into(), Scheme {
-                vars: vec![av, bv, ev],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Result".into(), vec![a, e.clone()]),
-                        Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
-                    ],
-                    Box::new(Type::Generic("Result".into(), vec![b, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.map_ok".into(),
+                Scheme {
+                    vars: vec![av, bv, ev],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Result".into(), vec![a, e.clone()]),
+                            Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
+                        ],
+                        Box::new(Type::Generic("Result".into(), vec![b, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.unwrap_or: (Result(a,e), a) -> a
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.unwrap_or".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Result".into(), vec![a.clone(), e]),
-                        a.clone(),
-                    ],
-                    Box::new(a),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.unwrap_or".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Result".into(), vec![a.clone(), e]),
+                            a.clone(),
+                        ],
+                        Box::new(a),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.map_err: (Result(a,e), (e -> f)) -> Result(a,f)
@@ -2333,34 +2738,43 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             let (f, fv) = self.fresh_tv();
-            env.define("result.map_err".into(), Scheme {
-                vars: vec![av, ev, fv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
-                        Type::Fun(vec![e], Box::new(f.clone())),
-                    ],
-                    Box::new(Type::Generic("Result".into(), vec![a, f])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.map_err".into(),
+                Scheme {
+                    vars: vec![av, ev, fv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                            Type::Fun(vec![e], Box::new(f.clone())),
+                        ],
+                        Box::new(Type::Generic("Result".into(), vec![a, f])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.flatten: (Result(Result(a,e),e)) -> Result(a,e)
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.flatten".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![Type::Generic("Result".into(), vec![
-                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
-                        e.clone(),
-                    ])],
-                    Box::new(Type::Generic("Result".into(), vec![a, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.flatten".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![Type::Generic(
+                            "Result".into(),
+                            vec![
+                                Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                                e.clone(),
+                            ],
+                        )],
+                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.flat_map: (Result(a, e), (a) -> Result(b, e)) -> Result(b, e)
@@ -2368,45 +2782,60 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.flat_map".into(), Scheme {
-                vars: vec![av, bv, ev],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
-                        Type::Fun(vec![a], Box::new(Type::Generic("Result".into(), vec![b.clone(), e.clone()]))),
-                    ],
-                    Box::new(Type::Generic("Result".into(), vec![b, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.flat_map".into(),
+                Scheme {
+                    vars: vec![av, bv, ev],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                            Type::Fun(
+                                vec![a],
+                                Box::new(Type::Generic(
+                                    "Result".into(),
+                                    vec![b.clone(), e.clone()],
+                                )),
+                            ),
+                        ],
+                        Box::new(Type::Generic("Result".into(), vec![b, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.is_ok: (Result(a,e)) -> Bool
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.is_ok".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![Type::Generic("Result".into(), vec![a, e])],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.is_ok".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Result".into(), vec![a, e])],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // result.is_err: (Result(a,e)) -> Bool
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("result.is_err".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![Type::Generic("Result".into(), vec![a, e])],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "result.is_err".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Result".into(), vec![a, e])],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -2415,93 +2844,108 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("option.map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Option".into(), vec![a.clone()]),
-                        Type::Fun(vec![a], Box::new(b.clone())),
-                    ],
-                    Box::new(Type::Generic("Option".into(), vec![b])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Option".into(), vec![a.clone()]),
+                            Type::Fun(vec![a], Box::new(b.clone())),
+                        ],
+                        Box::new(Type::Generic("Option".into(), vec![b])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // option.flat_map: (Option(a), (a -> Option(b))) -> Option(b)
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("option.flat_map".into(), Scheme {
-                vars: vec![av, bv],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Option".into(), vec![a.clone()]),
-                        Type::Fun(vec![a], Box::new(Type::Generic("Option".into(), vec![b.clone()]))),
-                    ],
-                    Box::new(Type::Generic("Option".into(), vec![b])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.flat_map".into(),
+                Scheme {
+                    vars: vec![av, bv],
+                    ty: Type::Fun(
+                        vec![
+                            Type::Generic("Option".into(), vec![a.clone()]),
+                            Type::Fun(
+                                vec![a],
+                                Box::new(Type::Generic("Option".into(), vec![b.clone()])),
+                            ),
+                        ],
+                        Box::new(Type::Generic("Option".into(), vec![b])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // option.unwrap_or: (Option(a), a) -> a
         {
             let (a, av) = self.fresh_tv();
-            env.define("option.unwrap_or".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Option".into(), vec![a.clone()]),
-                        a.clone(),
-                    ],
-                    Box::new(a),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.unwrap_or".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Option".into(), vec![a.clone()]), a.clone()],
+                        Box::new(a),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // option.to_result: (Option(a), e) -> Result(a, e)
         {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
-            env.define("option.to_result".into(), Scheme {
-                vars: vec![av, ev],
-                ty: Type::Fun(
-                    vec![
-                        Type::Generic("Option".into(), vec![a.clone()]),
-                        e.clone(),
-                    ],
-                    Box::new(Type::Generic("Result".into(), vec![a, e])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.to_result".into(),
+                Scheme {
+                    vars: vec![av, ev],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Option".into(), vec![a.clone()]), e.clone()],
+                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // option.is_some: (Option(a)) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("option.is_some".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Generic("Option".into(), vec![a])],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.is_some".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Option".into(), vec![a])],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // option.is_none: (Option(a)) -> Bool
         {
             let (a, av) = self.fresh_tv();
-            env.define("option.is_none".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(
-                    vec![Type::Generic("Option".into(), vec![a])],
-                    Box::new(Type::Bool),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "option.is_none".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Generic("Option".into(), vec![a])],
+                        Box::new(Type::Bool),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -2509,44 +2953,68 @@ impl TypeChecker {
         // io.inspect: a -> String
         {
             let (a, av) = self.fresh_tv();
-            env.define("io.inspect".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a], Box::new(Type::String)),
-                constraints: vec![],
-            });
+            env.define(
+                "io.inspect".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a], Box::new(Type::String)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // io.read_file: (String) -> Result(String, String)
-        env.define("io.read_file".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Generic("Result".into(), vec![Type::String, Type::String])),
-        )));
+        env.define(
+            "io.read_file".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![Type::String, Type::String],
+                )),
+            )),
+        );
 
         // io.write_file: (String, String) -> Result((), String)
-        env.define("io.write_file".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Result".into(), vec![Type::Unit, Type::String])),
-        )));
+        env.define(
+            "io.write_file".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![Type::Unit, Type::String],
+                )),
+            )),
+        );
 
         // io.read_line: () -> Result(String, String)
-        env.define("io.read_line".into(), Scheme::mono(Type::Fun(
-            vec![],
-            Box::new(Type::Generic("Result".into(), vec![Type::String, Type::String])),
-        )));
+        env.define(
+            "io.read_line".into(),
+            Scheme::mono(Type::Fun(
+                vec![],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![Type::String, Type::String],
+                )),
+            )),
+        );
 
         // io.args: () -> List(String)
-        env.define("io.args".into(), Scheme::mono(Type::Fun(
-            vec![],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "io.args".into(),
+            Scheme::mono(Type::Fun(
+                vec![],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
     }
 
     fn register_fs_builtins(&mut self, env: &mut TypeEnv) {
         // fs.exists: (String) -> Bool
-        env.define("fs.exists".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "fs.exists".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+        );
     }
 
     fn register_test_builtins(&mut self, env: &mut TypeEnv) {
@@ -2556,29 +3024,38 @@ impl TypeChecker {
         // is_method_call arity tolerance still allows the 1-arg form.
         env.define(
             "test.assert".into(),
-            Scheme::mono(Type::Fun(vec![Type::Bool, Type::String], Box::new(Type::Unit))),
+            Scheme::mono(Type::Fun(
+                vec![Type::Bool, Type::String],
+                Box::new(Type::Unit),
+            )),
         );
 
         // test.assert_eq: (a, a, String) -> ()
         // The message parameter is optional at runtime.
         {
             let (a, av) = self.fresh_tv();
-            env.define("test.assert_eq".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "test.assert_eq".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // test.assert_ne: (a, a, String) -> ()
         // The message parameter is optional at runtime.
         {
             let (a, av) = self.fresh_tv();
-            env.define("test.assert_ne".into(), Scheme {
-                vars: vec![av],
-                ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "test.assert_ne".into(),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
@@ -2586,14 +3063,17 @@ impl TypeChecker {
         // math.sqrt, math.log, math.log10, math.sin, math.cos, math.tan,
         // math.asin, math.acos, math.atan: (Float) -> Float
         {
-            let float_to_float = Scheme::mono(Type::Fun(
-                vec![Type::Float],
-                Box::new(Type::Float),
-            ));
+            let float_to_float = Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
             for name in &[
-                "math.sqrt", "math.log", "math.log10",
-                "math.sin", "math.cos", "math.tan",
-                "math.asin", "math.acos", "math.atan",
+                "math.sqrt",
+                "math.log",
+                "math.log10",
+                "math.sin",
+                "math.cos",
+                "math.tan",
+                "math.asin",
+                "math.acos",
+                "math.atan",
             ] {
                 env.define(name.to_string(), float_to_float.clone());
             }
@@ -2618,85 +3098,106 @@ impl TypeChecker {
         // channel.new: (Int) -> Channel  (opaque; use fresh var)
         {
             let (ch, chv) = self.fresh_tv();
-            env.define("channel.new".into(), Scheme {
-                vars: vec![chv],
-                ty: Type::Fun(vec![Type::Int], Box::new(ch)),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.new".into(),
+                Scheme {
+                    vars: vec![chv],
+                    ty: Type::Fun(vec![Type::Int], Box::new(ch)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.send: (Channel, a) -> Unit
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("channel.send".into(), Scheme {
-                vars: vec![chv, av],
-                ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.send".into(),
+                Scheme {
+                    vars: vec![chv, av],
+                    ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.receive: (Channel) -> ChannelResult(a)
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("channel.receive".into(), Scheme {
-                vars: vec![chv, av],
-                ty: Type::Fun(
-                    vec![ch],
-                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.receive".into(),
+                Scheme {
+                    vars: vec![chv, av],
+                    ty: Type::Fun(
+                        vec![ch],
+                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.close: (Channel) -> Unit
         {
             let (ch, chv) = self.fresh_tv();
-            env.define("channel.close".into(), Scheme {
-                vars: vec![chv],
-                ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.close".into(),
+                Scheme {
+                    vars: vec![chv],
+                    ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.try_send: (Channel, a) -> Bool
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("channel.try_send".into(), Scheme {
-                vars: vec![chv, av],
-                ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.try_send".into(),
+                Scheme {
+                    vars: vec![chv, av],
+                    ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.try_receive: (Channel) -> ChannelResult(a)
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("channel.try_receive".into(), Scheme {
-                vars: vec![chv, av],
-                ty: Type::Fun(
-                    vec![ch],
-                    Box::new(Type::Generic("ChannelResult".into(), vec![a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.try_receive".into(),
+                Scheme {
+                    vars: vec![chv, av],
+                    ty: Type::Fun(
+                        vec![ch],
+                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.select: (List(Channel)) -> (Channel, a)
         {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
-            env.define("channel.select".into(), Scheme {
-                vars: vec![chv, av],
-                ty: Type::Fun(
-                    vec![Type::List(Box::new(ch.clone()))],
-                    Box::new(Type::Tuple(vec![ch, a])),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.select".into(),
+                Scheme {
+                    vars: vec![chv, av],
+                    ty: Type::Fun(
+                        vec![Type::List(Box::new(ch.clone()))],
+                        Box::new(Type::Tuple(vec![ch, a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
 
         // channel.each: (Channel(a), Fn(a) -> b) -> Unit
@@ -2704,251 +3205,374 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
-            env.define("channel.each".into(), Scheme {
-                vars: vec![chv, av, bv],
-                ty: Type::Fun(
-                    vec![ch, Type::Fun(vec![a], Box::new(b))],
-                    Box::new(Type::Unit),
-                ),
-                constraints: vec![],
-            });
+            env.define(
+                "channel.each".into(),
+                Scheme {
+                    vars: vec![chv, av, bv],
+                    ty: Type::Fun(
+                        vec![ch, Type::Fun(vec![a], Box::new(b))],
+                        Box::new(Type::Unit),
+                    ),
+                    constraints: vec![],
+                },
+            );
         }
     }
 
     fn register_time_builtins(&mut self, env: &mut TypeEnv) {
         // ── Time module type definitions ──────────────────────────────
 
-        let instant_ty = Type::Record("Instant".into(), vec![
-            ("epoch_ns".into(), Type::Int),
-        ]);
-        let date_ty = Type::Record("Date".into(), vec![
-            ("year".into(), Type::Int),
-            ("month".into(), Type::Int),
-            ("day".into(), Type::Int),
-        ]);
-        let time_of_day_ty = Type::Record("Time".into(), vec![
-            ("hour".into(), Type::Int),
-            ("minute".into(), Type::Int),
-            ("second".into(), Type::Int),
-            ("ns".into(), Type::Int),
-        ]);
-        let datetime_ty = Type::Record("DateTime".into(), vec![
-            ("date".into(), date_ty.clone()),
-            ("time".into(), time_of_day_ty.clone()),
-        ]);
-        let duration_ty = Type::Record("Duration".into(), vec![
-            ("ns".into(), Type::Int),
-        ]);
-        let weekday_ty = Type::Generic("Weekday".into(), vec![]);
-
-        // Register record types so field access type-checks
-        self.records.insert("Instant".into(), RecordInfo {
-            _name: "Instant".into(),
-            _params: vec![],
-            fields: vec![("epoch_ns".into(), Type::Int)],
-        });
-        self.records.insert("Date".into(), RecordInfo {
-            _name: "Date".into(),
-            _params: vec![],
-            fields: vec![
+        let instant_ty = Type::Record("Instant".into(), vec![("epoch_ns".into(), Type::Int)]);
+        let date_ty = Type::Record(
+            "Date".into(),
+            vec![
                 ("year".into(), Type::Int),
                 ("month".into(), Type::Int),
                 ("day".into(), Type::Int),
             ],
-        });
-        self.records.insert("Time".into(), RecordInfo {
-            _name: "Time".into(),
-            _params: vec![],
-            fields: vec![
+        );
+        let time_of_day_ty = Type::Record(
+            "Time".into(),
+            vec![
                 ("hour".into(), Type::Int),
                 ("minute".into(), Type::Int),
                 ("second".into(), Type::Int),
                 ("ns".into(), Type::Int),
             ],
-        });
-        self.records.insert("DateTime".into(), RecordInfo {
-            _name: "DateTime".into(),
-            _params: vec![],
-            fields: vec![
+        );
+        let datetime_ty = Type::Record(
+            "DateTime".into(),
+            vec![
                 ("date".into(), date_ty.clone()),
                 ("time".into(), time_of_day_ty.clone()),
             ],
-        });
-        self.records.insert("Duration".into(), RecordInfo {
-            _name: "Duration".into(),
-            _params: vec![],
-            fields: vec![("ns".into(), Type::Int)],
-        });
+        );
+        let duration_ty = Type::Record("Duration".into(), vec![("ns".into(), Type::Int)]);
+        let weekday_ty = Type::Generic("Weekday".into(), vec![]);
+
+        // Register record types so field access type-checks
+        self.records.insert(
+            "Instant".into(),
+            RecordInfo {
+                _name: "Instant".into(),
+                _params: vec![],
+                fields: vec![("epoch_ns".into(), Type::Int)],
+            },
+        );
+        self.records.insert(
+            "Date".into(),
+            RecordInfo {
+                _name: "Date".into(),
+                _params: vec![],
+                fields: vec![
+                    ("year".into(), Type::Int),
+                    ("month".into(), Type::Int),
+                    ("day".into(), Type::Int),
+                ],
+            },
+        );
+        self.records.insert(
+            "Time".into(),
+            RecordInfo {
+                _name: "Time".into(),
+                _params: vec![],
+                fields: vec![
+                    ("hour".into(), Type::Int),
+                    ("minute".into(), Type::Int),
+                    ("second".into(), Type::Int),
+                    ("ns".into(), Type::Int),
+                ],
+            },
+        );
+        self.records.insert(
+            "DateTime".into(),
+            RecordInfo {
+                _name: "DateTime".into(),
+                _params: vec![],
+                fields: vec![
+                    ("date".into(), date_ty.clone()),
+                    ("time".into(), time_of_day_ty.clone()),
+                ],
+            },
+        );
+        self.records.insert(
+            "Duration".into(),
+            RecordInfo {
+                _name: "Duration".into(),
+                _params: vec![],
+                fields: vec![("ns".into(), Type::Int)],
+            },
+        );
 
         // Register Weekday enum
-        self.enums.insert("Weekday".into(), EnumInfo {
-            _name: "Weekday".into(),
-            params: vec![],
-            variants: vec![
-                VariantInfo { name: "Monday".into(), field_types: vec![] },
-                VariantInfo { name: "Tuesday".into(), field_types: vec![] },
-                VariantInfo { name: "Wednesday".into(), field_types: vec![] },
-                VariantInfo { name: "Thursday".into(), field_types: vec![] },
-                VariantInfo { name: "Friday".into(), field_types: vec![] },
-                VariantInfo { name: "Saturday".into(), field_types: vec![] },
-                VariantInfo { name: "Sunday".into(), field_types: vec![] },
-            ],
-        });
-        for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] {
-            self.variant_to_enum.insert(day.to_string(), "Weekday".into());
+        self.enums.insert(
+            "Weekday".into(),
+            EnumInfo {
+                _name: "Weekday".into(),
+                params: vec![],
+                variants: vec![
+                    VariantInfo {
+                        name: "Monday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Tuesday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Wednesday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Thursday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Friday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Saturday".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "Sunday".into(),
+                        field_types: vec![],
+                    },
+                ],
+            },
+        );
+        for day in [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ] {
+            self.variant_to_enum
+                .insert(day.to_string(), "Weekday".into());
             env.define(day.to_string(), Scheme::mono(weekday_ty.clone()));
         }
 
         // ── Function signatures ──────────────────────────────────────
 
         // time.now: () -> Instant
-        env.define("time.now".into(), Scheme::mono(Type::Fun(
-            vec![], Box::new(instant_ty.clone()),
-        )));
+        env.define(
+            "time.now".into(),
+            Scheme::mono(Type::Fun(vec![], Box::new(instant_ty.clone()))),
+        );
 
         // time.today: () -> Date
-        env.define("time.today".into(), Scheme::mono(Type::Fun(
-            vec![], Box::new(date_ty.clone()),
-        )));
+        env.define(
+            "time.today".into(),
+            Scheme::mono(Type::Fun(vec![], Box::new(date_ty.clone()))),
+        );
 
         // time.date: (Int, Int, Int) -> Result(Date, String)
-        env.define("time.date".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int, Type::Int, Type::Int],
-            Box::new(Type::Generic("Result".into(), vec![date_ty.clone(), Type::String])),
-        )));
+        env.define(
+            "time.date".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::Int, Type::Int, Type::Int],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![date_ty.clone(), Type::String],
+                )),
+            )),
+        );
 
         // time.time: (Int, Int, Int) -> Result(Time, String)
-        env.define("time.time".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int, Type::Int, Type::Int],
-            Box::new(Type::Generic("Result".into(), vec![time_of_day_ty.clone(), Type::String])),
-        )));
+        env.define(
+            "time.time".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::Int, Type::Int, Type::Int],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![time_of_day_ty.clone(), Type::String],
+                )),
+            )),
+        );
 
         // time.datetime: (Date, Time) -> DateTime
-        env.define("time.datetime".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone(), time_of_day_ty.clone()],
-            Box::new(datetime_ty.clone()),
-        )));
+        env.define(
+            "time.datetime".into(),
+            Scheme::mono(Type::Fun(
+                vec![date_ty.clone(), time_of_day_ty.clone()],
+                Box::new(datetime_ty.clone()),
+            )),
+        );
 
         // time.to_datetime: (Instant, Int) -> DateTime
-        env.define("time.to_datetime".into(), Scheme::mono(Type::Fun(
-            vec![instant_ty.clone(), Type::Int],
-            Box::new(datetime_ty.clone()),
-        )));
+        env.define(
+            "time.to_datetime".into(),
+            Scheme::mono(Type::Fun(
+                vec![instant_ty.clone(), Type::Int],
+                Box::new(datetime_ty.clone()),
+            )),
+        );
 
         // time.to_instant: (DateTime, Int) -> Instant
-        env.define("time.to_instant".into(), Scheme::mono(Type::Fun(
-            vec![datetime_ty.clone(), Type::Int],
-            Box::new(instant_ty.clone()),
-        )));
+        env.define(
+            "time.to_instant".into(),
+            Scheme::mono(Type::Fun(
+                vec![datetime_ty.clone(), Type::Int],
+                Box::new(instant_ty.clone()),
+            )),
+        );
 
         // time.to_utc: (Instant) -> DateTime
-        env.define("time.to_utc".into(), Scheme::mono(Type::Fun(
-            vec![instant_ty.clone()],
-            Box::new(datetime_ty.clone()),
-        )));
+        env.define(
+            "time.to_utc".into(),
+            Scheme::mono(Type::Fun(
+                vec![instant_ty.clone()],
+                Box::new(datetime_ty.clone()),
+            )),
+        );
 
         // time.from_utc: (DateTime) -> Instant
-        env.define("time.from_utc".into(), Scheme::mono(Type::Fun(
-            vec![datetime_ty.clone()],
-            Box::new(instant_ty.clone()),
-        )));
+        env.define(
+            "time.from_utc".into(),
+            Scheme::mono(Type::Fun(
+                vec![datetime_ty.clone()],
+                Box::new(instant_ty.clone()),
+            )),
+        );
 
         // time.format: (DateTime, String) -> String
-        env.define("time.format".into(), Scheme::mono(Type::Fun(
-            vec![datetime_ty.clone(), Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "time.format".into(),
+            Scheme::mono(Type::Fun(
+                vec![datetime_ty.clone(), Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // time.format_date: (Date, String) -> String
-        env.define("time.format_date".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone(), Type::String],
-            Box::new(Type::String),
-        )));
+        env.define(
+            "time.format_date".into(),
+            Scheme::mono(Type::Fun(
+                vec![date_ty.clone(), Type::String],
+                Box::new(Type::String),
+            )),
+        );
 
         // time.parse: (String, String) -> Result(DateTime, String)
-        env.define("time.parse".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Result".into(), vec![datetime_ty.clone(), Type::String])),
-        )));
+        env.define(
+            "time.parse".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![datetime_ty.clone(), Type::String],
+                )),
+            )),
+        );
 
         // time.parse_date: (String, String) -> Result(Date, String)
-        env.define("time.parse_date".into(), Scheme::mono(Type::Fun(
-            vec![Type::String, Type::String],
-            Box::new(Type::Generic("Result".into(), vec![date_ty.clone(), Type::String])),
-        )));
+        env.define(
+            "time.parse_date".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic(
+                    "Result".into(),
+                    vec![date_ty.clone(), Type::String],
+                )),
+            )),
+        );
 
         // time.add_days: (Date, Int) -> Date
-        env.define("time.add_days".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone(), Type::Int],
-            Box::new(date_ty.clone()),
-        )));
+        env.define(
+            "time.add_days".into(),
+            Scheme::mono(Type::Fun(
+                vec![date_ty.clone(), Type::Int],
+                Box::new(date_ty.clone()),
+            )),
+        );
 
         // time.add_months: (Date, Int) -> Date
-        env.define("time.add_months".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone(), Type::Int],
-            Box::new(date_ty.clone()),
-        )));
+        env.define(
+            "time.add_months".into(),
+            Scheme::mono(Type::Fun(
+                vec![date_ty.clone(), Type::Int],
+                Box::new(date_ty.clone()),
+            )),
+        );
 
         // time.add: (Instant, Duration) -> Instant
-        env.define("time.add".into(), Scheme::mono(Type::Fun(
-            vec![instant_ty.clone(), duration_ty.clone()],
-            Box::new(instant_ty.clone()),
-        )));
+        env.define(
+            "time.add".into(),
+            Scheme::mono(Type::Fun(
+                vec![instant_ty.clone(), duration_ty.clone()],
+                Box::new(instant_ty.clone()),
+            )),
+        );
 
         // time.since: (Instant, Instant) -> Duration
-        env.define("time.since".into(), Scheme::mono(Type::Fun(
-            vec![instant_ty.clone(), instant_ty.clone()],
-            Box::new(duration_ty.clone()),
-        )));
+        env.define(
+            "time.since".into(),
+            Scheme::mono(Type::Fun(
+                vec![instant_ty.clone(), instant_ty.clone()],
+                Box::new(duration_ty.clone()),
+            )),
+        );
 
         // time.hours: (Int) -> Duration
-        env.define("time.hours".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int], Box::new(duration_ty.clone()),
-        )));
+        env.define(
+            "time.hours".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        );
 
         // time.minutes: (Int) -> Duration
-        env.define("time.minutes".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int], Box::new(duration_ty.clone()),
-        )));
+        env.define(
+            "time.minutes".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        );
 
         // time.seconds: (Int) -> Duration
-        env.define("time.seconds".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int], Box::new(duration_ty.clone()),
-        )));
+        env.define(
+            "time.seconds".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        );
 
         // time.ms: (Int) -> Duration
-        env.define("time.ms".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int], Box::new(duration_ty.clone()),
-        )));
+        env.define(
+            "time.ms".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+        );
 
         // time.weekday: (Date) -> Weekday
-        env.define("time.weekday".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone()], Box::new(weekday_ty),
-        )));
+        env.define(
+            "time.weekday".into(),
+            Scheme::mono(Type::Fun(vec![date_ty.clone()], Box::new(weekday_ty))),
+        );
 
         // time.days_between: (Date, Date) -> Int
-        env.define("time.days_between".into(), Scheme::mono(Type::Fun(
-            vec![date_ty.clone(), date_ty.clone()],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "time.days_between".into(),
+            Scheme::mono(Type::Fun(
+                vec![date_ty.clone(), date_ty.clone()],
+                Box::new(Type::Int),
+            )),
+        );
 
         // time.days_in_month: (Int, Int) -> Int
-        env.define("time.days_in_month".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int, Type::Int],
-            Box::new(Type::Int),
-        )));
+        env.define(
+            "time.days_in_month".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+        );
 
         // time.is_leap_year: (Int) -> Bool
-        env.define("time.is_leap_year".into(), Scheme::mono(Type::Fun(
-            vec![Type::Int],
-            Box::new(Type::Bool),
-        )));
+        env.define(
+            "time.is_leap_year".into(),
+            Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Bool))),
+        );
 
         // time.sleep: (Duration) -> Unit
-        env.define("time.sleep".into(), Scheme::mono(Type::Fun(
-            vec![duration_ty],
-            Box::new(Type::Unit),
-        )));
+        env.define(
+            "time.sleep".into(),
+            Scheme::mono(Type::Fun(vec![duration_ty], Box::new(Type::Unit))),
+        );
     }
 
     fn register_http_builtins(&mut self, env: &mut TypeEnv) {
@@ -2957,94 +3581,144 @@ impl TypeChecker {
         // Method enum
         let method_ty = Type::Generic("Method".into(), vec![]);
 
-        self.enums.insert("Method".into(), EnumInfo {
-            _name: "Method".into(),
-            params: vec![],
-            variants: vec![
-                VariantInfo { name: "GET".into(), field_types: vec![] },
-                VariantInfo { name: "POST".into(), field_types: vec![] },
-                VariantInfo { name: "PUT".into(), field_types: vec![] },
-                VariantInfo { name: "PATCH".into(), field_types: vec![] },
-                VariantInfo { name: "DELETE".into(), field_types: vec![] },
-                VariantInfo { name: "HEAD".into(), field_types: vec![] },
-                VariantInfo { name: "OPTIONS".into(), field_types: vec![] },
-            ],
-        });
+        self.enums.insert(
+            "Method".into(),
+            EnumInfo {
+                _name: "Method".into(),
+                params: vec![],
+                variants: vec![
+                    VariantInfo {
+                        name: "GET".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "POST".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "PUT".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "PATCH".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "DELETE".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "HEAD".into(),
+                        field_types: vec![],
+                    },
+                    VariantInfo {
+                        name: "OPTIONS".into(),
+                        field_types: vec![],
+                    },
+                ],
+            },
+        );
         for variant in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
-            self.variant_to_enum.insert(variant.to_string(), "Method".into());
+            self.variant_to_enum
+                .insert(variant.to_string(), "Method".into());
             env.define(variant.to_string(), Scheme::mono(method_ty.clone()));
         }
 
         // Response record
         let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));
 
-        let response_ty = Type::Record("Response".into(), vec![
-            ("status".into(), Type::Int),
-            ("body".into(), Type::String),
-            ("headers".into(), map_ss.clone()),
-        ]);
-
-        self.records.insert("Response".into(), RecordInfo {
-            _name: "Response".into(),
-            _params: vec![],
-            fields: vec![
+        let response_ty = Type::Record(
+            "Response".into(),
+            vec![
                 ("status".into(), Type::Int),
                 ("body".into(), Type::String),
                 ("headers".into(), map_ss.clone()),
             ],
-        });
+        );
+
+        self.records.insert(
+            "Response".into(),
+            RecordInfo {
+                _name: "Response".into(),
+                _params: vec![],
+                fields: vec![
+                    ("status".into(), Type::Int),
+                    ("body".into(), Type::String),
+                    ("headers".into(), map_ss.clone()),
+                ],
+            },
+        );
 
         // Request record
-        let request_ty = Type::Record("Request".into(), vec![
-            ("method".into(), method_ty.clone()),
-            ("path".into(), Type::String),
-            ("query".into(), Type::String),
-            ("headers".into(), map_ss.clone()),
-            ("body".into(), Type::String),
-        ]);
-
-        self.records.insert("Request".into(), RecordInfo {
-            _name: "Request".into(),
-            _params: vec![],
-            fields: vec![
+        let request_ty = Type::Record(
+            "Request".into(),
+            vec![
                 ("method".into(), method_ty.clone()),
                 ("path".into(), Type::String),
                 ("query".into(), Type::String),
                 ("headers".into(), map_ss.clone()),
                 ("body".into(), Type::String),
             ],
-        });
+        );
+
+        self.records.insert(
+            "Request".into(),
+            RecordInfo {
+                _name: "Request".into(),
+                _params: vec![],
+                fields: vec![
+                    ("method".into(), method_ty.clone()),
+                    ("path".into(), Type::String),
+                    ("query".into(), Type::String),
+                    ("headers".into(), map_ss.clone()),
+                    ("body".into(), Type::String),
+                ],
+            },
+        );
 
         // ── Function signatures ──────────────────────────────────────
 
-        let result_response = Type::Generic("Result".into(), vec![response_ty.clone(), Type::String]);
+        let result_response =
+            Type::Generic("Result".into(), vec![response_ty.clone(), Type::String]);
 
         // http.get: (String) -> Result(Response, String)
-        env.define("http.get".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(result_response.clone()),
-        )));
+        env.define(
+            "http.get".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(result_response.clone()),
+            )),
+        );
 
         // http.request: (Method, String, String, Map(String, String)) -> Result(Response, String)
-        env.define("http.request".into(), Scheme::mono(Type::Fun(
-            vec![method_ty, Type::String, Type::String, map_ss],
-            Box::new(result_response),
-        )));
+        env.define(
+            "http.request".into(),
+            Scheme::mono(Type::Fun(
+                vec![method_ty, Type::String, Type::String, map_ss],
+                Box::new(result_response),
+            )),
+        );
 
         // http.serve: (Int, Fn(Request) -> Response) -> Unit
-        env.define("http.serve".into(), Scheme::mono(Type::Fun(
-            vec![
-                Type::Int,
-                Type::Fun(vec![request_ty], Box::new(response_ty)),
-            ],
-            Box::new(Type::Unit),
-        )));
+        env.define(
+            "http.serve".into(),
+            Scheme::mono(Type::Fun(
+                vec![
+                    Type::Int,
+                    Type::Fun(vec![request_ty], Box::new(response_ty)),
+                ],
+                Box::new(Type::Unit),
+            )),
+        );
 
         // http.segments: (String) -> List(String)
-        env.define("http.segments".into(), Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::List(Box::new(Type::String))),
-        )));
+        env.define(
+            "http.segments".into(),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
     }
 
     // ── Register type declarations ──────────────────────────────────
@@ -3074,11 +3748,8 @@ impl TypeChecker {
                     });
 
                     // Register the constructor in the type environment
-                    let type_params: Vec<Type> = td
-                        .params
-                        .iter()
-                        .map(|p| param_vars[p].clone())
-                        .collect();
+                    let type_params: Vec<Type> =
+                        td.params.iter().map(|p| param_vars[p].clone()).collect();
 
                     let result_type = if type_params.is_empty() {
                         Type::Generic(td.name.clone(), vec![])
@@ -3153,27 +3824,53 @@ impl TypeChecker {
                 // The type is the record type itself, so json.parse can
                 // propagate it into the return type.
                 let record_ty = Type::Record(td.name.clone(), field_types);
-                env.define(td.name.clone(), Scheme {
-                    vars: vec![],
-                    ty: record_ty,
-                    constraints: vec![],
-                });
+                env.define(
+                    td.name.clone(),
+                    Scheme {
+                        vars: vec![],
+                        ty: record_ty,
+                        constraints: vec![],
+                    },
+                );
             }
         }
 
         // Auto-derive builtin traits for user-defined types.
         // All enums and records get Equal, Compare, Hash, Display since
         // the runtime supports Eq/Ord/Hash on all Value variants.
-        let dummy_span = Span { line: 0, col: 0, offset: 0 };
+        let dummy_span = Span {
+            line: 0,
+            col: 0,
+            offset: 0,
+        };
         for trait_name in &["Equal", "Compare", "Hash", "Display"] {
-            self.trait_impl_set.insert((trait_name.to_string(), td.name.clone()));
+            self.trait_impl_set
+                .insert((trait_name.to_string(), td.name.clone()));
         }
         // Register auto-derived method entries
         let builtin_methods: &[(&str, Type)] = &[
-            ("display", Type::Fun(vec![self.fresh_var()], Box::new(Type::String))),
-            ("equal", Type::Fun(vec![self.fresh_var(), self.fresh_var()], Box::new(Type::Bool))),
-            ("compare", Type::Fun(vec![self.fresh_var(), self.fresh_var()], Box::new(Type::Int))),
-            ("hash", Type::Fun(vec![self.fresh_var()], Box::new(Type::Int))),
+            (
+                "display",
+                Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+            ),
+            (
+                "equal",
+                Type::Fun(
+                    vec![self.fresh_var(), self.fresh_var()],
+                    Box::new(Type::Bool),
+                ),
+            ),
+            (
+                "compare",
+                Type::Fun(
+                    vec![self.fresh_var(), self.fresh_var()],
+                    Box::new(Type::Int),
+                ),
+            ),
+            (
+                "hash",
+                Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+            ),
         ];
         for (method_name, method_type) in builtin_methods {
             self.method_table.insert(
@@ -3237,9 +3934,7 @@ impl TypeChecker {
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
                 match name.as_str() {
-                    "List" if resolved_args.is_empty() => {
-                        Type::List(Box::new(self.fresh_var()))
-                    }
+                    "List" if resolved_args.is_empty() => Type::List(Box::new(self.fresh_var())),
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
@@ -3253,9 +3948,7 @@ impl TypeChecker {
                             Box::new(iter.next().unwrap()),
                         )
                     }
-                    "Set" if resolved_args.is_empty() => {
-                        Type::Set(Box::new(self.fresh_var()))
-                    }
+                    "Set" if resolved_args.is_empty() => Type::Set(Box::new(self.fresh_var())),
                     "Set" if resolved_args.len() == 1 => {
                         Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
@@ -3375,8 +4068,13 @@ impl TypeChecker {
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
             // Allow overriding auto-derived impls.
-            let first_method = ti.methods.first().map(|m| m.name.as_str()).unwrap_or("display");
-            let is_overriding_auto = self.method_table
+            let first_method = ti
+                .methods
+                .first()
+                .map(|m| m.name.as_str())
+                .unwrap_or("display");
+            let is_overriding_auto = self
+                .method_table
                 .get(&(ti.target_type.clone(), first_method.to_string()))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(true);
@@ -3439,7 +4137,10 @@ impl TypeChecker {
         for (type_param, trait_name) in &f.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
-                    format!("unknown trait '{}' in where clause for '{}'", trait_name, type_param),
+                    format!(
+                        "unknown trait '{}' in where clause for '{}'",
+                        trait_name, type_param
+                    ),
                     f.span,
                 );
             }
@@ -3503,35 +4204,30 @@ impl TypeChecker {
             Pattern::Constructor(name, sub_pats) => {
                 // Look up the constructor to find inner types
                 let resolved = self.apply(ty);
-                if let Some(enum_name) = self.variant_to_enum.get(name).cloned() {
-                    if let Some(enum_info) = self.enums.get(&enum_name).cloned() {
-                        if let Some(var_info) = enum_info
-                            .variants
-                            .iter()
-                            .find(|v| v.name == *name)
-                        {
-                            // For parameterized types we need to figure out type args
-                            // from the outer type and substitute them in
-                            let type_args = match &resolved {
-                                Type::Generic(_, args) => args.clone(),
-                                _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
-                            };
-                            for (i, sp) in sub_pats.iter().enumerate() {
-                                if i < var_info.field_types.len() {
-                                    let field_ty = substitute_enum_params(
-                                        &var_info.field_types[i],
-                                        &enum_info.params,
-                                        &type_args,
-                                    );
-                                    self.bind_pattern(sp, &field_ty, env);
-                                } else {
-                                    let tv = self.fresh_var();
-                                    self.bind_pattern(sp, &tv, env);
-                                }
-                            }
-                            return;
+                if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
+                    && let Some(enum_info) = self.enums.get(&enum_name).cloned()
+                    && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
+                {
+                    // For parameterized types we need to figure out type args
+                    // from the outer type and substitute them in
+                    let type_args = match &resolved {
+                        Type::Generic(_, args) => args.clone(),
+                        _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
+                    };
+                    for (i, sp) in sub_pats.iter().enumerate() {
+                        if i < var_info.field_types.len() {
+                            let field_ty = substitute_enum_params(
+                                &var_info.field_types[i],
+                                &enum_info.params,
+                                &type_args,
+                            );
+                            self.bind_pattern(sp, &field_ty, env);
+                        } else {
+                            let tv = self.fresh_var();
+                            self.bind_pattern(sp, &tv, env);
                         }
                     }
+                    return;
                 }
                 // Fallback: bind sub-patterns with fresh vars
                 for sp in sub_pats {
@@ -3542,7 +4238,15 @@ impl TypeChecker {
             Pattern::List(pats, rest) => {
                 let elem_ty = self.fresh_var();
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
-                self.unify(ty, &list_ty, Span { line: 0, col: 0, offset: 0 });
+                self.unify(
+                    ty,
+                    &list_ty,
+                    Span {
+                        line: 0,
+                        col: 0,
+                        offset: 0,
+                    },
+                );
                 let resolved_elem = self.apply(&elem_ty);
                 for p in pats {
                     self.bind_pattern(p, &resolved_elem, env);
@@ -3556,17 +4260,12 @@ impl TypeChecker {
                 let resolved = self.apply(ty);
                 if let Type::Record(_, field_types) = &resolved {
                     for (field_name, sub_pat) in fields {
-                        if let Some((_, ft)) =
-                            field_types.iter().find(|(n, _)| n == field_name)
-                        {
+                        if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {
                                 self.bind_pattern(sp, ft, env);
                             } else {
                                 // Shorthand: field name is also the binding
-                                env.define(
-                                    field_name.clone(),
-                                    Scheme::mono(ft.clone()),
-                                );
+                                env.define(field_name.clone(), Scheme::mono(ft.clone()));
                             }
                         } else {
                             if let Some(sp) = sub_pat {
@@ -3574,10 +4273,7 @@ impl TypeChecker {
                                 self.bind_pattern(sp, &tv, env);
                             } else {
                                 let tv = self.fresh_var();
-                                env.define(
-                                    field_name.clone(),
-                                    Scheme::mono(tv),
-                                );
+                                env.define(field_name.clone(), Scheme::mono(tv));
                             }
                         }
                     }
@@ -3600,16 +4296,40 @@ impl TypeChecker {
                 }
             }
             Pattern::Range(_, _) => {
-                self.unify(ty, &Type::Int, Span { line: 0, col: 0, offset: 0 });
+                self.unify(
+                    ty,
+                    &Type::Int,
+                    Span {
+                        line: 0,
+                        col: 0,
+                        offset: 0,
+                    },
+                );
             }
             Pattern::FloatRange(_, _) => {
-                self.unify(ty, &Type::Float, Span { line: 0, col: 0, offset: 0 });
+                self.unify(
+                    ty,
+                    &Type::Float,
+                    Span {
+                        line: 0,
+                        col: 0,
+                        offset: 0,
+                    },
+                );
             }
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
-                self.unify(ty, &map_ty, Span { line: 0, col: 0, offset: 0 });
+                self.unify(
+                    ty,
+                    &map_ty,
+                    Span {
+                        line: 0,
+                        col: 0,
+                        offset: 0,
+                    },
+                );
                 let resolved_val = self.apply(&val_ty);
                 for (_key, pat) in entries {
                     self.bind_pattern(pat, &resolved_val, env);
@@ -3619,11 +4339,22 @@ impl TypeChecker {
                 // Pin does not introduce a new binding — it checks against an
                 // existing variable.  Look it up in the parent (pre-match) scope
                 // first, then fall back to the current scope for when/let contexts.
-                let found = env.parent.as_ref().and_then(|p| p.lookup(name).cloned())
+                let found = env
+                    .parent
+                    .as_ref()
+                    .and_then(|p| p.lookup(name).cloned())
                     .or_else(|| env.lookup(name).cloned());
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
-                    self.unify(ty, &pinned_ty, Span { line: 0, col: 0, offset: 0 });
+                    self.unify(
+                        ty,
+                        &pinned_ty,
+                        Span {
+                            line: 0,
+                            col: 0,
+                            offset: 0,
+                        },
+                    );
                 }
                 // If not found, we just skip — the runtime will handle the missing variable.
             }
@@ -3713,10 +4444,7 @@ impl TypeChecker {
             }
 
             ExprKind::Tuple(elems) => {
-                let types: Vec<Type> = elems
-                    .iter_mut()
-                    .map(|e| self.infer_expr(e, env))
-                    .collect();
+                let types: Vec<Type> = elems.iter_mut().map(|e| self.infer_expr(e, env)).collect();
                 Type::Tuple(types)
             }
 
@@ -3729,10 +4457,7 @@ impl TypeChecker {
                     // Module-qualified name or `self` — allow without error
                     self.fresh_var()
                 } else {
-                    self.error(
-                        format!("undefined variable '{name}'"),
-                        span,
-                    );
+                    self.error(format!("undefined variable '{name}'"), span);
                     self.fresh_var()
                 }
             }
@@ -3740,7 +4465,11 @@ impl TypeChecker {
             ExprKind::FieldAccess(obj, field) => {
                 let field = field.clone();
                 // Capture module name before mutable borrow for inference
-                let module_name = if let ExprKind::Ident(n) = &obj.kind { Some(n.clone()) } else { None };
+                let module_name = if let ExprKind::Ident(n) = &obj.kind {
+                    Some(n.clone())
+                } else {
+                    None
+                };
 
                 // Check for module-style access first (e.g., string.split)
                 // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
@@ -3766,7 +4495,11 @@ impl TypeChecker {
                         // Direct field access first
                         if let Some((_, ft)) = fields.iter().find(|(n, _)| n == &field) {
                             ft.clone()
-                        } else if let Some(entry) = self.method_table.get(&(rec_name.clone(), field.clone())).cloned() {
+                        } else if let Some(entry) = self
+                            .method_table
+                            .get(&(rec_name.clone(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3780,17 +4513,19 @@ impl TypeChecker {
                     }
                     Type::Generic(type_name, _) => {
                         // Check record field definitions
-                        if let Some(rec_info) = self.records.get(type_name).cloned() {
-                            if let Some((_, ft)) =
-                                rec_info.fields.iter().find(|(n, _)| n == &field)
-                            {
-                                let resolved = self.apply(&ft);
-                                expr.ty = Some(resolved.clone());
-                                return resolved;
-                            }
+                        if let Some(rec_info) = self.records.get(type_name).cloned()
+                            && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| n == &field)
+                        {
+                            let resolved = self.apply(ft);
+                            expr.ty = Some(resolved.clone());
+                            return resolved;
                         }
                         // Check method table (trait methods)
-                        if let Some(entry) = self.method_table.get(&(type_name.clone(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&(type_name.clone(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3813,11 +4548,18 @@ impl TypeChecker {
                     // Primitive types — check method table for trait methods
                     Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => {
                         let type_name = match &obj_ty {
-                            Type::Int => "Int", Type::Float => "Float",
-                            Type::Bool => "Bool", Type::String => "String",
-                            Type::Unit => "()", _ => unreachable!(),
+                            Type::Int => "Int",
+                            Type::Float => "Float",
+                            Type::Bool => "Bool",
+                            Type::String => "String",
+                            Type::Unit => "()",
+                            _ => unreachable!(),
                         };
-                        if let Some(entry) = self.method_table.get(&(type_name.to_string(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&(type_name.to_string(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3830,7 +4572,11 @@ impl TypeChecker {
                     }
                     // Collection types
                     Type::List(_) => {
-                        if let Some(entry) = self.method_table.get(&("List".to_string(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&("List".to_string(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3839,7 +4585,11 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Tuple(_) => {
-                        if let Some(entry) = self.method_table.get(&("Tuple".to_string(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&("Tuple".to_string(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3848,7 +4598,11 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Map(_, _) => {
-                        if let Some(entry) = self.method_table.get(&("Map".to_string(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&("Map".to_string(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3857,7 +4611,11 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Set(_) => {
-                        if let Some(entry) = self.method_table.get(&("Set".to_string(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&("Set".to_string(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -3867,17 +4625,21 @@ impl TypeChecker {
                     }
                     // Variant types — look up parent enum
                     Type::Variant(variant_name, _) => {
-                        let parent = self.variant_to_enum.get(variant_name).cloned()
+                        let parent = self
+                            .variant_to_enum
+                            .get(variant_name)
+                            .cloned()
                             .unwrap_or_else(|| variant_name.clone());
-                        if let Some(entry) = self.method_table.get(&(parent.clone(), field.clone())).cloned() {
+                        if let Some(entry) = self
+                            .method_table
+                            .get(&(parent.clone(), field.clone()))
+                            .cloned()
+                        {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(
-                            format!("unknown method '{field}' on type {parent}"),
-                            span,
-                        );
+                        self.error(format!("unknown method '{field}' on type {parent}"), span);
                         Type::Error
                     }
                     Type::Var(_) | Type::Error => {
@@ -3944,12 +4706,17 @@ impl TypeChecker {
                     // Destructure rhs.kind mutably to get at callee and call_args
                     if let ExprKind::Call(callee, call_args) = &mut rhs.kind {
                         // Capture callee name for where clause check
-                        let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind { Some(n.clone()) } else { None };
+                        let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
+                            Some(n.clone())
+                        } else {
+                            None
+                        };
                         // Capture arg spans before mutable inference
                         let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
 
                         // If callee is a named function, use instantiate_with_constraints
-                        let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name {
+                        let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name
+                        {
                             if let Some(scheme) = env.lookup(name).cloned() {
                                 let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                                 (self.apply(&ty), constraints)
@@ -3993,16 +4760,18 @@ impl TypeChecker {
                         // Check where clause constraints using instantiated TyVars
                         for (tyvar, trait_name) in &where_constraints {
                             let resolved = self.apply(&Type::Var(*tyvar));
-                            if let Some(type_name) = self.type_name_for_impl(&resolved) {
-                                if !self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone())) {
-                                    self.error(
-                                        format!(
-                                            "type '{}' does not implement trait '{}'",
-                                            type_name, trait_name
-                                        ),
-                                        span,
-                                    );
-                                }
+                            if let Some(type_name) = self.type_name_for_impl(&resolved)
+                                && !self
+                                    .trait_impl_set
+                                    .contains(&(trait_name.clone(), type_name.clone()))
+                            {
+                                self.error(
+                                    format!(
+                                        "type '{}' does not implement trait '{}'",
+                                        type_name, trait_name
+                                    ),
+                                    span,
+                                );
                             }
                         }
 
@@ -4065,7 +4834,11 @@ impl TypeChecker {
 
             ExprKind::Call(callee, args) => {
                 // Capture callee name and arg spans before mutable inference
-                let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind { Some(n.clone()) } else { None };
+                let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
+                    Some(n.clone())
+                } else {
+                    None
+                };
                 let is_method_call = matches!(&callee.kind, ExprKind::FieldAccess(..));
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
@@ -4084,10 +4857,8 @@ impl TypeChecker {
                     (self.apply(&ty), vec![])
                 };
 
-                let arg_types: Vec<Type> = args
-                    .iter_mut()
-                    .map(|a| self.infer_expr(a, env))
-                    .collect();
+                let arg_types: Vec<Type> =
+                    args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
 
                 let result_ty = match &callee_ty {
                     Type::Fun(params, ret) => {
@@ -4134,16 +4905,18 @@ impl TypeChecker {
                 // Check where clause constraints using instantiated TyVars
                 for (tyvar, trait_name) in &where_constraints {
                     let resolved = self.apply(&Type::Var(*tyvar));
-                    if let Some(type_name) = self.type_name_for_impl(&resolved) {
-                        if !self.trait_impl_set.contains(&(trait_name.clone(), type_name.clone())) {
-                            self.error(
-                                format!(
-                                    "type '{}' does not implement trait '{}'",
-                                    type_name, trait_name
-                                ),
-                                span,
-                            );
-                        }
+                    if let Some(type_name) = self.type_name_for_impl(&resolved)
+                        && !self
+                            .trait_impl_set
+                            .contains(&(trait_name.clone(), type_name.clone()))
+                    {
+                        self.error(
+                            format!(
+                                "type '{}' does not implement trait '{}'",
+                                type_name, trait_name
+                            ),
+                            span,
+                        );
                     }
                 }
 
@@ -4212,7 +4985,10 @@ impl TypeChecker {
                 base_ty
             }
 
-            ExprKind::Match { expr: scrutinee, arms } => {
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
                 match scrutinee {
                     Some(scrutinee) => {
                         let scrutinee_span = scrutinee.span;
@@ -4221,7 +4997,12 @@ impl TypeChecker {
 
                         for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
-                            self.check_pattern(&arm.pattern, &scrutinee_ty, &mut arm_env, scrutinee_span);
+                            self.check_pattern(
+                                &arm.pattern,
+                                &scrutinee_ty,
+                                &mut arm_env,
+                                scrutinee_span,
+                            );
 
                             if let Some(ref mut guard) = arm.guard {
                                 let guard_span = guard.span;
@@ -4286,10 +5067,9 @@ impl TypeChecker {
             ExprKind::Loop { bindings, body } => {
                 let mut loop_env = env.child();
                 let binding_count = bindings.len();
-                for i in 0..binding_count {
-                    let ty = self.infer_expr(&mut bindings[i].1, env);
-                    let name = bindings[i].0.clone();
-                    loop_env.define(name, Scheme::mono(ty));
+                for (name, value) in bindings.iter_mut() {
+                    let ty = self.infer_expr(value, env);
+                    loop_env.define(name.clone(), Scheme::mono(ty));
                 }
                 let prev_loop = self.loop_binding_count;
                 self.loop_binding_count = Some(binding_count);
@@ -4303,21 +5083,19 @@ impl TypeChecker {
                 for arg in args {
                     let _ty = self.infer_expr(arg, env);
                 }
-                if let Some(expected) = self.loop_binding_count {
-                    if recur_count != expected {
-                        self.warning(
-                            format!(
-                                "loop has {} binding(s), but recur supplies {} argument(s)",
-                                expected,
-                                recur_count
-                            ),
-                            span,
-                        );
-                    }
+                if let Some(expected) = self.loop_binding_count
+                    && recur_count != expected
+                {
+                    self.warning(
+                        format!(
+                            "loop has {} binding(s), but recur supplies {} argument(s)",
+                            expected, recur_count
+                        ),
+                        span,
+                    );
                 }
                 self.fresh_var()
             }
-
         };
         let resolved = self.apply(&ty);
         expr.ty = Some(resolved.clone());
@@ -4354,7 +5132,11 @@ impl TypeChecker {
                 Type::Unit
             }
 
-            Stmt::When { pattern, expr, else_body } => {
+            Stmt::When {
+                pattern,
+                expr,
+                else_body,
+            } => {
                 let expr_ty = self.infer_expr(expr, env);
 
                 // Type check the else body
@@ -4367,31 +5149,22 @@ impl TypeChecker {
                 // e.g., when Ok(value) = expr, value has the inner type
                 if let Pattern::Constructor(name, sub_pats) = pattern {
                     let expr_ty = self.apply(&expr_ty);
-                    if let Some(enum_name) = self.variant_to_enum.get(name).cloned() {
-                        if let Some(enum_info) = self.enums.get(&enum_name).cloned() {
-                            if let Some(var_info) = enum_info
-                                .variants
-                                .iter()
-                                .find(|v| v.name == *name)
-                            {
-                                let type_args = match &expr_ty {
-                                    Type::Generic(_, args) => args.clone(),
-                                    _ => enum_info
-                                        .params
-                                        .iter()
-                                        .map(|_| self.fresh_var())
-                                        .collect(),
-                                };
-                                for (i, sp) in sub_pats.iter().enumerate() {
-                                    if i < var_info.field_types.len() {
-                                        let field_ty = substitute_enum_params(
-                                            &var_info.field_types[i],
-                                            &enum_info.params,
-                                            &type_args,
-                                        );
-                                        self.bind_pattern(sp, &field_ty, env);
-                                    }
-                                }
+                    if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
+                        && let Some(enum_info) = self.enums.get(&enum_name).cloned()
+                        && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
+                    {
+                        let type_args = match &expr_ty {
+                            Type::Generic(_, args) => args.clone(),
+                            _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
+                        };
+                        for (i, sp) in sub_pats.iter().enumerate() {
+                            if i < var_info.field_types.len() {
+                                let field_ty = substitute_enum_params(
+                                    &var_info.field_types[i],
+                                    &enum_info.params,
+                                    &type_args,
+                                );
+                                self.bind_pattern(sp, &field_ty, env);
                             }
                         }
                     }
@@ -4400,7 +5173,10 @@ impl TypeChecker {
                 Type::Unit
             }
 
-            Stmt::WhenBool { condition, else_body } => {
+            Stmt::WhenBool {
+                condition,
+                else_body,
+            } => {
                 let cond_ty = self.infer_expr(condition, env);
                 self.unify(&cond_ty, &Type::Bool, condition.span);
 
@@ -4416,13 +5192,7 @@ impl TypeChecker {
 
     // ── Pattern checking (type check, not just bind) ────────────────
 
-    fn check_pattern(
-        &mut self,
-        pattern: &Pattern,
-        expected: &Type,
-        env: &mut TypeEnv,
-        span: Span,
-    ) {
+    fn check_pattern(&mut self, pattern: &Pattern, expected: &Type, env: &mut TypeEnv, span: Span) {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Ident(name) => {
@@ -4441,8 +5211,7 @@ impl TypeChecker {
                 self.unify(expected, &Type::String, span);
             }
             Pattern::Tuple(pats) => {
-                let elem_types: Vec<Type> =
-                    pats.iter().map(|_| self.fresh_var()).collect();
+                let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
                 let tuple_ty = Type::Tuple(elem_types.clone());
                 self.unify(expected, &tuple_ty, span);
 
@@ -4496,10 +5265,7 @@ impl TypeChecker {
             Pattern::Record { name, fields, .. } => {
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
-                        let rec_ty = Type::Record(
-                            rec_name.clone(),
-                            rec_info.fields.clone(),
-                        );
+                        let rec_ty = Type::Record(rec_name.clone(), rec_info.fields.clone());
                         self.unify(expected, &rec_ty, span);
 
                         for (field_name, sub_pat) in fields {
@@ -4509,10 +5275,7 @@ impl TypeChecker {
                                 if let Some(sp) = sub_pat {
                                     self.check_pattern(sp, ft, env, span);
                                 } else {
-                                    env.define(
-                                        field_name.clone(),
-                                        Scheme::mono(ft.clone()),
-                                    );
+                                    env.define(field_name.clone(), Scheme::mono(ft.clone()));
                                 }
                             }
                         }
@@ -4574,7 +5337,10 @@ impl TypeChecker {
             Pattern::Pin(name) => {
                 // Look up the pinned variable in the parent (pre-match) scope,
                 // falling back to current scope for when/let contexts.
-                let found = env.parent.as_ref().and_then(|p| p.lookup(name).cloned())
+                let found = env
+                    .parent
+                    .as_ref()
+                    .and_then(|p| p.lookup(name).cloned())
                     .or_else(|| env.lookup(name).cloned());
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
@@ -4590,12 +5356,7 @@ impl TypeChecker {
     // A match is exhaustive iff the wildcard pattern is NOT useful after
     // all arms have been processed.
 
-    fn check_exhaustiveness(
-        &mut self,
-        arms: &[MatchArm],
-        scrutinee_ty: &Type,
-        span: Span,
-    ) {
+    fn check_exhaustiveness(&mut self, arms: &[MatchArm], scrutinee_ty: &Type, span: Span) {
         // Collect patterns from arms without guards (guarded arms don't
         // guarantee coverage since the guard may be false).
         let patterns: Vec<&Pattern> = arms
@@ -4637,7 +5398,9 @@ impl TypeChecker {
 
         // Expand or-patterns in the query.
         if let Pattern::Or(alts) = query {
-            return alts.iter().any(|alt| self.is_useful(matrix, alt, ty, depth));
+            return alts
+                .iter()
+                .any(|alt| self.is_useful(matrix, alt, ty, depth));
         }
 
         // Expand or-patterns in the matrix.
@@ -4692,35 +5455,45 @@ impl TypeChecker {
             }
             // Record types have a single constructor — a wildcard is NOT useful
             // if any row already matches (record pattern, wildcard, or ident).
-            Type::Record(..) => {
-                !matrix.iter().any(|p| matches!(p,
-                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }))
-            }
+            Type::Record(..) => !matrix.iter().any(|p| {
+                matches!(
+                    p,
+                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
+                )
+            }),
             // Lists have two constructors: [] (empty) and [_, ..rest] (non-empty).
             Type::List(_elem_ty) => {
                 let empty = Pattern::List(vec![], None);
-                let non_empty = Pattern::List(
-                    vec![Pattern::Wildcard],
-                    Some(Box::new(Pattern::Wildcard)),
-                );
+                let non_empty =
+                    Pattern::List(vec![Pattern::Wildcard], Some(Box::new(Pattern::Wildcard)));
                 self.is_useful(matrix, &empty, ty, depth + 1)
                     || self.is_useful(matrix, &non_empty, ty, depth + 1)
             }
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
-            _ => {
-                !matrix.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)))
-            }
+            _ => !matrix
+                .iter()
+                .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
         }
     }
 
     /// Check if a specific constructor pattern is useful.
-    fn is_constructor_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type, depth: usize) -> bool {
+    fn is_constructor_useful(
+        &self,
+        matrix: &[&Pattern],
+        query: &Pattern,
+        ty: &Type,
+        depth: usize,
+    ) -> bool {
         match query {
             Pattern::Bool(b) => {
-                let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
-                    matches!(p, Pattern::Bool(pb) if pb == b)
-                        || matches!(p, Pattern::Wildcard | Pattern::Ident(_))
-                }).copied().collect();
+                let specialized: Vec<&Pattern> = matrix
+                    .iter()
+                    .filter(|p| {
+                        matches!(p, Pattern::Bool(pb) if pb == b)
+                            || matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                    })
+                    .copied()
+                    .collect();
                 specialized.is_empty()
             }
             Pattern::Constructor(name, sub_pats) => {
@@ -4752,12 +5525,13 @@ impl TypeChecker {
                         _ => Type::Error,
                     };
                     // Unwrap the single element from each specialized tuple.
-                    let unwrapped: Vec<Pattern> = specialized.iter().map(|p| {
-                        match p {
+                    let unwrapped: Vec<Pattern> = specialized
+                        .iter()
+                        .map(|p| match p {
                             Pattern::Tuple(ps) if !ps.is_empty() => ps[0].clone(),
                             _ => p.clone(),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     let unwrapped_refs: Vec<&Pattern> = unwrapped.iter().collect();
                     self.is_useful(&unwrapped_refs, &sub_pats[0], &elem_ty, depth + 1)
                 } else {
@@ -4771,32 +5545,50 @@ impl TypeChecker {
                 let is_empty = elems.is_empty() && rest.is_none();
                 if is_empty {
                     // Empty list pattern: useful if no empty list or wildcard in matrix
-                    let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
-                        matches!(p, Pattern::Wildcard | Pattern::Ident(_))
-                            || matches!(p, Pattern::List(e, r) if e.is_empty() && r.is_none())
-                    }).copied().collect();
+                    let specialized: Vec<&Pattern> = matrix
+                        .iter()
+                        .filter(|p| {
+                            matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                                || matches!(p, Pattern::List(e, r) if e.is_empty() && r.is_none())
+                        })
+                        .copied()
+                        .collect();
                     specialized.is_empty()
                 } else {
                     // Non-empty list pattern: useful if no non-empty list or wildcard covers it
-                    let specialized: Vec<&Pattern> = matrix.iter().filter(|p| {
-                        matches!(p, Pattern::Wildcard | Pattern::Ident(_))
-                            || matches!(p, Pattern::List(e, _) if !e.is_empty())
-                    }).copied().collect();
+                    let specialized: Vec<&Pattern> = matrix
+                        .iter()
+                        .filter(|p| {
+                            matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                                || matches!(p, Pattern::List(e, _) if !e.is_empty())
+                        })
+                        .copied()
+                        .collect();
                     specialized.is_empty()
                 }
             }
             // Literal patterns — useful iff no wildcard covers them.
-            Pattern::Int(_) | Pattern::Float(_) | Pattern::StringLit(_)
-            | Pattern::Range(..) | Pattern::FloatRange(..) | Pattern::Pin(_) => {
-                !matrix.iter().any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_)))
-            }
+            Pattern::Int(_)
+            | Pattern::Float(_)
+            | Pattern::StringLit(_)
+            | Pattern::Range(..)
+            | Pattern::FloatRange(..)
+            | Pattern::Pin(_) => !matrix
+                .iter()
+                .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
             _ => false,
         }
     }
 
     /// Check multi-element tuple usefulness by specializing on the first column.
     /// This implements the proper Maranget column decomposition.
-    fn is_tuple_useful_recursive(&self, matrix: &[&Pattern], sub_pats: &[Pattern], ty: &Type, depth: usize) -> bool {
+    fn is_tuple_useful_recursive(
+        &self,
+        matrix: &[&Pattern],
+        sub_pats: &[Pattern],
+        ty: &Type,
+        depth: usize,
+    ) -> bool {
         let arity = sub_pats.len();
         if arity == 0 {
             return matrix.is_empty();
@@ -4806,13 +5598,14 @@ impl TypeChecker {
                 Type::Tuple(ts) if !ts.is_empty() => ts[0].clone(),
                 _ => Type::Error,
             };
-            let col_pats: Vec<&Pattern> = matrix.iter().filter_map(|p| {
-                match p {
+            let col_pats: Vec<&Pattern> = matrix
+                .iter()
+                .filter_map(|p| match p {
                     Pattern::Tuple(ps) if ps.len() == 1 => Some(&ps[0]),
                     Pattern::Wildcard | Pattern::Ident(_) => Some(*p),
                     _ => None,
-                }
-            }).collect();
+                })
+                .collect();
             return self.is_useful(&col_pats, &sub_pats[0], &col_ty, depth + 1);
         }
 
@@ -4846,7 +5639,8 @@ impl TypeChecker {
                         }
                     }
                     Pattern::Wildcard | Pattern::Ident(_) => {
-                        let wilds: Vec<Pattern> = (0..arity - 1).map(|_| Pattern::Wildcard).collect();
+                        let wilds: Vec<Pattern> =
+                            (0..arity - 1).map(|_| Pattern::Wildcard).collect();
                         specialized_rest.push(Pattern::Tuple(wilds));
                     }
                     _ => {}
@@ -4869,11 +5663,15 @@ impl TypeChecker {
                     Type::Bool => vec![Pattern::Bool(true), Pattern::Bool(false)],
                     Type::Generic(name, _) => {
                         if let Some(info) = self.enums.get(name) {
-                            info.variants.iter().map(|v| {
-                                let sub_pats: Vec<Pattern> = (0..v.field_types.len())
-                                    .map(|_| Pattern::Wildcard).collect();
-                                Pattern::Constructor(v.name.clone(), sub_pats)
-                            }).collect()
+                            info.variants
+                                .iter()
+                                .map(|v| {
+                                    let sub_pats: Vec<Pattern> = (0..v.field_types.len())
+                                        .map(|_| Pattern::Wildcard)
+                                        .collect();
+                                    Pattern::Constructor(v.name.clone(), sub_pats)
+                                })
+                                .collect()
                         } else {
                             vec![Pattern::Wildcard]
                         }
@@ -4902,7 +5700,12 @@ impl TypeChecker {
     }
 
     /// Specialize the matrix for a specific enum constructor.
-    fn specialize_constructor(&self, matrix: &[&Pattern], ctor_name: &str, arity: usize) -> Vec<Pattern> {
+    fn specialize_constructor(
+        &self,
+        matrix: &[&Pattern],
+        ctor_name: &str,
+        arity: usize,
+    ) -> Vec<Pattern> {
         let mut result = Vec::new();
         for pat in matrix {
             match pat {
@@ -4947,29 +5750,30 @@ impl TypeChecker {
 
     /// Get the sub-type for a constructor's fields.
     fn sub_type_for_constructor(&self, ctor_name: &str, parent_ty: &Type) -> Type {
-        if let Some(enum_name) = self.variant_to_enum.get(ctor_name) {
-            if let Some(enum_info) = self.enums.get(enum_name) {
-                if let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name) {
-                    if variant.field_types.len() == 1 {
-                        if let Type::Generic(_, type_args) = parent_ty {
-                            return substitute_enum_params(
-                                &variant.field_types[0],
-                                &enum_info.params,
-                                type_args,
-                            );
-                        }
-                        return variant.field_types[0].clone();
-                    } else if variant.field_types.len() > 1 {
-                        let field_types: Vec<Type> = if let Type::Generic(_, type_args) = parent_ty {
-                            variant.field_types.iter()
-                                .map(|ft| substitute_enum_params(ft, &enum_info.params, type_args))
-                                .collect()
-                        } else {
-                            variant.field_types.clone()
-                        };
-                        return Type::Tuple(field_types);
-                    }
+        if let Some(enum_name) = self.variant_to_enum.get(ctor_name)
+            && let Some(enum_info) = self.enums.get(enum_name)
+            && let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name)
+        {
+            if variant.field_types.len() == 1 {
+                if let Type::Generic(_, type_args) = parent_ty {
+                    return substitute_enum_params(
+                        &variant.field_types[0],
+                        &enum_info.params,
+                        type_args,
+                    );
                 }
+                return variant.field_types[0].clone();
+            } else if variant.field_types.len() > 1 {
+                let field_types: Vec<Type> = if let Type::Generic(_, type_args) = parent_ty {
+                    variant
+                        .field_types
+                        .iter()
+                        .map(|ft| substitute_enum_params(ft, &enum_info.params, type_args))
+                        .collect()
+                } else {
+                    variant.field_types.clone()
+                };
+                return Type::Tuple(field_types);
             }
         }
         Type::Error
@@ -4982,8 +5786,12 @@ impl TypeChecker {
                 let has_true = patterns.iter().any(|p| Self::covers_bool(p, true));
                 let has_false = patterns.iter().any(|p| Self::covers_bool(p, false));
                 let mut missing = Vec::new();
-                if !has_true { missing.push("true"); }
-                if !has_false { missing.push("false"); }
+                if !has_true {
+                    missing.push("true");
+                }
+                if !has_false {
+                    missing.push("false");
+                }
                 if missing.is_empty() {
                     "not all patterns are covered".into()
                 } else {
@@ -5056,7 +5864,9 @@ impl TypeChecker {
             }
             ExprKind::Call(callee, args) => {
                 self.resolve_expr_types(callee);
-                for a in args { self.resolve_expr_types(a); }
+                for a in args {
+                    self.resolve_expr_types(a);
+                }
             }
             ExprKind::List(elems) => {
                 for elem in elems {
@@ -5067,7 +5877,9 @@ impl TypeChecker {
                 }
             }
             ExprKind::Tuple(elems) => {
-                for e in elems { self.resolve_expr_types(e); }
+                for e in elems {
+                    self.resolve_expr_types(e);
+                }
             }
             ExprKind::Map(pairs) => {
                 for (k, v) in pairs {
@@ -5076,13 +5888,20 @@ impl TypeChecker {
                 }
             }
             ExprKind::SetLit(elems) => {
-                for e in elems { self.resolve_expr_types(e); }
+                for e in elems {
+                    self.resolve_expr_types(e);
+                }
             }
             ExprKind::Lambda { body, .. } => {
                 self.resolve_expr_types(body);
             }
-            ExprKind::Match { expr: scrutinee, arms } => {
-                if let Some(s) = scrutinee { self.resolve_expr_types(s); }
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
+                if let Some(s) = scrutinee {
+                    self.resolve_expr_types(s);
+                }
                 for arm in arms {
                     if let Some(ref mut guard) = arm.guard {
                         self.resolve_expr_types(guard);
@@ -5094,11 +5913,16 @@ impl TypeChecker {
                 for stmt in stmts {
                     match stmt {
                         Stmt::Let { value, .. } => self.resolve_expr_types(value),
-                        Stmt::When { expr, else_body, .. } => {
+                        Stmt::When {
+                            expr, else_body, ..
+                        } => {
                             self.resolve_expr_types(expr);
                             self.resolve_expr_types(else_body);
                         }
-                        Stmt::WhenBool { condition, else_body } => {
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
                             self.resolve_expr_types(condition);
                             self.resolve_expr_types(else_body);
                         }
@@ -5116,11 +5940,15 @@ impl TypeChecker {
             }
             ExprKind::FieldAccess(e, _) => self.resolve_expr_types(e),
             ExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields { self.resolve_expr_types(e); }
+                for (_, e) in fields {
+                    self.resolve_expr_types(e);
+                }
             }
             ExprKind::RecordUpdate { expr, fields } => {
                 self.resolve_expr_types(expr);
-                for (_, e) in fields { self.resolve_expr_types(e); }
+                for (_, e) in fields {
+                    self.resolve_expr_types(e);
+                }
             }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
@@ -5130,11 +5958,15 @@ impl TypeChecker {
                 }
             }
             ExprKind::Loop { bindings, body } => {
-                for (_, e) in bindings { self.resolve_expr_types(e); }
+                for (_, e) in bindings {
+                    self.resolve_expr_types(e);
+                }
                 self.resolve_expr_types(body);
             }
             ExprKind::Recur(args) => {
-                for a in args { self.resolve_expr_types(a); }
+                for a in args {
+                    self.resolve_expr_types(a);
+                }
             }
             _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }
@@ -5170,14 +6002,20 @@ fn collect_pattern_vars(pat: &Pattern) -> Vec<String> {
         }
         Pattern::Or(alts) => {
             // Return vars from first alt (they should all be the same after validation)
-            alts.first().map(|a| collect_pattern_vars(a)).unwrap_or_default()
+            alts.first().map(collect_pattern_vars).unwrap_or_default()
         }
-        Pattern::Map(entries) => {
-            entries.iter().flat_map(|(_, p)| collect_pattern_vars(p)).collect()
-        }
-        Pattern::Wildcard | Pattern::Int(_) | Pattern::Float(_)
-        | Pattern::Bool(_) | Pattern::StringLit(_)
-        | Pattern::Range(_, _) | Pattern::FloatRange(_, _) | Pattern::Pin(_) => vec![],
+        Pattern::Map(entries) => entries
+            .iter()
+            .flat_map(|(_, p)| collect_pattern_vars(p))
+            .collect(),
+        Pattern::Wildcard
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::Bool(_)
+        | Pattern::StringLit(_)
+        | Pattern::Range(_, _)
+        | Pattern::FloatRange(_, _)
+        | Pattern::Pin(_) => vec![],
     }
 }
 
@@ -5185,18 +6023,20 @@ fn collect_pattern_vars(pat: &Pattern) -> Vec<String> {
 fn occurs_in(var: TyVar, ty: &Type) -> bool {
     match ty {
         Type::Var(v) => *v == var,
-        Type::Fun(params, ret) => {
-            params.iter().any(|p| occurs_in(var, p)) || occurs_in(var, ret)
-        }
+        Type::Fun(params, ret) => params.iter().any(|p| occurs_in(var, p)) || occurs_in(var, ret),
         Type::List(inner) => occurs_in(var, inner),
         Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
         Type::Record(_, fields) => fields.iter().any(|(_, t)| occurs_in(var, t)),
-        Type::Variant(_, args) | Type::Generic(_, args) => {
-            args.iter().any(|a| occurs_in(var, a))
-        }
+        Type::Variant(_, args) | Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
-        Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Error | Type::Never => false,
+        Type::Int
+        | Type::Float
+        | Type::Bool
+        | Type::String
+        | Type::Unit
+        | Type::Error
+        | Type::Never => false,
     }
 }
 
@@ -5247,7 +6087,10 @@ mod tests {
 
     fn assert_no_errors(input: &str) {
         let errors = check_program(input);
-        let hard_errors: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
+        let hard_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
         if !hard_errors.is_empty() {
             panic!(
                 "expected no type errors, got:\n{}",
@@ -5263,7 +6106,9 @@ mod tests {
     fn assert_has_error(input: &str, expected_substring: &str) {
         let errors = check_program(input);
         assert!(
-            errors.iter().any(|e| e.message.contains(expected_substring)),
+            errors
+                .iter()
+                .any(|e| e.message.contains(expected_substring)),
             "expected an error containing '{}', got: {:?}",
             expected_substring,
             errors.iter().map(|e| &e.message).collect::<Vec<_>>()
@@ -5274,68 +6119,81 @@ mod tests {
 
     #[test]
     fn test_int_literal() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 42
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_float_literal() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 3.14
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_string_literal() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = "hello"
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_bool_literal() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = true
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_arithmetic() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 1 + 2
   let y = x * 3
   y
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_comparison() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 1 < 2
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_function_call() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn add(a, b) {
   a + b
 }
@@ -5343,72 +6201,84 @@ fn add(a, b) {
 fn main() {
   add(1, 2)
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_shadowing() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 1
   let x = x + 1
   let x = x * 3
   x
 }
-        "#);
+        "#,
+        );
     }
 
     // ── List inference ──────────────────────────────────────────────
 
     #[test]
     fn test_list_inference() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let xs = [1, 2, 3]
   xs
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_empty_list() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let xs = []
   xs
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Tuple inference ─────────────────────────────────────────────
 
     #[test]
     fn test_tuple_inference() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let pair = (1, "hello")
   pair
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Lambda inference ────────────────────────────────────────────
 
     #[test]
     fn test_lambda() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let double = fn(x) { x * 2 }
   double(5)
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Enum types ──────────────────────────────────────────────────
 
     #[test]
     fn test_enum_type() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -5424,14 +6294,16 @@ fn area(shape) {
 fn main() {
   area(Circle(5.0))
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Record types ────────────────────────────────────────────────
 
     #[test]
     fn test_record_type() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type User {
   name: String,
   age: Int,
@@ -5442,12 +6314,14 @@ fn main() {
   let u = User { name: "Alice", age: 30, active: true }
   u.name
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_record_update() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type User {
   name: String,
   age: Int,
@@ -5463,14 +6337,16 @@ fn main() {
   let u2 = birthday(u)
   u2.age
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Match exhaustiveness ────────────────────────────────────────
 
     #[test]
     fn test_match_exhaustive_with_wildcard() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -5486,12 +6362,14 @@ fn describe(shape) {
 fn main() {
   describe(Circle(1.0))
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_match_exhaustive_all_variants() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -5507,7 +6385,8 @@ fn describe(shape) {
 fn main() {
   describe(Circle(1.0))
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
@@ -5556,7 +6435,8 @@ fn main() { handle(Ok(Some(1))) }
     #[test]
     fn test_match_exhaustive_nested_option() {
         // Full coverage of nested Option inside Result.
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn handle(r) {
   match r {
     Ok(Some(x)) -> x
@@ -5565,7 +6445,8 @@ fn handle(r) {
   }
 }
 fn main() { handle(Ok(Some(1))) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
@@ -5587,7 +6468,8 @@ fn main() { check((true, true)) }
 
     #[test]
     fn test_match_exhaustive_bool_tuple() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn check(pair) {
   match pair {
     (true, true) -> "both true"
@@ -5596,14 +6478,16 @@ fn check(pair) {
   }
 }
 fn main() { check((true, true)) }
-        "#);
+        "#,
+        );
     }
 
     // ── Generic types ───────────────────────────────────────────────
 
     #[test]
     fn test_option_some_none() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = Some(42)
   let y = None
@@ -5612,12 +6496,14 @@ fn main() {
     None -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_result_ok_err() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = Ok(42)
   match x {
@@ -5625,14 +6511,16 @@ fn main() {
     Err(e) -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Question mark operator ──────────────────────────────────────
 
     #[test]
     fn test_question_mark() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn process(x) {
   let val = Ok(x)?
   Ok(val * 2)
@@ -5644,14 +6532,16 @@ fn main() {
     Err(_) -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── When guard (type narrowing) ─────────────────────────────────
 
     #[test]
     fn test_when_guard() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn process(x) {
   when Ok(value) = Ok(x) else {
     return Err("failed")
@@ -5665,14 +6555,16 @@ fn main() {
     Err(_) -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Boolean when guard ────────────────────────────────────────────
 
     #[test]
     fn test_when_bool_guard() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn check(n) {
   when n > 0 else {
     return "not positive"
@@ -5683,12 +6575,14 @@ fn check(n) {
 fn main() {
   check(5)
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_when_bool_mixed_with_pattern_guard() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn process(x) {
   when Ok(value) = Ok(x) else {
     return Err("failed")
@@ -5705,41 +6599,47 @@ fn main() {
     Err(_) -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Pipe operator ───────────────────────────────────────────────
 
     #[test]
     fn test_pipe_operator() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   [1, 2, 3, 4, 5]
   |> list.filter { x -> x > 2 }
   |> list.map { x -> x * 10 }
   |> list.fold(0) { acc, x -> acc + x }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── String interpolation ────────────────────────────────────────
 
     #[test]
     fn test_string_interpolation() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let name = "world"
   let n = 42
   "hello {name}, the answer is {n}"
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Trait implementation ────────────────────────────────────────
 
     #[test]
     fn test_trait_impl() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -5758,40 +6658,46 @@ fn main() {
   let s = Circle(5.0)
   s.display()
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Map literal ─────────────────────────────────────────────────
 
     #[test]
     fn test_map_literal() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
   m
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Single-expression function ──────────────────────────────────
 
     #[test]
     fn test_single_expr_fn() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn square(x) = x * x
 fn add(a, b) = a + b
 
 fn main() {
   add(square(3), square(4))
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Integration test programs ───────────────────────────────────
 
     #[test]
     fn test_fizzbuzz_program() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -5810,12 +6716,14 @@ fn main() {
   ]
   results
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_closures_and_higher_order() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn make_adder(n) {
   fn(x) { x + n }
 }
@@ -5824,12 +6732,14 @@ fn main() {
   let add5 = make_adder(5)
   add5(10)
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_error_handling_pipeline() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
@@ -5861,12 +6771,14 @@ fn main() {
     Err(e) -> println("config error: {e}")
   }
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_match_with_guards() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn classify(n) {
   match n {
     0 -> "zero"
@@ -5878,14 +6790,16 @@ fn classify(n) {
 fn main() {
   [classify(-5), classify(0), classify(42)]
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Let-polymorphism ────────────────────────────────────────────
 
     #[test]
     fn test_let_polymorphism() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn identity(x) {
   x
 }
@@ -5895,7 +6809,8 @@ fn main() {
   let b = identity("hello")
   a
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Unification error ───────────────────────────────────────────
@@ -5930,19 +6845,22 @@ fn main() {
 
     #[test]
     fn test_range_expression() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let r = 1..10
   r
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Exhaustiveness: guards don't count as covering ──────────────
 
     #[test]
     fn test_match_guards_with_catch_all() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn classify(n) {
   match n {
     0 -> "zero"
@@ -5954,7 +6872,8 @@ fn classify(n) {
 fn main() {
   classify(5)
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Severity tests ─────────────────────────────────────────────
@@ -5962,32 +6881,40 @@ fn main() {
     #[test]
     fn test_type_error_has_error_severity() {
         // A type mismatch should produce Severity::Error
-        let errors = check_errors(r#"
+        let errors = check_errors(
+            r#"
             fn main() {
                 let x: Int = "hello"
                 x
             }
-        "#);
+        "#,
+        );
         assert!(!errors.is_empty());
         assert!(errors.iter().any(|e| e.severity == Severity::Error));
     }
 
     #[test]
     fn test_valid_program_no_errors() {
-        let errors = check_errors(r#"
+        let errors = check_errors(
+            r#"
             fn main() {
                 let x = 42
                 x + 1
             }
-        "#);
-        let hard_errors: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
+        "#,
+        );
+        let hard_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
         assert!(hard_errors.is_empty());
     }
 
     #[test]
     fn test_trait_impl_validates_methods() {
         // Complete impl should have no errors about missing methods
-        let errors = check_program(r#"
+        let errors = check_program(
+            r#"
             trait Greet {
                 fn greet(self) -> String {
                     "hello"
@@ -6000,14 +6927,23 @@ fn main() {
             }
             type User { name: String }
             fn main() { 0 }
-        "#);
-        let trait_errors: Vec<_> = errors.iter().filter(|e| e.message.contains("missing method")).collect();
-        assert!(trait_errors.is_empty(), "unexpected trait errors: {:?}", trait_errors);
+        "#,
+        );
+        let trait_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("missing method"))
+            .collect();
+        assert!(
+            trait_errors.is_empty(),
+            "unexpected trait errors: {:?}",
+            trait_errors
+        );
     }
 
     #[test]
     fn test_trait_impl_missing_method() {
-        let errors = check_program(r#"
+        let errors = check_program(
+            r#"
             trait Showable {
                 fn show(self) -> String { "default" }
                 fn detail(self) -> String { "detail" }
@@ -6017,26 +6953,34 @@ fn main() {
             }
             type Item { name: String }
             fn main() { 0 }
-        "#);
-        assert!(errors.iter().any(|e| e.message.contains("missing method") && e.message.contains("detail")));
+        "#,
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("missing method") && e.message.contains("detail"))
+        );
     }
 
     #[test]
     fn test_trait_impl_unknown_trait() {
-        let errors = check_program(r#"
+        let errors = check_program(
+            r#"
             trait Nonexistent for Thing {
                 fn foo(self) -> Int { 0 }
             }
             type Thing { x: Int }
             fn main() { 0 }
-        "#);
+        "#,
+        );
         assert!(errors.iter().any(|e| e.message.contains("not declared")));
     }
 
     #[test]
     fn test_builtin_display_trait_exists() {
         // Implementing Display should not produce "trait not declared" error
-        let errors = check_program(r#"
+        let errors = check_program(
+            r#"
             type Color { Red, Blue }
             trait Display for Color {
                 fn display(self) -> String {
@@ -6047,26 +6991,37 @@ fn main() {
                 }
             }
             fn main() { 0 }
-        "#);
-        let undeclared: Vec<_> = errors.iter().filter(|e| e.message.contains("not declared")).collect();
-        assert!(undeclared.is_empty(), "Display should be a built-in trait: {:?}", undeclared);
+        "#,
+        );
+        let undeclared: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains("not declared"))
+            .collect();
+        assert!(
+            undeclared.is_empty(),
+            "Display should be a built-in trait: {:?}",
+            undeclared
+        );
     }
 
     #[test]
     fn test_where_unknown_trait_warning() {
-        let errors = check_program(r#"
+        let errors = check_program(
+            r#"
             fn show(x) where x: Nonexistent {
                 x
             }
             fn main() { 0 }
-        "#);
+        "#,
+        );
         assert!(errors.iter().any(|e| e.message.contains("Nonexistent")));
     }
 
     #[test]
     fn test_where_constraint_satisfied() {
         // Should produce no errors about constraints
-        let errors = check_errors(r#"
+        let errors = check_errors(
+            r#"
             trait Showable {
                 fn show(self) -> String { "default" }
             }
@@ -6080,17 +7035,24 @@ fn main() {
             fn main() {
                 display(Red)
             }
-        "#);
-        let constraint_errors: Vec<_> = errors.iter()
+        "#,
+        );
+        let constraint_errors: Vec<_> = errors
+            .iter()
             .filter(|e| e.message.contains("does not implement"))
             .collect();
-        assert!(constraint_errors.is_empty(), "unexpected: {:?}", constraint_errors);
+        assert!(
+            constraint_errors.is_empty(),
+            "unexpected: {:?}",
+            constraint_errors
+        );
     }
 
     #[test]
     fn test_where_constraint_violated() {
         // Should produce an error: Int doesn't implement Showable
-        let errors = check_errors(r#"
+        let errors = check_errors(
+            r#"
             trait Showable {
                 fn show(self) -> String { "default" }
             }
@@ -6100,7 +7062,8 @@ fn main() {
             fn main() {
                 display(42)
             }
-        "#);
+        "#,
+        );
         assert!(errors.iter().any(|e| e.message.contains("does not implement") || e.message.contains("Showable")),
             "expected constraint violation error, got: {:?}", errors);
     }
@@ -6109,7 +7072,8 @@ fn main() {
 
     #[test]
     fn test_record_with_list_field() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Bag {
   items: List,
   name: String,
@@ -6119,12 +7083,14 @@ fn main() {
   let b = Bag { items: [1, 2, 3], name: "test" }
   b.name
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_record_with_map_field() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Config {
   data: Map,
 }
@@ -6133,12 +7099,14 @@ fn main() {
   let c = Config { data: #{ "key": "value" } }
   c.data
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_record_with_list_and_map_fields() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Config {
   values: Map,
   errors: List,
@@ -6148,12 +7116,14 @@ fn main() {
   let c = Config { values: #{ "a": 1 }, errors: ["err1", "err2"] }
   c.values
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_record_with_list_field_access() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Bag {
   items: List,
 }
@@ -6162,14 +7132,16 @@ fn main() {
   let b = Bag { items: [1, 2, 3] }
   b.items
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Tests for newly registered builtins ────────────────────────
 
     #[test]
     fn test_list_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let xs = [1, 2, 3]
   let ys = list.append(xs, 4)
@@ -6187,12 +7159,14 @@ fn main() {
   let pairs = list.enumerate(xs)
   n
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_string_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let s = "hello world"
   let upper = string.to_upper(s)
@@ -6207,12 +7181,14 @@ fn main() {
   let replaced = string.replace(s, "world", "there")
   n
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_float_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let a = 3.14
   let b = 2.71
@@ -6225,12 +7201,14 @@ fn main() {
   let abs = float.abs(a)
   rounded
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_int_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let a = 5
   let b = 3
@@ -6239,12 +7217,14 @@ fn main() {
   let f = int.to_float(a)
   f
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_map_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let got = map.get(m, "a")
@@ -6255,23 +7235,27 @@ fn main() {
   let merged = map.merge(m, #{ "c": 3 })
   ks
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_io_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let result = io.read_file("test.txt")
   let args = io.args()
   args
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_option_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let opt = Some(42)
   let is_s = option.is_some(opt)
@@ -6281,24 +7265,28 @@ fn main() {
   let res = option.to_result(opt, "no value")
   val
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_result_module_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let r = Ok(42)
   let is_ok = result.is_ok(r)
   let is_err = result.is_err(r)
   is_ok
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_higher_order_builtins() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let xs = [[1, 2], [3, 4], [5]]
   let flat = list.flatten(xs)
@@ -6306,61 +7294,72 @@ fn main() {
   let sorted = list.sort_by([3, 1, 2], fn(x) { x })
   flat
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_len_accepts_string_and_map() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let list_len = list.length([1, 2, 3])
   let str_len = string.length("hello")
   let map_len = map.length(#{ "a": 1 })
   list_len + str_len + map_len
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_assert_ne_builtin() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   test.assert_ne(1, 2)
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_channel_new_no_type_error() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
   channel.close(ch)
   ch
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_task_spawn_no_type_error() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let h = task.spawn(fn() { 42 })
   let result = task.join(h)
   result
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_map_length_no_type_error() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let n = map.length(m)
   n
 }
-        "#);
+        "#,
+        );
     }
 }

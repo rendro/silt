@@ -32,7 +32,13 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Self { tokens, pos: 0, in_match_scrutinee: false, errors: Vec::new(), depth: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            in_match_scrutinee: false,
+            errors: Vec::new(),
+            depth: 0,
+        }
     }
 
     // ── helpers ──────────────────────────────────────────────────────
@@ -145,8 +151,16 @@ impl Parser {
     fn synchronize(&mut self) {
         loop {
             match self.peek() {
-                Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let | Token::Eof => break,
-                _ => { self.advance(); }
+                Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Import
+                | Token::Let
+                | Token::Eof => break,
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -176,9 +190,15 @@ impl Parser {
                     Token::Let => {
                         let decl = self.parse_let_decl()?;
                         match decl {
-                            Decl::Let { pattern, ty, value, .. } => {
-                                Ok(Decl::Let { pattern, ty, value, is_pub: true, span })
-                            }
+                            Decl::Let {
+                                pattern, ty, value, ..
+                            } => Ok(Decl::Let {
+                                pattern,
+                                ty,
+                                value,
+                                is_pub: true,
+                                span,
+                            }),
                             _ => unreachable!(),
                         }
                     }
@@ -609,7 +629,13 @@ impl Parser {
         self.expect(&Token::Eq)?;
         self.skip_nl();
         let value = self.parse_expr()?;
-        Ok(Decl::Let { pattern, ty, value, is_pub: false, span })
+        Ok(Decl::Let {
+            pattern,
+            ty,
+            value,
+            is_pub: false,
+            span,
+        })
     }
 
     fn parse_when_stmt(&mut self) -> Result<Stmt> {
@@ -619,19 +645,19 @@ impl Parser {
         // If parse_pattern succeeds and is followed by `=`, it's the pattern form.
         // Otherwise, backtrack and parse as boolean form: when <expr> else { <block> }
         let saved = self.save();
-        if let Ok(pattern) = self.parse_pattern() {
-            if self.at(&Token::Eq) {
-                self.advance(); // consume `=`
-                self.skip_nl();
-                let expr = self.parse_expr()?;
-                self.expect(&Token::Else)?;
-                let else_body = self.parse_block()?;
-                return Ok(Stmt::When {
-                    pattern,
-                    expr,
-                    else_body,
-                });
-            }
+        if let Ok(pattern) = self.parse_pattern()
+            && self.at(&Token::Eq)
+        {
+            self.advance(); // consume `=`
+            self.skip_nl();
+            let expr = self.parse_expr()?;
+            self.expect(&Token::Else)?;
+            let else_body = self.parse_block()?;
+            return Ok(Stmt::When {
+                pattern,
+                expr,
+                else_body,
+            });
         }
 
         // Boolean form: when <expr> else { <block> }
@@ -846,10 +872,7 @@ impl Parser {
                     self.skip_nl();
                     let right = self.parse_expr_bp(r_bp)?;
                     let span = left.span;
-                    left = Expr::new(
-                        ExprKind::Binary(Box::new(left), op, Box::new(right)),
-                        span,
-                    );
+                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Lt | Token::Gt | Token::LtEq | Token::GtEq => {
@@ -869,10 +892,7 @@ impl Parser {
                     self.skip_nl();
                     let right = self.parse_expr_bp(r_bp)?;
                     let span = left.span;
-                    left = Expr::new(
-                        ExprKind::Binary(Box::new(left), op, Box::new(right)),
-                        span,
-                    );
+                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Plus | Token::Minus if !had_newline => {
@@ -893,10 +913,7 @@ impl Parser {
                     self.skip_nl();
                     let right = self.parse_expr_bp(r_bp)?;
                     let span = left.span;
-                    left = Expr::new(
-                        ExprKind::Binary(Box::new(left), op, Box::new(right)),
-                        span,
-                    );
+                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
                 Token::Star | Token::Slash | Token::Percent => {
@@ -915,10 +932,7 @@ impl Parser {
                     self.skip_nl();
                     let right = self.parse_expr_bp(r_bp)?;
                     let span = left.span;
-                    left = Expr::new(
-                        ExprKind::Binary(Box::new(left), op, Box::new(right)),
-                        span,
-                    );
+                    left = Expr::new(ExprKind::Binary(Box::new(left), op, Box::new(right)), span);
                     continue;
                 }
 
@@ -939,13 +953,19 @@ impl Parser {
                 let span = self.span();
                 self.advance();
                 let expr = self.parse_expr_bp(90)?;
-                Ok(Expr::new(ExprKind::Unary(UnaryOp::Neg, Box::new(expr)), span))
+                Ok(Expr::new(
+                    ExprKind::Unary(UnaryOp::Neg, Box::new(expr)),
+                    span,
+                ))
             }
             Token::Not => {
                 let span = self.span();
                 self.advance();
                 let expr = self.parse_expr_bp(90)?;
-                Ok(Expr::new(ExprKind::Unary(UnaryOp::Not, Box::new(expr)), span))
+                Ok(Expr::new(
+                    ExprKind::Unary(UnaryOp::Not, Box::new(expr)),
+                    span,
+                ))
             }
             _ => self.parse_atom(),
         }
@@ -982,8 +1002,15 @@ impl Parser {
                 // Could be: Constructor, Constructor(args), or RecordCreate { fields }
                 if !self.has_newline_before() && self.at(&Token::LParen) {
                     let args = self.parse_call_args()?;
-                    Ok(Expr::new(ExprKind::Call(Box::new(Expr::new(ExprKind::Ident(name), span)), args), span))
-                } else if !self.has_newline_before() && self.at(&Token::LBrace) && !self.in_match_scrutinee && !self.is_trailing_closure() {
+                    Ok(Expr::new(
+                        ExprKind::Call(Box::new(Expr::new(ExprKind::Ident(name), span)), args),
+                        span,
+                    ))
+                } else if !self.has_newline_before()
+                    && self.at(&Token::LBrace)
+                    && !self.in_match_scrutinee
+                    && !self.is_trailing_closure()
+                {
                     // Record creation: User { name: "Alice", ... }
                     self.advance(); // {
                     let fields = self.parse_record_fields()?;
@@ -1097,10 +1124,7 @@ impl Parser {
             Token::Return => {
                 self.advance();
                 // Return may or may not have a value
-                if self.has_newline_before()
-                    || self.at(&Token::RBrace)
-                    || self.at(&Token::Eof)
-                {
+                if self.has_newline_before() || self.at(&Token::RBrace) || self.at(&Token::Eof) {
                     Ok(Expr::new(ExprKind::Return(None), span))
                 } else {
                     let val = self.parse_expr()?;
@@ -1147,10 +1171,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(ParseError {
-                        message: format!(
-                            "expected string continuation, found {}",
-                            self.peek()
-                        ),
+                        message: format!("expected string continuation, found {}", self.peek()),
                         span: self.span(),
                     });
                 }
@@ -1631,19 +1652,29 @@ impl Parser {
                     let end = if self.at(&Token::Minus) {
                         self.advance();
                         match self.peek().clone() {
-                            Token::Float(m) => { self.advance(); -m }
-                            _ => return Err(ParseError {
-                                message: "expected float after - in range pattern".into(),
-                                span: self.span(),
-                            }),
+                            Token::Float(m) => {
+                                self.advance();
+                                -m
+                            }
+                            _ => {
+                                return Err(ParseError {
+                                    message: "expected float after - in range pattern".into(),
+                                    span: self.span(),
+                                });
+                            }
                         }
                     } else {
                         match self.peek().clone() {
-                            Token::Float(m) => { self.advance(); m }
-                            _ => return Err(ParseError {
-                                message: "expected float end for range pattern".into(),
-                                span: self.span(),
-                            }),
+                            Token::Float(m) => {
+                                self.advance();
+                                m
+                            }
+                            _ => {
+                                return Err(ParseError {
+                                    message: "expected float end for range pattern".into(),
+                                    span: self.span(),
+                                });
+                            }
                         }
                     };
                     Ok(Pattern::FloatRange(n, end))
@@ -1780,7 +1811,8 @@ impl Parser {
                                             Ok(Pattern::Range(-n, -m))
                                         }
                                         _ => Err(ParseError {
-                                            message: "expected integer after - in range pattern".into(),
+                                            message: "expected integer after - in range pattern"
+                                                .into(),
                                             span: self.span(),
                                         }),
                                     }
@@ -1811,7 +1843,8 @@ impl Parser {
                                             Ok(Pattern::FloatRange(-n, -m))
                                         }
                                         _ => Err(ParseError {
-                                            message: "expected float after - in range pattern".into(),
+                                            message: "expected float after - in range pattern"
+                                                .into(),
                                             span: self.span(),
                                         }),
                                     }
@@ -1878,18 +1911,21 @@ mod tests {
 
     #[test]
     fn test_hello_world() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 println("hello, world")
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         assert!(matches!(prog.decls[0], Decl::Fn(_)));
     }
 
     #[test]
     fn test_fizzbuzz() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -1904,18 +1940,21 @@ fn main() {
   |> map { n -> fizzbuzz(n) }
   |> each { s -> println(s) }
 }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 2);
     }
 
     #[test]
     fn test_type_decl_record() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             type User {
                 name: String,
                 age: Int,
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Type(ref td) = prog.decls[0] {
             assert_eq!(td.name, "User");
@@ -1927,12 +1966,14 @@ fn main() {
 
     #[test]
     fn test_type_decl_enum() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             type Shape {
                 Circle(Float)
                 Rect(Float, Float)
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Type(ref td) = prog.decls[0] {
             assert_eq!(td.name, "Shape");
@@ -1946,42 +1987,49 @@ fn main() {
 
     #[test]
     fn test_pipe_and_trailing_closure() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 [1, 2, 3] |> map { x -> x * 2 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_record_create_and_update() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 let u = User { name: "Alice", age: 30 }
                 let u2 = u.{ age: 31 }
                 u2
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_when_stmt() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 when Some(x) = find(42) else {
                     return None
                 }
                 x
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_trait_impl() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             trait Display for Shape {
                 fn display(self) -> String {
                     match self {
@@ -1990,35 +2038,41 @@ fn main() {
                     }
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         assert!(matches!(prog.decls[0], Decl::TraitImpl(_)));
     }
 
     #[test]
     fn test_import() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             import io
             import math.{ add, Point }
             import math as m
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 3);
     }
 
     #[test]
     fn test_question_mark() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 let x = foo()?
                 x
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_match_with_guard() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn classify(n) {
                 match n {
                     0 -> "zero"
@@ -2026,29 +2080,34 @@ fn main() {
                     _ -> "negative"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_string_interp() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 let name = "world"
                 println("hello {name}")
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_where_clause() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn show(x) where x: Display {
                 x
             }
             fn main() { 0 }
-        "#);
+        "#,
+        );
         if let Decl::Fn(f) = &prog.decls[0] {
             assert_eq!(f.where_clauses, vec![("x".into(), "Display".into())]);
         } else {
@@ -2058,12 +2117,14 @@ fn main() {
 
     #[test]
     fn test_where_clause_multiple() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn compare_show(a, b) where a: Display, b: Compare {
                 a
             }
             fn main() { 0 }
-        "#);
+        "#,
+        );
         if let Decl::Fn(f) = &prog.decls[0] {
             assert_eq!(f.where_clauses.len(), 2);
         } else {
@@ -2073,11 +2134,13 @@ fn main() {
 
     #[test]
     fn test_abstract_trait_method() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             trait Display {
                 fn display(self) -> String
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Trait(ref td) = prog.decls[0] {
             assert_eq!(td.name, "Display");
@@ -2091,10 +2154,12 @@ fn main() {
     #[test]
     fn test_fn_without_where_still_works() {
         // Regression test: functions without where should still parse
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn add(a, b) { a + b }
             fn main() { add(1, 2) }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 2);
     }
 
@@ -2103,7 +2168,8 @@ fn main() {
         // Trailing closures in pipe RHS should work inside match scrutinees.
         // The `{ x -> x > 5 }` is a trailing closure for `list.any`, while
         // `{ true -> ... }` is the match body.
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 let items = [1, 2, 3, 6]
                 match items |> list.any { x -> x > 5 } {
@@ -2111,7 +2177,8 @@ fn main() {
                     _ -> "all small"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
         // Verify the match has a scrutinee with a pipe expression
         if let Decl::Fn(ref f) = prog.decls[0] {
@@ -2124,10 +2191,17 @@ fn main() {
                 Stmt::Expr(e) => e,
                 _ => panic!("expected expression statement"),
             };
-            if let ExprKind::Match { expr: Some(scrutinee), arms } = &match_expr.kind {
+            if let ExprKind::Match {
+                expr: Some(scrutinee),
+                arms,
+            } = &match_expr.kind
+            {
                 // Scrutinee should be a Pipe
-                assert!(matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
-                    "expected Pipe scrutinee, got {:?}", scrutinee.kind);
+                assert!(
+                    matches!(scrutinee.kind, ExprKind::Pipe(_, _)),
+                    "expected Pipe scrutinee, got {:?}",
+                    scrutinee.kind
+                );
                 // Should have 2 arms
                 assert_eq!(arms.len(), 2);
             } else {
@@ -2139,33 +2213,38 @@ fn main() {
     #[test]
     fn test_match_with_chained_pipes_and_trailing_closures() {
         // Multiple pipes with trailing closures in a match scrutinee
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 match items |> filter { x -> x > 0 } |> map { x -> x * 2 } {
                     [] -> "empty"
                     _ -> "non-empty"
                 }
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_when_bool_stmt() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 when x > 0 else {
                     return "negative"
                 }
                 x
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 
     #[test]
     fn test_when_bool_mixed_with_pattern() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             fn main() {
                 when Ok(value) = parse(input) else {
                     return Err("failed")
@@ -2175,7 +2254,8 @@ fn main() {
                 }
                 value
             }
-        "#);
+        "#,
+        );
         assert_eq!(prog.decls.len(), 1);
     }
 }

@@ -17,10 +17,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     watcher
         .watch(watch_dir, RecursiveMode::Recursive)
         .unwrap_or_else(|e| {
-            eprintln!(
-                "error: failed to watch {}: {e}",
-                watch_dir.display()
-            );
+            eprintln!("error: failed to watch {}: {e}", watch_dir.display());
             std::process::exit(1);
         });
 
@@ -39,9 +36,10 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     loop {
         match rx.recv() {
             Ok(Ok(event)) => {
-                let silt_changed = event.paths.iter().any(|p| {
-                    p.extension().is_some_and(|ext| ext == "silt")
-                });
+                let silt_changed = event
+                    .paths
+                    .iter()
+                    .any(|p| p.extension().is_some_and(|ext| ext == "silt"));
 
                 if silt_changed && last_run.elapsed() > Duration::from_millis(500) {
                     // Let file writes settle, then drain pending events

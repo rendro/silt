@@ -88,11 +88,14 @@ fn rand_u64() -> u64 {
 #[test]
 fn test_import_module_qualified() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
 fn internal_helper(x) = x * 2
-        "#)],
+        "#,
+        )],
         r#"
 import calc
 
@@ -107,10 +110,13 @@ fn main() {
 #[test]
 fn test_import_module_multiple_functions() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
-        "#)],
+        "#,
+        )],
         r#"
 import calc
 
@@ -127,10 +133,13 @@ fn main() {
 #[test]
 fn test_import_specific_items() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
-        "#)],
+        "#,
+        )],
         r#"
 import calc.{ add, square }
 
@@ -145,10 +154,13 @@ fn main() {
 #[test]
 fn test_import_single_item() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
-        "#)],
+        "#,
+        )],
         r#"
 import calc.{ add }
 
@@ -165,10 +177,13 @@ fn main() {
 #[test]
 fn test_import_module_with_alias() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
-        "#)],
+        "#,
+        )],
         r#"
 import calc as m
 
@@ -183,10 +198,13 @@ fn main() {
 #[test]
 fn test_import_alias_multiple_calls() {
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 pub fn mul(a, b) = a * b
-        "#)],
+        "#,
+        )],
         r#"
 import calc as m
 
@@ -203,10 +221,13 @@ fn main() {
 #[test]
 fn test_private_function_not_importable_qualified() {
     let err = run_module_test_err(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 fn secret(x) = x * 2
-        "#)],
+        "#,
+        )],
         r#"
 import calc
 
@@ -224,10 +245,13 @@ fn main() {
 #[test]
 fn test_private_function_not_selectively_importable() {
     let err = run_module_test_err(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
 fn secret(x) = x * 2
-        "#)],
+        "#,
+        )],
         r#"
 import calc.{ secret }
 
@@ -237,8 +261,11 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("no public item") || err.contains("not public") || err.contains("not found")
-            || err.contains("Undefined") || err.contains("undefined"),
+        err.contains("no public item")
+            || err.contains("not public")
+            || err.contains("not found")
+            || err.contains("Undefined")
+            || err.contains("undefined"),
         "expected error about private item, got: {err}"
     );
 }
@@ -249,9 +276,12 @@ fn main() {
 fn test_module_loaded_only_once() {
     // Importing the same module twice should work (cached)
     let result = run_module_test(
-        &[("calc.silt", r#"
+        &[(
+            "calc.silt",
+            r#"
 pub fn add(a, b) = a + b
-        "#)],
+        "#,
+        )],
         r#"
 import calc
 import calc.{ add }
@@ -290,14 +320,16 @@ fn main() {
 fn test_import_builtin_string_module() {
     // `import string` should be a no-op (builtins already registered)
     // and string.split should still work
-    let result = run_vm(r#"
+    let result = run_vm(
+        r#"
 import string
 
 fn main() {
   let parts = "a,b,c" |> string.split(",")
   parts
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::List(std::sync::Arc::new(vec![
@@ -311,13 +343,15 @@ fn main() {
 #[test]
 fn test_import_builtin_items() {
     // `import string.{ split }` should bring split into scope directly
-    let result = run_vm(r#"
+    let result = run_vm(
+        r#"
 import string.{ split }
 
 fn main() {
   "a,b,c" |> split(",")
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::List(std::sync::Arc::new(vec![
@@ -331,13 +365,15 @@ fn main() {
 #[test]
 fn test_import_builtin_with_alias() {
     // `import string as s` should make s.split available
-    let result = run_vm(r#"
+    let result = run_vm(
+        r#"
 import string as s
 
 fn main() {
   "hello world" |> s.split(" ")
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::List(std::sync::Arc::new(vec![
@@ -349,7 +385,8 @@ fn main() {
 
 #[test]
 fn test_import_builtin_io_module() {
-    let result = run_vm(r#"
+    let result = run_vm(
+        r#"
 import io
 import list
 
@@ -358,7 +395,8 @@ fn main() {
   -- just verify it returns a list
   list.length(args)
 }
-    "#);
+    "#,
+    );
     // Should return some Int (the number of args)
     match result {
         Value::Int(_) => {} // ok
@@ -371,7 +409,9 @@ fn main() {
 #[test]
 fn test_module_with_pub_type() {
     let result = run_module_test(
-        &[("shapes.silt", r#"
+        &[(
+            "shapes.silt",
+            r#"
 pub type Shape {
   Circle(Float)
   Rect(Float, Float)
@@ -383,7 +423,8 @@ pub fn area(shape) {
     Rect(w, h) -> w * h
   }
 }
-        "#)],
+        "#,
+        )],
         r#"
 import shapes.{ area, Shape }
 
@@ -401,14 +442,20 @@ fn main() {
 fn test_circular_import_detected() {
     let err = run_module_test_err(
         &[
-            ("a.silt", r#"
+            (
+                "a.silt",
+                r#"
 import b
 pub fn fa() = 1
-            "#),
-            ("b.silt", r#"
+            "#,
+            ),
+            (
+                "b.silt",
+                r#"
 import a
 pub fn fb() = 2
-            "#),
+            "#,
+            ),
         ],
         r#"
 import a
@@ -430,15 +477,21 @@ fn main() {
 fn test_multi_module_example() {
     let result = run_module_test(
         &[
-            ("calc.silt", r#"
+            (
+                "calc.silt",
+                r#"
 pub fn add(a, b) = a + b
 pub fn square(x) = x * x
 fn internal_helper(x) = x * 2
-            "#),
-            ("utils.silt", r#"
+            "#,
+            ),
+            (
+                "utils.silt",
+                r#"
 pub fn double(x) = x * 2
 pub fn triple(x) = x * 3
-            "#),
+            "#,
+            ),
         ],
         r#"
 import calc

@@ -255,7 +255,9 @@ fn vm_run_file(path: &str) {
 
     // Run the type checker
     let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    let has_hard_errors = type_errors
+        .iter()
+        .any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
         let source_err = SourceError::from_type_error(err, &source, path);
         eprintln!("{source_err}");
@@ -298,13 +300,18 @@ fn vm_run_file(path: &str) {
             eprintln!("{source_err}");
             // Print call stack if there are meaningful frames beyond the error site.
             // Filter out synthetic frames like <script> and <call:...>.
-            let meaningful: Vec<_> = e.call_stack.iter()
+            let meaningful: Vec<_> = e
+                .call_stack
+                .iter()
                 .filter(|(name, span)| span.line > 0 && !name.starts_with('<'))
                 .collect();
             if meaningful.len() > 1 {
                 eprintln!("\ncall stack:");
                 for (name, frame_span) in &meaningful {
-                    eprintln!("  -> {}  at {}:{}:{}", name, path, frame_span.line, frame_span.col);
+                    eprintln!(
+                        "  -> {}  at {}:{}:{}",
+                        name, path, frame_span.line, frame_span.col
+                    );
                 }
             }
         } else {
@@ -344,7 +351,9 @@ fn disasm_file(path: &str) {
 
     // Run the type checker
     let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    let has_hard_errors = type_errors
+        .iter()
+        .any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
         let source_err = SourceError::from_type_error(err, &source, path);
         eprintln!("{source_err}");
@@ -419,7 +428,10 @@ fn check_file(path: &str, format: OutputFormat) {
 
     // Run the type checker even if there were parse errors (on partial program)
     let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = has_parse_errors || type_errors.iter().any(|e| e.severity == typechecker::Severity::Error);
+    let has_hard_errors = has_parse_errors
+        || type_errors
+            .iter()
+            .any(|e| e.severity == typechecker::Severity::Error);
     for err in &type_errors {
         let source_err = SourceError::from_type_error(err, &source, path);
         errors.push(source_err);
@@ -456,7 +468,9 @@ fn print_json_errors(errors: &[SourceError]) {
 
 fn find_test_files(dir: &Path) -> Vec<String> {
     let mut results = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else { return results };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return results;
+    };
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
@@ -561,10 +575,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     continue;
                 }
                 if f.name.starts_with("test_") {
-                    if let Some(ref filter) = filter {
-                        if !f.name.contains(filter.as_str()) {
-                            continue;
-                        }
+                    if let Some(ref filter) = filter
+                        && !f.name.contains(filter.as_str())
+                    {
+                        continue;
                     }
                     total += 1;
                     let caller = silt::bytecode::call_global_script(&f.name);
@@ -576,7 +590,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                         Err(e) => {
                             println!("  FAIL {path}::{}", f.name);
                             if let Some(span) = e.span {
-                                let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+                                let source_err =
+                                    SourceError::runtime_at(&e.message, span, &source, path);
                                 println!("    {source_err}");
                             } else {
                                 println!("    Error: {e}");

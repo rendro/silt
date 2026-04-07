@@ -80,9 +80,12 @@ fn main() {
     // ── Compilation ─────────────────────────────────────────────────
     println!("── Compilation ────────────────────────────────────────────────");
 
-    bench_compile("compile: hello world", r#"
+    bench_compile(
+        "compile: hello world",
+        r#"
 fn main() { println("hello") }
-    "#);
+    "#,
+    );
 
     bench_compile("compile: 100-line program", &generate_large_program(100));
 
@@ -91,7 +94,9 @@ fn main() { println("hello") }
     // ── Recursion & TCO ─────────────────────────────────────────────
     println!("── Recursion & TCO ────────────────────────────────────────────");
 
-    bench("tco: countdown 1M", r#"
+    bench(
+        "tco: countdown 1M",
+        r#"
 fn countdown(n) {
   match n {
     0 -> 0
@@ -99,9 +104,12 @@ fn countdown(n) {
   }
 }
 fn main() { countdown(1000000) }
-    "#);
+    "#,
+    );
 
-    bench("tco: sum 100K", r#"
+    bench(
+        "tco: sum 100K",
+        r#"
 fn sum(n, acc) {
   match n {
     0 -> acc
@@ -109,9 +117,12 @@ fn sum(n, acc) {
   }
 }
 fn main() { sum(100000, 0) }
-    "#);
+    "#,
+    );
 
-    bench("recursion: fibonacci(25)", r#"
+    bench(
+        "recursion: fibonacci(25)",
+        r#"
 fn fib(n) {
   match n {
     0 -> 0
@@ -120,9 +131,12 @@ fn fib(n) {
   }
 }
 fn main() { fib(25) }
-    "#);
+    "#,
+    );
 
-    bench("loop: sum 100K", r#"
+    bench(
+        "loop: sum 100K",
+        r#"
 fn main() {
   loop n = 0, acc = 0 {
     match n {
@@ -131,40 +145,52 @@ fn main() {
     }
   }
 }
-    "#);
+    "#,
+    );
 
     println!();
 
     // ── Collections ─────────────────────────────────────────────────
     println!("── Collections ────────────────────────────────────────────────");
 
-    bench("list: map 10K", r#"
+    bench(
+        "list: map 10K",
+        r#"
 import list
 fn main() {
   1..10001
   |> list.map { x -> x * 2 }
   |> list.length
 }
-    "#);
+    "#,
+    );
 
-    bench("list: filter 10K", r#"
+    bench(
+        "list: filter 10K",
+        r#"
 import list
 fn main() {
   1..10001
   |> list.filter { x -> x % 2 == 0 }
   |> list.length
 }
-    "#);
+    "#,
+    );
 
-    bench("list: fold 10K", r#"
+    bench(
+        "list: fold 10K",
+        r#"
 import list
 fn main() {
   1..10001
   |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
-    bench("list: map+filter+fold 10K", r#"
+    bench(
+        "list: map+filter+fold 10K",
+        r#"
 import list
 fn main() {
   1..10001
@@ -172,52 +198,67 @@ fn main() {
   |> list.filter { x -> x % 3 == 0 }
   |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
-    bench("list: sort_by 5K", r#"
+    bench(
+        "list: sort_by 5K",
+        r#"
 import list
 fn main() {
   let xs = list.reverse(1..5001)
   list.sort_by(xs, fn(x) { x })
   |> list.length
 }
-    "#);
+    "#,
+    );
 
-    bench("list: flatten nested", r#"
+    bench(
+        "list: flatten nested",
+        r#"
 import list
 fn main() {
   let xs = list.map(1..101) { i -> list.map(1..101) { j -> i * 100 + j } }
   list.flatten(xs) |> list.length
 }
-    "#);
+    "#,
+    );
 
     println!();
 
     // ── String operations ───────────────────────────────────────────
     println!("── Strings ────────────────────────────────────────────────────");
 
-    bench("string: split+join 1K", r#"
+    bench(
+        "string: split+join 1K",
+        r#"
 import string
 import list
 fn main() {
   let s = string.join(list.map(1..1001) { n -> "{n}" }, ",")
   string.split(s, ",") |> list.length
 }
-    "#);
+    "#,
+    );
 
-    bench("string: interpolation 10K", r#"
+    bench(
+        "string: interpolation 10K",
+        r#"
 import list
 fn main() {
   list.map(1..10001) { n ->
     "item-{n}"
   } |> list.length
 }
-    "#);
+    "#,
+    );
 
     // ── Regex operations ────────────────────────────────────────────
     println!("── Regex ──────────────────────────────────────────────────────");
 
-    bench("regex: is_match 1K (cached)", r#"
+    bench(
+        "regex: is_match 1K (cached)",
+        r#"
 import regex
 import list
 fn main() {
@@ -228,9 +269,12 @@ fn main() {
     }
   }
 }
-    "#);
+    "#,
+    );
 
-    bench("regex: find_all 1K", r#"
+    bench(
+        "regex: find_all 1K",
+        r#"
 import regex
 import list
 fn main() {
@@ -238,9 +282,12 @@ fn main() {
     regex.find_all("[0-9]+", "abc{n}def{n}ghi") |> list.length
   } |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
-    bench("regex: replace_all 1K", r#"
+    bench(
+        "regex: replace_all 1K",
+        r#"
 import regex
 import list
 fn main() {
@@ -248,14 +295,17 @@ fn main() {
     regex.replace_all("[aeiou]", "hello world {n}", "_")
   } |> list.length
 }
-    "#);
+    "#,
+    );
 
     println!();
 
     // ── Pattern matching ────────────────────────────────────────────
     println!("── Pattern matching ───────────────────────────────────────────");
 
-    bench("match: simple 100K", r#"
+    bench(
+        "match: simple 100K",
+        r#"
 import list
 fn classify(n) {
   match n % 4 {
@@ -268,9 +318,12 @@ fn classify(n) {
 fn main() {
   list.map(1..100001) { n -> classify(n) } |> list.length
 }
-    "#);
+    "#,
+    );
 
-    bench("match: nested ADT 50K", r#"
+    bench(
+        "match: nested ADT 50K",
+        r#"
 import list
 type Expr { Num(Int), Add(Expr, Expr) }
 fn eval(e) {
@@ -284,9 +337,12 @@ fn main() {
     eval(Add(Num(n), Add(Num(1), Num(2))))
   } |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
-    bench("match: or-pattern 100K", r#"
+    bench(
+        "match: or-pattern 100K",
+        r#"
 import list
 fn is_vowel(s) {
   match s {
@@ -305,14 +361,17 @@ fn main() {
     }
   } |> list.length
 }
-    "#);
+    "#,
+    );
 
     println!();
 
     // ── Closures & higher-order ─────────────────────────────────────
     println!("── Closures & higher-order ─────────────────────────────────────");
 
-    bench("closure: capture + call 100K", r#"
+    bench(
+        "closure: capture + call 100K",
+        r#"
 import list
 fn make_adder(n) = fn(x) { x + n }
 fn main() {
@@ -320,9 +379,12 @@ fn main() {
   list.map(1..100001) { n -> add5(n) }
   |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
-    bench("closure: nested composition", r#"
+    bench(
+        "closure: nested composition",
+        r#"
 import list
 fn compose(f, g) = fn(x) { f(g(x)) }
 fn main() {
@@ -332,14 +394,17 @@ fn main() {
   list.map(1..50001) { n -> double_then_inc(n) }
   |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
 
     println!();
 
     // ── Maps & sets ─────────────────────────────────────────────────
     println!("── Maps & sets ────────────────────────────────────────────────");
 
-    bench("map: build+lookup 1K", r#"
+    bench(
+        "map: build+lookup 1K",
+        r#"
 import list
 import map
 fn main() {
@@ -353,7 +418,8 @@ fn main() {
     }
   }
 }
-    "#);
+    "#,
+    );
 
     println!();
 
@@ -434,7 +500,9 @@ fn main() {
     // ── Arithmetic ──────────────────────────────────────────────────
     println!("── Arithmetic ─────────────────────────────────────────────────");
 
-    bench("int: arithmetic 1M ops", r#"
+    bench(
+        "int: arithmetic 1M ops",
+        r#"
 fn compute(n, acc) {
   match n {
     0 -> acc
@@ -442,9 +510,12 @@ fn compute(n, acc) {
   }
 }
 fn main() { compute(1000000, 0) }
-    "#);
+    "#,
+    );
 
-    bench("float: arithmetic 100K ops", r#"
+    bench(
+        "float: arithmetic 100K ops",
+        r#"
 import float
 fn compute(n, acc) {
   match n == 0 {
@@ -453,7 +524,8 @@ fn compute(n, acc) {
   }
 }
 fn main() { compute(100000, 0.0) }
-    "#);
+    "#,
+    );
 
     println!();
     println!("═══════════════════════════════════════════════════════════════");

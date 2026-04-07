@@ -47,6 +47,12 @@ struct SchedulerInner {
     live_tasks: AtomicUsize,
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
     /// Create a new scheduler (does NOT start worker threads yet).
     pub fn new() -> Self {

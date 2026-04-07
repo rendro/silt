@@ -1,3 +1,5 @@
+#![allow(clippy::mutable_key_type)]
+
 pub mod ast;
 pub mod builtins;
 pub mod bytecode;
@@ -12,13 +14,13 @@ pub mod module;
 pub mod parser;
 #[cfg(feature = "repl")]
 pub mod repl;
-#[cfg(feature = "watch")]
-pub mod watch;
-pub mod types;
-pub mod typechecker;
 pub mod scheduler;
+pub mod typechecker;
+pub mod types;
 pub mod value;
 pub mod vm;
+#[cfg(feature = "watch")]
+pub mod watch;
 
 // Re-export FFI types for embedders.
 pub use value::{FromValue, IntoValue, Value};

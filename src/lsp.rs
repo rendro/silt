@@ -11,16 +11,15 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
-    SignatureHelpRequest, Request as _,
+    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, Request as _,
+    SignatureHelpRequest,
 };
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse,
-    Diagnostic, DiagnosticSeverity, DocumentSymbol, DocumentSymbolResponse,
-    GotoDefinitionResponse, Hover, HoverContents, HoverProviderCapability,
-    Location, MarkupContent, MarkupKind, OneOf, ParameterInformation, ParameterLabel,
-    Position, PublishDiagnosticsParams, Range, ServerCapabilities,
-    SignatureHelp, SignatureHelpOptions, SignatureInformation, SymbolKind,
+    CompletionItem, CompletionItemKind, CompletionOptions, CompletionResponse, Diagnostic,
+    DiagnosticSeverity, DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Hover,
+    HoverContents, HoverProviderCapability, Location, MarkupContent, MarkupKind, OneOf,
+    ParameterInformation, ParameterLabel, Position, PublishDiagnosticsParams, Range,
+    ServerCapabilities, SignatureHelp, SignatureHelpOptions, SignatureInformation, SymbolKind,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
 };
 
@@ -206,7 +205,11 @@ impl Server {
         let tokens = match Lexer::new(&source).tokenize() {
             Ok(t) => t,
             Err(e) => {
-                diagnostics.push(make_diagnostic(&e.message, &e.span, DiagnosticSeverity::ERROR));
+                diagnostics.push(make_diagnostic(
+                    &e.message,
+                    &e.span,
+                    DiagnosticSeverity::ERROR,
+                ));
                 self.documents.insert(
                     uri.clone(),
                     Document {
@@ -223,7 +226,11 @@ impl Server {
         let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
 
         for e in &parse_errors {
-            diagnostics.push(make_diagnostic(&e.message, &e.span, DiagnosticSeverity::ERROR));
+            diagnostics.push(make_diagnostic(
+                &e.message,
+                &e.span,
+                DiagnosticSeverity::ERROR,
+            ));
         }
 
         let type_errors = typechecker::check(&mut program);
@@ -251,10 +258,7 @@ impl Server {
 
     fn publish_diagnostics(&self, uri: Uri, diagnostics: Vec<Diagnostic>) {
         let params = PublishDiagnosticsParams::new(uri, diagnostics, None);
-        let notif = lsp_server::Notification::new(
-            PublishDiagnostics::METHOD.to_string(),
-            params,
-        );
+        let notif = lsp_server::Notification::new(PublishDiagnostics::METHOD.to_string(), params);
         self.connection
             .sender
             .send(Message::Notification(notif))
@@ -273,7 +277,9 @@ impl Server {
 
         // Check if cursor is on a field name in a field access expression.
         // e.g., for `data.response`, hovering on `response` shows the field type.
-        if let Some((field_name, field_ty)) = find_field_type_at_offset(program, &doc.source, cursor) {
+        if let Some((field_name, field_ty)) =
+            find_field_type_at_offset(program, &doc.source, cursor)
+        {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -342,12 +348,12 @@ impl Server {
         let doc = self.documents.get(uri);
 
         // Detect dot-completion context: extract the identifier before the `.`
-        if let Some(doc) = doc {
-            if let Some(prefix) = extract_dot_prefix(&doc.source, &pos) {
-                let cursor = position_to_offset(&doc.source, &pos);
-                let items = self.dot_completions(doc, &prefix, cursor);
-                return Some(CompletionResponse::Array(items));
-            }
+        if let Some(doc) = doc
+            && let Some(prefix) = extract_dot_prefix(&doc.source, &pos)
+        {
+            let cursor = position_to_offset(&doc.source, &pos);
+            let items = self.dot_completions(doc, &prefix, cursor);
+            return Some(CompletionResponse::Array(items));
         }
 
         let mut items: Vec<CompletionItem> = Vec::new();
@@ -432,51 +438,49 @@ impl Server {
 
         // 2. Check local variables in scope at cursor for the prefix
         let locals = locals_at_offset(program, cursor);
-        if let Some(local) = locals.iter().rev().find(|l| l.name == prefix) {
-            if let Some(ref ty) = local.ty {
-                if let Some(fields) = record_fields_from_type(ty, program) {
-                    for (name, field_ty) in &fields {
-                        items.push(CompletionItem {
-                            label: name.clone(),
-                            kind: Some(CompletionItemKind::FIELD),
-                            detail: Some(format!("{field_ty}")),
-                            ..CompletionItem::default()
-                        });
-                    }
-                    return items;
-                }
+        if let Some(local) = locals.iter().rev().find(|l| l.name == prefix)
+            && let Some(ref ty) = local.ty
+            && let Some(fields) = record_fields_from_type(ty, program)
+        {
+            for (name, field_ty) in &fields {
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(format!("{field_ty}")),
+                    ..CompletionItem::default()
+                });
             }
+            return items;
         }
 
         // 3. Try to resolve the identifier's type from the typed AST
-        if let Some(ty) = find_ident_type_by_name(program, prefix) {
-            if let Some(fields) = record_fields_from_type(&ty, program) {
-                for (name, field_ty) in &fields {
-                    items.push(CompletionItem {
-                        label: name.clone(),
-                        kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(format!("{field_ty}")),
-                        ..CompletionItem::default()
-                    });
-                }
-                return items;
+        if let Some(ty) = find_ident_type_by_name(program, prefix)
+            && let Some(fields) = record_fields_from_type(&ty, program)
+        {
+            for (name, field_ty) in &fields {
+                items.push(CompletionItem {
+                    label: name.clone(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(format!("{field_ty}")),
+                    ..CompletionItem::default()
+                });
             }
+            return items;
         }
 
         // 3. Fallback: if the prefix matches a type name, offer its fields
         for decl in &program.decls {
-            if let Decl::Type(td) = decl {
-                if td.name == prefix {
-                    if let TypeBody::Record(fields) = &td.body {
-                        for field in fields {
-                            items.push(CompletionItem {
-                                label: field.name.clone(),
-                                kind: Some(CompletionItemKind::FIELD),
-                                detail: Some(format!("{}", type_expr_to_type(&field.ty))),
-                                ..CompletionItem::default()
-                            });
-                        }
-                    }
+            if let Decl::Type(td) = decl
+                && td.name == prefix
+                && let TypeBody::Record(fields) = &td.body
+            {
+                for field in fields {
+                    items.push(CompletionItem {
+                        label: field.name.clone(),
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(format!("{}", type_expr_to_type(&field.ty))),
+                        ..CompletionItem::default()
+                    });
                 }
             }
         }
@@ -525,7 +529,9 @@ impl Server {
             match ch {
                 ')' | ']' | '}' => depth += 1,
                 '(' | '[' | '{' => {
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                     depth -= 1;
                 }
                 ',' if depth == 0 => active_param += 1,
@@ -536,10 +542,14 @@ impl Server {
         // Find the function name: scan back past the `(` to the ident.
         let paren_pos = before.rfind('(')?;
         let before_paren = before[..paren_pos].trim_end();
-        let fn_name: String = before_paren.chars().rev()
+        let fn_name: String = before_paren
+            .chars()
+            .rev()
             .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
             .collect::<String>()
-            .chars().rev().collect();
+            .chars()
+            .rev()
+            .collect();
 
         if fn_name.is_empty() {
             return None;
@@ -570,7 +580,10 @@ impl Server {
     // ── Document symbols ──────────────────────────────────────────
 
     #[allow(deprecated)] // DocumentSymbol::deprecated field
-    fn document_symbols(&self, params: lsp_types::DocumentSymbolParams) -> Option<DocumentSymbolResponse> {
+    fn document_symbols(
+        &self,
+        params: lsp_types::DocumentSymbolParams,
+    ) -> Option<DocumentSymbolResponse> {
         let uri = &params.text_document.uri;
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
@@ -579,7 +592,9 @@ impl Server {
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => {
-                    let detail = doc.definitions.get(&f.name)
+                    let detail = doc
+                        .definitions
+                        .get(&f.name)
                         .and_then(|d| d.ty.as_ref())
                         .map(|t| format!("{t}"));
                     symbols.push(DocumentSymbol {
@@ -621,20 +636,23 @@ impl Server {
                         children: None,
                     });
                 }
-                Decl::Let { pattern, span, value, .. } => {
-                    if let Pattern::Ident(name) = pattern {
-                        let detail = value.ty.as_ref().map(|t| format!("{t}"));
-                        symbols.push(DocumentSymbol {
-                            name: name.clone(),
-                            detail,
-                            kind: SymbolKind::VARIABLE,
-                            range: span_to_range(span),
-                            selection_range: span_to_range(span),
-                            tags: None,
-                            deprecated: None,
-                            children: None,
-                        });
-                    }
+                Decl::Let {
+                    pattern: Pattern::Ident(name),
+                    span,
+                    value,
+                    ..
+                } => {
+                    let detail = value.ty.as_ref().map(|t| format!("{t}"));
+                    symbols.push(DocumentSymbol {
+                        name: name.clone(),
+                        detail,
+                        kind: SymbolKind::VARIABLE,
+                        range: span_to_range(span),
+                        selection_range: span_to_range(span),
+                        tags: None,
+                        deprecated: None,
+                        children: None,
+                    });
                 }
                 _ => {}
             }
@@ -691,7 +709,9 @@ fn build_signature_from_def(name: &str, def: &DefInfo) -> (String, Vec<Parameter
 fn has_unresolved_vars(ty: &Type) -> bool {
     match ty {
         Type::Var(_) => true,
-        Type::Fun(params, ret) => params.iter().any(has_unresolved_vars) || has_unresolved_vars(ret),
+        Type::Fun(params, ret) => {
+            params.iter().any(has_unresolved_vars) || has_unresolved_vars(ret)
+        }
         Type::List(inner) | Type::Set(inner) => has_unresolved_vars(inner),
         Type::Tuple(elems) => elems.iter().any(has_unresolved_vars),
         Type::Record(_, fields) => fields.iter().any(|(_, t)| has_unresolved_vars(t)),
@@ -721,23 +741,61 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
             Decl::Fn(f) => {
                 let fn_ty = build_fn_type(f);
                 let params = fn_param_names(f);
-                defs.insert(f.name.clone(), DefInfo { span: f.span, ty: fn_ty, params });
+                defs.insert(
+                    f.name.clone(),
+                    DefInfo {
+                        span: f.span,
+                        ty: fn_ty,
+                        params,
+                    },
+                );
             }
             Decl::Type(t) => {
-                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
+                defs.insert(
+                    t.name.clone(),
+                    DefInfo {
+                        span: t.span,
+                        ty: None,
+                        params: vec![],
+                    },
+                );
                 if let TypeBody::Enum(variants) = &t.body {
                     for v in variants {
-                        defs.insert(v.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
+                        defs.insert(
+                            v.name.clone(),
+                            DefInfo {
+                                span: t.span,
+                                ty: None,
+                                params: vec![],
+                            },
+                        );
                     }
                 }
             }
             Decl::Trait(t) => {
-                defs.insert(t.name.clone(), DefInfo { span: t.span, ty: None, params: vec![] });
+                defs.insert(
+                    t.name.clone(),
+                    DefInfo {
+                        span: t.span,
+                        ty: None,
+                        params: vec![],
+                    },
+                );
             }
-            Decl::Let { pattern, span, value, .. } => {
-                if let Pattern::Ident(name) = pattern {
-                    defs.insert(name.clone(), DefInfo { span: *span, ty: value.ty.clone(), params: vec![] });
-                }
+            Decl::Let {
+                pattern: Pattern::Ident(name),
+                span,
+                value,
+                ..
+            } => {
+                defs.insert(
+                    name.clone(),
+                    DefInfo {
+                        span: *span,
+                        ty: value.ty.clone(),
+                        params: vec![],
+                    },
+                );
             }
             _ => {}
         }
@@ -746,10 +804,13 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
 }
 
 fn fn_param_names(f: &FnDecl) -> Vec<String> {
-    f.params.iter().map(|p| match &p.pattern {
-        Pattern::Ident(name) => name.clone(),
-        _ => "_".to_string(),
-    }).collect()
+    f.params
+        .iter()
+        .map(|p| match &p.pattern {
+            Pattern::Ident(name) => name.clone(),
+            _ => "_".to_string(),
+        })
+        .collect()
 }
 
 /// Build a function's type signature from its typed body.
@@ -763,9 +824,17 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
     // were bound there. But the simplest reliable source is the function's
     // own usage. As a practical approach: walk the body to find Ident nodes
     // matching param names and grab their types.
-    let param_names: Vec<&str> = f.params.iter().filter_map(|p| {
-        if let Pattern::Ident(name) = &p.pattern { Some(name.as_str()) } else { None }
-    }).collect();
+    let param_names: Vec<&str> = f
+        .params
+        .iter()
+        .filter_map(|p| {
+            if let Pattern::Ident(name) = &p.pattern {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let mut param_types = Vec::new();
     for name in &param_names {
@@ -781,10 +850,10 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
 
 /// Find the type of the first Ident expression matching `name` in the body.
 fn find_param_type(expr: &Expr, name: &str) -> Option<Type> {
-    if let ExprKind::Ident(n) = &expr.kind {
-        if n == name {
-            return expr.ty.clone();
-        }
+    if let ExprKind::Ident(n) = &expr.kind
+        && n == name
+    {
+        return expr.ty.clone();
     }
     // Search children
     let mut result = None;
@@ -828,78 +897,119 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
     let start = token_start(&expr.span);
     // The cursor must be at or after this expression's start.
     // We rely on depth-first traversal: the deepest (most specific) match wins.
-    if cursor >= start {
-        if let Some(ref ty) = expr.ty {
-            *best = Some(ty);
-        }
+    if cursor >= start
+        && let Some(ref ty) = expr.ty
+    {
+        *best = Some(ty);
     }
 
     // Recurse into children (inlined to satisfy the borrow checker).
     match &expr.kind {
         ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-            find_type_in_expr(l, cursor, best); find_type_in_expr(r, cursor, best);
+            find_type_in_expr(l, cursor, best);
+            find_type_in_expr(r, cursor, best);
         }
-        ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Return(Some(e))
+        ExprKind::Unary(_, e)
+        | ExprKind::QuestionMark(e)
+        | ExprKind::Return(Some(e))
         | ExprKind::FieldAccess(e, _) => find_type_in_expr(e, cursor, best),
         ExprKind::Call(callee, args) => {
             find_type_in_expr(callee, cursor, best);
-            for a in args { find_type_in_expr(a, cursor, best); }
+            for a in args {
+                find_type_in_expr(a, cursor, best);
+            }
         }
         ExprKind::Lambda { body, .. } => find_type_in_expr(body, cursor, best),
         ExprKind::Match { expr, arms } => {
-            if let Some(e) = expr { find_type_in_expr(e, cursor, best); }
+            if let Some(e) = expr {
+                find_type_in_expr(e, cursor, best);
+            }
             for arm in arms {
-                if let Some(ref g) = arm.guard { find_type_in_expr(g, cursor, best); }
+                if let Some(ref g) = arm.guard {
+                    find_type_in_expr(g, cursor, best);
+                }
                 find_type_in_expr(&arm.body, cursor, best);
             }
         }
-        ExprKind::Block(stmts) => for stmt in stmts {
-            match stmt {
-                Stmt::Let { value, .. } => find_type_in_expr(value, cursor, best),
-                Stmt::Expr(e) => find_type_in_expr(e, cursor, best),
-                Stmt::When { expr, else_body, .. } => {
-                    find_type_in_expr(expr, cursor, best);
-                    find_type_in_expr(else_body, cursor, best);
-                }
-                Stmt::WhenBool { condition, else_body } => {
-                    find_type_in_expr(condition, cursor, best);
-                    find_type_in_expr(else_body, cursor, best);
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { value, .. } => find_type_in_expr(value, cursor, best),
+                    Stmt::Expr(e) => find_type_in_expr(e, cursor, best),
+                    Stmt::When {
+                        expr, else_body, ..
+                    } => {
+                        find_type_in_expr(expr, cursor, best);
+                        find_type_in_expr(else_body, cursor, best);
+                    }
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
+                        find_type_in_expr(condition, cursor, best);
+                        find_type_in_expr(else_body, cursor, best);
+                    }
                 }
             }
-        },
-        ExprKind::List(elems) => for elem in elems {
-            match elem {
-                ListElem::Single(e) | ListElem::Spread(e) => find_type_in_expr(e, cursor, best),
+        }
+        ExprKind::List(elems) => {
+            for elem in elems {
+                match elem {
+                    ListElem::Single(e) | ListElem::Spread(e) => find_type_in_expr(e, cursor, best),
+                }
             }
-        },
-        ExprKind::Map(entries) => for (k, v) in entries {
-            find_type_in_expr(k, cursor, best); find_type_in_expr(v, cursor, best);
-        },
+        }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                find_type_in_expr(k, cursor, best);
+                find_type_in_expr(v, cursor, best);
+            }
+        }
         ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-            for e in elems { find_type_in_expr(e, cursor, best); }
+            for e in elems {
+                find_type_in_expr(e, cursor, best);
+            }
         }
         ExprKind::RecordCreate { fields, .. } => {
-            for (_, v) in fields { find_type_in_expr(v, cursor, best); }
+            for (_, v) in fields {
+                find_type_in_expr(v, cursor, best);
+            }
         }
         ExprKind::RecordUpdate { expr, fields, .. } => {
             find_type_in_expr(expr, cursor, best);
-            for (_, v) in fields { find_type_in_expr(v, cursor, best); }
+            for (_, v) in fields {
+                find_type_in_expr(v, cursor, best);
+            }
         }
         ExprKind::Loop { bindings, body } => {
-            for (_, init) in bindings { find_type_in_expr(init, cursor, best); }
+            for (_, init) in bindings {
+                find_type_in_expr(init, cursor, best);
+            }
             find_type_in_expr(body, cursor, best);
         }
-        ExprKind::Recur(args) => for a in args { find_type_in_expr(a, cursor, best); },
-        ExprKind::StringInterp(parts) => for part in parts {
-            if let StringPart::Expr(e) = part { find_type_in_expr(e, cursor, best); }
-        },
+        ExprKind::Recur(args) => {
+            for a in args {
+                find_type_in_expr(a, cursor, best);
+            }
+        }
+        ExprKind::StringInterp(parts) => {
+            for part in parts {
+                if let StringPart::Expr(e) = part {
+                    find_type_in_expr(e, cursor, best);
+                }
+            }
+        }
         _ => {}
     }
 }
 
 /// Check if the cursor is on the field name of a `FieldAccess` expression.
 /// If so, return the field's type by looking it up in the receiver's record type.
-fn find_field_type_at_offset(program: &Program, source: &str, cursor: usize) -> Option<(String, Type)> {
+fn find_field_type_at_offset(
+    program: &Program,
+    source: &str,
+    cursor: usize,
+) -> Option<(String, Type)> {
     let mut result: Option<(String, Type)> = None;
     for decl in &program.decls {
         match decl {
@@ -916,7 +1026,12 @@ fn find_field_type_at_offset(program: &Program, source: &str, cursor: usize) -> 
     result
 }
 
-fn find_field_in_expr(expr: &Expr, source: &str, cursor: usize, result: &mut Option<(String, Type)>) {
+fn find_field_in_expr(
+    expr: &Expr,
+    source: &str,
+    cursor: usize,
+    result: &mut Option<(String, Type)>,
+) {
     if let ExprKind::FieldAccess(receiver, field) = &expr.kind {
         // Find where the field name starts in the source.
         // The FieldAccess span covers the receiver. The field name is after the dot.
@@ -929,11 +1044,11 @@ fn find_field_in_expr(expr: &Expr, source: &str, cursor: usize, result: &mut Opt
                 let field_end = field_start + field.len();
                 if cursor >= field_start && cursor < field_end {
                     // Cursor is on the field name — look up the field type
-                    if let Some(receiver_ty) = &receiver.ty {
-                        if let Some(field_ty) = get_field_type(receiver_ty, field) {
-                            *result = Some((field.clone(), field_ty));
-                            return;
-                        }
+                    if let Some(receiver_ty) = &receiver.ty
+                        && let Some(field_ty) = get_field_type(receiver_ty, field)
+                    {
+                        *result = Some((field.clone(), field_ty));
+                        return;
                     }
                 }
             }
@@ -951,57 +1066,94 @@ fn find_field_in_expr(expr: &Expr, source: &str, cursor: usize, result: &mut Opt
             }
             ExprKind::Call(callee, args) => {
                 find_field_in_expr(callee, source, cursor, result);
-                for a in args { find_field_in_expr(a, source, cursor, result); }
+                for a in args {
+                    find_field_in_expr(a, source, cursor, result);
+                }
             }
             ExprKind::Lambda { body, .. } => find_field_in_expr(body, source, cursor, result),
             ExprKind::Match { expr, arms } => {
-                if let Some(e) = expr { find_field_in_expr(e, source, cursor, result); }
+                if let Some(e) = expr {
+                    find_field_in_expr(e, source, cursor, result);
+                }
                 for arm in arms {
-                    if let Some(ref g) = arm.guard { find_field_in_expr(g, source, cursor, result); }
+                    if let Some(ref g) = arm.guard {
+                        find_field_in_expr(g, source, cursor, result);
+                    }
                     find_field_in_expr(&arm.body, source, cursor, result);
                 }
             }
-            ExprKind::Block(stmts) => for stmt in stmts {
-                match stmt {
-                    Stmt::Let { value, .. } => find_field_in_expr(value, source, cursor, result),
-                    Stmt::Expr(e) => find_field_in_expr(e, source, cursor, result),
-                    Stmt::When { expr, else_body, .. } => {
-                        find_field_in_expr(expr, source, cursor, result);
-                        find_field_in_expr(else_body, source, cursor, result);
-                    }
-                    Stmt::WhenBool { condition, else_body } => {
-                        find_field_in_expr(condition, source, cursor, result);
-                        find_field_in_expr(else_body, source, cursor, result);
+            ExprKind::Block(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { value, .. } => {
+                            find_field_in_expr(value, source, cursor, result)
+                        }
+                        Stmt::Expr(e) => find_field_in_expr(e, source, cursor, result),
+                        Stmt::When {
+                            expr, else_body, ..
+                        } => {
+                            find_field_in_expr(expr, source, cursor, result);
+                            find_field_in_expr(else_body, source, cursor, result);
+                        }
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
+                            find_field_in_expr(condition, source, cursor, result);
+                            find_field_in_expr(else_body, source, cursor, result);
+                        }
                     }
                 }
-            },
+            }
             ExprKind::RecordCreate { fields, .. } => {
-                for (_, v) in fields { find_field_in_expr(v, source, cursor, result); }
+                for (_, v) in fields {
+                    find_field_in_expr(v, source, cursor, result);
+                }
             }
             ExprKind::RecordUpdate { expr, fields, .. } => {
                 find_field_in_expr(expr, source, cursor, result);
-                for (_, v) in fields { find_field_in_expr(v, source, cursor, result); }
+                for (_, v) in fields {
+                    find_field_in_expr(v, source, cursor, result);
+                }
             }
             ExprKind::Loop { bindings, body } => {
-                for (_, init) in bindings { find_field_in_expr(init, source, cursor, result); }
+                for (_, init) in bindings {
+                    find_field_in_expr(init, source, cursor, result);
+                }
                 find_field_in_expr(body, source, cursor, result);
             }
-            ExprKind::List(elems) => for elem in elems {
-                match elem {
-                    ListElem::Single(e) | ListElem::Spread(e) => find_field_in_expr(e, source, cursor, result),
+            ExprKind::List(elems) => {
+                for elem in elems {
+                    match elem {
+                        ListElem::Single(e) | ListElem::Spread(e) => {
+                            find_field_in_expr(e, source, cursor, result)
+                        }
+                    }
                 }
-            },
-            ExprKind::Map(entries) => for (k, v) in entries {
-                find_field_in_expr(k, source, cursor, result);
-                find_field_in_expr(v, source, cursor, result);
-            },
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
-                for e in elems { find_field_in_expr(e, source, cursor, result); }
             }
-            ExprKind::Recur(args) => for a in args { find_field_in_expr(a, source, cursor, result); },
-            ExprKind::StringInterp(parts) => for part in parts {
-                if let StringPart::Expr(e) = part { find_field_in_expr(e, source, cursor, result); }
-            },
+            ExprKind::Map(entries) => {
+                for (k, v) in entries {
+                    find_field_in_expr(k, source, cursor, result);
+                    find_field_in_expr(v, source, cursor, result);
+                }
+            }
+            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+                for e in elems {
+                    find_field_in_expr(e, source, cursor, result);
+                }
+            }
+            ExprKind::Recur(args) => {
+                for a in args {
+                    find_field_in_expr(a, source, cursor, result);
+                }
+            }
+            ExprKind::StringInterp(parts) => {
+                for part in parts {
+                    if let StringPart::Expr(e) = part {
+                        find_field_in_expr(e, source, cursor, result);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1010,12 +1162,14 @@ fn find_field_in_expr(expr: &Expr, source: &str, cursor: usize, result: &mut Opt
 /// Look up a field's type within a record type.
 fn get_field_type(ty: &Type, field_name: &str) -> Option<Type> {
     match ty {
-        Type::Record(_, fields) => {
-            fields.iter().find(|(n, _)| n == field_name).map(|(_, t)| t.clone())
-        }
-        Type::Tuple(elems) => {
-            field_name.parse::<usize>().ok().and_then(|i| elems.get(i).cloned())
-        }
+        Type::Record(_, fields) => fields
+            .iter()
+            .find(|(n, _)| n == field_name)
+            .map(|(_, t)| t.clone()),
+        Type::Tuple(elems) => field_name
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| elems.get(i).cloned()),
         _ => None,
     }
 }
@@ -1056,19 +1210,28 @@ fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<String>) {
 fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
     match &expr.kind {
         ExprKind::Binary(lhs, _, rhs) | ExprKind::Pipe(lhs, rhs) | ExprKind::Range(lhs, rhs) => {
-            f(lhs); f(rhs);
+            f(lhs);
+            f(rhs);
         }
-        ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Return(Some(e))
+        ExprKind::Unary(_, e)
+        | ExprKind::QuestionMark(e)
+        | ExprKind::Return(Some(e))
         | ExprKind::FieldAccess(e, _) => f(e),
         ExprKind::Call(callee, args) => {
             f(callee);
-            for a in args { f(a); }
+            for a in args {
+                f(a);
+            }
         }
         ExprKind::Lambda { body, .. } => f(body),
         ExprKind::Match { expr, arms } => {
-            if let Some(e) = expr { f(e); }
+            if let Some(e) = expr {
+                f(e);
+            }
             for arm in arms {
-                if let Some(ref guard) = arm.guard { f(guard); }
+                if let Some(ref guard) = arm.guard {
+                    f(guard);
+                }
                 f(&arm.body);
             }
         }
@@ -1077,8 +1240,19 @@ fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
                 match stmt {
                     Stmt::Let { value, .. } => f(value),
                     Stmt::Expr(e) => f(e),
-                    Stmt::When { expr, else_body, .. } => { f(expr); f(else_body); }
-                    Stmt::WhenBool { condition, else_body } => { f(condition); f(else_body); }
+                    Stmt::When {
+                        expr, else_body, ..
+                    } => {
+                        f(expr);
+                        f(else_body);
+                    }
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
+                        f(condition);
+                        f(else_body);
+                    }
                 }
             }
         }
@@ -1089,21 +1263,44 @@ fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
                 }
             }
         }
-        ExprKind::Map(entries) => { for (k, v) in entries { f(k); f(v); } }
-        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => { for e in elems { f(e); } }
-        ExprKind::RecordCreate { fields, .. } => { for (_, v) in fields { f(v); } }
+        ExprKind::Map(entries) => {
+            for (k, v) in entries {
+                f(k);
+                f(v);
+            }
+        }
+        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+            for e in elems {
+                f(e);
+            }
+        }
+        ExprKind::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                f(v);
+            }
+        }
         ExprKind::RecordUpdate { expr, fields, .. } => {
             f(expr);
-            for (_, v) in fields { f(v); }
+            for (_, v) in fields {
+                f(v);
+            }
         }
         ExprKind::Loop { bindings, body } => {
-            for (_, init) in bindings { f(init); }
+            for (_, init) in bindings {
+                f(init);
+            }
             f(body);
         }
-        ExprKind::Recur(args) => { for a in args { f(a); } }
+        ExprKind::Recur(args) => {
+            for a in args {
+                f(a);
+            }
+        }
         ExprKind::StringInterp(parts) => {
             for part in parts {
-                if let StringPart::Expr(e) = part { f(e); }
+                if let StringPart::Expr(e) = part {
+                    f(e);
+                }
             }
         }
         _ => {}
@@ -1145,26 +1342,40 @@ fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar> {
 fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
     match pattern {
         Pattern::Ident(name) if name != "_" => {
-            locals.push(LocalVar { name: name.clone(), ty: None });
+            locals.push(LocalVar {
+                name: name.clone(),
+                ty: None,
+            });
         }
         Pattern::Constructor(_, fields) => {
-            for p in fields { collect_pattern_names(p, locals); }
+            for p in fields {
+                collect_pattern_names(p, locals);
+            }
         }
         Pattern::Tuple(pats) => {
-            for p in pats { collect_pattern_names(p, locals); }
+            for p in pats {
+                collect_pattern_names(p, locals);
+            }
         }
         Pattern::Record { fields, .. } => {
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
                 } else {
-                    locals.push(LocalVar { name: name.clone(), ty: None });
+                    locals.push(LocalVar {
+                        name: name.clone(),
+                        ty: None,
+                    });
                 }
             }
         }
         Pattern::List(pats, rest) => {
-            for p in pats { collect_pattern_names(p, locals); }
-            if let Some(r) = rest { collect_pattern_names(r, locals); }
+            for p in pats {
+                collect_pattern_names(p, locals);
+            }
+            if let Some(r) = rest {
+                collect_pattern_names(r, locals);
+            }
         }
         _ => {}
     }
@@ -1183,7 +1394,12 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                         }
                         collect_locals_in_expr(value, cursor, locals);
                     }
-                    Stmt::When { pattern, expr, else_body, .. } => {
+                    Stmt::When {
+                        pattern,
+                        expr,
+                        else_body,
+                        ..
+                    } => {
                         // The pattern binding is visible after the when statement
                         if expr.span.offset <= cursor {
                             collect_pattern_names(pattern, locals);
@@ -1195,7 +1411,10 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                         collect_locals_in_expr(expr, cursor, locals);
                         collect_locals_in_expr(else_body, cursor, locals);
                     }
-                    Stmt::WhenBool { condition, else_body } => {
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
                         collect_locals_in_expr(condition, cursor, locals);
                         collect_locals_in_expr(else_body, cursor, locals);
                     }
@@ -1206,7 +1425,9 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             }
         }
         ExprKind::Match { expr, arms } => {
-            if let Some(e) = expr { collect_locals_in_expr(e, cursor, locals); }
+            if let Some(e) = expr {
+                collect_locals_in_expr(e, cursor, locals);
+            }
             for arm in arms {
                 if arm.body.span.offset <= cursor {
                     collect_pattern_names(&arm.pattern, locals);
@@ -1215,13 +1436,18 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             }
         }
         ExprKind::Lambda { body, params, .. } => {
-            for p in params { collect_pattern_names(&p.pattern, locals); }
+            for p in params {
+                collect_pattern_names(&p.pattern, locals);
+            }
             collect_locals_in_expr(body, cursor, locals);
         }
         ExprKind::Loop { bindings, body } => {
             for (name, init) in bindings {
                 if init.span.offset <= cursor {
-                    locals.push(LocalVar { name: name.clone(), ty: init.ty.clone() });
+                    locals.push(LocalVar {
+                        name: name.clone(),
+                        ty: init.ty.clone(),
+                    });
                 }
                 collect_locals_in_expr(init, cursor, locals);
             }
@@ -1237,14 +1463,17 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
 fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mut Vec<LocalVar>) {
     match pattern {
         Pattern::Ident(name) if name != "_" => {
-            locals.push(LocalVar { name: name.clone(), ty: ty.cloned() });
+            locals.push(LocalVar {
+                name: name.clone(),
+                ty: ty.cloned(),
+            });
         }
         _ => collect_pattern_names(pattern, locals),
     }
 }
 
 /// For `when Ok(x) = expr` where expr has type Result(T, E), set x's type to T.
-fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals: &mut Vec<LocalVar>) {
+fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals: &mut [LocalVar]) {
     if let (Pattern::Constructor(ctor, fields), Some(Type::Generic(_, args))) = (pattern, expr_ty) {
         // Result(T, E): Ok(x) → x has type T, Err(x) → x has type E
         // Option(T): Some(x) → x has type T
@@ -1292,11 +1521,7 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
         .into_iter()
         .rev()
         .collect();
-    if ident.is_empty() {
-        None
-    } else {
-        Some(ident)
-    }
+    if ident.is_empty() { None } else { Some(ident) }
 }
 
 /// Walk the entire AST to find the type of a variable by name.
@@ -1319,14 +1544,12 @@ fn find_ident_type_by_name(program: &Program, name: &str) -> Option<Type> {
 }
 
 fn find_ident_type_in_expr(expr: &Expr, name: &str, result: &mut Option<Type>) {
-    if let ExprKind::Ident(ident_name) = &expr.kind {
-        if ident_name == name {
-            if let Some(ty) = &expr.ty {
-                if !has_unresolved_vars(ty) {
-                    *result = Some(ty.clone());
-                }
-            }
-        }
+    if let ExprKind::Ident(ident_name) = &expr.kind
+        && ident_name == name
+        && let Some(ty) = &expr.ty
+        && !has_unresolved_vars(ty)
+    {
+        *result = Some(ty.clone());
     }
     visit_expr_children(expr, |child| find_ident_type_in_expr(child, name, result));
 }
@@ -1345,17 +1568,16 @@ fn record_fields_from_type(ty: &Type, program: &Program) -> Option<Vec<(String, 
 /// Look up a type declaration by name and return its record fields.
 fn lookup_record_fields(program: &Program, type_name: &str) -> Option<Vec<(String, Type)>> {
     for decl in &program.decls {
-        if let Decl::Type(td) = decl {
-            if td.name == type_name {
-                if let TypeBody::Record(fields) = &td.body {
-                    return Some(
-                        fields
-                            .iter()
-                            .map(|f| (f.name.clone(), type_expr_to_type(&f.ty)))
-                            .collect(),
-                    );
-                }
-            }
+        if let Decl::Type(td) = decl
+            && td.name == type_name
+            && let TypeBody::Record(fields) = &td.body
+        {
+            return Some(
+                fields
+                    .iter()
+                    .map(|f| (f.name.clone(), type_expr_to_type(&f.ty)))
+                    .collect(),
+            );
         }
     }
     None
@@ -1392,8 +1614,8 @@ fn type_expr_to_type(te: &TypeExpr) -> Type {
 // ── Completion data ────────────────────────────────────────────────
 
 const KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match",
-    "mod", "pub", "return", "trait", "type", "when", "where",
+    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
+    "when", "where",
 ];
 
 const BUILTINS: &[(&str, CompletionItemKind)] = &[
@@ -1607,9 +1829,7 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-fn extract_request<R: lsp_types::request::Request>(
-    req: Request,
-) -> Option<(RequestId, R::Params)> {
+fn extract_request<R: lsp_types::request::Request>(req: Request) -> Option<(RequestId, R::Params)> {
     req.extract::<R::Params>(R::METHOD).ok()
 }
 

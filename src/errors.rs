@@ -77,7 +77,12 @@ impl SourceError {
         }
     }
 
-    pub fn compile_warning(message: impl Into<String>, span: Span, source: &str, file: impl Into<String>) -> Self {
+    pub fn compile_warning(
+        message: impl Into<String>,
+        span: Span,
+        source: &str,
+        file: impl Into<String>,
+    ) -> Self {
         let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Compile,
@@ -100,7 +105,12 @@ impl SourceError {
         }
     }
 
-    pub fn runtime_at(message: impl Into<String>, span: Span, source: &str, file: impl Into<String>) -> Self {
+    pub fn runtime_at(
+        message: impl Into<String>,
+        span: Span,
+        source: &str,
+        file: impl Into<String>,
+    ) -> Self {
         let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Runtime,
@@ -256,7 +266,7 @@ impl fmt::Display for SourceError {
 
             write!(
                 f,
-                "\n {cyan}{gutter:>width$} |{reset} {spacing}{label_color}{bold}{caret} {msg}{reset}",
+                "\n {cyan}{gutter:>width$} |{reset} {spacing}{label_color}{bold}^ {msg}{reset}",
                 cyan = c.cyan,
                 gutter = "",
                 width = gutter_width,
@@ -264,7 +274,6 @@ impl fmt::Display for SourceError {
                 spacing = spacing,
                 label_color = label_color,
                 bold = c.bold,
-                caret = "^",
                 msg = self.message,
             )?;
         }

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use rustyline::completion::{Completer, Pair};
@@ -7,7 +8,7 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
-use rustyline::{Editor, Helper, Context};
+use rustyline::{Context, Editor, Helper};
 
 use crate::compiler::Compiler;
 use crate::lexer::Lexer;
@@ -20,7 +21,7 @@ const HISTORY_FILE: &str = ".silt_history";
 // ── Tab completion helper ───────────────────────────────────────────
 
 struct SiltHelper {
-    names: Arc<RefCell<Vec<String>>>,
+    names: Rc<RefCell<Vec<String>>>,
 }
 
 impl Completer for SiltHelper {
@@ -67,10 +68,13 @@ impl Helper for SiltHelper {}
 // ── REPL ────────────────────────────────────────────────────────────
 
 pub fn run_repl() {
-    let names = Arc::new(RefCell::new(builtin_names()));
-    let helper = SiltHelper { names: names.clone() };
+    let names = Rc::new(RefCell::new(builtin_names()));
+    let helper = SiltHelper {
+        names: names.clone(),
+    };
 
-    let mut rl: Editor<SiltHelper, DefaultHistory> = Editor::new().expect("failed to create editor");
+    let mut rl: Editor<SiltHelper, DefaultHistory> =
+        Editor::new().expect("failed to create editor");
     rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
 
@@ -81,7 +85,11 @@ pub fn run_repl() {
     let mut buffer = String::new();
 
     loop {
-        let prompt = if buffer.is_empty() { "silt> " } else { "  ... " };
+        let prompt = if buffer.is_empty() {
+            "silt> "
+        } else {
+            "  ... "
+        };
 
         match rl.readline(prompt) {
             Ok(line) => {
@@ -139,46 +147,166 @@ pub fn run_repl() {
 fn builtin_names() -> Vec<String> {
     let mut names = vec![
         // Keywords / commands
-        ":quit", ":help",
-        "fn", "let", "type", "trait", "match", "when", "return",
-        "import", "loop", "true", "false",
+        ":quit",
+        ":help",
+        "fn",
+        "let",
+        "type",
+        "trait",
+        "match",
+        "when",
+        "return",
+        "import",
+        "loop",
+        "true",
+        "false",
         // Globals
-        "print", "println", "panic",
-        "Ok", "Err", "Some", "None",
-        "Stop", "Continue", "Message", "Closed", "Empty",
+        "print",
+        "println",
+        "panic",
+        "Ok",
+        "Err",
+        "Some",
+        "None",
+        "Stop",
+        "Continue",
+        "Message",
+        "Closed",
+        "Empty",
         // Modules
-        "list.map", "list.filter", "list.fold", "list.each", "list.find",
-        "list.sort", "list.sort_by", "list.reverse", "list.head", "list.tail",
-        "list.last", "list.length", "list.contains", "list.append", "list.concat",
-        "list.zip", "list.flatten", "list.flat_map", "list.filter_map", "list.any", "list.all",
-        "list.get", "list.take", "list.drop", "list.enumerate", "list.group_by",
-        "list.fold_until", "list.unfold",
-        "string.split", "string.trim", "string.join", "string.length",
-        "string.contains", "string.replace", "string.to_upper", "string.to_lower",
-        "string.starts_with", "string.ends_with", "string.chars", "string.repeat",
-        "string.index_of", "string.slice", "string.pad_left", "string.pad_right",
-        "string.is_empty", "string.is_alpha", "string.is_digit",
-        "string.is_upper", "string.is_lower", "string.is_alnum", "string.is_whitespace",
-        "int.parse", "int.abs", "int.min", "int.max", "int.to_float", "int.to_string",
-        "float.parse", "float.round", "float.ceil", "float.floor", "float.abs",
-        "float.to_string", "float.to_int", "float.min", "float.max",
-        "map.get", "map.set", "map.delete", "map.keys", "map.values",
-        "map.length", "map.merge", "map.filter", "map.map", "map.entries", "map.from_entries",
-        "map.each", "map.update",
-        "result.unwrap_or", "result.map_ok", "result.map_err", "result.flatten",
-        "result.flat_map", "result.is_ok", "result.is_err",
-        "option.map", "option.unwrap_or", "option.to_result", "option.is_some", "option.is_none",
-        "io.read_file", "io.write_file", "io.read_line", "io.inspect", "io.args",
-        "math.sqrt", "math.pow", "math.log", "math.log10",
-        "math.sin", "math.cos", "math.tan", "math.asin", "math.acos", "math.atan", "math.atan2",
-        "math.pi", "math.e",
-        "channel.new", "channel.send", "channel.receive", "channel.close",
-        "channel.try_send", "channel.try_receive", "channel.select",
-        "task.spawn", "task.join", "task.cancel",
-        "regex.is_match", "regex.find", "regex.find_all", "regex.split",
-        "regex.replace", "regex.replace_all", "regex.replace_all_with", "regex.captures",
-        "json.parse", "json.stringify", "json.pretty",
-        "test.assert", "test.assert_eq", "test.assert_ne",
+        "list.map",
+        "list.filter",
+        "list.fold",
+        "list.each",
+        "list.find",
+        "list.sort",
+        "list.sort_by",
+        "list.reverse",
+        "list.head",
+        "list.tail",
+        "list.last",
+        "list.length",
+        "list.contains",
+        "list.append",
+        "list.concat",
+        "list.zip",
+        "list.flatten",
+        "list.flat_map",
+        "list.filter_map",
+        "list.any",
+        "list.all",
+        "list.get",
+        "list.take",
+        "list.drop",
+        "list.enumerate",
+        "list.group_by",
+        "list.fold_until",
+        "list.unfold",
+        "string.split",
+        "string.trim",
+        "string.join",
+        "string.length",
+        "string.contains",
+        "string.replace",
+        "string.to_upper",
+        "string.to_lower",
+        "string.starts_with",
+        "string.ends_with",
+        "string.chars",
+        "string.repeat",
+        "string.index_of",
+        "string.slice",
+        "string.pad_left",
+        "string.pad_right",
+        "string.is_empty",
+        "string.is_alpha",
+        "string.is_digit",
+        "string.is_upper",
+        "string.is_lower",
+        "string.is_alnum",
+        "string.is_whitespace",
+        "int.parse",
+        "int.abs",
+        "int.min",
+        "int.max",
+        "int.to_float",
+        "int.to_string",
+        "float.parse",
+        "float.round",
+        "float.ceil",
+        "float.floor",
+        "float.abs",
+        "float.to_string",
+        "float.to_int",
+        "float.min",
+        "float.max",
+        "map.get",
+        "map.set",
+        "map.delete",
+        "map.keys",
+        "map.values",
+        "map.length",
+        "map.merge",
+        "map.filter",
+        "map.map",
+        "map.entries",
+        "map.from_entries",
+        "map.each",
+        "map.update",
+        "result.unwrap_or",
+        "result.map_ok",
+        "result.map_err",
+        "result.flatten",
+        "result.flat_map",
+        "result.is_ok",
+        "result.is_err",
+        "option.map",
+        "option.unwrap_or",
+        "option.to_result",
+        "option.is_some",
+        "option.is_none",
+        "io.read_file",
+        "io.write_file",
+        "io.read_line",
+        "io.inspect",
+        "io.args",
+        "math.sqrt",
+        "math.pow",
+        "math.log",
+        "math.log10",
+        "math.sin",
+        "math.cos",
+        "math.tan",
+        "math.asin",
+        "math.acos",
+        "math.atan",
+        "math.atan2",
+        "math.pi",
+        "math.e",
+        "channel.new",
+        "channel.send",
+        "channel.receive",
+        "channel.close",
+        "channel.try_send",
+        "channel.try_receive",
+        "channel.select",
+        "task.spawn",
+        "task.join",
+        "task.cancel",
+        "regex.is_match",
+        "regex.find",
+        "regex.find_all",
+        "regex.split",
+        "regex.replace",
+        "regex.replace_all",
+        "regex.replace_all_with",
+        "regex.captures",
+        "json.parse",
+        "json.stringify",
+        "json.pretty",
+        "test.assert",
+        "test.assert_eq",
+        "test.assert_ne",
     ];
     names.sort();
     names.into_iter().map(String::from).collect()

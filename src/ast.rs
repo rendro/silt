@@ -12,7 +12,11 @@ pub struct Expr {
 
 impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span, ty: None }
+        Self {
+            kind,
+            span,
+            ty: None,
+        }
     }
 }
 

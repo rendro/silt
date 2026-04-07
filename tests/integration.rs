@@ -46,11 +46,13 @@ fn run_err(input: &str) -> String {
 
 #[test]
 fn test_hello_world() {
-    run_ok(r#"
+    run_ok(
+        r#"
 fn main() {
   println("hello, world")
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: FizzBuzz ────────────────────────────────────────────────
@@ -90,7 +92,8 @@ fn main() {
 
 #[test]
 fn test_fizzbuzz_with_pipe() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import list
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
@@ -106,7 +109,8 @@ fn main() {
   |> list.map { n -> fizzbuzz(n) }
   |> list.each { s -> println(s) }
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: Error Handling with when and ? ──────────────────────────
@@ -178,7 +182,8 @@ fn main() {
 
 #[test]
 fn test_enum_and_trait() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import list
 type Shape {
   Circle(Float)
@@ -208,7 +213,8 @@ fn main() {
   |> list.map { s -> (s.display(), area(s)) }
   |> list.each { pair -> println("{pair}") }
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: Record Update and Destructuring ─────────────────────────
@@ -237,7 +243,8 @@ fn main() {
 
 #[test]
 fn test_record_filter_map() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import list
 type User {
   name: String,
@@ -262,7 +269,8 @@ fn main() {
     println("{u.name} is now {u.age}")
   }
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: Error Handling with string.split and module access ──────
@@ -287,7 +295,8 @@ fn main() {
 
 #[test]
 fn test_error_handling_pipeline() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import int
 import list
 import string
@@ -322,7 +331,8 @@ fn main() {
     Err(e) -> println("config error: {e}")
   }
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: Match with guards ───────────────────────────────────────
@@ -394,19 +404,24 @@ fn main() {
   "hello {name}, the answer is {n}"
 }
     "#);
-    assert_eq!(result, Value::String("hello world, the answer is 42".into()));
+    assert_eq!(
+        result,
+        Value::String("hello world, the answer is 42".into())
+    );
 }
 
 // ── Phase 3: Map literals ────────────────────────────────────────────
 
 #[test]
 fn test_map_literal() {
-    run_ok(r#"
+    run_ok(
+        r#"
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
   println(m)
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Phase 3: Single-expression functions ─────────────────────────────
@@ -511,7 +526,8 @@ fn main() {
 
 #[test]
 fn test_producer_consumer() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import channel
 import task
 fn main() {
@@ -531,7 +547,8 @@ fn main() {
   task.join(producer)
   task.join(consumer)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -561,7 +578,8 @@ fn main() {
 
 #[test]
 fn test_cancel_task() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import task
 fn main() {
   let h = task.spawn(fn() {
@@ -569,7 +587,8 @@ fn main() {
   })
   task.cancel(h)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -682,11 +701,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3),
-        ]))
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3),]))
     );
 }
 
@@ -736,14 +751,16 @@ fn main() {
 #[test]
 fn test_send_on_closed_channel_errors() {
     // Sending on closed channel should error
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   let ch = channel.new(10)
   channel.close(ch)
   channel.send(ch, 42)
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("send on closed channel"), "got: {err}");
 }
 
@@ -782,7 +799,10 @@ fn main() {
   channel.try_receive(ch)
 }
     "#);
-    assert_eq!(result, Value::Variant("Message".into(), vec![Value::Int(42)]));
+    assert_eq!(
+        result,
+        Value::Variant("Message".into(), vec![Value::Int(42)])
+    );
 }
 
 #[test]
@@ -840,7 +860,10 @@ fn main() {
   channel.try_receive(ch)
 }
     "#);
-    assert_eq!(result, Value::Variant("Message".into(), vec![Value::Int(99)]));
+    assert_eq!(
+        result,
+        Value::Variant("Message".into(), vec![Value::Int(99)])
+    );
 }
 
 // ── List pattern matching ───────────────────────────────────────────
@@ -949,11 +972,14 @@ fn main() {
   [classify(0), classify(3), classify(9)]
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::String("binary".into()),
-        Value::String("small prime".into()),
-        Value::String("other".into()),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("binary".into()),
+            Value::String("small prime".into()),
+            Value::String("other".into()),
+        ]))
+    );
 }
 
 #[test]
@@ -989,11 +1015,14 @@ fn main() {
   [classify(5), classify(42), classify(100)]
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::String("single digit".into()),
-        Value::String("double digit".into()),
-        Value::String("big".into()),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("single digit".into()),
+            Value::String("double digit".into()),
+            Value::String("big".into()),
+        ]))
+    );
 }
 
 // ── Map patterns ────────────────────────────────────────────────────
@@ -1105,7 +1134,8 @@ fn main() {
 #[test]
 fn test_non_tail_call_exceeds_depth_limit() {
     // Non-tail recursion exceeding the frame limit should produce a clear error.
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn deep(n) {
   match n {
     0 -> 0
@@ -1115,9 +1145,16 @@ fn deep(n) {
 fn main() {
   deep(200000)
 }
-    "#);
-    assert!(err.contains("stack overflow"), "expected stack overflow error, got: {err}");
-    assert!(err.contains("tail position"), "error should hint at TCO, got: {err}");
+    "#,
+    );
+    assert!(
+        err.contains("stack overflow"),
+        "expected stack overflow error, got: {err}"
+    );
+    assert!(
+        err.contains("tail position"),
+        "error should hint at TCO, got: {err}"
+    );
 }
 
 // ── List append and concat ──────────────────────────────────────────
@@ -1130,7 +1167,15 @@ fn main() {
   list.append([1, 2, 3], 4)
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ]))
+    );
 }
 
 #[test]
@@ -1141,7 +1186,15 @@ fn main() {
   list.concat([1, 2], [3, 4])
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4)
+        ]))
+    );
 }
 
 // ── Stdlib: list.get, string.index_of, string.slice, etc. ──────────
@@ -1185,31 +1238,43 @@ fn main() { string.slice("hello world", 0, 5) }"#);
 fn test_list_take() {
     let result = run(r#"import list
 fn main() { list.take([1, 2, 3, 4, 5], 3) }"#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
 }
 
 #[test]
 fn test_list_drop() {
     let result = run(r#"import list
 fn main() { list.drop([1, 2, 3, 4, 5], 2) }"#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(3), Value::Int(4), Value::Int(5)]))
+    );
 }
 
 #[test]
 fn test_list_enumerate() {
     let result = run(r#"import list
 fn main() { list.enumerate(["a", "b"]) }"#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::Tuple(vec![Value::Int(0), Value::String("a".into())]),
-        Value::Tuple(vec![Value::Int(1), Value::String("b".into())]),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Tuple(vec![Value::Int(0), Value::String("a".into())]),
+            Value::Tuple(vec![Value::Int(1), Value::String("b".into())]),
+        ]))
+    );
 }
 
 #[test]
 fn test_float_min_max() {
     let result = run(r#"import float
 fn main() { (float.min(3.14, 2.71), float.max(3.14, 2.71)) }"#);
-    assert_eq!(result, Value::Tuple(vec![Value::Float(2.71), Value::Float(3.14)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Float(2.71), Value::Float(3.14)])
+    );
 }
 
 // ── sort_by ─────────────────────────────────────────────────────────
@@ -1224,11 +1289,14 @@ fn main() {
   words |> list.sort_by { w -> string.length(w) }
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::String("apple".into()),
-        Value::String("banana".into()),
-        Value::String("cherry".into()),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("apple".into()),
+            Value::String("banana".into()),
+            Value::String("cherry".into()),
+        ]))
+    );
 }
 
 // ── Match with comparison scrutinee ─────────────────────────────────
@@ -1333,11 +1401,17 @@ fn main() {
   [1, 2, 3] |> list.flat_map { n -> [n, n * 10] }
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::Int(1), Value::Int(10),
-        Value::Int(2), Value::Int(20),
-        Value::Int(3), Value::Int(30),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(10),
+            Value::Int(2),
+            Value::Int(20),
+            Value::Int(3),
+            Value::Int(30),
+        ]))
+    );
 }
 
 // ── list.filter_map ────────────────────────────────────────────────
@@ -1355,9 +1429,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::Int(20), Value::Int(40),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(20), Value::Int(40),]))
+    );
 }
 
 #[test]
@@ -1379,9 +1454,14 @@ fn main() {
   [1, 2, 3] |> list.filter_map { n -> Some(n + 100) }
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::Int(101), Value::Int(102), Value::Int(103),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(101),
+            Value::Int(102),
+            Value::Int(103),
+        ]))
+    );
 }
 
 // ── list.any / list.all ────────────────────────────────────────────
@@ -1760,13 +1840,15 @@ fn main() {
 
 #[test]
 fn test_loop_arity_mismatch() {
-    let result = run_err(r#"
+    let result = run_err(
+        r#"
 fn main() {
   loop x = 0, y = 0 {
     loop(1)
   }
 }
-    "#);
+    "#,
+    );
     assert!(result.contains("expects 2 argument(s)"));
 }
 
@@ -1870,10 +1952,7 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::Variant("Some".into(), vec![Value::Int(4)])
-    );
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(4)]));
 }
 
 // ── list.unfold ─────────────────────────────────────────────────────
@@ -2173,7 +2252,8 @@ fn main() {
 
 #[test]
 fn test_where_clause_with_display() {
-    run_ok(r#"
+    run_ok(
+        r#"
 type Shape { Circle(Float) Rect(Float, Float) }
 
 trait Display for Shape {
@@ -2193,12 +2273,14 @@ fn main() {
   let s = Circle(3.14)
   println(show(s))
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_where_clause_with_equal() {
-    run_ok(r#"
+    run_ok(
+        r#"
 fn are_same(a: t, b: t) where t: Equal {
   a == b
 }
@@ -2207,12 +2289,14 @@ fn main() {
   are_same(1, 2)
   are_same("hello", "hello")
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_where_clause_with_compare() {
-    run_ok(r#"
+    run_ok(
+        r#"
 fn is_less(a: t, b: t) where t: Compare {
   a < b
 }
@@ -2221,7 +2305,8 @@ fn main() {
   is_less(1, 2)
   is_less("a", "b")
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Typed AST verification ──────────────────────────────────────────
@@ -2234,7 +2319,9 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     silt::typechecker::check(&mut program);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -2253,7 +2340,9 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     silt::typechecker::check(&mut program);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -2271,7 +2360,9 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     silt::typechecker::check(&mut program);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -2294,7 +2385,9 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     silt::typechecker::check(&mut program);
 
     if let silt::ast::Decl::Fn(f) = &program.decls[0] {
@@ -2320,7 +2413,9 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     silt::typechecker::check(&mut program);
 
     // double's body (x * 2) should resolve to Int
@@ -2345,10 +2440,14 @@ fn main() {
 }
     "#;
     let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
-    let mut program = silt::parser::Parser::new(tokens).parse_program().expect("parse");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
     let errors = silt::typechecker::check(&mut program);
     assert!(
-        errors.iter().any(|e| e.severity == silt::types::Severity::Error),
+        errors
+            .iter()
+            .any(|e| e.severity == silt::types::Severity::Error),
         "should catch Int vs String return type mismatch"
     );
 }
@@ -2357,25 +2456,31 @@ fn main() {
 
 #[test]
 fn test_mixed_int_float_add() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 1 + 2.5 }
-    "#);
+    "#,
+    );
     assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
 #[test]
 fn test_mixed_float_int_sub() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 10.0 - 3 }
-    "#);
+    "#,
+    );
     assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
 #[test]
 fn test_mixed_int_float_div() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 7 / 2.0 }
-    "#);
+    "#,
+    );
     assert!(err.contains("cannot mix Int and Float"), "got: {err}");
 }
 
@@ -2397,25 +2502,31 @@ fn main() {
 
 #[test]
 fn test_cross_type_eq_is_error() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 5 == "hello" }
-    "#);
+    "#,
+    );
     assert!(err.contains("unsupported operation"), "got: {err}");
 }
 
 #[test]
 fn test_cross_type_lt_is_error() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 3 < true }
-    "#);
+    "#,
+    );
     assert!(err.contains("unsupported operation"), "got: {err}");
 }
 
 #[test]
 fn test_cross_type_int_float_eq_is_error() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() { 3 == 3.0 }
-    "#);
+    "#,
+    );
     assert!(err.contains("unsupported operation"), "got: {err}");
 }
 
@@ -2576,9 +2687,17 @@ fn main() {
   map.get(groups, 0)
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![
-        Value::List(Arc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6)]))
-    ]));
+    assert_eq!(
+        result,
+        Value::Variant(
+            "Some".into(),
+            vec![Value::List(Arc::new(vec![
+                Value::Int(2),
+                Value::Int(4),
+                Value::Int(6)
+            ]))]
+        )
+    );
 }
 
 // ── Regex module ────────────────────────────────────────────────────
@@ -2613,7 +2732,10 @@ fn main() {
   regex.find("\\d+", "abc 123 def 456")
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("123".into())]));
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("123".into())])
+    );
 }
 
 #[test]
@@ -2624,10 +2746,13 @@ fn main() {
   regex.find_all("\\d+", "abc 123 def 456")
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::String("123".into()),
-        Value::String("456".into()),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("123".into()),
+            Value::String("456".into()),
+        ]))
+    );
 }
 
 #[test]
@@ -2638,11 +2763,14 @@ fn main() {
   regex.split("\\s+", "hello   world   foo")
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![
-        Value::String("hello".into()),
-        Value::String("world".into()),
-        Value::String("foo".into()),
-    ])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("hello".into()),
+            Value::String("world".into()),
+            Value::String("foo".into()),
+        ]))
+    );
 }
 
 #[test]
@@ -2743,7 +2871,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![Value::String("a@b.com".into())]));
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("a@b.com".into())])
+    );
 }
 
 #[test]
@@ -2788,7 +2919,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("json.parse(User): missing field 'age'".into()));
+    assert_eq!(
+        result,
+        Value::String("json.parse(User): missing field 'age'".into())
+    );
 }
 
 #[test]
@@ -2803,7 +2937,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("json.parse(User): field 'name': expected String, got number".into()));
+    assert_eq!(
+        result,
+        Value::String("json.parse(User): field 'name': expected String, got number".into())
+    );
 }
 
 #[test]
@@ -2818,7 +2955,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("json.parse(User): expected JSON object, got array".into()));
+    assert_eq!(
+        result,
+        Value::String("json.parse(User): expected JSON object, got array".into())
+    );
 }
 
 #[test]
@@ -2901,7 +3041,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("json.parse_list(Employee): expected JSON array, got object".into()));
+    assert_eq!(
+        result,
+        Value::String("json.parse_list(Employee): expected JSON array, got object".into())
+    );
 }
 
 #[test]
@@ -2949,7 +3092,10 @@ fn main() {
   json.stringify(data)
 }
     "#);
-    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    let s = match result {
+        Value::String(s) => s,
+        _ => panic!("expected string"),
+    };
     assert!(s.contains("\"name\""));
     assert!(s.contains("\"Bob\""));
     assert!(s.contains("\"age\""));
@@ -2965,7 +3111,10 @@ fn main() {
   json.stringify(u)
 }
     "#);
-    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    let s = match result {
+        Value::String(s) => s,
+        _ => panic!("expected string"),
+    };
     assert!(s.contains("\"name\""));
     assert!(s.contains("\"Alice\""));
     assert!(s.contains("\"age\""));
@@ -2998,7 +3147,10 @@ fn main() {
   json.pretty(data)
 }
     "#);
-    let s = match result { Value::String(s) => s, _ => panic!("expected string") };
+    let s = match result {
+        Value::String(s) => s,
+        _ => panic!("expected string"),
+    };
     assert!(s.contains('\n'), "pretty output should have newlines");
 }
 
@@ -3119,7 +3271,10 @@ fn main() {
   events |> list.map { e -> e.date.month }
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(12)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(12)]))
+    );
 }
 
 #[test]
@@ -3205,13 +3360,17 @@ fn main() {
   regex.captures("(\\w+)@(\\w+)", "user@host")
 }
     "#);
-    assert_eq!(result, Value::Variant("Some".into(), vec![
-        Value::List(Arc::new(vec![
-            Value::String("user@host".into()),
-            Value::String("user".into()),
-            Value::String("host".into()),
-        ]))
-    ]));
+    assert_eq!(
+        result,
+        Value::Variant(
+            "Some".into(),
+            vec![Value::List(Arc::new(vec![
+                Value::String("user@host".into()),
+                Value::String("user".into()),
+                Value::String("host".into()),
+            ]))]
+        )
+    );
 }
 
 #[test]
@@ -3229,54 +3388,72 @@ fn main() {
 
 #[test]
 fn test_assert_with_message() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() {
   test.assert(false, "should be true")
 }
-    "#);
-    assert!(err.contains("should be true"), "error should contain message: {err}");
+    "#,
+    );
+    assert!(
+        err.contains("should be true"),
+        "error should contain message: {err}"
+    );
 }
 
 #[test]
 fn test_assert_eq_with_message() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() {
   test.assert_eq(1, 2, "1 + 0")
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("1 + 0"), "error should contain context: {err}");
-    assert!(err.contains("1 != 2") || err.contains("!= 2"), "error should show values: {err}");
+    assert!(
+        err.contains("1 != 2") || err.contains("!= 2"),
+        "error should show values: {err}"
+    );
 }
 
 #[test]
 fn test_assert_ne_with_message() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import test
 fn main() {
   test.assert_ne(5, 5, "should differ")
 }
-    "#);
-    assert!(err.contains("should differ"), "error should contain message: {err}");
+    "#,
+    );
+    assert!(
+        err.contains("should differ"),
+        "error should contain message: {err}"
+    );
 }
 
 #[test]
 fn test_assert_without_message_still_works() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import test
 fn main() {
   test.assert(true)
   test.assert_eq(1, 1)
   test.assert_ne(1, 2)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_parameterized_test_pattern() {
     // Demonstrates the idiomatic parameterized test pattern
-    run_ok(r#"
+    run_ok(
+        r#"
 import list
 import test
 fn main() {
@@ -3285,7 +3462,8 @@ fn main() {
     test.assert_eq(a + b, expected, "{a} + {b}")
   }
 }
-    "#);
+    "#,
+    );
 }
 
 // ── Short-circuit && and || ─────────────────────────────────────────
@@ -3293,25 +3471,29 @@ fn main() {
 #[test]
 fn test_and_short_circuit() {
     // false && panic() should NOT panic — right side not evaluated
-    run_ok(r#"
+    run_ok(
+        r#"
 import test
 fn main() {
   let result = false && panic("should not reach")
   test.assert_eq(result, false)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_or_short_circuit() {
     // true || panic() should NOT panic — right side not evaluated
-    run_ok(r#"
+    run_ok(
+        r#"
 import test
 fn main() {
   let result = true || panic("should not reach")
   test.assert_eq(result, true)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -3548,7 +3730,10 @@ fn main() {
 }
     "#);
     // BTreeMap orders fields alphabetically
-    assert_eq!(result, Value::String("User {age: 30, name: \"Alice\"}".into()));
+    assert_eq!(
+        result,
+        Value::String("User {age: 30, name: \"Alice\"}".into())
+    );
 }
 
 #[test]
@@ -3686,7 +3871,8 @@ fn main() {
 
 #[test]
 fn test_when_bool_diverges_panic() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn check(n) {
   when n > 0 else { panic("must be positive") }
   n
@@ -3695,7 +3881,8 @@ fn check(n) {
 fn main() {
   check(-1)
 }
-    "#);
+    "#,
+    );
     assert!(err.contains("must be positive"));
 }
 
@@ -3853,10 +4040,13 @@ fn main() {
 
     // Extract the result list
     let values = match result {
-        Value::List(ref items) => items.iter().map(|v| match v {
-            Value::Int(n) => *n,
-            _ => panic!("expected int in result list"),
-        }).collect::<Vec<_>>(),
+        Value::List(ref items) => items
+            .iter()
+            .map(|v| match v {
+                Value::Int(n) => *n,
+                _ => panic!("expected int in result list"),
+            })
+            .collect::<Vec<_>>(),
         _ => panic!("expected list result"),
     };
 
@@ -3868,8 +4058,14 @@ fn main() {
     // With real threads, distribution is non-deterministic.
     // All 6 messages must be processed; at least 2 workers should participate.
     assert_eq!(values.len(), 6);
-    let active_workers = [w1_count, w2_count, w3_count].iter().filter(|&&c| c > 0).count();
-    assert!(active_workers >= 1, "at least 1 worker should receive messages, got {values:?}");
+    let active_workers = [w1_count, w2_count, w3_count]
+        .iter()
+        .filter(|&&c| c > 0)
+        .count();
+    assert!(
+        active_workers >= 1,
+        "at least 1 worker should receive messages, got {values:?}"
+    );
 }
 
 #[test]
@@ -3944,7 +4140,14 @@ fn test_string_is_alpha() {
 import string
 fn main() { (string.is_alpha("a"), string.is_alpha("5"), string.is_alpha("")) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(false)
+        ])
+    );
 }
 
 #[test]
@@ -3953,7 +4156,10 @@ fn test_string_is_digit() {
 import string
 fn main() { (string.is_digit("7"), string.is_digit("x")) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -3962,9 +4168,15 @@ fn test_string_is_upper_lower() {
 import string
 fn main() { (string.is_upper("A"), string.is_upper("a"), string.is_lower("z"), string.is_lower("Z")) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![
-        Value::Bool(true), Value::Bool(false), Value::Bool(true), Value::Bool(false),
-    ]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Bool(false),
+        ])
+    );
 }
 
 #[test]
@@ -3973,7 +4185,14 @@ fn test_string_is_alnum() {
 import string
 fn main() { (string.is_alnum("a"), string.is_alnum("3"), string.is_alnum("!")) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(false)
+        ])
+    );
 }
 
 #[test]
@@ -3982,7 +4201,10 @@ fn test_string_is_whitespace() {
 import string
 fn main() { (string.is_whitespace(" "), string.is_whitespace("a")) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 // ── map.each ───────────────────────────────────────────────────────
@@ -4064,7 +4286,10 @@ fn main() {
   (set.contains(s, 2), set.contains(s, 4))
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -4090,7 +4315,10 @@ fn main() {
   (set.length(s2), set.contains(s2, 2))
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Int(2), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Int(2), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -4117,7 +4345,10 @@ fn main() {
   set.to_list(c)
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(3), Value::Int(4)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(3), Value::Int(4)]))
+    );
 }
 
 #[test]
@@ -4143,7 +4374,10 @@ fn main() {
   (set.is_subset(a, b), set.is_subset(b, a))
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -4156,10 +4390,13 @@ fn main() {
   (set.length(s), set.to_list(s))
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![
-        Value::Int(3),
-        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
-    ]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Int(3),
+            Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+        ])
+    );
 }
 
 #[test]
@@ -4170,7 +4407,10 @@ fn main() {
   set.to_list(#[3, 1, 2])
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
 }
 
 #[test]
@@ -4182,7 +4422,14 @@ fn main() {
   set.to_list(set.map(s) { x -> x * 10 })
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(10), Value::Int(20), Value::Int(30)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(10),
+            Value::Int(20),
+            Value::Int(30)
+        ]))
+    );
 }
 
 #[test]
@@ -4194,18 +4441,23 @@ fn main() {
   set.to_list(set.filter(s) { x -> x > 3 })
 }
     "#);
-    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)])));
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(4), Value::Int(5)]))
+    );
 }
 
 #[test]
 fn test_set_each() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import set
 fn main() {
   let s = #[1, 2, 3]
   set.each(s) { x -> println(x) }
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -4275,16 +4527,34 @@ use std::collections::BTreeMap;
 
 /// Helper to build a Silt record Value.
 fn make_record(name: &str, fields: Vec<(&str, Value)>) -> Value {
-    let map: BTreeMap<String, Value> = fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let map: BTreeMap<String, Value> = fields
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
     Value::Record(name.to_string(), Arc::new(map))
 }
 
 fn make_date(y: i64, m: i64, d: i64) -> Value {
-    make_record("Date", vec![("year", Value::Int(y)), ("month", Value::Int(m)), ("day", Value::Int(d))])
+    make_record(
+        "Date",
+        vec![
+            ("year", Value::Int(y)),
+            ("month", Value::Int(m)),
+            ("day", Value::Int(d)),
+        ],
+    )
 }
 
 fn make_time(h: i64, m: i64, s: i64, ns: i64) -> Value {
-    make_record("Time", vec![("hour", Value::Int(h)), ("minute", Value::Int(m)), ("second", Value::Int(s)), ("ns", Value::Int(ns))])
+    make_record(
+        "Time",
+        vec![
+            ("hour", Value::Int(h)),
+            ("minute", Value::Int(m)),
+            ("second", Value::Int(s)),
+            ("ns", Value::Int(ns)),
+        ],
+    )
 }
 
 fn make_datetime(date: Value, time: Value) -> Value {
@@ -4301,7 +4571,10 @@ fn test_time_date_valid() {
 import time
 fn main() { time.date(2024, 3, 15) }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 3, 15)]));
+    assert_eq!(
+        result,
+        Value::Variant("Ok".into(), vec![make_date(2024, 3, 15)])
+    );
 }
 
 #[test]
@@ -4319,7 +4592,10 @@ fn test_time_date_leap_day() {
 import time
 fn main() { time.date(2024, 2, 29) }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 2, 29)]));
+    assert_eq!(
+        result,
+        Value::Variant("Ok".into(), vec![make_date(2024, 2, 29)])
+    );
 }
 
 #[test]
@@ -4337,7 +4613,10 @@ fn test_time_time_valid() {
 import time
 fn main() { time.time(14, 30, 0) }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![make_time(14, 30, 0, 0)]));
+    assert_eq!(
+        result,
+        Value::Variant("Ok".into(), vec![make_time(14, 30, 0, 0)])
+    );
 }
 
 #[test]
@@ -4359,7 +4638,10 @@ fn main() {
   time.datetime(d, t)
 }
     "#);
-    assert_eq!(result, make_datetime(make_date(2024, 6, 15), make_time(9, 30, 0, 0)));
+    assert_eq!(
+        result,
+        make_datetime(make_date(2024, 6, 15), make_time(9, 30, 0, 0))
+    );
 }
 
 #[test]
@@ -4425,7 +4707,10 @@ fn test_time_parse_date() {
 import time
 fn main() { time.parse_date("2024-07-04", "%Y-%m-%d") }
     "#);
-    assert_eq!(result, Value::Variant("Ok".into(), vec![make_date(2024, 7, 4)]));
+    assert_eq!(
+        result,
+        Value::Variant("Ok".into(), vec![make_date(2024, 7, 4)])
+    );
 }
 
 #[test]
@@ -4496,12 +4781,15 @@ fn main() {
   (h.ns, m.ns, s.ns, ms.ns)
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![
-        Value::Int(3_600_000_000_000),
-        Value::Int(60_000_000_000),
-        Value::Int(1_000_000_000),
-        Value::Int(1_000_000),
-    ]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Int(3_600_000_000_000),
+            Value::Int(60_000_000_000),
+            Value::Int(1_000_000_000),
+            Value::Int(1_000_000),
+        ])
+    );
 }
 
 #[test]
@@ -4616,7 +4904,10 @@ fn test_time_days_in_month() {
 import time
 fn main() { (time.days_in_month(2024, 2), time.days_in_month(2023, 2), time.days_in_month(2024, 7)) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Int(29), Value::Int(28), Value::Int(31)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Int(29), Value::Int(28), Value::Int(31)])
+    );
 }
 
 #[test]
@@ -4625,12 +4916,15 @@ fn test_time_is_leap_year() {
 import time
 fn main() { (time.is_leap_year(2024), time.is_leap_year(1900), time.is_leap_year(2000), time.is_leap_year(2023)) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![
-        Value::Bool(true),   // divisible by 4
-        Value::Bool(false),  // divisible by 100 but not 400
-        Value::Bool(true),   // divisible by 400
-        Value::Bool(false),  // not divisible by 4
-    ]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),  // divisible by 4
+            Value::Bool(false), // divisible by 100 but not 400
+            Value::Bool(true),  // divisible by 400
+            Value::Bool(false), // not divisible by 4
+        ])
+    );
 }
 
 #[test]
@@ -4644,7 +4938,14 @@ fn main() {
   (jan31 < feb1, feb1 > jan31, jan31 == jan31)
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(true)
+        ])
+    );
 }
 
 #[test]
@@ -4653,7 +4954,14 @@ fn test_time_weekday_compare_chronological() {
 import time
 fn main() { (Monday < Friday, Sunday > Monday, Wednesday == Wednesday) }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(true)
+        ])
+    );
 }
 
 #[test]
@@ -4694,12 +5002,15 @@ fn main() {
   ("{time.hours(2)}", "{time.minutes(30)}", "{time.seconds(5)}", "{time.ms(500)}")
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![
-        Value::String("2h".into()),
-        Value::String("30m".into()),
-        Value::String("5s".into()),
-        Value::String("500ms".into()),
-    ]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::String("2h".into()),
+            Value::String("30m".into()),
+            Value::String("5s".into()),
+            Value::String("500ms".into()),
+        ])
+    );
 }
 
 #[test]
@@ -4726,7 +5037,10 @@ fn main() {
   (forward.ns > 0, backward.ns < 0)
 }
     "#);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(true)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(true)])
+    );
 }
 
 #[test]
@@ -4745,7 +5059,8 @@ fn main() {
 
 #[test]
 fn test_time_sleep_basic() {
-    run_ok(r#"
+    run_ok(
+        r#"
 import time
 import test
 fn main() {
@@ -4754,7 +5069,8 @@ fn main() {
   let elapsed = time.since(before, time.now())
   test.assert(elapsed.ns > 0)
 }
-    "#);
+    "#,
+    );
 }
 
 #[test]
@@ -5038,26 +5354,27 @@ fn main() {
 
 #[test]
 fn test_http_segments_wrong_arg_count() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.segments("/a", "/b")
 }
-    "#);
-    assert!(
-        err.contains("http.segments takes 1 argument"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("http.segments takes 1 argument"), "got: {err}");
 }
 
 #[test]
 fn test_http_segments_wrong_type() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.segments(42)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("http.segments requires a String"),
         "got: {err}"
@@ -5066,54 +5383,53 @@ fn main() {
 
 #[test]
 fn test_http_get_wrong_arg_count() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.get("http://example.com", "extra")
 }
-    "#);
-    assert!(
-        err.contains("http.get takes 1 argument"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("http.get takes 1 argument"), "got: {err}");
 }
 
 #[test]
 fn test_http_get_wrong_type() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.get(42)
 }
-    "#);
-    assert!(
-        err.contains("http.get requires a String"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("http.get requires a String"), "got: {err}");
 }
 
 #[test]
 fn test_http_request_wrong_arg_count() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.request(GET, "http://example.com")
 }
-    "#);
-    assert!(
-        err.contains("http.request takes 4 arguments"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("http.request takes 4 arguments"), "got: {err}");
 }
 
 #[test]
 fn test_http_request_non_variant_method() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.request("GET", "http://example.com", "", #{})
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("first argument must be a Method"),
         "got: {err}"
@@ -5122,86 +5438,80 @@ fn main() {
 
 #[test]
 fn test_http_request_non_string_url() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.request(GET, 42, "", #{})
 }
-    "#);
-    assert!(
-        err.contains("url must be a String"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("url must be a String"), "got: {err}");
 }
 
 #[test]
 fn test_http_request_non_string_body() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.request(POST, "http://example.com", 42, #{})
 }
-    "#);
-    assert!(
-        err.contains("body must be a String"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("body must be a String"), "got: {err}");
 }
 
 #[test]
 fn test_http_request_non_map_headers() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.request(GET, "http://example.com", "", "bad")
 }
-    "#);
-    assert!(
-        err.contains("headers must be a Map"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("headers must be a Map"), "got: {err}");
 }
 
 #[test]
 fn test_http_serve_wrong_arg_count() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.serve(8080)
 }
-    "#);
-    assert!(
-        err.contains("http.serve takes 2 arguments"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("http.serve takes 2 arguments"), "got: {err}");
 }
 
 #[test]
 fn test_http_serve_non_int_port() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.serve("8080", fn(req) { Response { status: 200, body: "", headers: #{} } })
 }
-    "#);
-    assert!(
-        err.contains("port must be an Int"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("port must be an Int"), "got: {err}");
 }
 
 #[test]
 fn test_http_unknown_function() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import http
 fn main() {
   http.nonexistent()
 }
-    "#);
-    assert!(
-        err.contains("unknown http function"),
-        "got: {err}"
+    "#,
     );
+    assert!(err.contains("unknown http function"), "got: {err}");
 }
 
 #[test]

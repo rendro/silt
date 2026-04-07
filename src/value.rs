@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use crate::bytecode;
 
@@ -432,7 +432,11 @@ fn val_i64(v: Option<&Value>) -> i64 {
 }
 
 /// Compare a named field in two record field maps.
-fn cmp_record_field(a: &BTreeMap<String, Value>, b: &BTreeMap<String, Value>, key: &str) -> Ordering {
+fn cmp_record_field(
+    a: &BTreeMap<String, Value>,
+    b: &BTreeMap<String, Value>,
+    key: &str,
+) -> Ordering {
     match (a.get(key), b.get(key)) {
         (Some(x), Some(y)) => x.cmp(y),
         (Some(_), None) => Ordering::Greater,
@@ -467,19 +471,29 @@ fn fmt_duration(f: &mut fmt::Formatter<'_>, total_ns: i64) -> fmt::Result {
         let h = ns / 3_600_000_000_000;
         let m = (ns % 3_600_000_000_000) / 60_000_000_000;
         let s = (ns % 60_000_000_000) / 1_000_000_000;
-        if m > 0 && s > 0 { write!(f, "{h}h{m}m{s}s") }
-        else if m > 0 { write!(f, "{h}h{m}m") }
-        else { write!(f, "{h}h") }
+        if m > 0 && s > 0 {
+            write!(f, "{h}h{m}m{s}s")
+        } else if m > 0 {
+            write!(f, "{h}h{m}m")
+        } else {
+            write!(f, "{h}h")
+        }
     } else if ns >= 60_000_000_000 {
         let m = ns / 60_000_000_000;
         let s = (ns % 60_000_000_000) / 1_000_000_000;
-        if s > 0 { write!(f, "{m}m{s}s") }
-        else { write!(f, "{m}m") }
+        if s > 0 {
+            write!(f, "{m}m{s}s")
+        } else {
+            write!(f, "{m}m")
+        }
     } else if ns >= 1_000_000_000 {
         let s = ns / 1_000_000_000;
         let ms = (ns % 1_000_000_000) / 1_000_000;
-        if ms > 0 { write!(f, "{s}.{ms:03}s") }
-        else { write!(f, "{s}s") }
+        if ms > 0 {
+            write!(f, "{s}.{ms:03}s")
+        } else {
+            write!(f, "{s}s")
+        }
     } else if ns >= 1_000_000 {
         write!(f, "{}ms", ns / 1_000_000)
     } else if ns >= 1_000 {
@@ -576,7 +590,7 @@ impl fmt::Display for Value {
                     }
                     write!(f, "}}")
                 }
-            }
+            },
             Value::Variant(name, fields) => {
                 if fields.is_empty() {
                     write!(f, "{name}")
@@ -675,29 +689,19 @@ impl Ord for Value {
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
-            (Value::Map(a), Value::Map(b)) => {
-                a.iter().cmp(b.iter())
-            }
-            (Value::Set(a), Value::Set(b)) => {
-                a.iter().cmp(b.iter())
-            }
+            (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),
+            (Value::Set(a), Value::Set(b)) => a.iter().cmp(b.iter()),
             (Value::Record(na, fa), Value::Record(nb, fb)) => {
                 na.cmp(nb).then_with(|| match na.as_str() {
-                    "Date" => {
-                        cmp_record_field(fa, fb, "year")
-                            .then_with(|| cmp_record_field(fa, fb, "month"))
-                            .then_with(|| cmp_record_field(fa, fb, "day"))
-                    }
-                    "Time" => {
-                        cmp_record_field(fa, fb, "hour")
-                            .then_with(|| cmp_record_field(fa, fb, "minute"))
-                            .then_with(|| cmp_record_field(fa, fb, "second"))
-                            .then_with(|| cmp_record_field(fa, fb, "ns"))
-                    }
-                    "DateTime" => {
-                        cmp_record_field(fa, fb, "date")
-                            .then_with(|| cmp_record_field(fa, fb, "time"))
-                    }
+                    "Date" => cmp_record_field(fa, fb, "year")
+                        .then_with(|| cmp_record_field(fa, fb, "month"))
+                        .then_with(|| cmp_record_field(fa, fb, "day")),
+                    "Time" => cmp_record_field(fa, fb, "hour")
+                        .then_with(|| cmp_record_field(fa, fb, "minute"))
+                        .then_with(|| cmp_record_field(fa, fb, "second"))
+                        .then_with(|| cmp_record_field(fa, fb, "ns")),
+                    "DateTime" => cmp_record_field(fa, fb, "date")
+                        .then_with(|| cmp_record_field(fa, fb, "time")),
                     _ => fa.iter().cmp(fb.iter()),
                 })
             }
@@ -729,11 +733,15 @@ pub trait IntoValue {
 }
 
 impl FromValue for Value {
-    fn from_value(value: &Value) -> Result<Self, String> { Ok(value.clone()) }
+    fn from_value(value: &Value) -> Result<Self, String> {
+        Ok(value.clone())
+    }
 }
 
 impl IntoValue for Value {
-    fn into_value(self) -> Value { self }
+    fn into_value(self) -> Value {
+        self
+    }
 }
 
 impl FromValue for i64 {
@@ -746,7 +754,9 @@ impl FromValue for i64 {
 }
 
 impl IntoValue for i64 {
-    fn into_value(self) -> Value { Value::Int(self) }
+    fn into_value(self) -> Value {
+        Value::Int(self)
+    }
 }
 
 impl FromValue for f64 {
@@ -760,7 +770,9 @@ impl FromValue for f64 {
 }
 
 impl IntoValue for f64 {
-    fn into_value(self) -> Value { Value::Float(self) }
+    fn into_value(self) -> Value {
+        Value::Float(self)
+    }
 }
 
 impl FromValue for bool {
@@ -773,7 +785,9 @@ impl FromValue for bool {
 }
 
 impl IntoValue for bool {
-    fn into_value(self) -> Value { Value::Bool(self) }
+    fn into_value(self) -> Value {
+        Value::Bool(self)
+    }
 }
 
 impl FromValue for String {
@@ -786,11 +800,15 @@ impl FromValue for String {
 }
 
 impl IntoValue for String {
-    fn into_value(self) -> Value { Value::String(self) }
+    fn into_value(self) -> Value {
+        Value::String(self)
+    }
 }
 
 impl IntoValue for &str {
-    fn into_value(self) -> Value { Value::String(self.to_string()) }
+    fn into_value(self) -> Value {
+        Value::String(self.to_string())
+    }
 }
 
 impl FromValue for () {
@@ -803,7 +821,9 @@ impl FromValue for () {
 }
 
 impl IntoValue for () {
-    fn into_value(self) -> Value { Value::Unit }
+    fn into_value(self) -> Value {
+        Value::Unit
+    }
 }
 
 impl FromValue for Vec<Value> {
@@ -816,7 +836,9 @@ impl FromValue for Vec<Value> {
 }
 
 impl IntoValue for Vec<Value> {
-    fn into_value(self) -> Value { Value::List(Arc::new(self)) }
+    fn into_value(self) -> Value {
+        Value::List(Arc::new(self))
+    }
 }
 
 impl<T: IntoValue> IntoValue for Option<T> {

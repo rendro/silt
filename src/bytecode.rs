@@ -19,7 +19,7 @@ use crate::value::Value;
 pub enum Op {
     // ── Constants & literals ────────────────────────────────────
     /// Push `constants[u16]` onto the stack.
-    Constant,       // operand: u16 index
+    Constant, // operand: u16 index
     /// Push Unit.
     Unit,
     /// Push true.
@@ -52,119 +52,119 @@ pub enum Op {
 
     // ── String interpolation ───────────────────────────────────
     /// Concatenate `u8` stringified values into one String.
-    StringConcat,   // operand: u8 count
+    StringConcat, // operand: u8 count
     /// Convert TOS to its Display string.
     DisplayValue,
 
     // ── Variables ──────────────────────────────────────────────
     /// Push `stack[frame_base + u16]`.
-    GetLocal,       // operand: u16 slot
+    GetLocal, // operand: u16 slot
     /// Store TOS into `stack[frame_base + u16]`. Does NOT pop.
-    SetLocal,       // operand: u16 slot
+    SetLocal, // operand: u16 slot
     /// Push `globals[constants[u16]]`.
-    GetGlobal,      // operand: u16 name_index
+    GetGlobal, // operand: u16 name_index
     /// Store TOS into globals.
-    SetGlobal,      // operand: u16 name_index
+    SetGlobal, // operand: u16 name_index
 
     // ── Upvalues (closures) ────────────────────────────────────
     /// Push captured upvalue at index.
-    GetUpvalue,     // operand: u8 index
+    GetUpvalue, // operand: u8 index
 
     // ── Function calls ─────────────────────────────────────────
     /// Call function on stack with `u8` args.
-    Call,           // operand: u8 argc
+    Call, // operand: u8 argc
     /// Tail-call: reuse current frame.
-    TailCall,       // operand: u8 argc
+    TailCall, // operand: u8 argc
     /// Return TOS to caller.
     Return,
     /// Call a builtin directly by name.
-    CallBuiltin,    // operands: u16 name_index, u8 argc
+    CallBuiltin, // operands: u16 name_index, u8 argc
 
     // ── Closures ───────────────────────────────────────────────
     /// Create a closure: `u16` function index, `u8` upvalue count,
     /// then N × (u8 is_local, u8 index) upvalue descriptors.
-    MakeClosure,    // operands: u16 func_index, u8 upvalue_count, then descriptors
+    MakeClosure, // operands: u16 func_index, u8 upvalue_count, then descriptors
 
     // ── Data constructors ──────────────────────────────────────
     /// Create a tuple from `u8` values.
-    MakeTuple,      // operand: u8 count
+    MakeTuple, // operand: u8 count
     /// Create a list from `u16` values.
-    MakeList,       // operand: u16 count
+    MakeList, // operand: u16 count
     /// Create a map from `u16` key-value pairs.
-    MakeMap,        // operand: u16 pair_count
+    MakeMap, // operand: u16 pair_count
     /// Create a set from `u16` values.
-    MakeSet,        // operand: u16 count
+    MakeSet, // operand: u16 count
     /// Create a record: `u16` type name, `u8` field count,
     /// then `u8 field_count` × `u16 field_name_index`.
-    MakeRecord,     // operands: u16 type_name_index, u8 field_count, then field names
+    MakeRecord, // operands: u16 type_name_index, u8 field_count, then field names
     /// Create a variant value.
-    MakeVariant,    // operands: u16 name_index, u8 field_count
+    MakeVariant, // operands: u16 name_index, u8 field_count
     /// Functional record update.
-    RecordUpdate,   // operand: u8 field_count, then field_count × u16 field_name_index
+    RecordUpdate, // operand: u8 field_count, then field_count × u16 field_name_index
     /// Create a range list from two ints on the stack.
     MakeRange,
 
     // ── Field access ───────────────────────────────────────────
     /// Access a field by name from TOS.
-    GetField,       // operand: u16 name_index
+    GetField, // operand: u16 name_index
     /// Access a tuple element by index.
-    GetIndex,       // operand: u8 index
+    GetIndex, // operand: u8 index
 
     // ── Control flow ───────────────────────────────────────────
     /// Jump forward by `u16` offset.
-    Jump,           // operand: u16 offset
+    Jump, // operand: u16 offset
     /// Jump backward by `u16` offset.
-    JumpBack,       // operand: u16 offset
+    JumpBack, // operand: u16 offset
     /// Pop TOS; jump forward if falsy.
-    JumpIfFalse,    // operand: u16 offset
+    JumpIfFalse, // operand: u16 offset
     /// Pop TOS; jump forward if truthy.
-    JumpIfTrue,     // operand: u16 offset
+    JumpIfTrue, // operand: u16 offset
     /// Discard TOS.
     Pop,
     /// Discard `u8` values.
-    PopN,           // operand: u8 count
+    PopN, // operand: u8 count
     /// Duplicate TOS.
     Dup,
 
     // ── Pattern matching ───────────────────────────────────────
     /// Test if TOS variant has tag `constants[u16]`. Peek, push bool.
-    TestTag,        // operand: u16 name_index
+    TestTag, // operand: u16 name_index
     /// Test if TOS equals `constants[u16]`. Peek, push bool.
-    TestEqual,      // operand: u16 const_index
+    TestEqual, // operand: u16 const_index
     /// Test if TOS tuple has length `u8`. Peek, push bool.
-    TestTupleLen,   // operand: u8 len
+    TestTupleLen, // operand: u8 len
     /// Test if TOS list has length >= `u8`. Peek, push bool.
-    TestListMin,    // operand: u8 min_len
+    TestListMin, // operand: u8 min_len
     /// Test if TOS list has length == `u8`. Peek, push bool.
-    TestListExact,  // operand: u8 len
+    TestListExact, // operand: u8 len
     /// Test if TOS int is in range [lo, hi]. Peek, push bool.
-    TestIntRange,   // operands: inline via constants
+    TestIntRange, // operands: inline via constants
     /// Test if TOS float is in range. Peek, push bool.
     TestFloatRange, // operands: inline via constants
     /// Test if TOS is a specific bool value. Peek, push bool.
-    TestBool,       // operand: u8 (0=false, 1=true)
+    TestBool, // operand: u8 (0=false, 1=true)
     /// Extract tuple element at `u8` index. Peek tuple, push element.
-    DestructTuple,  // operand: u8 index
+    DestructTuple, // operand: u8 index
     /// Extract variant field at `u8` index. Peek variant, push field.
     DestructVariant, // operand: u8 index
     /// Extract list element at `u8` index. Peek list, push element.
-    DestructList,   // operand: u8 index
+    DestructList, // operand: u8 index
     /// Extract list tail from `u8` index. Peek list, push rest.
     DestructListRest, // operand: u8 start
     /// Extract named record field. Peek record, push value.
     DestructRecordField, // operand: u16 name_index
     /// Test if TOS is a record with given type name. Peek, push bool.
-    TestRecordTag,  // operand: u16 name_index
+    TestRecordTag, // operand: u16 name_index
     /// Test if TOS map contains key. Peek, push bool.
-    TestMapHasKey,  // operand: u16 const_index (string key)
+    TestMapHasKey, // operand: u16 const_index (string key)
     /// Extract map value by key. Peek map, push value.
     DestructMapValue, // operand: u16 const_index (string key)
 
     // ── Loop ───────────────────────────────────────────────────
     /// Store `u8` values from stack into loop-binding locals.
-    LoopSetup,      // operand: u8 binding_count
+    LoopSetup, // operand: u8 binding_count
     /// Update loop bindings and jump back.
-    Recur,          // operand: u8 arg_count
+    Recur, // operand: u8 arg_count
 
     // ── Error handling ─────────────────────────────────────────
     /// Unwrap Ok/Some or early-return Err/None.
@@ -295,6 +295,12 @@ pub struct Chunk {
     pub spans: Vec<(usize, Span)>,
 }
 
+impl Default for Chunk {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Chunk {
     pub fn new() -> Self {
         Chunk {
@@ -309,7 +315,7 @@ impl Chunk {
         let offset = self.code.len();
         self.code.push(byte);
         // Only record span if it differs from the last recorded span.
-        if self.spans.last().map_or(true, |(_, s)| *s != span) {
+        if self.spans.last().is_none_or(|(_, s)| *s != span) {
             self.spans.push((offset, span));
         }
         offset
@@ -346,7 +352,7 @@ impl Chunk {
                 (Value::Bool(a), Value::Bool(b)) if a == b => return i as u16,
                 (Value::String(a), Value::String(b)) if a == b => return i as u16,
                 (Value::Float(a), Value::Float(b)) if a.to_bits() == b.to_bits() => {
-                    return i as u16
+                    return i as u16;
                 }
                 _ => {}
             }
@@ -392,6 +398,11 @@ impl Chunk {
     /// Current length of bytecode.
     pub fn len(&self) -> usize {
         self.code.len()
+    }
+
+    /// Whether the chunk contains no bytecode.
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
     }
 }
 

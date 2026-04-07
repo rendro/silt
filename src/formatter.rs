@@ -9,8 +9,8 @@ const INDENT: &str = "  ";
 /// A standalone comment (on its own line) extracted from source.
 #[derive(Debug, Clone)]
 struct Comment {
-    line: usize,        // 1-based line number where the comment starts
-    text: String,       // the raw comment text including `--` or `{- ... -}`
+    line: usize,  // 1-based line number where the comment starts
+    text: String, // the raw comment text including `--` or `{- ... -}`
 }
 
 /// Extract standalone comments from source text.
@@ -195,11 +195,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     let mut import_strs: Vec<String> = Vec::new();
     let mut has_imports = false;
 
-    let formatted_decls: Vec<String> = program
-        .decls
-        .iter()
-        .map(|d| format_decl(d, 0))
-        .collect();
+    let formatted_decls: Vec<String> = program.decls.iter().map(|d| format_decl(d, 0)).collect();
 
     // Collect and sort import strings; track which decl indices are imports.
     let mut is_import = vec![false; program.decls.len()];
@@ -276,7 +272,13 @@ fn format_decl(decl: &Decl, depth: usize) -> String {
         Decl::Trait(t) => format_trait(t, depth),
         Decl::TraitImpl(t) => format_trait_impl(t, depth),
         Decl::Import(i) => format_import(i, depth),
-        Decl::Let { pattern, ty, value, is_pub, .. } => {
+        Decl::Let {
+            pattern,
+            ty,
+            value,
+            is_pub,
+            ..
+        } => {
             let indent = "  ".repeat(depth);
             let pub_prefix = if *is_pub { "pub " } else { "" };
             let pat = format_pattern(pattern);
@@ -301,7 +303,7 @@ fn format_fn(f: &FnDecl, depth: usize) -> String {
     let params = f
         .params
         .iter()
-        .map(|p| format_param(p))
+        .map(format_param)
         .collect::<Vec<_>>()
         .join(", ");
     let ret = if let Some(ty) = &f.return_type {
@@ -364,7 +366,12 @@ fn format_body(expr: &Expr, depth: usize) -> String {
                 format!("{{\n{inner}\n{}}}", indent(depth))
             }
         }
-        _ => format!("{{\n{}{}\n{}}}", indent(depth + 1), format_expr(expr, depth + 1), indent(depth)),
+        _ => format!(
+            "{{\n{}{}\n{}}}",
+            indent(depth + 1),
+            format_expr(expr, depth + 1),
+            indent(depth)
+        ),
     }
 }
 
@@ -385,8 +392,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
                     if v.fields.is_empty() {
                         format!("{}{}", indent(depth + 1), v.name)
                     } else {
-                        let fields: Vec<String> =
-                            v.fields.iter().map(|f| format_type_expr(f)).collect();
+                        let fields: Vec<String> = v.fields.iter().map(format_type_expr).collect();
                         format!("{}{}({})", indent(depth + 1), v.name, fields.join(", "))
                     }
                 })
@@ -420,11 +426,7 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
 
 fn format_trait(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = t
-        .methods
-        .iter()
-        .map(|m| format_fn(m, depth + 1))
-        .collect();
+    let methods: Vec<String> = t.methods.iter().map(|m| format_fn(m, depth + 1)).collect();
     format!(
         "{prefix}trait {} {{\n{}\n{prefix}}}",
         t.name,
@@ -434,11 +436,7 @@ fn format_trait(t: &TraitDecl, depth: usize) -> String {
 
 fn format_trait_impl(t: &TraitImpl, depth: usize) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = t
-        .methods
-        .iter()
-        .map(|m| format_fn(m, depth + 1))
-        .collect();
+    let methods: Vec<String> = t.methods.iter().map(|m| format_fn(m, depth + 1)).collect();
     format!(
         "{prefix}trait {} for {} {{\n{}\n{prefix}}}",
         t.trait_name,
@@ -470,10 +468,7 @@ fn format_stmt(stmt: &Stmt, depth: usize) -> String {
             } else {
                 String::new()
             };
-            format!(
-                "{prefix}let {pat}{ty_str} = {}",
-                format_expr(value, depth)
-            )
+            format!("{prefix}let {pat}{ty_str} = {}", format_expr(value, depth))
         }
         Stmt::When {
             pattern,
@@ -512,11 +507,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         ExprKind::Int(n) => n.to_string(),
         ExprKind::Float(n) => {
             let s = n.to_string();
-            if s.contains('.') {
-                s
-            } else {
-                format!("{s}.0")
-            }
+            if s.contains('.') { s } else { format!("{s}.0") }
         }
         ExprKind::Bool(b) => b.to_string(),
         ExprKind::StringLit(s) => format!("\"{}\"", escape_string(s)),
@@ -542,10 +533,13 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if elems.is_empty() {
                 "[]".to_string()
             } else {
-                let items: Vec<String> = elems.iter().map(|elem| match elem {
-                    ListElem::Single(e) => format_expr(e, depth),
-                    ListElem::Spread(e) => format!("..{}", format_expr(e, depth)),
-                }).collect();
+                let items: Vec<String> = elems
+                    .iter()
+                    .map(|elem| match elem {
+                        ListElem::Single(e) => format_expr(e, depth),
+                        ListElem::Spread(e) => format!("..{}", format_expr(e, depth)),
+                    })
+                    .collect();
                 format!("[{}]", items.join(", "))
             }
         }
@@ -556,9 +550,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             } else {
                 let items: Vec<String> = pairs
                     .iter()
-                    .map(|(k, v)| {
-                        format!("{}: {}", format_expr(k, depth), format_expr(v, depth))
-                    })
+                    .map(|(k, v)| format!("{}: {}", format_expr(k, depth), format_expr(v, depth)))
                     .collect();
                 format!("#{{ {} }}", items.join(", "))
             }
@@ -610,11 +602,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Range(start, end) => {
-            format!(
-                "{}..{}",
-                format_expr(start, depth),
-                format_expr(end, depth)
-            )
+            format!("{}..{}", format_expr(start, depth), format_expr(end, depth))
         }
 
         ExprKind::QuestionMark(expr) => {
@@ -624,19 +612,16 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         ExprKind::Call(callee, args) => {
             let callee_str = format_expr(callee, depth);
             // Trailing closure detection: if last arg is a lambda, format differently
-            if let Some((last, init)) = args.split_last() {
-                if matches!(last.kind, ExprKind::Lambda { .. }) {
-                    let lambda_str = format_trailing_closure(last, depth);
-                    if init.is_empty() {
-                        return format!("{callee_str} {lambda_str}");
-                    } else {
-                        let arg_strs: Vec<String> =
-                            init.iter().map(|a| format_expr(a, depth)).collect();
-                        return format!(
-                            "{callee_str}({}) {lambda_str}",
-                            arg_strs.join(", ")
-                        );
-                    }
+            if let Some((last, init)) = args.split_last()
+                && matches!(last.kind, ExprKind::Lambda { .. })
+            {
+                let lambda_str = format_trailing_closure(last, depth);
+                if init.is_empty() {
+                    return format!("{callee_str} {lambda_str}");
+                } else {
+                    let arg_strs: Vec<String> =
+                        init.iter().map(|a| format_expr(a, depth)).collect();
+                    return format!("{callee_str}({}) {lambda_str}", arg_strs.join(", "));
                 }
             }
             let arg_strs: Vec<String> = args.iter().map(|a| format_expr(a, depth)).collect();
@@ -644,12 +629,9 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Lambda { params, body } => {
-            let param_strs: Vec<String> = params.iter().map(|p| format_param(p)).collect();
+            let param_strs: Vec<String> = params.iter().map(format_param).collect();
             let params_str = param_strs.join(", ");
-            format!(
-                "fn({params_str}) {}",
-                format_body(body, depth)
-            )
+            format!("fn({params_str}) {}", format_body(body, depth))
         }
 
         ExprKind::FieldAccess(expr, field) => {
@@ -659,9 +641,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         ExprKind::RecordCreate { name, fields } => {
             let field_strs: Vec<String> = fields
                 .iter()
-                .map(|(fname, fexpr)| {
-                    format!("{fname}: {}", format_expr(fexpr, depth))
-                })
+                .map(|(fname, fexpr)| format!("{fname}: {}", format_expr(fexpr, depth)))
                 .collect();
             format!("{name} {{ {} }}", field_strs.join(", "))
         }
@@ -669,9 +649,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         ExprKind::RecordUpdate { expr, fields } => {
             let field_strs: Vec<String> = fields
                 .iter()
-                .map(|(fname, fexpr)| {
-                    format!("{fname}: {}", format_expr(fexpr, depth))
-                })
+                .map(|(fname, fexpr)| format!("{fname}: {}", format_expr(fexpr, depth)))
                 .collect();
             format!(
                 "{}.{{ {} }}",
@@ -680,33 +658,27 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             )
         }
 
-        ExprKind::Match { expr, arms } => {
-            match expr {
-                Some(scrutinee) => {
-                    let scrutinee_str = format_expr(scrutinee, depth);
-                    let arm_strs: Vec<String> = arms
-                        .iter()
-                        .map(|arm| format_match_arm(arm, depth + 1, false))
-                        .collect();
-                    format!(
-                        "match {scrutinee_str} {{\n{}\n{}}}",
-                        arm_strs.join("\n"),
-                        indent(depth)
-                    )
-                }
-                None => {
-                    let arm_strs: Vec<String> = arms
-                        .iter()
-                        .map(|arm| format_match_arm(arm, depth + 1, true))
-                        .collect();
-                    format!(
-                        "match {{\n{}\n{}}}",
-                        arm_strs.join("\n"),
-                        indent(depth)
-                    )
-                }
+        ExprKind::Match { expr, arms } => match expr {
+            Some(scrutinee) => {
+                let scrutinee_str = format_expr(scrutinee, depth);
+                let arm_strs: Vec<String> = arms
+                    .iter()
+                    .map(|arm| format_match_arm(arm, depth + 1, false))
+                    .collect();
+                format!(
+                    "match {scrutinee_str} {{\n{}\n{}}}",
+                    arm_strs.join("\n"),
+                    indent(depth)
+                )
             }
-        }
+            None => {
+                let arm_strs: Vec<String> = arms
+                    .iter()
+                    .map(|arm| format_match_arm(arm, depth + 1, true))
+                    .collect();
+                format!("match {{\n{}\n{}}}", arm_strs.join("\n"), indent(depth))
+            }
+        },
 
         ExprKind::Return(val) => {
             if let Some(e) = val {
@@ -720,8 +692,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if stmts.is_empty() {
                 "{}".to_string()
             } else {
-                let inner: Vec<String> =
-                    stmts.iter().map(|s| format_stmt(s, depth + 1)).collect();
+                let inner: Vec<String> = stmts.iter().map(|s| format_stmt(s, depth + 1)).collect();
                 format!("{{\n{}\n{}}}", inner.join("\n"), indent(depth))
             }
         }
@@ -743,8 +714,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if args.is_empty() {
                 "loop()".to_string()
             } else {
-                let arg_strs: Vec<String> =
-                    args.iter().map(|a| format_expr(a, depth)).collect();
+                let arg_strs: Vec<String> = args.iter().map(|a| format_expr(a, depth)).collect();
                 format!("loop({})", arg_strs.join(", "))
             }
         }
@@ -762,31 +732,22 @@ fn collect_pipe_stages<'a>(kind: &'a ExprKind, stages: &mut Vec<&'a ExprKind>) {
 
 fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
     if let ExprKind::Lambda { params, body } = &expr.kind {
-        let param_strs: Vec<String> = params.iter().map(|p| format_param(p)).collect();
+        let param_strs: Vec<String> = params.iter().map(format_param).collect();
         let params_str = param_strs.join(", ");
         if let ExprKind::Block(stmts) = &body.kind {
-            if stmts.len() == 1 {
-                if let Stmt::Expr(inner) = &stmts[0] {
-                    return format!(
-                        "{{ {params_str} -> {} }}",
-                        format_expr(inner, depth)
-                    );
-                }
+            if stmts.len() == 1
+                && let Stmt::Expr(inner) = &stmts[0]
+            {
+                return format!("{{ {params_str} -> {} }}", format_expr(inner, depth));
             }
-            let inner: Vec<String> = stmts
-                .iter()
-                .map(|s| format_stmt(s, depth + 1))
-                .collect();
+            let inner: Vec<String> = stmts.iter().map(|s| format_stmt(s, depth + 1)).collect();
             return format!(
                 "{{ {params_str} ->\n{}\n{}}}",
                 inner.join("\n"),
                 indent(depth)
             );
         }
-        format!(
-            "{{ {params_str} -> {} }}",
-            format_expr(body, depth)
-        )
+        format!("{{ {params_str} -> {} }}", format_expr(body, depth))
     } else {
         format_expr(expr, depth)
     }
@@ -803,10 +764,7 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
                 format_expr(&arm.body, depth)
             )
         } else {
-            format!(
-                "{prefix}_ -> {}",
-                format_expr(&arm.body, depth)
-            )
+            format!("{prefix}_ -> {}", format_expr(&arm.body, depth))
         }
     } else {
         let pat = format_pattern(&arm.pattern);
@@ -815,10 +773,7 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
         } else {
             String::new()
         };
-        format!(
-            "{prefix}{pat}{guard} -> {}",
-            format_expr(&arm.body, depth)
-        )
+        format!("{prefix}{pat}{guard} -> {}", format_expr(&arm.body, depth))
     }
 }
 
@@ -829,23 +784,19 @@ fn format_pattern(pattern: &Pattern) -> String {
         Pattern::Int(n) => n.to_string(),
         Pattern::Float(n) => {
             let s = n.to_string();
-            if s.contains('.') {
-                s
-            } else {
-                format!("{s}.0")
-            }
+            if s.contains('.') { s } else { format!("{s}.0") }
         }
         Pattern::Bool(b) => b.to_string(),
         Pattern::StringLit(s) => format!("\"{}\"", escape_string(s)),
         Pattern::Tuple(pats) => {
-            let items: Vec<String> = pats.iter().map(|p| format_pattern(p)).collect();
+            let items: Vec<String> = pats.iter().map(format_pattern).collect();
             format!("({})", items.join(", "))
         }
         Pattern::Constructor(name, pats) => {
             if pats.is_empty() {
                 name.clone()
             } else {
-                let items: Vec<String> = pats.iter().map(|p| format_pattern(p)).collect();
+                let items: Vec<String> = pats.iter().map(format_pattern).collect();
                 format!("{name}({})", items.join(", "))
             }
         }
@@ -873,14 +824,14 @@ fn format_pattern(pattern: &Pattern) -> String {
             }
         }
         Pattern::List(pats, rest) => {
-            let mut items: Vec<String> = pats.iter().map(|p| format_pattern(p)).collect();
+            let mut items: Vec<String> = pats.iter().map(format_pattern).collect();
             if let Some(rest_pat) = rest {
                 items.push(format!("..{}", format_pattern(rest_pat)));
             }
             format!("[{}]", items.join(", "))
         }
         Pattern::Or(alts) => {
-            let items: Vec<String> = alts.iter().map(|p| format_pattern(p)).collect();
+            let items: Vec<String> = alts.iter().map(format_pattern).collect();
             items.join(" | ")
         }
         Pattern::Range(start, end) => format!("{start}..{end}"),
@@ -900,15 +851,15 @@ fn format_type_expr(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Named(name) => name.clone(),
         TypeExpr::Generic(name, args) => {
-            let arg_strs: Vec<String> = args.iter().map(|a| format_type_expr(a)).collect();
+            let arg_strs: Vec<String> = args.iter().map(format_type_expr).collect();
             format!("{name}({})", arg_strs.join(", "))
         }
         TypeExpr::Tuple(elems) => {
-            let items: Vec<String> = elems.iter().map(|e| format_type_expr(e)).collect();
+            let items: Vec<String> = elems.iter().map(format_type_expr).collect();
             format!("({})", items.join(", "))
         }
         TypeExpr::Function(params, ret) => {
-            let param_strs: Vec<String> = params.iter().map(|p| format_type_expr(p)).collect();
+            let param_strs: Vec<String> = params.iter().map(format_type_expr).collect();
             format!("Fn({}) -> {}", param_strs.join(", "), format_type_expr(ret))
         }
     }
@@ -957,7 +908,10 @@ mod tests {
 fn bar() = 2
 "#;
         let result = format(source).unwrap();
-        assert!(result.contains("-- helper function"), "comment should be preserved");
+        assert!(
+            result.contains("-- helper function"),
+            "comment should be preserved"
+        );
         assert!(result.contains("fn foo() = 1"));
         assert!(result.contains("fn bar() = 2"));
     }
@@ -968,7 +922,10 @@ fn bar() = 2
 fn main() = 42
 "#;
         let result = format(source).unwrap();
-        assert!(result.starts_with("-- module header\n"), "header comment should be at top");
+        assert!(
+            result.starts_with("-- module header\n"),
+            "header comment should be at top"
+        );
         assert!(result.contains("fn main() = 42"));
     }
 
@@ -981,7 +938,10 @@ fn main() = 42
 fn b() = 2
 "#;
         let result = format(source).unwrap();
-        assert!(result.contains("-- first comment\n-- second comment"), "multiple comments preserved");
+        assert!(
+            result.contains("-- first comment\n-- second comment"),
+            "multiple comments preserved"
+        );
     }
 
     #[test]
@@ -992,7 +952,10 @@ fn b() = 2
 fn b() = 2
 "#;
         let result = format(source).unwrap();
-        assert!(result.contains("{- block comment -}"), "block comment should be preserved");
+        assert!(
+            result.contains("{- block comment -}"),
+            "block comment should be preserved"
+        );
     }
 
     #[test]
@@ -1052,7 +1015,10 @@ fn c() = 3
 -- trailing comment
 "#;
         let result = format(source).unwrap();
-        assert!(result.contains("-- trailing comment"), "trailing comment should be preserved");
+        assert!(
+            result.contains("-- trailing comment"),
+            "trailing comment should be preserved"
+        );
     }
 
     #[test]
@@ -1468,7 +1434,10 @@ fn main() = Point { x: 1, y: 2 }
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
-        assert_eq!(first, second, "when-pattern formatting should be idempotent");
+        assert_eq!(
+            first, second,
+            "when-pattern formatting should be idempotent"
+        );
     }
 
     #[test]
@@ -1499,8 +1468,14 @@ fn main() = 1
         let channel_pos = result.find("import channel").unwrap();
         let list_pos = result.find("import list").unwrap();
         let string_pos = result.find("import string").unwrap();
-        assert!(channel_pos < list_pos, "imports should be sorted alphabetically");
-        assert!(list_pos < string_pos, "imports should be sorted alphabetically");
+        assert!(
+            channel_pos < list_pos,
+            "imports should be sorted alphabetically"
+        );
+        assert!(
+            list_pos < string_pos,
+            "imports should be sorted alphabetically"
+        );
     }
 
     #[test]
@@ -1527,7 +1502,10 @@ fn main() = 1
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
-        assert_eq!(first, second, "guardless match formatting should be idempotent");
+        assert_eq!(
+            first, second,
+            "guardless match formatting should be idempotent"
+        );
     }
 
     #[test]
@@ -1541,7 +1519,10 @@ fn main() = 1
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
-        assert_eq!(first, second, "match with guard formatting should be idempotent");
+        assert_eq!(
+            first, second,
+            "match with guard formatting should be idempotent"
+        );
     }
 
     #[test]
@@ -1554,7 +1535,10 @@ fn main() {
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
-        assert_eq!(first, second, "record update formatting should be idempotent");
+        assert_eq!(
+            first, second,
+            "record update formatting should be idempotent"
+        );
     }
 
     #[test]
