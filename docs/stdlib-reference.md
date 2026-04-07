@@ -2424,7 +2424,8 @@ io.read_file(path: String) -> Result(String, String)
 ```
 
 Reads the entire contents of a file. Returns `Ok(contents)` on success or
-`Err(message)` on failure.
+`Err(message)` on failure. When called from a spawned task, the operation
+transparently yields to the scheduler while the file is being read.
 
 ```silt
 fn main() {
@@ -2443,7 +2444,8 @@ io.read_line() -> Result(String, String)
 ```
 
 Reads a single line from stdin (trailing newline stripped). Returns
-`Ok(line)` on success or `Err(message)` on failure.
+`Ok(line)` on success or `Err(message)` on failure. When called from a
+spawned task, the operation transparently yields to the scheduler.
 
 ```silt
 fn main() {
@@ -2463,7 +2465,9 @@ io.write_file(path: String, contents: String) -> Result((), String)
 ```
 
 Writes a string to a file, creating or overwriting it. Returns `Ok(())` on
-success or `Err(message)` on failure.
+success or `Err(message)` on failure. When called from a spawned task, the
+operation transparently yields to the scheduler while the file is being
+written.
 
 ```silt
 fn main() {
@@ -3883,7 +3887,7 @@ type Response {
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, String)` | HTTP GET request |
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, String)` | HTTP request with method, URL, body, headers |
-| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a blocking HTTP server |
+| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 
 
@@ -3894,6 +3898,10 @@ http.get(url: String) -> Result(Response, String)
 ```
 
 Makes an HTTP GET request. Returns `Ok(Response)` for any successful connection (including 4xx/5xx status codes). Returns `Err(message)` for network errors (DNS failure, connection refused, timeout).
+
+When called from a spawned task, `http.get` transparently yields to the
+scheduler while the request is in flight. No API change is needed -- the
+call site looks the same.
 
 ```silt
 fn main() {
@@ -3924,6 +3932,9 @@ http.request(method: Method, url: String, body: String, headers: Map(String, Str
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.
 
+Like `http.get`, this transparently yields to the scheduler when called from
+a spawned task.
+
 ```silt
 -- POST with JSON body
 let resp = http.request(
@@ -3947,7 +3958,12 @@ let resp = http.request(GET, "https://api.example.com/data", "", #{"Accept": "te
 http.serve(port: Int, handler: Fn(Request) -> Response) -> ()
 ```
 
-Starts a blocking HTTP server on the given port. The handler function receives a `Request` and must return a `Response`. The server runs forever (stop with Ctrl-C).
+Starts an HTTP server on the given port. Each incoming request is handled on
+its own thread with a fresh VM, so multiple requests are processed
+concurrently. The accept loop runs on a dedicated OS thread and does not block
+the scheduler. If a handler function errors, the server returns a 500 response
+without crashing. The handler receives a `Request` and must return a
+`Response`. The server runs forever (stop with Ctrl-C).
 
 Use pattern matching on `(req.method, segments)` for routing:
 

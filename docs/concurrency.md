@@ -708,9 +708,20 @@ parked task is woken and rescheduled.
 | `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
 | `task.join(handle)` | Task not yet complete -- resumes when the task finishes |
 | `channel.select([...])` | No channel has data -- resumes when any channel becomes ready |
+| `io.read_file(path)` | Always (file I/O) |
+| `io.write_file(path, content)` | Always (file I/O) |
+| `io.read_line()` | Always (stdin) |
+| `http.get(url)` | Always (network) |
+| `http.request(...)` | Always (network) |
 
 None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
+
+I/O operations follow the same transparent yielding pattern as channel
+operations -- no special syntax needed. When a spawned task calls
+`io.read_file` or `http.get`, the operation is dispatched to an I/O pool and
+the task is parked until the result is ready. From the main thread, these
+operations block synchronously, just like channel operations.
 
 ### Implications of real parallelism
 
@@ -724,6 +735,8 @@ running other tasks.
   through a channel is always safe. There is no shared mutable state.
 - **No colored functions.** Unlike async/await, there is no function coloring.
   `channel.send` and `channel.receive` look and act like normal function calls.
+  I/O operations like `io.read_file` and `http.get` also transparently yield
+  to the scheduler -- there is no `async io.read_file` or special I/O monad.
 
 
 ## 7. Limitations and Future Work

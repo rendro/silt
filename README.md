@@ -40,7 +40,7 @@ fn eval(expr) {
 
 ## Parallelism
 
-Spawn lightweight tasks that run in parallel on a fixed thread pool. Communicate through channels. Every value is immutable, so there are no data races to debug.
+Spawn lightweight tasks that run in parallel on a fixed thread pool. Communicate through channels. Every value is immutable, so there are no data races to debug. I/O operations transparently yield to the scheduler — no async/await needed.
 
 ```silt
 fn main() {
@@ -82,7 +82,7 @@ fn main() {
 
 ## HTTP
 
-Built-in HTTP client and server. Pattern matching replaces routing frameworks.
+Built-in HTTP client and server. Pattern matching replaces routing frameworks. Requests are handled concurrently.
 
 ```silt
 import http
