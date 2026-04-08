@@ -1496,11 +1496,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3)
-        ]))
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
     );
 }
 
@@ -1572,10 +1568,7 @@ fn main() {
   [..xs]
 }
     "#);
-    assert_eq!(
-        result,
-        Value::List(Arc::new(vec![Value::Int(42)]))
-    );
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(42)])));
 }
 
 #[test]
@@ -1636,11 +1629,7 @@ fn main() {
     "#);
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3)
-        ]))
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
     );
 }
 
@@ -1658,12 +1647,14 @@ fn main() {
 
 #[test]
 fn test_list_spread_non_list_error() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 fn main() {
   let x = 42
   [1, ..x]
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("not a list") || err.contains("ListConcat"),
         "expected list error, got: {err}"
@@ -6993,8 +6984,7 @@ fn main() {
 
 #[test]
 fn test_fn_returns_closure_capturing_param() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn make_multiplier(factor) {
   fn(x) { x * factor }
 }
@@ -7004,15 +6994,13 @@ fn main() {
   let triple = make_multiplier(3)
   double(5) + triple(5)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(25));
 }
 
 #[test]
 fn test_fn_returns_closure_capturing_local() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn make_counter(start) {
   let base = start * 10
   fn(n) { base + n }
@@ -7022,8 +7010,7 @@ fn main() {
   let f = make_counter(5)
   f(3)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(53));
 }
 
@@ -7031,14 +7018,12 @@ fn main() {
 
 #[test]
 fn test_lambda_iife() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let result = (fn(x, y) { x + y })(3, 4)
   result
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(7));
 }
 
@@ -7069,16 +7054,14 @@ fn main() {
 
 #[test]
 fn test_lambda_captures_in_list_operations() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 
 fn main() {
   let offset = 100
   [1, 2, 3] |> list.map(fn(x) { x + offset })
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7093,8 +7076,7 @@ fn main() {
 
 #[test]
 fn test_triple_nested_closure_upvalue_chain() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn outer(x) {
   let middle = fn() {
     let inner = fn() { x }
@@ -7106,29 +7088,25 @@ fn outer(x) {
 fn main() {
   outer(42)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_upvalue_deduplication() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let x = 10
   let f = fn() { x + x + x }
   f()
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(30));
 }
 
 #[test]
 fn test_multiple_upvalues_in_closure() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let a = 1
   let b = 2
@@ -7137,15 +7115,13 @@ fn main() {
   let f = fn() { a + b + c + d }
   f()
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(10));
 }
 
 #[test]
 fn test_upvalue_in_nested_match() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let factor = 10
   let f = fn(x) {
@@ -7156,8 +7132,7 @@ fn main() {
   }
   f(3)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(30));
 }
 
@@ -7165,8 +7140,7 @@ fn main() {
 
 #[test]
 fn test_map_pattern_multiple_keys() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let m = #{"a": 1, "b": 2, "c": 3}
   match m {
@@ -7174,15 +7148,13 @@ fn main() {
     _ -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(3));
 }
 
 #[test]
 fn test_map_pattern_missing_key() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let m = #{"a": 1}
   match m {
@@ -7190,15 +7162,13 @@ fn main() {
     _ -> 99
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(99));
 }
 
 #[test]
 fn test_map_pattern_with_guard() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let m = #{"x": 5, "y": 10}
   match m {
@@ -7207,8 +7177,7 @@ fn main() {
     _ -> "none"
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("big".into()));
 }
 
@@ -7216,8 +7185,7 @@ fn main() {
 
 #[test]
 fn test_or_pattern_multiple_literals() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(n) {
   match n {
     1 | 2 | 3 -> "low"
@@ -7229,8 +7197,7 @@ fn classify(n) {
 fn main() {
   [classify(2), classify(5), classify(9)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7243,8 +7210,7 @@ fn main() {
 
 #[test]
 fn test_or_pattern_with_constructors_and_fallthrough() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Color { Red, Green, Blue, Yellow }
 
 fn is_primary(c) {
@@ -7257,8 +7223,7 @@ fn is_primary(c) {
 fn main() {
   [is_primary(Red), is_primary(Green), is_primary(Blue)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7273,8 +7238,7 @@ fn main() {
 
 #[test]
 fn test_scope_cleanup_reuses_slots() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   {
     let a = 1
@@ -7288,15 +7252,13 @@ fn main() {
     x + y
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(30));
 }
 
 #[test]
 fn test_nested_scope_cleanup() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let outer = 100
   {
@@ -7309,8 +7271,7 @@ fn main() {
   }
   outer
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(100));
 }
 
@@ -7331,8 +7292,7 @@ fn main() {
 
 #[test]
 fn test_record_update_multiple_fields() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Point { x: Int, y: Int, z: Int }
 
 fn main() {
@@ -7340,8 +7300,7 @@ fn main() {
   let p2 = p.{ x: 10, z: 30 }
   p2.x + p2.y + p2.z
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
@@ -7349,8 +7308,7 @@ fn main() {
 
 #[test]
 fn test_tco_deep_recursion() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn count(n, acc) {
   match n {
     0 -> acc
@@ -7361,15 +7319,13 @@ fn count(n, acc) {
 fn main() {
   count(200000, 0)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(200000));
 }
 
 #[test]
 fn test_tco_with_explicit_return() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn count(n) {
   match n <= 0 {
     true -> return 0
@@ -7380,8 +7336,7 @@ fn count(n) {
 fn main() {
   count(100000)
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(0));
 }
 
@@ -7389,8 +7344,7 @@ fn main() {
 
 #[test]
 fn test_option_constructors_with_import() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 
 fn main() {
@@ -7399,15 +7353,13 @@ fn main() {
     None -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_result_constructors_with_import() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 
 fn main() {
@@ -7416,8 +7368,7 @@ fn main() {
     Err(e) -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(99));
 }
 
@@ -7425,14 +7376,12 @@ fn main() {
 
 #[test]
 fn test_tuple_numeric_field_access() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let t = (10, 20, 30)
   t.0 + t.1 + t.2
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(60));
 }
 
@@ -7460,8 +7409,7 @@ fn main() {
 
 #[test]
 fn test_loop_nested_inner_outer() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   loop i = 0, outer_sum = 0 {
     match i >= 3 {
@@ -7478,8 +7426,7 @@ fn main() {
     }
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(9));
 }
 
@@ -7503,8 +7450,7 @@ fn main() { a }
 
 #[test]
 fn test_deeply_nested_pattern() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 
 fn main() {
@@ -7514,15 +7460,13 @@ fn main() {
     _ -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(6));
 }
 
 #[test]
 fn test_pattern_match_multiple_arms_with_bindings() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Shape {
   Circle(Float),
   Rect(Float, Float),
@@ -7540,8 +7484,7 @@ fn area(s) {
 fn main() {
   area(Rect(3.0, 4.0))
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Float(12.0));
 }
 
@@ -7549,28 +7492,24 @@ fn main() {
 
 #[test]
 fn test_string_interp_nested_braces() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let x = 42
   "value: {x}"
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("value: 42".into()));
 }
 
 #[test]
 fn test_string_interp_complex_expr() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let x = 3
   let y = 4
   "sum: {x + y}, product: {x * y}"
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("sum: 7, product: 12".into()));
 }
 
@@ -7578,8 +7517,7 @@ fn main() {
 
 #[test]
 fn test_loop_three_bindings() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   loop i = 0, sum = 0, product = 1 {
     match i >= 4 {
@@ -7588,12 +7526,8 @@ fn main() {
     }
   }
 }
-    "#,
-    );
-    assert_eq!(
-        result,
-        Value::Tuple(vec![Value::Int(6), Value::Int(24)])
-    );
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Int(6), Value::Int(24)]));
 }
 
 #[test]
@@ -7644,21 +7578,18 @@ fn main() {
 
 #[test]
 fn test_ascription_basic() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let x = 42 as Int
   x
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_ascription_constrains_generic() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let x = None as Option(Int)
   match x {
@@ -7666,28 +7597,24 @@ fn main() {
     None -> -1
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(-1));
 }
 
 #[test]
 fn test_ascription_in_pipe() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn id(x: Int) -> Int { x }
 fn main() {
   (42 |> id()) as Int
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_ascription_with_result() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import int
 fn main() {
   let r = int.parse("42") as Result(Int, String)
@@ -7696,8 +7623,7 @@ fn main() {
     Err(_) -> -1
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
@@ -7705,8 +7631,7 @@ fn main() {
 
 #[test]
 fn test_record_pattern_field_binding() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Person { name: String, age: Int }
 
 fn main() {
@@ -7716,15 +7641,13 @@ fn main() {
     _ -> "unknown"
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("Alice is 30".into()));
 }
 
 #[test]
 fn test_record_pattern_nested_constructor() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Status { Active, Inactive }
 type User { name: String, status: Status }
 
@@ -7740,8 +7663,7 @@ fn main() {
   let u2 = User { name: "Bob", status: Inactive }
   [describe(u1), describe(u2)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7755,8 +7677,7 @@ fn main() {
 
 #[test]
 fn test_float_range_pattern_basic() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(x) {
   match x {
     0.0..10.0 -> "low"
@@ -7768,8 +7689,7 @@ fn classify(x) {
 fn main() {
   [classify(5.0), classify(50.0), classify(200.0)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7784,8 +7704,7 @@ fn main() {
 
 #[test]
 fn test_float_range_boundary_inclusive() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(x) {
   match x {
     10.0..20.0 -> "in range"
@@ -7796,8 +7715,7 @@ fn classify(x) {
 fn main() {
   [classify(10.0), classify(20.0), classify(9.9), classify(20.1)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7813,8 +7731,7 @@ fn main() {
 
 #[test]
 fn test_or_pattern_five_alternatives() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(n) {
   match n {
     1 | 2 | 3 | 4 | 5 -> "small"
@@ -7825,8 +7742,7 @@ fn classify(n) {
 fn main() {
   [classify(1), classify(3), classify(5), classify(6), classify(100)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7841,8 +7757,7 @@ fn main() {
 
 #[test]
 fn test_or_pattern_nested_in_tuple() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn check(x, y) {
   match (x, y) {
     (1 | 2, "a" | "b") -> "match"
@@ -7853,8 +7768,7 @@ fn check(x, y) {
 fn main() {
   [check(1, "a"), check(2, "b"), check(1, "c"), check(3, "a")]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7868,8 +7782,7 @@ fn main() {
 
 #[test]
 fn test_or_pattern_in_constructor() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(opt) {
   match opt {
     Some(1 | 2 | 3) -> "small"
@@ -7881,8 +7794,7 @@ fn classify(opt) {
 fn main() {
   [classify(Some(1)), classify(Some(2)), classify(Some(99)), classify(None)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -7898,8 +7810,7 @@ fn main() {
 
 #[test]
 fn test_map_pattern_nested() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let m = #{"user": #{"name": "alice"}}
   match m {
@@ -7907,15 +7818,13 @@ fn main() {
     _ -> "unknown"
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("alice".into()));
 }
 
 #[test]
 fn test_map_pattern_literal_and_binding() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let m = #{"type": "admin", "level": 5}
   match m {
@@ -7923,8 +7832,7 @@ fn main() {
     _ -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(5));
 }
 
@@ -7932,8 +7840,7 @@ fn main() {
 
 #[test]
 fn test_constructor_four_level_nesting() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type C { WrapC(Int) }
 type B { WrapB(C) }
 type A { WrapA(B) }
@@ -7945,15 +7852,13 @@ fn main() {
     _ -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_constructor_mixed_nesting() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   let val = Some((1, [2, 3]))
   match val {
@@ -7961,8 +7866,7 @@ fn main() {
     _ -> 0
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(6));
 }
 
@@ -7970,8 +7874,7 @@ fn main() {
 
 #[test]
 fn test_lambda_tuple_param_destructure() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 
 fn main() {
@@ -7979,8 +7882,7 @@ fn main() {
   let sums = list.map(pairs) { (a, b) -> a + b }
   sums
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![Value::Int(3), Value::Int(7)]))
@@ -7989,8 +7891,7 @@ fn main() {
 
 #[test]
 fn test_lambda_nested_param_destructure() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 
 fn main() {
@@ -7998,8 +7899,7 @@ fn main() {
   let results = list.map(data) { (a, (b, c)) -> a + b + c }
   results
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![Value::Int(6), Value::Int(15)]))
@@ -8010,8 +7910,7 @@ fn main() {
 
 #[test]
 fn test_guard_accesses_bound_variables() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn classify(pair) {
   match pair {
     (a, b) when a > b -> "first"
@@ -8023,8 +7922,7 @@ fn classify(pair) {
 fn main() {
   [classify((5, 3)), classify((3, 5)), classify((4, 4))]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -8037,8 +7935,7 @@ fn main() {
 
 #[test]
 fn test_guard_false_falls_through() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn main() {
   match 5 {
     n when n > 10 -> "big"
@@ -8046,15 +7943,13 @@ fn main() {
     _ -> "small"
   }
 }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("medium".into()));
 }
 
 #[test]
 fn test_guard_with_function_call() {
-    let result = run(
-        r#"
+    let result = run(r#"
 fn is_even(n) { n % 2 == 0 }
 fn classify(n) {
   match n {
@@ -8066,8 +7961,7 @@ fn classify(n) {
 fn main() {
   [classify(4), classify(7)]
 }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -8083,7 +7977,8 @@ fn main() {
 fn test_async_io_read_file_in_task() {
     let tmp = std::env::temp_dir().join("silt_test_async.txt");
     let tmp = tmp.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import io
 import task
 
@@ -8094,7 +7989,8 @@ fn main() {{
   }})
   task.join(h)
 }}
-"#);
+"#
+    );
     let result = run(&input);
     assert!(
         matches!(result, Value::Variant(ref tag, ref args) if tag == "Ok" && args[0] == Value::String("hello async".into())),
@@ -8108,7 +8004,8 @@ fn test_async_io_parallel_reads() {
     let tmp_b = std::env::temp_dir().join("silt_b.txt");
     let tmp_a = tmp_a.to_str().unwrap().replace('\\', "/");
     let tmp_b = tmp_b.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import io
 import task
 
@@ -8121,7 +8018,8 @@ fn main() {{
   let b = task.join(h2)
   (a, b)
 }}
-"#);
+"#
+    );
     let result = run(&input);
     if let Value::Tuple(elems) = &result {
         assert!(

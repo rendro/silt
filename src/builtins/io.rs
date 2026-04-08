@@ -38,14 +38,17 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 }
                 // First call — submit to I/O pool
                 let path = path.clone();
-                let completion = vm.runtime.io_pool.submit(move || {
-                    match std::fs::read_to_string(&path) {
-                        Ok(content) => Value::Variant("Ok".into(), vec![Value::String(content)]),
-                        Err(e) => {
-                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
-                        }
-                    }
-                });
+                let completion =
+                    vm.runtime
+                        .io_pool
+                        .submit(move || match std::fs::read_to_string(&path) {
+                            Ok(content) => {
+                                Value::Variant("Ok".into(), vec![Value::String(content)])
+                            }
+                            Err(e) => {
+                                Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                            }
+                        });
                 vm.pending_io = Some(completion.clone());
                 vm.block_reason = Some(BlockReason::Io(completion));
                 for arg in args {
@@ -89,14 +92,15 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 // First call — submit to I/O pool
                 let path = path.clone();
                 let content = content.clone();
-                let completion = vm.runtime.io_pool.submit(move || {
-                    match std::fs::write(&path, &content) {
-                        Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
-                        Err(e) => {
-                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
-                        }
-                    }
-                });
+                let completion =
+                    vm.runtime
+                        .io_pool
+                        .submit(move || match std::fs::write(&path, &content) {
+                            Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
+                            Err(e) => {
+                                Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                            }
+                        });
                 vm.pending_io = Some(completion.clone());
                 vm.block_reason = Some(BlockReason::Io(completion));
                 for arg in args {
@@ -136,9 +140,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                             "Ok".into(),
                             vec![Value::String(line.trim_end().to_string())],
                         ),
-                        Err(e) => {
-                            Value::Variant("Err".into(), vec![Value::String(e.to_string())])
-                        }
+                        Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
                     }
                 });
                 vm.pending_io = Some(completion.clone());

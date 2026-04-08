@@ -141,7 +141,8 @@ pub struct TypeChecker {
     /// Method table: (type_name, method_name) → method entry.
     pub(super) method_table: HashMap<(std::string::String, std::string::String), MethodEntry>,
     /// Tracks which (trait_name, type_name) pairs have been implemented.
-    pub(super) trait_impl_set: std::collections::HashSet<(std::string::String, std::string::String)>,
+    pub(super) trait_impl_set:
+        std::collections::HashSet<(std::string::String, std::string::String)>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -384,7 +385,10 @@ impl TypeChecker {
 
     /// Instantiate a scheme and remap its where clause constraints.
     /// Returns (instantiated_type, remapped_constraints).
-    pub(super) fn instantiate_with_constraints(&mut self, scheme: &Scheme) -> (Type, Vec<(TyVar, String)>) {
+    pub(super) fn instantiate_with_constraints(
+        &mut self,
+        scheme: &Scheme,
+    ) -> (Type, Vec<(TyVar, String)>) {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
@@ -725,10 +729,8 @@ impl TypeChecker {
                     // that unification doesn't permanently bind trait-level vars
                     // (which would break validation of other impls).
                     let fvs = free_vars_in(trait_method_type);
-                    let mapping: HashMap<TyVar, Type> = fvs
-                        .into_iter()
-                        .map(|v| (v, self.fresh_var()))
-                        .collect();
+                    let mapping: HashMap<TyVar, Type> =
+                        fvs.into_iter().map(|v| (v, self.fresh_var())).collect();
                     let expected = substitute_vars(trait_method_type, &mapping);
                     self.unify(&impl_type, &expected, impl_span);
                 } else {
@@ -761,7 +763,6 @@ impl TypeChecker {
         };
         (t, v)
     }
-
 
     // ── Register type declarations ──────────────────────────────────
 
@@ -1193,9 +1194,6 @@ impl TypeChecker {
             env.define(key, scheme);
         }
     }
-
-
-
 }
 
 // ── Helper functions ────────────────────────────────────────────────
@@ -3070,7 +3068,9 @@ fn main() {
             "#,
         );
         assert!(
-            errors.iter().any(|e| e.message.contains("binding") || e.message.contains("argument")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("binding") || e.message.contains("argument")),
             "expected recur arity warning, got: {:?}",
             errors.iter().map(|e| &e.message).collect::<Vec<_>>()
         );

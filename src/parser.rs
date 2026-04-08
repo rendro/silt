@@ -2308,7 +2308,11 @@ fn main() {
         );
         assert!(errs.len() >= 1, "expected at least one error");
         // Recovery should still produce at least the two valid decls
-        assert!(prog.decls.len() >= 2, "expected at least 2 decls, got {}", prog.decls.len());
+        assert!(
+            prog.decls.len() >= 2,
+            "expected at least 2 decls, got {}",
+            prog.decls.len()
+        );
     }
 
     #[test]
@@ -2320,7 +2324,11 @@ fn main() {
             fn ok() { 0 }
         "#,
         );
-        assert!(errs.len() >= 2, "expected at least 2 errors, got {}", errs.len());
+        assert!(
+            errs.len() >= 2,
+            "expected at least 2 errors, got {}",
+            errs.len()
+        );
         assert!(prog.decls.len() >= 1);
     }
 
@@ -2782,7 +2790,11 @@ fn main() {
                 Stmt::Expr(e) => e,
                 _ => panic!("expected expr stmt"),
             };
-            if let ExprKind::Loop { ref bindings, ref body } = expr.kind {
+            if let ExprKind::Loop {
+                ref bindings,
+                ref body,
+            } = expr.kind
+            {
                 assert_eq!(bindings.len(), 2);
                 assert_eq!(bindings[0].0, "i");
                 assert_eq!(bindings[1].0, "acc");
@@ -2916,8 +2928,12 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 3);
         assert!(matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m)) if m == "io"));
-        assert!(matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if m == "math" && items.len() == 2));
-        assert!(matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if m == "http" && a == "h"));
+        assert!(
+            matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if m == "math" && items.len() == 2)
+        );
+        assert!(
+            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if m == "http" && a == "h")
+        );
     }
 
     // ── 5. Error cases ──────────────────────────────────────────────

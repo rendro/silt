@@ -2996,18 +2996,40 @@ mod tests {
     use super::super::*;
 
     fn assert_no_errors(input: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        let hard: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
-        assert!(hard.is_empty(), "expected no type errors, got:\n{}", hard.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join("\n"));
+        let hard: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
+        assert!(
+            hard.is_empty(),
+            "expected no type errors, got:\n{}",
+            hard.iter()
+                .map(|e| format!("  {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     fn assert_has_error(input: &str, expected: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        assert!(errors.iter().any(|e| e.message.contains(expected)), "expected error containing '{expected}', got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.iter().any(|e| e.message.contains(expected)),
+            "expected error containing '{expected}', got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     // ── Builtin registration completeness ───────────────────────────
@@ -3028,29 +3050,44 @@ mod tests {
     #[test]
     fn test_builtin_type_signatures_returns_qualified_names() {
         let sigs = builtin_type_signatures();
-        assert!(sigs.contains_key("list.map"), "list.map missing from signatures");
-        assert!(sigs.contains_key("string.split"), "string.split missing from signatures");
-        assert!(sigs.contains_key("math.sqrt"), "math.sqrt missing from signatures");
+        assert!(
+            sigs.contains_key("list.map"),
+            "list.map missing from signatures"
+        );
+        assert!(
+            sigs.contains_key("string.split"),
+            "string.split missing from signatures"
+        );
+        assert!(
+            sigs.contains_key("math.sqrt"),
+            "math.sqrt missing from signatures"
+        );
         // Should not contain unqualified names
-        assert!(!sigs.contains_key("print"), "unqualified 'print' should not be in qualified signatures");
+        assert!(
+            !sigs.contains_key("print"),
+            "unqualified 'print' should not be in qualified signatures"
+        );
     }
 
     // ── Math module ─────────────────────────────────────────────────
 
     #[test]
     fn test_math_sqrt() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import math
 fn main() {
   let x = math.sqrt(4.0)
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_math_trig_functions() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import math
 fn main() {
   let a = math.sin(1.0)
@@ -3058,86 +3095,102 @@ fn main() {
   let c = math.tan(1.0)
   a + b + c
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_math_pow() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import math
 fn main() {
   math.pow(2.0, 10.0)
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Time module ─────────────────────────────────────────────────
 
     #[test]
     fn test_time_now() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import time
 fn main() {
   time.now()
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_time_sleep() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import time
 fn main() {
   time.sleep(time.ms(100))
 }
-        "#);
+        "#,
+        );
     }
 
     // ── HTTP module ─────────────────────────────────────────────────
 
     #[test]
     fn test_http_get_type() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import http
 fn main() {
   http.get("http://example.com", #{})
 }
-        "#);
+        "#,
+        );
     }
 
     // ── FS module ───────────────────────────────────────────────────
 
     #[test]
     fn test_fs_exists_type_check() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import fs
 fn main() {
   fs.exists("file.txt")
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Test module ─────────────────────────────────────────────────
 
     #[test]
     fn test_test_module_assert_eq() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 import test
 fn main() {
   test.assert_eq(1, 1)
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Builtin type mismatches ─────────────────────────────────────
 
     #[test]
     fn test_math_sqrt_wrong_type() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 import math
 fn main() {
   math.sqrt("hello")
 }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 }

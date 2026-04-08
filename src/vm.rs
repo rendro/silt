@@ -15,7 +15,9 @@ use crate::builtins::data::FieldType;
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
 use crate::scheduler::{Scheduler, SliceResult};
-use crate::value::{Channel, FromValue, IntoValue, IoCompletion, TaskHandle, Value, checked_range_len};
+use crate::value::{
+    Channel, FromValue, IntoValue, IoCompletion, TaskHandle, Value, checked_range_len,
+};
 
 /// Type alias for foreign (Rust-side) functions registered with the VM.
 type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
@@ -1324,7 +1326,8 @@ impl Vm {
                             let elem = elems.get(index).ok_or_else(|| {
                                 VmError::new(format!(
                                     "DestructTuple index {} out of bounds (len {})",
-                                    index, elems.len()
+                                    index,
+                                    elems.len()
                                 ))
                             })?;
                             self.push(elem.clone());
@@ -1340,7 +1343,8 @@ impl Vm {
                             let field = fields.get(index).ok_or_else(|| {
                                 VmError::new(format!(
                                     "DestructVariant index {} out of bounds (len {})",
-                                    index, fields.len()
+                                    index,
+                                    fields.len()
                                 ))
                             })?;
                             self.push(field.clone());
@@ -1358,7 +1362,8 @@ impl Vm {
                             let elem = xs.get(index).ok_or_else(|| {
                                 VmError::new(format!(
                                     "DestructList index {} out of bounds (len {})",
-                                    index, xs.len()
+                                    index,
+                                    xs.len()
                                 ))
                             })?;
                             self.push(elem.clone());
@@ -1381,7 +1386,8 @@ impl Vm {
                             if start > xs.len() {
                                 return Err(VmError::new(format!(
                                     "DestructListRest start {} out of bounds (len {})",
-                                    start, xs.len()
+                                    start,
+                                    xs.len()
                                 )));
                             }
                             let rest: Vec<Value> = xs[start..].to_vec();
@@ -1907,7 +1913,8 @@ impl Vm {
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
                         "StringConcat: need {} values but stack has {}",
-                        count, self.stack.len()
+                        count,
+                        self.stack.len()
                     )));
                 }
                 let start = self.stack.len() - count;
@@ -2298,7 +2305,8 @@ impl Vm {
                     let elem = elems.get(index).ok_or_else(|| {
                         VmError::new(format!(
                             "DestructTuple index {} out of bounds (len {})",
-                            index, elems.len()
+                            index,
+                            elems.len()
                         ))
                     })?;
                     self.push(elem.clone());
@@ -2313,7 +2321,8 @@ impl Vm {
                     let field = fields.get(index).ok_or_else(|| {
                         VmError::new(format!(
                             "DestructVariant index {} out of bounds (len {})",
-                            index, fields.len()
+                            index,
+                            fields.len()
                         ))
                     })?;
                     self.push(field.clone());
@@ -2329,7 +2338,8 @@ impl Vm {
                         let elem = xs.get(index).ok_or_else(|| {
                             VmError::new(format!(
                                 "DestructList index {} out of bounds (len {})",
-                                index, xs.len()
+                                index,
+                                xs.len()
                             ))
                         })?;
                         self.push(elem.clone());
@@ -2352,7 +2362,8 @@ impl Vm {
                         if start > xs.len() {
                             return Err(VmError::new(format!(
                                 "DestructListRest start {} out of bounds (len {})",
-                                start, xs.len()
+                                start,
+                                xs.len()
                             )));
                         }
                         self.push(Value::List(Arc::new(xs[start..].to_vec())));

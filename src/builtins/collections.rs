@@ -8,15 +8,25 @@ use crate::vm::{Vm, VmError};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
 enum ValueIter {
-    List { items: Arc<Vec<Value>>, index: usize },
-    Range { current: i64, end: i64, done: bool },
+    List {
+        items: Arc<Vec<Value>>,
+        index: usize,
+    },
+    Range {
+        current: i64,
+        end: i64,
+        done: bool,
+    },
 }
 
 impl ValueIter {
     /// Build an iterator from a List or Range value.
     fn try_from(val: &Value, fn_name: &str) -> Result<Self, VmError> {
         match val {
-            Value::List(xs) => Ok(ValueIter::List { items: Arc::clone(xs), index: 0 }),
+            Value::List(xs) => Ok(ValueIter::List {
+                items: Arc::clone(xs),
+                index: 0,
+            }),
             Value::Range(lo, hi) => Ok(ValueIter::Range {
                 current: *lo,
                 end: *hi,
@@ -547,9 +557,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     {
                         acc = fields[0].clone();
                     }
-                    Value::Variant(ref tag, ref fields)
-                        if tag == "Stop" && fields.len() == 1 =>
-                    {
+                    Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
                         return Ok(fields[0].clone());
                     }
                     _ => acc = result,

@@ -1502,12 +1502,7 @@ fn do_http_get(url: &str) -> Value {
 
 /// Perform a synchronous HTTP request and return a `Value`.
 #[cfg(feature = "http")]
-fn do_http_request(
-    method_tag: &str,
-    url: &str,
-    body: &str,
-    headers: &[(String, String)],
-) -> Value {
+fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, String)]) -> Value {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .build()
@@ -1578,7 +1573,9 @@ fn do_http_request(
         other => {
             return Value::Variant(
                 "Err".into(),
-                vec![Value::String(format!("http.request: unknown method: {other}"))],
+                vec![Value::String(format!(
+                    "http.request: unknown method: {other}"
+                ))],
             );
         }
     };
@@ -1693,9 +1690,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                             }
                         })
                         .collect();
-                    let completion = vm.runtime.io_pool.submit(move || {
-                        do_http_request(&method_tag, &url, &body, &headers)
-                    });
+                    let completion = vm
+                        .runtime
+                        .io_pool
+                        .submit(move || do_http_request(&method_tag, &url, &body, &headers));
                     vm.pending_io = Some(completion.clone());
                     vm.block_reason = Some(BlockReason::Io(completion));
                     for arg in args {

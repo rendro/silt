@@ -68,11 +68,16 @@ impl TypeChecker {
                 for stmt in stmts {
                     match stmt {
                         Stmt::Let { value, .. } => self.check_unresolved_in_expr(value),
-                        Stmt::When { expr, else_body, .. } => {
+                        Stmt::When {
+                            expr, else_body, ..
+                        } => {
                             self.check_unresolved_in_expr(expr);
                             self.check_unresolved_in_expr(else_body);
                         }
-                        Stmt::WhenBool { condition, else_body } => {
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
                             self.check_unresolved_in_expr(condition);
                             self.check_unresolved_in_expr(else_body);
                         }
@@ -83,7 +88,10 @@ impl TypeChecker {
             ExprKind::Lambda { body, .. } => {
                 self.check_unresolved_in_expr(body);
             }
-            ExprKind::Match { expr: scrutinee, arms } => {
+            ExprKind::Match {
+                expr: scrutinee,
+                arms,
+            } => {
                 if let Some(s) = scrutinee {
                     self.check_unresolved_in_expr(s);
                 }
@@ -176,12 +184,7 @@ impl TypeChecker {
     ///    or non-call expressions are flagged.
     fn check_unresolved_in_block(&mut self, stmts: &[Stmt]) {
         for (i, stmt) in stmts.iter().enumerate() {
-            if let Stmt::Let {
-                pattern,
-                ty,
-                value,
-            } = stmt
-            {
+            if let Stmt::Let { pattern, ty, value } = stmt {
                 // Only check when there's no user annotation
                 if ty.is_some() {
                     continue;
@@ -237,7 +240,9 @@ impl TypeChecker {
     fn stmt_references_name(stmt: &Stmt, name: &str) -> bool {
         match stmt {
             Stmt::Let { value, .. } => Self::expr_references_name(value, name),
-            Stmt::When { expr, else_body, .. } => {
+            Stmt::When {
+                expr, else_body, ..
+            } => {
                 Self::expr_references_name(expr, name)
                     || Self::expr_references_name(else_body, name)
             }
@@ -286,9 +291,7 @@ impl TypeChecker {
                     })
             }
             ExprKind::List(elems) => elems.iter().any(|elem| match elem {
-                ListElem::Single(e) | ListElem::Spread(e) => {
-                    Self::expr_references_name(e, name)
-                }
+                ListElem::Single(e) | ListElem::Spread(e) => Self::expr_references_name(e, name),
             }),
             ExprKind::Tuple(elems) | ExprKind::SetLit(elems) => {
                 elems.iter().any(|e| Self::expr_references_name(e, name))
@@ -296,12 +299,14 @@ impl TypeChecker {
             ExprKind::Map(pairs) => pairs.iter().any(|(k, v)| {
                 Self::expr_references_name(k, name) || Self::expr_references_name(v, name)
             }),
-            ExprKind::RecordCreate { fields, .. } => {
-                fields.iter().any(|(_, e)| Self::expr_references_name(e, name))
-            }
+            ExprKind::RecordCreate { fields, .. } => fields
+                .iter()
+                .any(|(_, e)| Self::expr_references_name(e, name)),
             ExprKind::RecordUpdate { expr, fields } => {
                 Self::expr_references_name(expr, name)
-                    || fields.iter().any(|(_, e)| Self::expr_references_name(e, name))
+                    || fields
+                        .iter()
+                        .any(|(_, e)| Self::expr_references_name(e, name))
             }
             ExprKind::StringInterp(parts) => parts.iter().any(|part| match part {
                 StringPart::Expr(e) => Self::expr_references_name(e, name),
@@ -468,20 +473,38 @@ mod tests {
     use super::super::*;
 
     fn check_errors(input: &str) -> Vec<TypeError> {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         check(&mut program)
     }
 
     fn assert_no_errors(input: &str) {
         let errors = check_errors(input);
-        let hard: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
-        assert!(hard.is_empty(), "expected no type errors, got:\n{}", hard.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join("\n"));
+        let hard: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
+        assert!(
+            hard.is_empty(),
+            "expected no type errors, got:\n{}",
+            hard.iter()
+                .map(|e| format!("  {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     fn assert_has_error(input: &str, expected: &str) {
         let errors = check_errors(input);
-        assert!(errors.iter().any(|e| e.message.contains(expected)), "expected error containing '{expected}', got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.iter().any(|e| e.message.contains(expected)),
+            "expected error containing '{expected}', got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     // ── is_bare_type_var ────────────────────────────────────────────
@@ -491,7 +514,11 @@ mod tests {
         let mut checker = TypeChecker::new();
         let tv = checker.fresh_var();
         // Unify with Int, so it's resolved
-        let span = crate::lexer::Span { line: 0, col: 0, offset: 0 };
+        let span = crate::lexer::Span {
+            line: 0,
+            col: 0,
+            offset: 0,
+        };
         checker.unify(&tv, &Type::Int, span);
         assert!(!checker.is_bare_type_var(&tv));
     }
@@ -508,23 +535,27 @@ mod tests {
     #[test]
     fn test_used_variable_no_false_positive() {
         // A let binding whose value type is initially unknown but resolved by usage
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = []
   let y = list.append(x, 1)
   y
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_annotated_let_not_flagged() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x: Int = 42
   x
 }
-        "#);
+        "#,
+        );
     }
 
     // ── stmt_references_name / expr_references_name ─────────────────
@@ -532,23 +563,27 @@ fn main() {
     #[test]
     fn test_stmt_references_name_in_let() {
         // If a later statement uses the variable, the unresolved check skips it
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn identity(x) = x
 fn main() {
   let x = identity(42)
   x + 1
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_expr_references_in_nested_block() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let f = { x -> x + 1 }
   f(42)
 }
-        "#);
+        "#,
+        );
     }
 
     // ── resolve_all_types applies substitution ──────────────────────
@@ -559,16 +594,29 @@ fn main() {
 fn double(x) = x * 2
 fn main() { double(5) }
         "#;
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        assert!(errors.iter().filter(|e| e.severity == Severity::Error).count() == 0);
+        assert!(
+            errors
+                .iter()
+                .filter(|e| e.severity == Severity::Error)
+                .count()
+                == 0
+        );
         // After checking, the function body should have resolved types (no bare Vars)
         for decl in &program.decls {
             if let Decl::Fn(f) = decl {
                 if f.name == "double" {
                     if let Some(ty) = &f.body.ty {
-                        assert!(!matches!(ty, Type::Var(_)), "body type should be resolved, got {ty}");
+                        assert!(
+                            !matches!(ty, Type::Var(_)),
+                            "body type should be resolved, got {ty}"
+                        );
                     }
                 }
             }
@@ -579,12 +627,14 @@ fn main() { double(5) }
 
     #[test]
     fn test_generic_call_resolved_by_context() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn id(x) = x
 fn main() {
   let n = id(42)
   n + 1
 }
-        "#);
+        "#,
+        );
     }
 }

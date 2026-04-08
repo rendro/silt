@@ -721,7 +721,12 @@ impl TypeChecker {
                         self.fresh_var()
                     }
                     _ => {
-                        self.error(format!("'?' operator requires Result or Option type, got '{inner_ty}'"), span);
+                        self.error(
+                            format!(
+                                "'?' operator requires Result or Option type, got '{inner_ty}'"
+                            ),
+                            span,
+                        );
                         self.fresh_var()
                     }
                 }
@@ -1258,66 +1263,98 @@ mod tests {
     use super::super::*;
 
     fn assert_no_errors(input: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        let hard: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
-        assert!(hard.is_empty(), "expected no type errors, got:\n{}", hard.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join("\n"));
+        let hard: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
+        assert!(
+            hard.is_empty(),
+            "expected no type errors, got:\n{}",
+            hard.iter()
+                .map(|e| format!("  {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     fn assert_has_error(input: &str, expected: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        assert!(errors.iter().any(|e| e.message.contains(expected)), "expected error containing '{expected}', got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.iter().any(|e| e.message.contains(expected)),
+            "expected error containing '{expected}', got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     // ── Unary operator inference ────────────────────────────────────
 
     #[test]
     fn test_unary_negate_int() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = -42
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_unary_negate_float() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = -3.14
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_unary_not_bool() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = !true
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_unary_not_non_bool() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn main() {
   !42
 }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 
     // ── Or-pattern binding ──────────────────────────────────────────
 
     #[test]
     fn test_or_pattern_binds_variable() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn classify(x) {
   match x {
     1 | 2 | 3 -> "small"
@@ -1325,26 +1362,30 @@ fn classify(x) {
   }
 }
 fn main() { classify(2) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_or_pattern_with_constructor_binding() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn extract(x) {
   match x {
     Ok(v) | Err(v) -> v
   }
 }
 fn main() { extract(Ok(42)) }
-        "#);
+        "#,
+        );
     }
 
     // ── Map pattern binding ─────────────────────────────────────────
 
     #[test]
     fn test_map_pattern_in_match() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let m = #{ "x": 1, "y": 2 }
   match m {
@@ -1352,14 +1393,16 @@ fn main() {
     _ -> 0
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Pin pattern ─────────────────────────────────────────────────
 
     #[test]
     fn test_pin_pattern_matches_value() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let expected = 42
   match 42 {
@@ -1367,121 +1410,144 @@ fn main() {
     _ -> "no match"
   }
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Return expression ───────────────────────────────────────────
 
     #[test]
     fn test_return_with_value() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn early(x) {
   when x > 0 else { return 0 }
   x * 2
 }
 fn main() { early(5) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_return_no_value() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn side_effect(x) {
   when x > 0 else { return () }
   println(x)
 }
 fn main() { side_effect(1) }
-        "#);
+        "#,
+        );
     }
 
     // ── String interpolation inference ──────────────────────────────
 
     #[test]
     fn test_string_interp_with_int_and_bool() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let n = 42
   let b = true
   "n={n}, b={b}"
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Ascription ──────────────────────────────────────────────────
 
     #[test]
     fn test_ascription_correct_type() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn main() {
   let x = 42 as Int
   x
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_ascription_mismatch() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn main() {
   "hello" as Int
 }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 
     // ── Pipe operator inference ─────────────────────────────────────
 
     #[test]
     fn test_pipe_chains_types() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn double(x) = x * 2
 fn add_one(x) = x + 1
 fn main() {
   5 |> double |> add_one
 }
-        "#);
+        "#,
+        );
     }
 
     // ── Record update inference ─────────────────────────────────────
 
     #[test]
     fn test_record_update_preserves_type() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Point { x: Int, y: Int }
 fn main() {
   let p = Point { x: 1, y: 2 }
   let q = p.{ x: 10 }
   q.y
 }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_record_create_wrong_field_type() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 type Point { x: Int, y: Int }
 fn main() {
   Point { x: "hello", y: 2 }
 }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 
     // ── check_pattern error cases ───────────────────────────────────
 
     #[test]
     fn test_check_pattern_wrong_type() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn main() {
   match 42 {
     true -> "yes"
     false -> "no"
   }
 }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 
     #[test]
     fn test_list_rest_pattern_binds() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn sum_list(xs) {
   match xs {
     [] -> 0
@@ -1489,14 +1555,16 @@ fn sum_list(xs) {
   }
 }
 fn main() { sum_list([1, 2, 3]) }
-        "#);
+        "#,
+        );
     }
 
     // ── Range pattern type checking ─────────────────────────────────
 
     #[test]
     fn test_range_pattern_int() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn classify(n) {
   match n {
     1..10 -> "small"
@@ -1504,27 +1572,32 @@ fn classify(n) {
   }
 }
 fn main() { classify(5) }
-        "#);
+        "#,
+        );
     }
 
     // ── When-bool statement ─────────────────────────────────────────
 
     #[test]
     fn test_when_bool_condition_must_be_bool() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn check(x) {
   when 42 else { return 0 }
   x
 }
 fn main() { check(1) }
-        "#, "type mismatch");
+        "#,
+            "type mismatch",
+        );
     }
 
     // ── Loop/recur type inference ───────────────────────────────────
 
     #[test]
     fn test_loop_bindings_inferred() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn factorial(n) {
   loop i = n, acc = 1 {
     match i <= 1 {
@@ -1534,6 +1607,7 @@ fn factorial(n) {
   }
 }
 fn main() { factorial(5) }
-        "#);
+        "#,
+        );
     }
 }

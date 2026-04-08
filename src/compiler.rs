@@ -228,7 +228,10 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError { message: "compiler bug: missing script context".into(), span: Span::new(0, 0) })?
+            .ok_or(CompileError {
+                message: "compiler bug: missing script context".into(),
+                span: Span::new(0, 0),
+            })?
             .function;
 
         // Build the result: script first, then all compiled functions.
@@ -242,7 +245,10 @@ impl Compiler {
     /// Returns all compiled functions. The first is a `<script>` that
     /// registers globals and returns Unit.  Useful for test runners and the
     /// REPL where `main()` is not the entry-point.
-    pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, CompileError> {
+    pub fn compile_declarations(
+        &mut self,
+        program: &Program,
+    ) -> Result<Vec<Function>, CompileError> {
         self.contexts
             .push(CompileContext::new("<script>".into(), 0));
 
@@ -258,7 +264,10 @@ impl Compiler {
         let script = self
             .contexts
             .pop()
-            .ok_or(CompileError { message: "compiler bug: missing script context".into(), span: Span::new(0, 0) })?
+            .ok_or(CompileError {
+                message: "compiler bug: missing script context".into(),
+                span: Span::new(0, 0),
+            })?
             .function;
         let mut result = vec![script];
         result.append(&mut self.functions);
@@ -321,10 +330,10 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::Return, span);
 
                 // Pop the context, recovering the compiled function.
-                let ctx = self
-                    .contexts
-                    .pop()
-                    .ok_or(CompileError { message: "compiler bug: missing function context".into(), span })?;
+                let ctx = self.contexts.pop().ok_or(CompileError {
+                    message: "compiler bug: missing function context".into(),
+                    span,
+                })?;
                 let func = ctx.function;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
@@ -366,7 +375,10 @@ impl Compiler {
                         self.current_chunk().emit_op(Op::Pop, span);
                     }
                     _ => {
-                        return Err(CompileError { message: "unsupported pattern in top-level let".into(), span });
+                        return Err(CompileError {
+                            message: "unsupported pattern in top-level let".into(),
+                            span,
+                        });
                     }
                 }
 
@@ -490,10 +502,10 @@ impl Compiler {
                     self.compile_expr(&method.body)?;
                     self.current_chunk().emit_op(Op::Return, span);
 
-                    let ctx = self
-                        .contexts
-                        .pop()
-                        .ok_or(CompileError { message: "compiler bug: missing trait method context".into(), span })?;
+                    let ctx = self.contexts.pop().ok_or(CompileError {
+                        message: "compiler bug: missing trait method context".into(),
+                        span,
+                    })?;
                     let func = ctx.function;
                     let vm_closure = Arc::new(VmClosure {
                         function: Arc::new(func),
@@ -625,7 +637,9 @@ impl Compiler {
         // Detect circular imports.
         if self.compiling_modules.contains(module_name) {
             return Err(CompileError {
-                message: format!("circular import detected: module '{module_name}' imports itself (directly or indirectly)"),
+                message: format!(
+                    "circular import detected: module '{module_name}' imports itself (directly or indirectly)"
+                ),
                 span: Span::new(0, 0),
             });
         }
@@ -642,7 +656,10 @@ impl Compiler {
 
     /// Inner implementation of file module compilation, separated so that
     /// the circular-import guard can wrap it cleanly.
-    fn compile_file_module_inner(&mut self, module_name: &str) -> Result<Vec<String>, CompileError> {
+    fn compile_file_module_inner(
+        &mut self,
+        module_name: &str,
+    ) -> Result<Vec<String>, CompileError> {
         let project_root = self.project_root.as_ref().ok_or_else(|| {
             CompileError {
                 message: format!("cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"),
@@ -652,16 +669,22 @@ impl Compiler {
 
         // Resolve, read, lex, parse the module file.
         let file_path = project_root.join(format!("{module_name}.silt"));
-        let source = std::fs::read_to_string(&file_path)
-            .map_err(|e| CompileError { message: format!("cannot load module '{module_name}': {e}"), span: Span::new(0, 0) })?;
+        let source = std::fs::read_to_string(&file_path).map_err(|e| CompileError {
+            message: format!("cannot load module '{module_name}': {e}"),
+            span: Span::new(0, 0),
+        })?;
 
-        let tokens = Lexer::new(&source)
-            .tokenize()
-            .map_err(|e| CompileError { message: format!("module '{module_name}': lex error: {e}"), span: Span::new(0, 0) })?;
+        let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
+            message: format!("module '{module_name}': lex error: {e}"),
+            span: Span::new(0, 0),
+        })?;
 
         let program = Parser::new(tokens)
             .parse_program()
-            .map_err(|e| CompileError { message: format!("module '{module_name}': parse error: {e}"), span: Span::new(0, 0) })?;
+            .map_err(|e| CompileError {
+                message: format!("module '{module_name}': parse error: {e}"),
+                span: Span::new(0, 0),
+            })?;
 
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();
@@ -723,10 +746,10 @@ impl Compiler {
                     self.compile_expr(&fn_decl.body)?;
                     self.current_chunk().emit_op(Op::Return, fn_span);
 
-                    let ctx = self
-                        .contexts
-                        .pop()
-                        .ok_or(CompileError { message: "compiler bug: missing module function context".into(), span })?;
+                    let ctx = self.contexts.pop().ok_or(CompileError {
+                        message: "compiler bug: missing module function context".into(),
+                        span,
+                    })?;
                     let func = ctx.function;
 
                     let vm_closure = Arc::new(VmClosure {
@@ -1067,7 +1090,10 @@ impl Compiler {
                     if let Some(required) = module::gated_constructor_module(name)
                         && !self.imported_builtin_modules.contains(required)
                     {
-                        return Err(CompileError { message: format!("'{name}' requires `import {required}`"), span });
+                        return Err(CompileError {
+                            message: format!("'{name}' requires `import {required}`"),
+                            span,
+                        });
                     }
                     let name_idx = self
                         .current_chunk()
@@ -1106,7 +1132,9 @@ impl Compiler {
                                 && !self.imported_builtin_modules.contains(module.as_str())
                             {
                                 return Err(CompileError {
-                                    message: format!("module '{module}' is not imported; add `import {module}` at the top of the file"),
+                                    message: format!(
+                                        "module '{module}' is not imported; add `import {module}` at the top of the file"
+                                    ),
                                     span,
                                 });
                             }
@@ -1174,7 +1202,9 @@ impl Compiler {
                             && !self.imported_builtin_modules.contains(name.as_str())
                         {
                             return Err(CompileError {
-                                message: format!("module '{name}' is not imported; add `import {name}` at the top of the file"),
+                                message: format!(
+                                    "module '{name}' is not imported; add `import {name}` at the top of the file"
+                                ),
                                 span,
                             });
                         }
@@ -1277,10 +1307,10 @@ impl Compiler {
                 self.in_tail_position = false;
                 self.current_chunk().emit_op(Op::Return, span);
 
-                let ctx = self
-                    .contexts
-                    .pop()
-                    .ok_or(CompileError { message: "compiler bug: missing lambda context".into(), span })?;
+                let ctx = self.contexts.pop().ok_or(CompileError {
+                    message: "compiler bug: missing lambda context".into(),
+                    span,
+                })?;
                 let upvalue_descs = ctx.upvalues.clone();
                 let func = ctx.function;
 
@@ -1458,17 +1488,20 @@ impl Compiler {
             }
 
             ExprKind::Recur(args) => {
-                let loop_info = self
-                    .ctx()
-                    .loop_stack
-                    .last()
-                    .ok_or_else(|| CompileError { message: "recur outside of loop".into(), span })?;
+                let loop_info = self.ctx().loop_stack.last().ok_or_else(|| CompileError {
+                    message: "recur outside of loop".into(),
+                    span,
+                })?;
                 let first_slot = loop_info.first_slot;
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
                     return Err(CompileError {
-                        message: format!("loop() expects {} argument(s), got {}", expected, args.len()),
+                        message: format!(
+                            "loop() expects {} argument(s), got {}",
+                            expected,
+                            args.len()
+                        ),
                         span,
                     });
                 }
@@ -1684,7 +1717,10 @@ impl Compiler {
                 if let Some(required) = module::gated_constructor_module(name)
                     && !self.imported_builtin_modules.contains(required)
                 {
-                    return Err(CompileError { message: format!("'{name}' requires `import {required}`"), span });
+                    return Err(CompileError {
+                        message: format!("'{name}' requires `import {required}`"),
+                        span,
+                    });
                 }
                 // Test: tag matches?
                 let idx = self
@@ -2304,7 +2340,9 @@ impl Compiler {
             {
                 if !self.imported_builtin_modules.contains(module.as_str()) {
                     return Err(CompileError {
-                        message: format!("module '{module}' is not imported; add `import {module}` at the top of the file"),
+                        message: format!(
+                            "module '{module}' is not imported; add `import {module}` at the top of the file"
+                        ),
                         span: callee.span,
                     });
                 }
@@ -2527,12 +2565,18 @@ mod tests {
 
     /// Check if a string constant exists in the chunk.
     fn has_string_constant(chunk: &Chunk, s: &str) -> bool {
-        chunk.constants.iter().any(|c| matches!(c, Value::String(v) if v == s))
+        chunk
+            .constants
+            .iter()
+            .any(|c| matches!(c, Value::String(v) if v == s))
     }
 
     /// Check if an int constant exists in the chunk.
     fn has_int_constant(chunk: &Chunk, n: i64) -> bool {
-        chunk.constants.iter().any(|c| matches!(c, Value::Int(v) if *v == n))
+        chunk
+            .constants
+            .iter()
+            .any(|c| matches!(c, Value::Int(v) if *v == n))
     }
 
     /// Find a function by name in the compiled output.
@@ -2584,7 +2628,12 @@ mod tests {
     fn test_compile_float_literal() {
         let fns = compile("fn main() { 3.14 }");
         let main = find_fn(&fns, "main");
-        assert!(main.chunk.constants.iter().any(|c| matches!(c, Value::Float(f) if (*f - 3.14).abs() < f64::EPSILON)));
+        assert!(
+            main.chunk
+                .constants
+                .iter()
+                .any(|c| matches!(c, Value::Float(f) if (*f - 3.14).abs() < f64::EPSILON))
+        );
     }
 
     #[test]
@@ -2648,7 +2697,10 @@ mod tests {
             let src = format!("fn cmp(a, b) {{ {expr} }}");
             let fns = compile(&src);
             let f = find_fn(&fns, "cmp");
-            assert!(has_op(&f.chunk, expected_op), "missing {expected_op:?} for {expr}");
+            assert!(
+                has_op(&f.chunk, expected_op),
+                "missing {expected_op:?} for {expr}"
+            );
         }
     }
 
@@ -2719,9 +2771,8 @@ mod tests {
 
     #[test]
     fn test_compile_multiple_functions() {
-        let fns = compile(
-            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }",
-        );
+        let fns =
+            compile("fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }");
         // Script + 3 functions (as closures in the script's constant pool)
         assert_eq!(fns[0].name, "<script>");
         // Functions are compiled as constants in the script, so we look for them there
@@ -2752,7 +2803,12 @@ mod tests {
         let fns = compile("fn main() { let f = fn(x) { x + 1 }\n f(5) }");
         let main = find_fn(&fns, "main");
         // Lambda is compiled as a VmClosure constant
-        assert!(main.chunk.constants.iter().any(|c| matches!(c, Value::VmClosure(_))));
+        assert!(
+            main.chunk
+                .constants
+                .iter()
+                .any(|c| matches!(c, Value::VmClosure(_)))
+        );
     }
 
     #[test]
@@ -2879,7 +2935,9 @@ fn main() { Red }
         );
         let script = &fns[0];
         // Nullary variants are registered as Variant values
-        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::Variant(name, fields) if name == "Red" && fields.is_empty())));
+        assert!(script.chunk.constants.iter().any(
+            |c| matches!(c, Value::Variant(name, fields) if name == "Red" && fields.is_empty())
+        ));
         assert!(has_string_constant(&script.chunk, "Red"));
         assert!(has_string_constant(&script.chunk, "Green"));
         assert!(has_string_constant(&script.chunk, "Blue"));
@@ -2896,7 +2954,9 @@ fn main() { Circle(1.0) }
         let script = &fns[0];
         // Constructor variants are registered as VariantConstructor values
         assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Circle" && *arity == 1)));
-        assert!(script.chunk.constants.iter().any(|c| matches!(c, Value::VariantConstructor(name, arity) if name == "Rect" && *arity == 2)));
+        assert!(script.chunk.constants.iter().any(
+            |c| matches!(c, Value::VariantConstructor(name, arity) if name == "Rect" && *arity == 2)
+        ));
     }
 
     // ── Match compilation ──────────────────────────────────────────
@@ -3032,7 +3092,10 @@ fn f(x) {
         );
         let f = find_fn(&fns, "f");
         assert!(has_op(&f.chunk, Op::Panic));
-        assert!(has_string_constant(&f.chunk, "non-exhaustive match: no arm matched"));
+        assert!(has_string_constant(
+            &f.chunk,
+            "non-exhaustive match: no arm matched"
+        ));
     }
 
     #[test]
@@ -3299,13 +3362,18 @@ fn main() {
 
     #[test]
     fn test_shadow_module_warning() {
-        let tokens = Lexer::new("fn main() { let list = 42\n list }").tokenize().unwrap();
+        let tokens = Lexer::new("fn main() { let list = 42\n list }")
+            .tokenize()
+            .unwrap();
         let program = Parser::new(tokens).parse_program().unwrap();
         let mut compiler = Compiler::new();
         compiler.import_all_builtins();
         compiler.compile_declarations(&program).unwrap();
         assert!(
-            compiler.warnings().iter().any(|w| w.message.contains("shadows")),
+            compiler
+                .warnings()
+                .iter()
+                .any(|w| w.message.contains("shadows")),
             "expected shadow warning"
         );
     }
@@ -3449,8 +3517,16 @@ fn f(x) {
         );
         let f = find_fn(&fns, "f");
         // Or-pattern has multiple TestEqual ops
-        let test_count = f.chunk.code.iter().filter(|&&b| b == Op::TestEqual as u8).count();
-        assert!(test_count >= 3, "expected at least 3 TestEqual ops for or-pattern, got {test_count}");
+        let test_count = f
+            .chunk
+            .code
+            .iter()
+            .filter(|&&b| b == Op::TestEqual as u8)
+            .count();
+        assert!(
+            test_count >= 3,
+            "expected at least 3 TestEqual ops for or-pattern, got {test_count}"
+        );
     }
 
     // ── Pin pattern in match ───────────────────────────────────────

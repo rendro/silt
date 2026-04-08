@@ -13,7 +13,12 @@ impl TypeChecker {
     // A match is exhaustive iff the wildcard pattern is NOT useful after
     // all arms have been processed.
 
-    pub(super) fn check_exhaustiveness(&mut self, arms: &[MatchArm], scrutinee_ty: &Type, span: Span) {
+    pub(super) fn check_exhaustiveness(
+        &mut self,
+        arms: &[MatchArm],
+        scrutinee_ty: &Type,
+        span: Span,
+    ) {
         // Collect patterns from arms without guards (guarded arms don't
         // guarantee coverage since the guard may be false).
         let patterns: Vec<&Pattern> = arms
@@ -495,25 +500,48 @@ mod tests {
     use super::super::*;
 
     fn assert_no_errors(input: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        let hard: Vec<_> = errors.iter().filter(|e| e.severity == Severity::Error).collect();
-        assert!(hard.is_empty(), "expected no type errors, got:\n{}", hard.iter().map(|e| format!("  {e}")).collect::<Vec<_>>().join("\n"));
+        let hard: Vec<_> = errors
+            .iter()
+            .filter(|e| e.severity == Severity::Error)
+            .collect();
+        assert!(
+            hard.is_empty(),
+            "expected no type errors, got:\n{}",
+            hard.iter()
+                .map(|e| format!("  {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     fn assert_has_error(input: &str, expected: &str) {
-        let tokens = crate::lexer::Lexer::new(input).tokenize().expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens).parse_program().expect("parse error");
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         let errors = check(&mut program);
-        assert!(errors.iter().any(|e| e.message.contains(expected)), "expected error containing '{expected}', got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.iter().any(|e| e.message.contains(expected)),
+            "expected error containing '{expected}', got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     // ── Or-pattern exhaustiveness ───────────────────────────────────
 
     #[test]
     fn test_or_pattern_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Color { Red, Green, Blue }
 fn describe(c) {
   match c {
@@ -522,12 +550,14 @@ fn describe(c) {
   }
 }
 fn main() { describe(Red) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_or_pattern_non_exhaustive() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 type Color { Red, Green, Blue }
 fn describe(c) {
   match c {
@@ -535,14 +565,17 @@ fn describe(c) {
   }
 }
 fn main() { describe(Red) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── Nested constructor exhaustiveness ────────────────────────────
 
     #[test]
     fn test_nested_option_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn process(x) {
   match x {
     Some(Some(v)) -> v
@@ -551,12 +584,14 @@ fn process(x) {
   }
 }
 fn main() { process(Some(Some(1))) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_nested_option_missing_inner() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn process(x) {
   match x {
     Some(Some(v)) -> v
@@ -564,14 +599,17 @@ fn process(x) {
   }
 }
 fn main() { process(Some(Some(1))) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── Tuple exhaustiveness ────────────────────────────────────────
 
     #[test]
     fn test_tuple_pair_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn check(pair) {
   match pair {
     (true, true) -> 1
@@ -581,12 +619,14 @@ fn check(pair) {
   }
 }
 fn main() { check((true, false)) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_tuple_pair_missing_case() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn check(pair) {
   match pair {
     (true, true) -> 1
@@ -595,14 +635,17 @@ fn check(pair) {
   }
 }
 fn main() { check((true, false)) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── List pattern exhaustiveness ─────────────────────────────────
 
     #[test]
     fn test_list_with_wildcard_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn head(xs) {
   match xs {
     [] -> 0
@@ -610,39 +653,47 @@ fn head(xs) {
   }
 }
 fn main() { head([1, 2, 3]) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_list_missing_empty_case() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn head(xs) {
   match xs {
     [x, ..rest] -> x
   }
 }
 fn main() { head([1, 2, 3]) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── Empty match ─────────────────────────────────────────────────
 
     #[test]
     fn test_empty_match_non_exhaustive() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn process(x) {
   match x {
   }
 }
 fn main() { process(1) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── All guards non-exhaustive ───────────────────────────────────
 
     #[test]
     fn test_all_arms_guarded() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 fn check(x) {
   match x {
     n when n > 0 -> "positive"
@@ -650,42 +701,49 @@ fn check(x) {
   }
 }
 fn main() { check(1) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 
     // ── Wildcard covers everything ──────────────────────────────────
 
     #[test]
     fn test_single_wildcard_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn id(x) {
   match x {
     _ -> x
   }
 }
 fn main() { id(42) }
-        "#);
+        "#,
+        );
     }
 
     // ── Bool or-pattern exhaustiveness ──────────────────────────────
 
     #[test]
     fn test_bool_or_pattern_covers() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 fn check(b) {
   match b {
     true | false -> "done"
   }
 }
 fn main() { check(true) }
-        "#);
+        "#,
+        );
     }
 
     // ── Multi-field constructor exhaustiveness ──────────────────────
 
     #[test]
     fn test_multi_field_variant_exhaustive() {
-        assert_no_errors(r#"
+        assert_no_errors(
+            r#"
 type Shape {
   Circle(Float),
   Rect(Float, Float),
@@ -697,12 +755,14 @@ fn area(s) {
   }
 }
 fn main() { area(Circle(1.0)) }
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn test_multi_field_variant_missing() {
-        assert_has_error(r#"
+        assert_has_error(
+            r#"
 type Shape {
   Circle(Float),
   Rect(Float, Float),
@@ -713,6 +773,8 @@ fn area(s) {
   }
 }
 fn main() { area(Circle(1.0)) }
-        "#, "non-exhaustive");
+        "#,
+            "non-exhaustive",
+        );
     }
 }
