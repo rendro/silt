@@ -406,7 +406,7 @@ list.drop(xs: List(a), n: Int) -> List(a)
 ```
 
 Returns the list without its first `n` elements. If `n >= length`, returns an
-empty list.
+empty list. Negative `n` is a runtime error.
 
 ```silt
 fn main() {
@@ -581,12 +581,14 @@ list.get(xs: List(a), index: Int) -> Option(a)
 ```
 
 Returns `Some(element)` at the given index, or `None` if out of bounds.
+Negative indices are a runtime error -- use `list.last` for end access.
 
 ```silt
 fn main() {
     let xs = [10, 20, 30]
     println(list.get(xs, 1))   // Some(20)
     println(list.get(xs, 10))  // None
+    -- list.get(xs, -1)        -- runtime error: negative index
 }
 ```
 
@@ -710,7 +712,7 @@ list.set(xs: List(a), index: Int, value: a) -> List(a)
 ```
 
 Returns a new list with the element at `index` replaced by `value`. Panics if
-the index is out of bounds.
+the index is out of bounds. Negative indices are a runtime error.
 
 ```silt
 fn main() {
@@ -777,6 +779,7 @@ list.take(xs: List(a), n: Int) -> List(a)
 ```
 
 Returns the first `n` elements. If `n >= length`, returns the whole list.
+Negative `n` is a runtime error.
 
 ```silt
 fn main() {
@@ -1213,7 +1216,7 @@ string.slice(s: String, start: Int, end: Int) -> String
 
 Returns the substring from character index `start` (inclusive) to `end`
 (exclusive). Indices are clamped to the string length. Returns an empty string
-if `start > end`.
+if `start > end`. Negative indices are a runtime error.
 
 ```silt
 fn main() {
@@ -1882,7 +1885,8 @@ Functions for parsing, converting, and comparing integers.
 int.abs(n: Int) -> Int
 ```
 
-Returns the absolute value.
+Returns the absolute value. Runtime error if `n` is `Int` minimum
+(`-9223372036854775808`) since the result cannot be represented.
 
 ```silt
 fn main() {

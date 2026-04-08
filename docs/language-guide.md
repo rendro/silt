@@ -207,7 +207,7 @@ fn get_or_die(opt) {
 
 | Type     | Description                       | Examples                  |
 |----------|-----------------------------------|---------------------------|
-| `Int`    | 64-bit signed integer             | `42`, `-7`, `0`           |
+| `Int`    | 64-bit signed integer (overflow is a runtime error) | `42`, `-7`, `0`           |
 | `Float`  | 64-bit floating-point (no NaN/Infinity) | `3.14`, `-0.5`, `1.0`    |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
@@ -1161,6 +1161,22 @@ application through pipes.
 
 `Stop(value)` and `Continue(value)` carry the same accumulator type. For
 search where the result type differs from state, use `loop`.
+
+## Integer Overflow
+
+Silt uses 64-bit signed integers. Arithmetic that overflows (e.g.
+`9223372036854775807 + 1`) is a **runtime error**, not silent wrapping.
+This matches the "explicit over implicit" philosophy -- silent wrong answers
+are worse than crashes. `int.abs` also errors on the single unrepresentable
+value (`int.abs(-9223372036854775808)`).
+
+## No Negative Indexing
+
+`list.get(xs, -1)` is a runtime error, not "last element." Indices are
+positions from the start, period. Use `list.last(xs)` for the last element,
+or `list.get(xs, list.length(xs) - 1)` for explicit end-relative access.
+This keeps the mental model simple and avoids hidden "if negative, wrap"
+logic.
 
 ## Immutability Cost
 

@@ -690,15 +690,14 @@ fn main() { list.get([1, 2, 3], 10) }
 
 #[test]
 fn test_runtime_list_get_negative_index() {
-    let result = run(r#"
+    let err = run_err(r#"
 import list
 fn main() { list.get([1, 2, 3], -1) }
     "#);
-    // list.get returns None for negative indices
-    match result {
-        Value::Variant(ref tag, ref args) if tag == "None" && args.is_empty() => {}
-        other => panic!("expected None, got {other:?}"),
-    }
+    assert!(
+        err.contains("list.get: negative index -1"),
+        "expected negative index error, got: {err}"
+    );
 }
 
 #[test]
@@ -1211,13 +1210,13 @@ fn main() {
 }
 
 #[test]
-fn test_integer_overflow_wraps() {
-    // Verify wrapping arithmetic doesn't panic
-    let result = run(&format!("fn main() {{ {} + 1 }}", i64::MAX));
-    match result {
-        Value::Int(n) => assert_eq!(n, i64::MIN), // wrapping
-        other => panic!("expected Int, got {other:?}"),
-    }
+fn test_integer_overflow_is_runtime_error() {
+    // Overflow should produce a runtime error, not wrap silently
+    let err = run_err(&format!("fn main() {{ {} + 1 }}", i64::MAX));
+    assert!(
+        err.contains("integer overflow"),
+        "expected overflow error, got: {err}"
+    );
 }
 
 #[test]

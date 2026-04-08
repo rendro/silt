@@ -28,7 +28,10 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("int.abs requires an int".into()));
             };
-            Ok(Value::Int(n.abs()))
+            match n.checked_abs() {
+                Some(v) => Ok(Value::Int(v)),
+                None => Err(VmError::new(format!("integer overflow: abs({n})"))),
+            }
         }
         "min" => {
             if args.len() != 2 {

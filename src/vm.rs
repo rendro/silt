@@ -803,7 +803,14 @@ impl Vm {
                 Some(Op::Negate) => {
                     let val = self.pop()?;
                     match val {
-                        Value::Int(n) => self.push(Value::Int(-n)),
+                        Value::Int(n) => match n.checked_neg() {
+                            Some(v) => self.push(Value::Int(v)),
+                            None => {
+                                return Err(VmError::new(format!(
+                                    "integer overflow: -{n}"
+                                )));
+                            }
+                        },
                         Value::Float(n) => self.push(Value::Float(-n)),
                         other => {
                             return Err(VmError::new(format!(
@@ -1861,7 +1868,14 @@ impl Vm {
             Op::Negate => {
                 let val = self.pop()?;
                 match val {
-                    Value::Int(n) => self.push(Value::Int(-n)),
+                    Value::Int(n) => match n.checked_neg() {
+                        Some(v) => self.push(Value::Int(v)),
+                        None => {
+                            return Err(VmError::new(format!(
+                                "integer overflow: -{n}"
+                            )));
+                        }
+                    },
                     Value::Float(n) => self.push(Value::Float(-n)),
                     other => {
                         return Err(VmError::new(format!(
@@ -2114,12 +2128,12 @@ impl Vm {
                 let new_values: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
                 let base = self.pop()?;
-                if let Value::Record(type_name, existing) = base {
-                    let mut fields = (*existing).clone();
+                if let Value::Record(type_name, mut existing) = base {
+                    let fields = Arc::make_mut(&mut existing);
                     for (name, val) in field_names.into_iter().zip(new_values) {
                         fields.insert(name, val);
                     }
-                    self.push(Value::Record(type_name, Arc::new(fields)));
+                    self.push(Value::Record(type_name, existing));
                 } else {
                     return Err(VmError::new("record update on non-record".into()));
                 }
@@ -2663,20 +2677,49 @@ impl Vm {
         let a = self.pop()?;
         let result = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => match op {
-                Op::Add => Value::Int(a.wrapping_add(*b)),
-                Op::Sub => Value::Int(a.wrapping_sub(*b)),
-                Op::Mul => Value::Int(a.wrapping_mul(*b)),
+                Op::Add => match a.checked_add(*b) {
+                    Some(v) => Value::Int(v),
+                    None => {
+                        return Err(VmError::new(format!("integer overflow: {a} + {b}")))
+                    }
+                },
+                Op::Sub => match a.checked_sub(*b) {
+                    Some(v) => Value::Int(v),
+                    None => {
+                        return Err(VmError::new(format!("integer overflow: {a} - {b}")))
+                    }
+                },
+                Op::Mul => match a.checked_mul(*b) {
+                    Some(v) => Value::Int(v),
+                    None => {
+                        return Err(VmError::new(format!("integer overflow: {a} * {b}")))
+                    }
+                },
                 Op::Div => {
                     if *b == 0 {
                         return Err(VmError::new("division by zero".to_string()));
                     }
-                    Value::Int(a / b)
+                    match a.checked_div(*b) {
+                        Some(v) => Value::Int(v),
+                        None => {
+                            return Err(VmError::new(format!(
+                                "integer overflow: {a} / {b}"
+                            )))
+                        }
+                    }
                 }
                 Op::Mod => {
                     if *b == 0 {
                         return Err(VmError::new("modulo by zero".to_string()));
                     }
-                    Value::Int(a % b)
+                    match a.checked_rem(*b) {
+                        Some(v) => Value::Int(v),
+                        None => {
+                            return Err(VmError::new(format!(
+                                "integer overflow: {a} % {b}"
+                            )))
+                        }
+                    }
                 }
                 _ => unreachable!(),
             },

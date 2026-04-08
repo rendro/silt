@@ -354,11 +354,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Ok(args[0].clone());
             }
             let iter = ValueIter::try_from(&args[0], "list.unique")?;
-            let mut seen = Vec::new();
+            let mut seen = BTreeSet::new();
             let mut result = Vec::new();
             for x in iter {
-                if !seen.contains(&x) {
-                    seen.push(x.clone());
+                if seen.insert(x.clone()) {
                     result.push(x);
                 }
             }
@@ -431,7 +430,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.get index must be int".into()));
             };
-            let idx = *n as usize;
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!("list.get: negative index {n_val}")));
+            }
+            let idx = n_val as usize;
             match &args[0] {
                 Value::List(xs) => match xs.get(idx) {
                     Some(val) => Ok(Value::Variant("Some".into(), vec![val.clone()])),
@@ -456,7 +459,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.set index must be int".into()));
             };
-            let idx = *n as usize;
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!("list.set: negative index {n_val}")));
+            }
+            let idx = n_val as usize;
             if idx >= v.len() {
                 return Err(VmError::new("list.set index out of bounds".into()));
             }
@@ -470,13 +477,17 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.take requires int".into()));
             };
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!("list.take: negative index {n_val}")));
+            }
             match &args[0] {
                 Value::List(xs) => {
-                    let n = (*n as usize).min(xs.len());
+                    let n = (n_val as usize).min(xs.len());
                     Ok(Value::List(Arc::new(xs[..n].to_vec())))
                 }
                 Value::Range(lo, hi) => {
-                    let count = *n;
+                    let count = n_val;
                     let new_hi = (*lo + count - 1).min(*hi);
                     if new_hi < *lo {
                         Ok(Value::List(Arc::new(Vec::new())))
@@ -494,13 +505,17 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.drop requires int".into()));
             };
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!("list.drop: negative index {n_val}")));
+            }
             match &args[0] {
                 Value::List(xs) => {
-                    let n = (*n as usize).min(xs.len());
+                    let n = (n_val as usize).min(xs.len());
                     Ok(Value::List(Arc::new(xs[n..].to_vec())))
                 }
                 Value::Range(lo, hi) => {
-                    let new_lo = lo + n;
+                    let new_lo = lo + n_val;
                     if new_lo > *hi {
                         Ok(Value::List(Arc::new(Vec::new())))
                     } else {

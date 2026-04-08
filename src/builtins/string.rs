@@ -167,7 +167,13 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("string.repeat requires an int".into()));
             };
-            Ok(Value::String(s.repeat(*n as usize)))
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!(
+                    "string.repeat: negative index {n_val}"
+                )));
+            }
+            Ok(Value::String(s.repeat(n_val as usize)))
         }
         "index_of" => {
             if args.len() != 2 {
@@ -194,9 +200,21 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Int(end) = &args[2] else {
                 return Err(VmError::new("third arg must be int".into()));
             };
+            let start_val = *start;
+            if start_val < 0 {
+                return Err(VmError::new(format!(
+                    "string.slice: negative index {start_val}"
+                )));
+            }
+            let end_val = *end;
+            if end_val < 0 {
+                return Err(VmError::new(format!(
+                    "string.slice: negative index {end_val}"
+                )));
+            }
             let chars: Vec<char> = s.chars().collect();
-            let start = (*start as usize).min(chars.len());
-            let end = (*end as usize).min(chars.len());
+            let start = (start_val as usize).min(chars.len());
+            let end = (end_val as usize).min(chars.len());
             if start > end {
                 Ok(Value::String(String::new()))
             } else {
@@ -216,7 +234,13 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(pad) = &args[2] else {
                 return Err(VmError::new("third arg must be string".into()));
             };
-            let width = *width as usize;
+            let width_val = *width;
+            if width_val < 0 {
+                return Err(VmError::new(format!(
+                    "string.pad_left: negative index {width_val}"
+                )));
+            }
+            let width = width_val as usize;
             let pad_char = pad.chars().next().unwrap_or(' ');
             if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
@@ -238,7 +262,13 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(pad) = &args[2] else {
                 return Err(VmError::new("third arg must be string".into()));
             };
-            let width = *width as usize;
+            let width_val = *width;
+            if width_val < 0 {
+                return Err(VmError::new(format!(
+                    "string.pad_right: negative index {width_val}"
+                )));
+            }
+            let width = width_val as usize;
             let pad_char = pad.chars().next().unwrap_or(' ');
             if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
