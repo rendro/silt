@@ -459,16 +459,14 @@ impl Lexer {
 
     fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
         // Handle hex (0x) and binary (0b) prefixes
-        if first == '0' {
-            if let Some(prefix) = self.peek() {
-                if prefix == 'x' || prefix == 'X' {
-                    self.advance_char(); // consume 'x'
-                    return self.scan_hex_int(start);
-                }
-                if prefix == 'b' || prefix == 'B' {
-                    self.advance_char(); // consume 'b'
-                    return self.scan_binary_int(start);
-                }
+        if first == '0' && let Some(prefix) = self.peek() {
+            if prefix == 'x' || prefix == 'X' {
+                self.advance_char(); // consume 'x'
+                return self.scan_hex_int(start);
+            }
+            if prefix == 'b' || prefix == 'B' {
+                self.advance_char(); // consume 'b'
+                return self.scan_binary_int(start);
             }
         }
 
@@ -507,34 +505,34 @@ impl Lexer {
 
         // Check for scientific notation: e/E followed by optional +/- and digits
         // Scientific notation always produces a Float
-        if let Some(e) = self.peek() {
-            if e == 'e' || e == 'E' {
-                is_float = true;
-                self.advance_char(); // consume 'e'
-                num.push('e');
-                // Optional sign
-                if let Some(sign) = self.peek() {
-                    if sign == '+' || sign == '-' {
-                        self.advance_char();
-                        num.push(sign);
+        if let Some(e) = self.peek()
+            && (e == 'e' || e == 'E')
+        {
+            is_float = true;
+            self.advance_char(); // consume 'e'
+            num.push('e');
+            // Optional sign
+            if let Some(sign) = self.peek()
+                && (sign == '+' || sign == '-')
+            {
+                self.advance_char();
+                num.push(sign);
+            }
+            // Must have at least one digit after e
+            if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                return Err(LexError {
+                    message: "expected digit after exponent".into(),
+                    span: start,
+                });
+            }
+            while let Some(ch) = self.peek() {
+                if ch.is_ascii_digit() || ch == '_' {
+                    self.advance_char();
+                    if ch != '_' {
+                        num.push(ch);
                     }
-                }
-                // Must have at least one digit after e
-                if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                    return Err(LexError {
-                        message: "expected digit after exponent".into(),
-                        span: start,
-                    });
-                }
-                while let Some(ch) = self.peek() {
-                    if ch.is_ascii_digit() || ch == '_' {
-                        self.advance_char();
-                        if ch != '_' {
-                            num.push(ch);
-                        }
-                    } else {
-                        break;
-                    }
+                } else {
+                    break;
                 }
             }
         }

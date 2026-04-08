@@ -552,17 +552,16 @@ impl TypeChecker {
                     }
                     Type::Var(v) => {
                         // Check if this type variable has trait constraints
-                        if let Some(trait_names) = self.active_constraints.get(&v).cloned() {
+                        if let Some(trait_names) = self.active_constraints.get(v).cloned() {
                             // Look for the method in constrained traits
                             for trait_name in &trait_names {
-                                if let Some(trait_info) = self.traits.get(trait_name).cloned() {
-                                    if let Some((_, method_ty)) =
+                                if let Some(trait_info) = self.traits.get(trait_name).cloned()
+                                    && let Some((_, method_ty)) =
                                         trait_info.methods.iter().find(|(n, _)| n == &field)
-                                    {
-                                        let resolved = self.apply(&method_ty);
-                                        expr.ty = Some(resolved.clone());
-                                        return resolved;
-                                    }
+                                {
+                                    let resolved = self.apply(method_ty);
+                                    expr.ty = Some(resolved.clone());
+                                    return resolved;
                                 }
                             }
                             // Method not found on any constrained trait — error

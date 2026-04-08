@@ -1217,9 +1217,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(ParseError {
-                        message: format!(
-                            "invalid expression in string interpolation; use \\{{ for a literal brace"
-                        ),
+                        message: "invalid expression in string interpolation; use \\{ for a literal brace".into(),
                         span: self.span(),
                     });
                 }
