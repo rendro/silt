@@ -300,7 +300,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.asin requires a number".into())),
             };
-            if f < -1.0 || f > 1.0 {
+            if !(-1.0..=1.0).contains(&f) {
                 return Err(VmError::new(
                     "math.asin: argument must be between -1 and 1".into(),
                 ));
@@ -316,7 +316,7 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.acos requires a number".into())),
             };
-            if f < -1.0 || f > 1.0 {
+            if !(-1.0..=1.0).contains(&f) {
                 return Err(VmError::new(
                     "math.acos: argument must be between -1 and 1".into(),
                 ));
