@@ -10,7 +10,7 @@ type Person {
 fn age(dob: Date) -> Int {
   let today = time.today()
   let years = today.year - dob.year
-  match today.month < dob.month || (today.month == dob.month && today.day < dob.day) {
+  match today.month < dob.month || today.month == dob.month && today.day < dob.day {
     true -> years - 1
     false -> years
   }
@@ -38,11 +38,12 @@ fn main() {
     {"name": "Bob",    "dob": "1984-02-29"},
     {"name": "Carol",  "dob": "2000-12-25"}
   ]""")?
-
-  people |> list.each { p ->
+  people
+  |> list.each { p ->
     let bday = next_birthday(p.dob)
     let days = time.days_between(time.today(), bday)
-    let wd = p.dob |> time.weekday
+    let wd = p.dob
+    |> time.weekday
     println("{p.name}: born {p.dob} ({wd}), age {age(p.dob)}, next birthday {bday} in {days} days")
   }
 }

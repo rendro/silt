@@ -890,6 +890,8 @@ fn escape_string(s: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\t', "\\t")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
 }
 
 fn precedence(op: BinOp) -> u8 {

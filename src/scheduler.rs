@@ -305,3 +305,159 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task) {
     queue.push_back(task);
     inner.condvar.notify_one();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::VmClosure;
+    use crate::compiler::Compiler;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::vm::CallFrame;
+
+    /// Compile a Silt snippet and return a VM ready for execute_slice.
+    fn make_vm(src: &str) -> Vm {
+        let tokens = Lexer::new(src).tokenize().expect("lexer error");
+        let mut program = Parser::new(tokens).parse_program().expect("parse error");
+        let _ = crate::typechecker::check(&mut program);
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).expect("compile error");
+        let script = Arc::new(functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        vm.is_scheduled_task = true;
+        let closure = Arc::new(VmClosure {
+            function: script,
+            upvalues: vec![],
+        });
+        vm.frames.push(CallFrame {
+            closure,
+            ip: 0,
+            base_slot: 0,
+        });
+        vm
+    }
+
+    fn make_task(id: usize, src: &str) -> (Task, Arc<TaskHandle>) {
+        let handle = Arc::new(TaskHandle::new(id));
+        let vm = make_vm(src);
+        (Task { id, vm, handle: handle.clone() }, handle)
+    }
+
+    // ── Basic lifecycle ────────────────────────────────────────────
+
+    #[test]
+    fn test_submit_and_join_single_task() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 42 }");
+        scheduler.submit(task);
+        let result = handle.join();
+        assert_eq!(result, Ok(Value::Int(42)));
+    }
+
+    #[test]
+    fn test_submit_multiple_tasks_all_complete() {
+        let scheduler = Scheduler::new();
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let src = format!("fn main() {{ {} }}", i);
+            let (task, handle) = make_task(i, &src);
+            scheduler.submit(task);
+            handles.push((i as i64, handle));
+        }
+        for (expected, handle) in handles {
+            assert_eq!(handle.join(), Ok(Value::Int(expected)));
+        }
+    }
+
+    #[test]
+    fn test_failed_task_reports_error() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
+        scheduler.submit(task);
+        let result = handle.join();
+        assert!(result.is_err(), "expected error from division by zero");
+        assert!(
+            result.unwrap_err().contains("division"),
+            "error should mention division"
+        );
+    }
+
+    // ── Counter bookkeeping ────────────────────────────────────────
+
+    #[test]
+    fn test_live_tasks_counter_reaches_zero() {
+        let scheduler = Scheduler::new();
+        let mut handles = Vec::new();
+        for i in 0..5 {
+            let (task, handle) = make_task(i, "fn main() { 1 }");
+            scheduler.submit(task);
+            handles.push(handle);
+        }
+        for h in &handles {
+            let _ = h.join();
+        }
+        // Give workers a moment to decrement.
+        std::thread::sleep(Duration::from_millis(50));
+        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
+        assert_eq!(live, 0, "live_tasks should be 0 after all tasks complete, got {live}");
+    }
+
+    #[test]
+    fn test_failed_task_decrements_live_counter() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
+        scheduler.submit(task);
+        let _ = handle.join();
+        std::thread::sleep(Duration::from_millis(50));
+        let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
+        assert_eq!(live, 0, "live_tasks should be 0 after failed task, got {live}");
+    }
+
+    // ── Shutdown ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_drop_joins_workers_cleanly() {
+        let scheduler = Scheduler::new();
+        let (task, handle) = make_task(1, "fn main() { 1 }");
+        scheduler.submit(task);
+        let _ = handle.join();
+        // Drop the scheduler — should not hang or panic.
+        drop(scheduler);
+    }
+
+    #[test]
+    fn test_drop_empty_scheduler_is_noop() {
+        // No tasks submitted — drop should be immediate.
+        let scheduler = Scheduler::new();
+        drop(scheduler);
+    }
+
+    // ── Deadlock detection ─────────────────────────────────────────
+
+    #[test]
+    fn test_deadlock_detected_flag() {
+        // Two tasks that each receive from a channel nobody sends to.
+        // The scheduler should detect this as a deadlock.
+        let scheduler = Scheduler::new();
+        let src = r#"
+import channel
+fn main() {
+  let ch = channel.new(0)
+  channel.receive(ch)
+}
+        "#;
+        let (task1, handle1) = make_task(1, src);
+        let (task2, handle2) = make_task(2, src);
+        scheduler.submit(task1);
+        scheduler.submit(task2);
+        // Both should complete (with deadlock error).
+        let r1 = handle1.join();
+        let r2 = handle2.join();
+        assert!(r1.is_err(), "task1 should fail with deadlock");
+        assert!(r2.is_err(), "task2 should fail with deadlock");
+        assert!(
+            scheduler.deadlock_detected(),
+            "deadlock_detected flag should be set"
+        );
+    }
+}

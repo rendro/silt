@@ -338,6 +338,12 @@ impl Vm {
     /// The function receives `&[Value]` and returns `Result<Value, VmError>`.
     /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
     ///
+    /// # Panics
+    /// The closure must not panic. A panic inside `func` will abort the
+    /// scheduler worker thread that is executing the call, which may leave
+    /// other tasks unable to make progress. Always return `Err(VmError)`
+    /// for error conditions instead of panicking.
+    ///
     /// # Errors
     /// Returns an error if the VM's runtime has already been shared (e.g. via
     /// task spawning). All foreign functions must be registered before running
