@@ -226,7 +226,6 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     match module {
         "math" => vec!["pi", "e"],
-        "float" => vec!["max_value", "min_value"],
         _ => vec![],
     }
 }

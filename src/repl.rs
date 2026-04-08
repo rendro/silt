@@ -209,7 +209,7 @@ fn has_unclosed_delimiters(input: &str) -> bool {
         prev = ch;
     }
 
-    depth_brace > 0 || depth_paren > 0 || depth_bracket > 0
+    depth_brace > 0 || depth_paren > 0 || depth_bracket > 0 || in_string
 }
 
 fn is_declaration(input: &str) -> bool {
@@ -306,5 +306,119 @@ fn eval_expression(vm: &mut Vm, input: &str) {
         Err(e) => {
             eprintln!("{e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── builtin_names tests ────────────────────────────────────────
+
+    #[test]
+    fn builtin_names_non_empty_and_sorted() {
+        let names = builtin_names();
+        assert!(!names.is_empty(), "builtin_names should not be empty");
+        for window in names.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "builtin_names not sorted: {:?} > {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_names_contains_module_entries() {
+        let names = builtin_names();
+        assert!(names.contains(&"list.map".to_string()), "missing list.map");
+        assert!(
+            names.contains(&"string.split".to_string()),
+            "missing string.split"
+        );
+        assert!(names.contains(&"math.pi".to_string()), "missing math.pi");
+    }
+
+    #[test]
+    fn builtin_names_contains_keywords() {
+        let names = builtin_names();
+        for kw in [":quit", "fn", "let"] {
+            assert!(names.contains(&kw.to_string()), "missing keyword: {kw}");
+        }
+    }
+
+    #[test]
+    fn builtin_names_contains_globals() {
+        let names = builtin_names();
+        for g in ["print", "println", "Ok", "None"] {
+            assert!(names.contains(&g.to_string()), "missing global: {g}");
+        }
+    }
+
+    #[test]
+    fn builtin_names_no_duplicates() {
+        let names = builtin_names();
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            assert!(seen.insert(name), "duplicate entry: {name}");
+        }
+    }
+
+    // ── has_unclosed_delimiters tests ──────────────────────────────
+
+    #[test]
+    fn unclosed_brace() {
+        assert!(has_unclosed_delimiters("let x = {"));
+    }
+
+    #[test]
+    fn balanced_braces() {
+        assert!(!has_unclosed_delimiters("let x = {}"));
+    }
+
+    #[test]
+    fn unclosed_paren() {
+        assert!(has_unclosed_delimiters("fn foo("));
+    }
+
+    #[test]
+    fn balanced_parens() {
+        assert!(!has_unclosed_delimiters("fn foo(x)"));
+    }
+
+    #[test]
+    fn unclosed_bracket() {
+        assert!(has_unclosed_delimiters("[1, 2"));
+    }
+
+    #[test]
+    fn balanced_brackets() {
+        assert!(!has_unclosed_delimiters("[1, 2]"));
+    }
+
+    #[test]
+    fn empty_input() {
+        assert!(!has_unclosed_delimiters(""));
+    }
+
+    #[test]
+    fn complete_statement() {
+        assert!(!has_unclosed_delimiters("let x = 1"));
+    }
+
+    #[test]
+    fn unclosed_string() {
+        assert!(has_unclosed_delimiters("\"unclosed string"));
+    }
+
+    #[test]
+    fn nested_unclosed() {
+        assert!(has_unclosed_delimiters("{ ( ["));
+    }
+
+    #[test]
+    fn nested_balanced() {
+        assert!(!has_unclosed_delimiters("{ ( [] ) }"));
     }
 }

@@ -205,7 +205,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 if reason.is_some() {
                     inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
                     // Store the handle so we can complete it on deadlock.
-                    let handle_for_registry = task_slot.lock().as_ref().unwrap().handle.clone();
+                    // SAFETY: task_slot was just created with Some(Task{..}) above.
+                    let handle_for_registry = task_slot
+                        .lock()
+                        .as_ref()
+                        .expect("task_slot just initialized")
+                        .handle
+                        .clone();
                     inner.blocked_handles.lock().push(handle_for_registry);
                 }
 
