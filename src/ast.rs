@@ -1,3 +1,4 @@
+use crate::intern::Symbol;
 use crate::lexer::Span;
 use crate::types::Type;
 
@@ -20,15 +21,6 @@ impl Expr {
     }
 }
 
-impl ExprKind {
-    pub fn kind_name(&self) -> &str {
-        match self {
-            ExprKind::Ident(name) => name,
-            _ => "<expr>",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     // Literals
@@ -45,8 +37,8 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
 
     // Variables & access
-    Ident(String),
-    FieldAccess(Box<Expr>, String),
+    Ident(Symbol),
+    FieldAccess(Box<Expr>, Symbol),
 
     // Operations
     Binary(Box<Expr>, BinOp, Box<Expr>),
@@ -67,12 +59,12 @@ pub enum ExprKind {
 
     // Records
     RecordCreate {
-        name: String,
-        fields: Vec<(String, Expr)>,
+        name: Symbol,
+        fields: Vec<(Symbol, Expr)>,
     },
     RecordUpdate {
         expr: Box<Expr>,
-        fields: Vec<(String, Expr)>,
+        fields: Vec<(Symbol, Expr)>,
     },
 
     // Control flow
@@ -88,7 +80,7 @@ pub enum ExprKind {
     // Loop
     /// Loop expression: `loop x = init, y = init { body }`
     Loop {
-        bindings: Vec<(String, Expr)>,
+        bindings: Vec<(Symbol, Expr)>,
         body: Box<Expr>,
     },
     /// Recur: `loop(args)` inside a loop body
@@ -168,16 +160,16 @@ pub enum ListElem {
 #[derive(Debug, Clone)]
 pub enum Pattern {
     Wildcard,
-    Ident(String),
+    Ident(Symbol),
     Int(i64),
     Float(f64),
     Bool(bool),
     StringLit(String),
     Tuple(Vec<Pattern>),
-    Constructor(String, Vec<Pattern>),
+    Constructor(Symbol, Vec<Pattern>),
     Record {
-        name: Option<String>,
-        fields: Vec<(String, Option<Pattern>)>,
+        name: Option<Symbol>,
+        fields: Vec<(Symbol, Option<Pattern>)>,
         has_rest: bool,
     },
     /// Match a list: [a, b, c] or [head, ...tail] or []
@@ -188,10 +180,10 @@ pub enum Pattern {
     Range(i64, i64),
     /// Float range pattern: 1.0..10.0 (inclusive on both ends)
     FloatRange(f64, f64),
-    /// Map pattern: #{ "key": value }
+    /// Map pattern: #{ "key": value } — keys are string literals, not identifiers
     Map(Vec<(String, Pattern)>),
     /// Pin pattern: ^name -- matches against the existing variable's value
-    Pin(String),
+    Pin(Symbol),
 }
 
 // ── Parameters & type expressions ────────────────────────────────────
@@ -204,8 +196,8 @@ pub struct Param {
 
 #[derive(Debug, Clone)]
 pub enum TypeExpr {
-    Named(String),
-    Generic(String, Vec<TypeExpr>),
+    Named(Symbol),
+    Generic(Symbol, Vec<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
@@ -236,10 +228,10 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
-    pub name: String,
+    pub name: Symbol,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
-    pub where_clauses: Vec<(String, String)>,
+    pub where_clauses: Vec<(Symbol, Symbol)>,
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,
@@ -253,20 +245,20 @@ pub enum TypeBody {
 
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
-    pub name: String,
+    pub name: Symbol,
     pub fields: Vec<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RecordField {
-    pub name: String,
+    pub name: Symbol,
     pub ty: TypeExpr,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
-    pub name: String,
-    pub params: Vec<String>,
+    pub name: Symbol,
+    pub params: Vec<Symbol>,
     pub body: TypeBody,
     pub is_pub: bool,
     pub span: Span,
@@ -274,24 +266,24 @@ pub struct TypeDecl {
 
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
-    pub name: String,
+    pub name: Symbol,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct TraitImpl {
-    pub trait_name: String,
-    pub target_type: String,
+    pub trait_name: Symbol,
+    pub target_type: Symbol,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub enum ImportTarget {
-    Module(String),
-    Items(String, Vec<String>),
-    Alias(String, String),
+    Module(Symbol),
+    Items(Symbol, Vec<Symbol>),
+    Alias(Symbol, Symbol),
 }
 
 #[derive(Debug, Clone)]

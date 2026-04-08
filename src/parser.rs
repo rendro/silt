@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::intern::{self, Symbol};
 use crate::lexer::{Span, SpannedToken, Token};
 use std::fmt;
 
@@ -94,7 +95,7 @@ impl Parser {
         }
     }
 
-    fn expect_ident(&mut self) -> Result<(String, Span)> {
+    fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         self.skip_nl();
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -241,12 +242,12 @@ impl Parser {
                 let (type_param, _) = self.expect_ident()?;
                 self.expect(&Token::Colon)?;
                 let (trait_name, _) = self.expect_ident()?;
-                clauses.push((type_param.clone(), trait_name));
+                clauses.push((type_param, trait_name));
                 // Support multi-trait bounds: `where a: Equal + Hash`
                 while self.at(&Token::Plus) {
                     self.advance(); // consume '+'
                     let (trait_name, _) = self.expect_ident()?;
-                    clauses.push((type_param.clone(), trait_name));
+                    clauses.push((type_param, trait_name));
                 }
                 self.skip_nl();
                 if self.at(&Token::Comma) {
@@ -379,7 +380,7 @@ impl Parser {
         }
         if let Token::Ident(ref name) = self.tokens[i].0 {
             // lowercase first char → likely record field
-            name.starts_with(|c: char| c.is_lowercase())
+            intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
         } else {
             false
         }
@@ -467,7 +468,7 @@ impl Parser {
             }))
         } else {
             // Must be `for Type { ... }`
-            self.expect(&Token::Ident("for".into()))?;
+            self.expect(&Token::Ident(intern::intern("for")))?;
             let (target, _) = self.expect_ident()?;
             self.expect(&Token::LBrace)?;
             let mut methods = Vec::new();
@@ -521,7 +522,7 @@ impl Parser {
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         self.skip_nl();
         // Function type: Fn(A, B) -> C
-        if matches!(self.peek(), Token::Ident(s) if s == "Fn") {
+        if matches!(self.peek(), Token::Ident(s) if *s == intern::intern("Fn")) {
             self.advance();
             self.expect(&Token::LParen)?;
             let mut params = Vec::new();
@@ -556,7 +557,7 @@ impl Parser {
             return Ok(TypeExpr::Tuple(elems));
         }
         let (name, _) = self.expect_ident()?;
-        if name == "Self" {
+        if name == intern::intern("Self") {
             return Ok(TypeExpr::SelfType);
         }
         if self.peek() == &Token::LParen {
@@ -783,7 +784,7 @@ impl Parser {
                         );
                     } else if let Token::Int(n) = self.peek() {
                         // Tuple index access: expr.0, expr.1, etc.
-                        let field = n.to_string();
+                        let field = intern::intern(&n.to_string());
                         self.advance();
                         let span = left.span;
                         left = Expr::new(ExprKind::FieldAccess(Box::new(left), field), span);
@@ -1042,8 +1043,8 @@ impl Parser {
                 self.advance();
                 self.parse_string_interp(s, span)
             }
-            Token::Ident(ref name) if is_constructor(name) => {
-                let name = name.clone();
+            Token::Ident(ref name) if is_constructor(*name) => {
+                let name = *name;
                 self.advance();
                 // Could be: Constructor, Constructor(args), or RecordCreate { fields }
                 if !self.has_newline_before() && self.at(&Token::LParen) {
@@ -1260,7 +1261,7 @@ impl Parser {
         self.expect(&Token::RBracket)?;
         Ok(Expr::new(
             ExprKind::Call(
-                Box::new(Expr::new(ExprKind::Ident("__index".into()), span)),
+                Box::new(Expr::new(ExprKind::Ident(intern::intern("__index")), span)),
                 vec![left, index],
             ),
             span,
@@ -1436,7 +1437,8 @@ impl Parser {
 
         if guardless {
             // Guardless match: each arm's LHS is a boolean expression or `_`
-            let is_wildcard = matches!(self.peek(), Token::Ident(name) if name == "_");
+            let is_wildcard =
+                matches!(self.peek(), Token::Ident(name) if *name == intern::intern("_"));
             if is_wildcard {
                 self.advance();
                 self.expect(&Token::Arrow)?;
@@ -1556,7 +1558,7 @@ impl Parser {
 
     // ── Record fields ────────────────────────────────────────────────
 
-    fn parse_record_fields(&mut self) -> Result<Vec<(String, Expr)>> {
+    fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
         let mut fields = Vec::new();
         self.skip_nl();
         while !self.at(&Token::RBrace) {
@@ -1600,12 +1602,12 @@ impl Parser {
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
         self.skip_nl();
         match self.peek().clone() {
-            Token::Ident(ref name) if name == "_" => {
+            Token::Ident(ref name) if *name == intern::intern("_") => {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
-            Token::Ident(ref name) if is_constructor(name) => {
-                let name = name.clone();
+            Token::Ident(ref name) if is_constructor(*name) => {
+                let name = *name;
                 self.advance();
                 // Constructor pattern: Some(x), Ok(value), Rect(w, h)
                 if self.at(&Token::LParen) {
@@ -1920,7 +1922,6 @@ impl Parser {
                 self.advance();
                 match self.peek().clone() {
                     Token::Ident(name) => {
-                        let name = name.clone();
                         self.advance();
                         Ok(Pattern::Pin(name))
                     }
@@ -1945,8 +1946,8 @@ impl Parser {
     }
 }
 
-fn is_constructor(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_uppercase())
+fn is_constructor(name: Symbol) -> bool {
+    intern::resolve(name).starts_with(|c: char| c.is_uppercase())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -1954,6 +1955,7 @@ fn is_constructor(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intern;
     use crate::lexer::Lexer;
 
     fn parse(input: &str) -> Program {
@@ -2009,7 +2011,7 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Type(ref td) = prog.decls[0] {
-            assert_eq!(td.name, "User");
+            assert_eq!(td.name, intern::intern("User"));
             assert!(matches!(td.body, TypeBody::Record(_)));
         } else {
             panic!("expected type decl");
@@ -2028,7 +2030,7 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Type(ref td) = prog.decls[0] {
-            assert_eq!(td.name, "Shape");
+            assert_eq!(td.name, intern::intern("Shape"));
             if let TypeBody::Enum(ref variants) = td.body {
                 assert_eq!(variants.len(), 2);
             } else {
@@ -2161,7 +2163,10 @@ fn main() {
         "#,
         );
         if let Decl::Fn(f) = &prog.decls[0] {
-            assert_eq!(f.where_clauses, vec![("x".into(), "Display".into())]);
+            assert_eq!(
+                f.where_clauses,
+                vec![(intern::intern("x"), intern::intern("Display"))]
+            );
         } else {
             panic!("expected fn decl");
         }
@@ -2195,9 +2200,9 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Trait(ref td) = prog.decls[0] {
-            assert_eq!(td.name, "Display");
+            assert_eq!(td.name, intern::intern("Display"));
             assert_eq!(td.methods.len(), 1);
-            assert_eq!(td.methods[0].name, "display");
+            assert_eq!(td.methods[0].name, intern::intern("display"));
         } else {
             panic!("expected trait decl");
         }
@@ -2445,7 +2450,9 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern, Pattern::Pin(name) if name == "x"));
+                assert!(
+                    matches!(&arms[0].pattern, Pattern::Pin(name) if *name == intern::intern("x"))
+                );
             } else {
                 panic!("expected match");
             }
@@ -2478,7 +2485,9 @@ fn main() {
                 if let Pattern::Map(ref entries) = arms[0].pattern {
                     assert_eq!(entries.len(), 1);
                     assert_eq!(entries[0].0, "key");
-                    assert!(matches!(entries[0].1, Pattern::Ident(ref v) if v == "v"));
+                    assert!(
+                        matches!(entries[0].1, Pattern::Ident(ref v) if *v == intern::intern("v"))
+                    );
                 } else {
                     panic!("expected map pattern");
                 }
@@ -2512,7 +2521,7 @@ fn main() {
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
                 if let Pattern::Constructor(ref name, ref inner) = arms[0].pattern {
-                    assert_eq!(name, "Some");
+                    assert_eq!(*name, intern::intern("Some"));
                     assert_eq!(inner.len(), 1);
                     assert!(matches!(&inner[0], Pattern::Tuple(pats) if pats.len() == 2));
                 } else {
@@ -2549,9 +2558,11 @@ fn main() {
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
                 if let Pattern::List(ref pats, ref rest) = arms[0].pattern {
                     assert_eq!(pats.len(), 1);
-                    assert!(matches!(&pats[0], Pattern::Ident(n) if n == "h"));
+                    assert!(matches!(&pats[0], Pattern::Ident(n) if *n == intern::intern("h")));
                     assert!(rest.is_some());
-                    assert!(matches!(rest.as_deref().unwrap(), Pattern::Ident(n) if n == "t"));
+                    assert!(
+                        matches!(rest.as_deref().unwrap(), Pattern::Ident(n) if *n == intern::intern("t"))
+                    );
                 } else {
                     panic!("expected list pattern");
                 }
@@ -2592,11 +2603,11 @@ fn main() {
                     has_rest,
                 } = arms[0].pattern
                 {
-                    assert_eq!(name.as_deref(), Some("User"));
+                    assert_eq!(*name, Some(intern::intern("User")));
                     assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].0, "name");
+                    assert_eq!(fields[0].0, intern::intern("name"));
                     assert!(fields[0].1.is_none()); // shorthand
-                    assert_eq!(fields[1].0, "age");
+                    assert_eq!(fields[1].0, intern::intern("age"));
                     assert!(fields[1].1.is_none());
                     assert!(!has_rest);
                 } else {
@@ -2735,7 +2746,7 @@ fn main() {
             };
             // Should be Pipe(Pipe(a, f), g) — left-associative
             if let ExprKind::Pipe(ref left, ref right) = expr.kind {
-                assert!(matches!(&right.kind, ExprKind::Ident(n) if n == "g"));
+                assert!(matches!(&right.kind, ExprKind::Ident(n) if *n == intern::intern("g")));
                 assert!(matches!(&left.kind, ExprKind::Pipe(_, _)));
             } else {
                 panic!("expected pipe expression, got {:?}", expr.kind);
@@ -2824,8 +2835,8 @@ fn main() {
             } = expr.kind
             {
                 assert_eq!(bindings.len(), 2);
-                assert_eq!(bindings[0].0, "i");
-                assert_eq!(bindings[1].0, "acc");
+                assert_eq!(bindings[0].0, intern::intern("i"));
+                assert_eq!(bindings[1].0, intern::intern("acc"));
                 // body should contain a Recur
                 if let ExprKind::Block(ref inner_stmts) = body.kind {
                     let recur_expr = match inner_stmts.last().unwrap() {
@@ -2875,7 +2886,7 @@ fn main() {
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Fn(ref f) = prog.decls[0] {
             assert!(f.is_pub);
-            assert_eq!(f.name, "add");
+            assert_eq!(f.name, intern::intern("add"));
         } else {
             panic!("expected fn decl");
         }
@@ -2895,7 +2906,7 @@ fn main() {
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Type(ref td) = prog.decls[0] {
             assert!(td.is_pub);
-            assert_eq!(td.name, "Color");
+            assert_eq!(td.name, intern::intern("Color"));
         } else {
             panic!("expected type decl");
         }
@@ -2917,7 +2928,7 @@ fn main() {
         } = prog.decls[0]
         {
             assert!(!is_pub);
-            assert!(matches!(pattern, Pattern::Ident(n) if n == "x"));
+            assert!(matches!(pattern, Pattern::Ident(n) if *n == intern::intern("x")));
             assert!(matches!(&value.kind, ExprKind::Int(42)));
         } else {
             panic!("expected let decl");
@@ -2936,10 +2947,10 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Trait(ref td) = prog.decls[0] {
-            assert_eq!(td.name, "Comparable");
+            assert_eq!(td.name, intern::intern("Comparable"));
             assert_eq!(td.methods.len(), 2);
-            assert_eq!(td.methods[0].name, "compare");
-            assert_eq!(td.methods[1].name, "equal");
+            assert_eq!(td.methods[0].name, intern::intern("compare"));
+            assert_eq!(td.methods[1].name, intern::intern("equal"));
         } else {
             panic!("expected trait decl");
         }
@@ -2955,12 +2966,14 @@ fn main() {
         "#,
         );
         assert_eq!(prog.decls.len(), 3);
-        assert!(matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m)) if m == "io"));
         assert!(
-            matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if m == "math" && items.len() == 2)
+            matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m)) if *m == intern::intern("io"))
         );
         assert!(
-            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if m == "http" && a == "h")
+            matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if *m == intern::intern("math") && items.len() == 2)
+        );
+        assert!(
+            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if *m == intern::intern("http") && *a == intern::intern("h"))
         );
     }
 
@@ -3028,10 +3041,13 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Fn(ref f) = prog.decls[0] {
-            assert_eq!(f.name, "show");
+            assert_eq!(f.name, intern::intern("show"));
             assert!(f.return_type.is_some());
             assert_eq!(f.where_clauses.len(), 1);
-            assert_eq!(f.where_clauses[0], ("x".into(), "Display".into()));
+            assert_eq!(
+                f.where_clauses[0],
+                (intern::intern("x"), intern::intern("Display"))
+            );
         } else {
             panic!("expected fn decl");
         }
@@ -3166,7 +3182,7 @@ fn main() {
                     has_rest,
                 } = arms[0].pattern
                 {
-                    assert_eq!(name.as_deref(), Some("User"));
+                    assert_eq!(*name, Some(intern::intern("User")));
                     assert_eq!(fields.len(), 1);
                     assert!(has_rest);
                 } else {
@@ -3225,7 +3241,7 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 1);
         if let Decl::Fn(ref f) = prog.decls[0] {
-            assert_eq!(f.name, "square");
+            assert_eq!(f.name, intern::intern("square"));
             // Body should be a binary expression, not a block
             assert!(matches!(&f.body.kind, ExprKind::Binary(_, BinOp::Mul, _)));
         } else {

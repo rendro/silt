@@ -99,7 +99,7 @@ impl TypeChecker {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
                             .map(|_| Pattern::Wildcard)
                             .collect();
-                        let ctor = Pattern::Constructor(variant.name.clone(), sub_pats.clone());
+                        let ctor = Pattern::Constructor(variant.name, sub_pats.clone());
                         if self.is_useful(matrix, &ctor, ty, depth + 1) {
                             return true;
                         }
@@ -159,11 +159,11 @@ impl TypeChecker {
                 specialized.is_empty()
             }
             Pattern::Constructor(name, sub_pats) => {
-                let specialized = self.specialize_constructor(matrix, name, sub_pats.len());
+                let specialized = self.specialize_constructor(matrix, *name, sub_pats.len());
                 if sub_pats.is_empty() {
                     specialized.is_empty()
                 } else {
-                    let sub_ty = self.sub_type_for_constructor(name, ty);
+                    let sub_ty = self.sub_type_for_constructor(*name, ty);
                     let sub_query = if sub_pats.len() == 1 {
                         sub_pats[0].clone()
                     } else {
@@ -331,7 +331,7 @@ impl TypeChecker {
                                     let sub_pats: Vec<Pattern> = (0..v.field_types.len())
                                         .map(|_| Pattern::Wildcard)
                                         .collect();
-                                    Pattern::Constructor(v.name.clone(), sub_pats)
+                                    Pattern::Constructor(v.name, sub_pats)
                                 })
                                 .collect()
                         } else {
@@ -365,13 +365,13 @@ impl TypeChecker {
     fn specialize_constructor(
         &self,
         matrix: &[&Pattern],
-        ctor_name: &str,
+        ctor_name: Symbol,
         arity: usize,
     ) -> Vec<Pattern> {
         let mut result = Vec::new();
         for pat in matrix {
             match pat {
-                Pattern::Constructor(name, sub_pats) if name == ctor_name => {
+                Pattern::Constructor(name, sub_pats) if *name == ctor_name => {
                     if arity <= 1 {
                         result.push(sub_pats.first().cloned().unwrap_or(Pattern::Wildcard));
                     } else {
@@ -411,8 +411,8 @@ impl TypeChecker {
     }
 
     /// Get the sub-type for a constructor's fields.
-    fn sub_type_for_constructor(&self, ctor_name: &str, parent_ty: &Type) -> Type {
-        if let Some(enum_name) = self.variant_to_enum.get(ctor_name)
+    fn sub_type_for_constructor(&self, ctor_name: Symbol, parent_ty: &Type) -> Type {
+        if let Some(enum_name) = self.variant_to_enum.get(&ctor_name)
             && let Some(enum_info) = self.enums.get(enum_name)
             && let Some(variant) = enum_info.variants.iter().find(|v| v.name == ctor_name)
         {
@@ -467,9 +467,9 @@ impl TypeChecker {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
                             .map(|_| Pattern::Wildcard)
                             .collect();
-                        let ctor = Pattern::Constructor(variant.name.clone(), sub_pats);
+                        let ctor = Pattern::Constructor(variant.name, sub_pats);
                         if self.is_useful(patterns, &ctor, ty, 0) {
-                            missing.push(variant.name.clone());
+                            missing.push(format!("{}", variant.name));
                         }
                     }
                     if missing.is_empty() {

@@ -3,10 +3,22 @@
 //! A `Function` is the compilation unit — it holds a `Chunk` of bytecode,
 //! a constant pool, and source span mappings for error reporting.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::lexer::Span;
 use crate::value::Value;
+
+/// A dedup key for simple constant types.  Using a dedicated enum avoids
+/// relying on `Value`'s `Hash`/`Eq` (which has quirks around `Float` NaN)
+/// and keeps the dedup scope explicit.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+enum ConstantKey {
+    Int(i64),
+    Bool(bool),
+    String(String),
+    Float(u64), // f64::to_bits()
+}
 
 // ── Opcodes ────────────────────────────────────────────────────────
 
@@ -276,6 +288,8 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     /// Source spans for error reporting, run-length encoded: (bytecode_offset, span).
     pub spans: Vec<(usize, Span)>,
+    /// O(1) lookup for deduplicating simple constants.
+    constant_dedup: HashMap<ConstantKey, u16>,
 }
 
 impl Default for Chunk {
@@ -290,6 +304,7 @@ impl Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             spans: Vec::new(),
+            constant_dedup: HashMap::new(),
         }
     }
 
@@ -326,20 +341,28 @@ impl Chunk {
     }
 
     /// Add a constant to the pool, returning its index.
-    /// Deduplicates integers, booleans, and strings.
+    /// Deduplicates integers, booleans, strings, and floats via O(1) HashMap lookup.
     pub fn add_constant(&mut self, value: Value) -> u16 {
-        // Deduplicate simple constants.
-        for (i, existing) in self.constants.iter().enumerate() {
-            match (&value, existing) {
-                (Value::Int(a), Value::Int(b)) if a == b => return i as u16,
-                (Value::Bool(a), Value::Bool(b)) if a == b => return i as u16,
-                (Value::String(a), Value::String(b)) if a == b => return i as u16,
-                (Value::Float(a), Value::Float(b)) if a.to_bits() == b.to_bits() => {
-                    return i as u16;
-                }
-                _ => {}
+        let key = match &value {
+            Value::Int(n) => Some(ConstantKey::Int(*n)),
+            Value::Bool(b) => Some(ConstantKey::Bool(*b)),
+            Value::String(s) => Some(ConstantKey::String(s.clone())),
+            Value::Float(f) => Some(ConstantKey::Float(f.to_bits())),
+            _ => None,
+        };
+
+        if let Some(k) = key {
+            if let Some(&idx) = self.constant_dedup.get(&k) {
+                return idx;
             }
+            let index = self.constants.len();
+            assert!(index <= u16::MAX as usize, "constant pool overflow");
+            self.constants.push(value);
+            let idx = index as u16;
+            self.constant_dedup.insert(k, idx);
+            return idx;
         }
+
         let index = self.constants.len();
         assert!(index <= u16::MAX as usize, "constant pool overflow");
         self.constants.push(value);

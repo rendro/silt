@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::intern::{self, Symbol};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
@@ -32,7 +34,7 @@ pub enum Token {
     StringEnd(String),
 
     // Identifiers
-    Ident(String),
+    Ident(Symbol),
 
     // Operators
     Plus,
@@ -641,7 +643,7 @@ impl Lexer {
             "loop" => Token::Loop,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
-            _ => Token::Ident(name),
+            _ => Token::Ident(intern::intern(&name)),
         };
         (tok, start)
     }
@@ -863,7 +865,7 @@ mod tests {
             lex("let x = 42"),
             vec![
                 Token::Let,
-                Token::Ident("x".into()),
+                Token::Ident(intern::intern("x")),
                 Token::Eq,
                 Token::Int(42),
             ]
@@ -898,7 +900,7 @@ mod tests {
             tokens,
             vec![
                 Token::StringStart("hello ".into()),
-                Token::Ident("name".into()),
+                Token::Ident(intern::intern("name")),
                 Token::StringEnd(String::new()),
             ]
         );
@@ -911,9 +913,9 @@ mod tests {
             tokens,
             vec![
                 Token::StringStart("a ".into()),
-                Token::Ident("x".into()),
+                Token::Ident(intern::intern("x")),
                 Token::StringMiddle(" b ".into()),
-                Token::Ident("y".into()),
+                Token::Ident(intern::intern("y")),
                 Token::StringEnd(" c".into()),
             ]
         );
@@ -996,7 +998,7 @@ mod tests {
             tokens,
             vec![
                 Token::Let,
-                Token::Ident("x".into()),
+                Token::Ident(intern::intern("x")),
                 Token::Eq,
                 Token::StringLit("hello\nworld".into()),
             ]
@@ -1041,7 +1043,7 @@ mod tests {
             tokens,
             vec![
                 Token::Let,
-                Token::Ident("json".into()),
+                Token::Ident(intern::intern("json")),
                 Token::Eq,
                 Token::StringLit("{\n  \"name\": \"Alice\"\n}".into()),
             ]

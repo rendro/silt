@@ -15,6 +15,7 @@ mod resolve;
 pub(super) use std::collections::{BTreeSet, HashMap};
 
 pub(super) use crate::ast::*;
+pub(super) use crate::intern::{Symbol, intern, resolve};
 pub(super) use crate::lexer::Span;
 pub(super) use crate::types::*;
 
@@ -25,7 +26,7 @@ pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
 /// A typing environment mapping names to type schemes.
 #[derive(Debug, Clone)]
 pub(super) struct TypeEnv {
-    pub(super) bindings: HashMap<std::string::String, Scheme>,
+    pub(super) bindings: HashMap<Symbol, Scheme>,
     parent: Option<Box<TypeEnv>>,
 }
 
@@ -44,12 +45,12 @@ impl TypeEnv {
         }
     }
 
-    pub(super) fn define(&mut self, name: std::string::String, scheme: Scheme) {
+    pub(super) fn define(&mut self, name: Symbol, scheme: Scheme) {
         self.bindings.insert(name, scheme);
     }
 
-    pub(super) fn lookup(&self, name: &str) -> Option<&Scheme> {
-        if let Some(s) = self.bindings.get(name) {
+    pub(super) fn lookup(&self, name: Symbol) -> Option<&Scheme> {
+        if let Some(s) = self.bindings.get(&name) {
             Some(s)
         } else if let Some(ref parent) = self.parent {
             parent.lookup(name)
@@ -88,30 +89,30 @@ impl TypeEnv {
 /// Information about a declared enum type.
 #[derive(Debug, Clone)]
 pub(super) struct EnumInfo {
-    pub(super) _name: std::string::String,
-    pub(super) params: Vec<std::string::String>,
+    pub(super) _name: Symbol,
+    pub(super) params: Vec<Symbol>,
     pub(super) variants: Vec<VariantInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct VariantInfo {
-    pub(super) name: std::string::String,
+    pub(super) name: Symbol,
     pub(super) field_types: Vec<Type>,
 }
 
 /// Information about a declared record type.
 #[derive(Debug, Clone)]
 pub(super) struct RecordInfo {
-    pub(super) _name: std::string::String,
-    pub(super) _params: Vec<std::string::String>,
-    pub(super) fields: Vec<(std::string::String, Type)>,
+    pub(super) _name: Symbol,
+    pub(super) _params: Vec<Symbol>,
+    pub(super) fields: Vec<(Symbol, Type)>,
 }
 
 /// Information about a declared trait.
 #[derive(Debug, Clone)]
 pub(super) struct TraitInfo {
-    pub(super) _name: std::string::String,
-    pub(super) methods: Vec<(std::string::String, Type)>,
+    pub(super) _name: Symbol,
+    pub(super) methods: Vec<(Symbol, Type)>,
 }
 
 /// A registered trait method implementation (new trait system).
@@ -131,18 +132,17 @@ pub struct TypeChecker {
     /// Counter for generating fresh type variables.
     pub(super) next_var: TyVar,
     /// Declared enum types (type name -> enum info).
-    pub(super) enums: HashMap<std::string::String, EnumInfo>,
+    pub(super) enums: HashMap<Symbol, EnumInfo>,
     /// Maps variant constructor name -> parent enum type name.
-    pub(super) variant_to_enum: HashMap<std::string::String, std::string::String>,
+    pub(super) variant_to_enum: HashMap<Symbol, Symbol>,
     /// Declared record types (type name -> record info).
-    pub(super) records: HashMap<std::string::String, RecordInfo>,
+    pub(super) records: HashMap<Symbol, RecordInfo>,
     /// Declared traits.
-    pub(super) traits: HashMap<std::string::String, TraitInfo>,
+    pub(super) traits: HashMap<Symbol, TraitInfo>,
     /// Method table: (type_name, method_name) → method entry.
-    pub(super) method_table: HashMap<(std::string::String, std::string::String), MethodEntry>,
+    pub(super) method_table: HashMap<(Symbol, Symbol), MethodEntry>,
     /// Tracks which (trait_name, type_name) pairs have been implemented.
-    pub(super) trait_impl_set:
-        std::collections::HashSet<(std::string::String, std::string::String)>,
+    pub(super) trait_impl_set: std::collections::HashSet<(Symbol, Symbol)>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -152,7 +152,7 @@ pub struct TypeChecker {
     /// Active trait constraints for type variables in the current function body.
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
-    pub(super) active_constraints: HashMap<TyVar, Vec<std::string::String>>,
+    pub(super) active_constraints: HashMap<TyVar, Vec<Symbol>>,
 }
 
 impl Default for TypeChecker {
@@ -207,19 +207,16 @@ impl TypeChecker {
             Type::List(inner) => Type::List(Box::new(self.apply(inner))),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
             Type::Record(name, fields) => {
-                let fields = fields
-                    .iter()
-                    .map(|(n, t)| (n.clone(), self.apply(t)))
-                    .collect();
-                Type::Record(name.clone(), fields)
+                let fields = fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
+                Type::Record(*name, fields)
             }
             Type::Variant(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
-                Type::Variant(name.clone(), args)
+                Type::Variant(*name, args)
             }
             Type::Generic(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
-                Type::Generic(name.clone(), args)
+                Type::Generic(*name, args)
             }
             Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
@@ -394,7 +391,7 @@ impl TypeChecker {
     pub(super) fn instantiate_with_constraints(
         &mut self,
         scheme: &Scheme,
-    ) -> (Type, Vec<(TyVar, String)>) {
+    ) -> (Type, Vec<(TyVar, Symbol)>) {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
@@ -404,8 +401,8 @@ impl TypeChecker {
             .constraints
             .iter()
             .map(|(v, trait_name)| match mapping.get(v) {
-                Some(Type::Var(new_v)) => (*new_v, trait_name.clone()),
-                _ => (*v, trait_name.clone()),
+                Some(Type::Var(new_v)) => (*new_v, *trait_name),
+                _ => (*v, *trait_name),
             })
             .collect();
         (ty, constraints)
@@ -416,21 +413,21 @@ impl TypeChecker {
     /// Convert a resolved Type to a type name string suitable for matching
     /// against `TraitImplInfo.target_type`. Returns `None` if the type is
     /// unresolved (still a type variable) or cannot be mapped to a name.
-    pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<std::string::String> {
+    pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<Symbol> {
         match ty {
-            Type::Int => Some("Int".into()),
-            Type::Float => Some("Float".into()),
-            Type::Bool => Some("Bool".into()),
-            Type::String => Some("String".into()),
-            Type::Unit => Some("()".into()),
-            Type::Record(name, _) => Some(name.clone()),
-            Type::Generic(name, _) => Some(name.clone()),
+            Type::Int => Some(intern("Int")),
+            Type::Float => Some(intern("Float")),
+            Type::Bool => Some(intern("Bool")),
+            Type::String => Some(intern("String")),
+            Type::Unit => Some(intern("()")),
+            Type::Record(name, _) => Some(*name),
+            Type::Generic(name, _) => Some(*name),
             Type::Variant(name, _) => {
                 // Look up the parent enum name for this variant
                 if let Some(enum_name) = self.variant_to_enum.get(name) {
-                    Some(enum_name.clone())
+                    Some(*enum_name)
                 } else {
-                    Some(name.clone())
+                    Some(*name)
                 }
             }
             Type::Var(_) => None, // unresolved
@@ -469,11 +466,11 @@ impl TypeChecker {
         {
             let display_self = self.fresh_var();
             self.traits.insert(
-                "Display".into(),
+                intern("Display"),
                 TraitInfo {
-                    _name: "Display".into(),
+                    _name: intern("Display"),
                     methods: vec![(
-                        "display".into(),
+                        intern("display"),
                         Type::Fun(vec![display_self], Box::new(Type::String)),
                     )],
                 },
@@ -483,11 +480,11 @@ impl TypeChecker {
             let compare_a = self.fresh_var();
             let compare_b = self.fresh_var();
             self.traits.insert(
-                "Compare".into(),
+                intern("Compare"),
                 TraitInfo {
-                    _name: "Compare".into(),
+                    _name: intern("Compare"),
                     methods: vec![(
-                        "compare".into(),
+                        intern("compare"),
                         Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
                     )],
                 },
@@ -497,11 +494,11 @@ impl TypeChecker {
             let equal_a = self.fresh_var();
             let equal_b = self.fresh_var();
             self.traits.insert(
-                "Equal".into(),
+                intern("Equal"),
                 TraitInfo {
-                    _name: "Equal".into(),
+                    _name: intern("Equal"),
                     methods: vec![(
-                        "equal".into(),
+                        intern("equal"),
                         Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
                     )],
                 },
@@ -510,11 +507,11 @@ impl TypeChecker {
         {
             let hash_self = self.fresh_var();
             self.traits.insert(
-                "Hash".into(),
+                intern("Hash"),
                 TraitInfo {
-                    _name: "Hash".into(),
+                    _name: intern("Hash"),
                     methods: vec![(
-                        "hash".into(),
+                        intern("hash"),
                         Type::Fun(vec![hash_self], Box::new(Type::Int)),
                     )],
                 },
@@ -559,12 +556,12 @@ impl TypeChecker {
             for type_name in &primitive_types {
                 for trait_name in &all_traits {
                     self.trait_impl_set
-                        .insert((trait_name.to_string(), type_name.to_string()));
+                        .insert((intern(trait_name), intern(type_name)));
                 }
                 // Register method entries for each builtin trait method
                 for (method_name, method_type) in trait_methods {
                     self.method_table.insert(
-                        (type_name.to_string(), method_name.to_string()),
+                        (intern(type_name), intern(method_name)),
                         MethodEntry {
                             method_type: method_type.clone(),
                             span: dummy_span,
@@ -576,11 +573,11 @@ impl TypeChecker {
             for type_name in &["List", "Tuple", "Map", "Set"] {
                 for trait_name in &all_traits {
                     self.trait_impl_set
-                        .insert((trait_name.to_string(), type_name.to_string()));
+                        .insert((intern(trait_name), intern(type_name)));
                 }
                 for (method_name, method_type) in trait_methods {
                     self.method_table.insert(
-                        (type_name.to_string(), method_name.to_string()),
+                        (intern(type_name), intern(method_name)),
                         MethodEntry {
                             method_type: method_type.clone(),
                             span: dummy_span,
@@ -594,25 +591,29 @@ impl TypeChecker {
         // Process imports: register selective/aliased import names in the type environment
         for decl in &program.decls {
             if let Decl::Import(ImportTarget::Items(module, items)) = decl {
-                if crate::module::is_builtin_module(module) {
+                let module_str = resolve(*module);
+                if crate::module::is_builtin_module(&module_str) {
                     for item in items {
-                        let qualified = format!("{module}.{item}");
-                        if let Some(scheme) = env.lookup(&qualified).cloned() {
-                            env.define(item.clone(), scheme);
+                        let qualified = intern(&format!("{module}.{item}"));
+                        if let Some(scheme) = env.lookup(qualified).cloned() {
+                            env.define(*item, scheme);
                         }
                         // Gated constructors (like Monday, GET) are already
                         // registered under their bare name — no alias needed.
                     }
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl
-                && crate::module::is_builtin_module(module)
-            {
-                let functions = crate::module::builtin_module_functions(module);
-                for func in functions {
-                    let qualified = format!("{module}.{func}");
-                    let aliased = format!("{alias}.{func}");
-                    if let Some(scheme) = env.lookup(&qualified).cloned() {
-                        env.define(aliased, scheme);
+            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
+                let module_str = resolve(*module);
+                if crate::module::is_builtin_module(&module_str) {
+                    let names = crate::module::builtin_module_functions(&module_str)
+                        .into_iter()
+                        .chain(crate::module::builtin_module_constants(&module_str));
+                    for func in names {
+                        let qualified = intern(&format!("{module}.{func}"));
+                        let aliased = intern(&format!("{alias}.{func}"));
+                        if let Some(scheme) = env.lookup(qualified).cloned() {
+                            env.define(aliased, scheme);
+                        }
                     }
                 }
             }
@@ -661,7 +662,7 @@ impl TypeChecker {
                 }
                 let scheme = self.generalize(&env, &val_ty);
                 if let Pattern::Ident(name) = pattern {
-                    env.define(name.clone(), scheme);
+                    env.define(*name, scheme);
                 } else {
                     self.bind_pattern(pattern, &val_ty, &mut env);
                 }
@@ -699,8 +700,7 @@ impl TypeChecker {
 
     fn validate_trait_impls(&mut self) {
         // Validate using method_table + trait_impl_set (the new system).
-        let impl_pairs: Vec<(std::string::String, std::string::String)> =
-            self.trait_impl_set.iter().cloned().collect();
+        let impl_pairs: Vec<(Symbol, Symbol)> = self.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
             // Check that the trait exists first.
             let Some(trait_info) = self.traits.get(trait_name).cloned() else {
@@ -718,7 +718,7 @@ impl TypeChecker {
             let is_auto = trait_info
                 .methods
                 .first()
-                .and_then(|(m, _)| self.method_table.get(&(type_name.clone(), m.clone())))
+                .and_then(|(m, _)| self.method_table.get(&(*type_name, *m)))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(false);
             if is_auto {
@@ -727,7 +727,7 @@ impl TypeChecker {
 
             // Check that all required methods are implemented with correct signature.
             for (method_name, trait_method_type) in &trait_info.methods {
-                let key = (type_name.clone(), method_name.clone());
+                let key = (*type_name, *method_name);
                 if let Some(entry) = self.method_table.get(&key) {
                     let impl_type = entry.method_type.clone();
                     let impl_span = entry.span;
@@ -774,10 +774,10 @@ impl TypeChecker {
 
     fn register_type_decl(&mut self, td: &TypeDecl, env: &mut TypeEnv) {
         // Create a mapping from type param names to placeholder type vars
-        let mut param_vars: HashMap<std::string::String, Type> = HashMap::new();
+        let mut param_vars: HashMap<Symbol, Type> = HashMap::new();
         for p in &td.params {
             let tv = self.fresh_var();
-            param_vars.insert(p.clone(), tv);
+            param_vars.insert(*p, tv);
         }
 
         match &td.body {
@@ -792,7 +792,7 @@ impl TypeChecker {
                         .collect();
 
                     variant_infos.push(VariantInfo {
-                        name: variant.name.clone(),
+                        name: variant.name,
                         field_types: field_types.clone(),
                     });
 
@@ -801,9 +801,9 @@ impl TypeChecker {
                         td.params.iter().map(|p| param_vars[p].clone()).collect();
 
                     let result_type = if type_params.is_empty() {
-                        Type::Generic(td.name.clone(), vec![])
+                        Type::Generic(td.name, vec![])
                     } else {
-                        Type::Generic(td.name.clone(), type_params)
+                        Type::Generic(td.name, type_params)
                     };
 
                     let var_ids: Vec<TyVar> = td
@@ -818,7 +818,7 @@ impl TypeChecker {
                     if field_types.is_empty() {
                         // No-arg constructor is just a value
                         env.define(
-                            variant.name.clone(),
+                            variant.name,
                             Scheme {
                                 vars: var_ids,
                                 ty: result_type,
@@ -828,7 +828,7 @@ impl TypeChecker {
                     } else {
                         // Constructor function
                         env.define(
-                            variant.name.clone(),
+                            variant.name,
                             Scheme {
                                 vars: var_ids,
                                 ty: Type::Fun(field_types, Box::new(result_type)),
@@ -837,32 +837,31 @@ impl TypeChecker {
                         );
                     }
 
-                    self.variant_to_enum
-                        .insert(variant.name.clone(), td.name.clone());
+                    self.variant_to_enum.insert(variant.name, td.name);
                 }
 
                 self.enums.insert(
-                    td.name.clone(),
+                    td.name,
                     EnumInfo {
-                        _name: td.name.clone(),
+                        _name: td.name,
                         params: td.params.clone(),
                         variants: variant_infos,
                     },
                 );
             }
             TypeBody::Record(fields) => {
-                let field_types: Vec<(std::string::String, Type)> = fields
+                let field_types: Vec<(Symbol, Type)> = fields
                     .iter()
                     .map(|f| {
                         let ty = self.resolve_type_expr(&f.ty, &mut param_vars);
-                        (f.name.clone(), ty)
+                        (f.name, ty)
                     })
                     .collect();
 
                 self.records.insert(
-                    td.name.clone(),
+                    td.name,
                     RecordInfo {
-                        _name: td.name.clone(),
+                        _name: td.name,
                         _params: td.params.clone(),
                         fields: field_types.clone(),
                     },
@@ -872,9 +871,9 @@ impl TypeChecker {
                 // passed to json.parse: `json.parse(Employee, str)`
                 // The type is the record type itself, so json.parse can
                 // propagate it into the return type.
-                let record_ty = Type::Record(td.name.clone(), field_types);
+                let record_ty = Type::Record(td.name, field_types);
                 env.define(
-                    td.name.clone(),
+                    td.name,
                     Scheme {
                         vars: vec![],
                         ty: record_ty,
@@ -893,8 +892,7 @@ impl TypeChecker {
             offset: 0,
         };
         for trait_name in &["Equal", "Compare", "Hash", "Display"] {
-            self.trait_impl_set
-                .insert((trait_name.to_string(), td.name.clone()));
+            self.trait_impl_set.insert((intern(trait_name), td.name));
         }
         // Register auto-derived method entries
         let builtin_methods: &[(&str, Type)] = &[
@@ -923,7 +921,7 @@ impl TypeChecker {
         ];
         for (method_name, method_type) in builtin_methods {
             self.method_table.insert(
-                (td.name.clone(), method_name.to_string()),
+                (td.name, intern(method_name)),
                 MethodEntry {
                     method_type: method_type.clone(),
                     span: dummy_span,
@@ -937,7 +935,7 @@ impl TypeChecker {
     pub(super) fn resolve_type_expr(
         &mut self,
         te: &TypeExpr,
-        param_vars: &mut HashMap<std::string::String, Type>,
+        param_vars: &mut HashMap<Symbol, Type>,
     ) -> Type {
         match te {
             TypeExpr::Named(name) => {
@@ -945,7 +943,8 @@ impl TypeChecker {
                 if let Some(tv) = param_vars.get(name) {
                     return tv.clone();
                 }
-                match name.as_str() {
+                let name_str = resolve(*name);
+                match name_str.as_str() {
                     "Int" => Type::Int,
                     "Float" => Type::Float,
                     "Bool" => Type::Bool,
@@ -965,14 +964,14 @@ impl TypeChecker {
                     _ => {
                         // Lowercase names in type annotations are type variables
                         // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
-                        let first_char = name.chars().next().unwrap_or('A');
+                        let first_char = name_str.chars().next().unwrap_or('A');
                         if first_char.is_lowercase() {
                             let tv = self.fresh_var();
-                            param_vars.insert(name.clone(), tv.clone());
+                            param_vars.insert(*name, tv.clone());
                             tv
                         } else {
                             // Uppercase: a record or enum type with no params
-                            Type::Generic(name.clone(), vec![])
+                            Type::Generic(*name, vec![])
                         }
                     }
                 }
@@ -982,7 +981,8 @@ impl TypeChecker {
                     .iter()
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
-                match name.as_str() {
+                let name_str = resolve(*name);
+                match name_str.as_str() {
                     "List" if resolved_args.is_empty() => Type::List(Box::new(self.fresh_var())),
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
@@ -1001,7 +1001,7 @@ impl TypeChecker {
                     "Set" if resolved_args.len() == 1 => {
                         Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
-                    _ => Type::Generic(name.clone(), resolved_args),
+                    _ => Type::Generic(*name, resolved_args),
                 }
             }
             TypeExpr::Tuple(elems) => {
@@ -1020,7 +1020,7 @@ impl TypeChecker {
                 Type::Fun(param_types, Box::new(ret_type))
             }
             TypeExpr::SelfType => {
-                if let Some(ty) = param_vars.get("Self") {
+                if let Some(ty) = param_vars.get(&intern("Self")) {
                     ty.clone()
                 } else {
                     // Self used outside of a trait context
@@ -1060,18 +1060,23 @@ impl TypeChecker {
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
                 if let Type::Var(tv) = resolved {
-                    scheme.constraints.push((tv, trait_name.clone()));
+                    scheme.constraints.push((tv, *trait_name));
                 }
             } else {
+                let first_param_name = f
+                    .params
+                    .first()
+                    .map(|p| match &p.pattern {
+                        Pattern::Ident(n) => resolve(*n),
+                        _ => "_".to_string(),
+                    })
+                    .unwrap_or_else(|| "_".to_string());
                 self.error(
                     format!(
                         "type variable '{}' in where clause is not introduced in the function signature; \
                          use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
                         type_param, f.name,
-                        f.params.first().map(|p| match &p.pattern {
-                            Pattern::Ident(n) => n.as_str(),
-                            _ => "_",
-                        }).unwrap_or("_"),
+                        first_param_name,
                         type_param, type_param, trait_name
                     ),
                     f.span,
@@ -1079,19 +1084,19 @@ impl TypeChecker {
             }
         }
 
-        env.define(f.name.clone(), scheme);
+        env.define(f.name, scheme);
     }
 
     // ── Register trait declarations ─────────────────────────────────
 
     fn register_trait_decl(&mut self, t: &TraitDecl) {
         let self_var = self.fresh_var();
-        let methods: Vec<(std::string::String, Type)> = t
+        let methods: Vec<(Symbol, Type)> = t
             .methods
             .iter()
             .map(|m| {
                 let mut param_map = HashMap::new();
-                param_map.insert("Self".to_string(), self_var.clone());
+                param_map.insert(intern("Self"), self_var.clone());
                 let mut param_types = Vec::new();
                 for param in &m.params {
                     let ty = if let Some(te) = &param.ty {
@@ -1106,14 +1111,14 @@ impl TypeChecker {
                 } else {
                     self.fresh_var()
                 };
-                (m.name.clone(), Type::Fun(param_types, Box::new(ret_type)))
+                (m.name, Type::Fun(param_types, Box::new(ret_type)))
             })
             .collect();
 
         self.traits.insert(
-            t.name.clone(),
+            t.name,
             TraitInfo {
-                _name: t.name.clone(),
+                _name: t.name,
                 methods,
             },
         );
@@ -1121,19 +1126,20 @@ impl TypeChecker {
 
     // ── Register trait implementations ──────────────────────────────
 
-    /// Convert a type name string (like "Int", "Float", "MyRecord") to a Type.
-    fn type_from_name(name: &str) -> Type {
-        match name {
+    /// Convert a type name Symbol to a Type.
+    fn type_from_name(name: Symbol) -> Type {
+        let name_str = resolve(name);
+        match name_str.as_str() {
             "Int" => Type::Int,
             "Float" => Type::Float,
             "Bool" => Type::Bool,
             "String" => Type::String,
-            _ => Type::Generic(name.to_string(), vec![]),
+            _ => Type::Generic(name, vec![]),
         }
     }
 
     fn register_trait_impl(&mut self, ti: &TraitImpl, env: &mut TypeEnv) {
-        let impl_key = (ti.trait_name.clone(), ti.target_type.clone());
+        let impl_key = (ti.trait_name, ti.target_type);
 
         // Coherence check: reject duplicate user-defined impls.
         if self.trait_impl_set.contains(&impl_key) {
@@ -1141,11 +1147,11 @@ impl TypeChecker {
             let first_method = ti
                 .methods
                 .first()
-                .map(|m| m.name.as_str())
-                .unwrap_or("display");
+                .map(|m| m.name)
+                .unwrap_or_else(|| intern("display"));
             let is_overriding_auto = self
                 .method_table
-                .get(&(ti.target_type.clone(), first_method.to_string()))
+                .get(&(ti.target_type, first_method))
                 .map(|e| e.is_auto_derived)
                 .unwrap_or(true);
             if !is_overriding_auto {
@@ -1162,11 +1168,11 @@ impl TypeChecker {
 
         self.trait_impl_set.insert(impl_key);
 
-        let self_type = Self::type_from_name(&ti.target_type);
+        let self_type = Self::type_from_name(ti.target_type);
 
         for method in &ti.methods {
             let mut param_map = HashMap::new();
-            param_map.insert("Self".to_string(), self_type.clone());
+            param_map.insert(intern("Self"), self_type.clone());
             let mut param_types = Vec::new();
             for param in &method.params {
                 let ty = if let Some(te) = &param.ty {
@@ -1186,7 +1192,7 @@ impl TypeChecker {
 
             // New: populate method_table.
             self.method_table.insert(
-                (ti.target_type.clone(), method.name.clone()),
+                (ti.target_type, method.name),
                 MethodEntry {
                     method_type: fn_type.clone(),
                     span: ti.span,
@@ -1195,7 +1201,7 @@ impl TypeChecker {
             );
 
             // Legacy: register in TypeEnv as "TypeName.method_name".
-            let key = format!("{}.{}", ti.target_type, method.name);
+            let key = intern(&format!("{}.{}", ti.target_type, method.name));
             let scheme = self.generalize(env, &fn_type);
             env.define(key, scheme);
         }
@@ -1205,12 +1211,12 @@ impl TypeChecker {
 // ── Helper functions ────────────────────────────────────────────────
 
 /// Collect the set of variable names bound by a pattern.
-pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<String> {
+pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
     match pat {
-        Pattern::Ident(name) => vec![name.clone()],
+        Pattern::Ident(name) => vec![*name],
         Pattern::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
         Pattern::List(pats, rest) => {
-            let mut vars: Vec<String> = pats.iter().flat_map(collect_pattern_vars).collect();
+            let mut vars: Vec<Symbol> = pats.iter().flat_map(collect_pattern_vars).collect();
             if let Some(rest_pat) = rest {
                 vars.extend(collect_pattern_vars(rest_pat));
             }
@@ -1218,13 +1224,13 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<String> {
         }
         Pattern::Constructor(_, pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
         Pattern::Record { fields, .. } => {
-            let mut vars: Vec<String> = Vec::new();
+            let mut vars: Vec<Symbol> = Vec::new();
             for (field_name, sub_pat) in fields {
                 if let Some(p) = sub_pat {
                     vars.extend(collect_pattern_vars(p));
                 } else {
                     // Shorthand field `{ x }` binds `x`
-                    vars.push(field_name.clone());
+                    vars.push(*field_name);
                 }
             }
             vars
@@ -1285,9 +1291,10 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
     checker.register_builtins(&mut env);
     let mut sigs = std::collections::HashMap::new();
     for (name, scheme) in &env.bindings {
-        if name.contains('.') {
+        let name_str = resolve(*name);
+        if name_str.contains('.') {
             let ty = checker.instantiate(scheme);
-            sigs.insert(name.clone(), format!("{ty}"));
+            sigs.insert(name_str, format!("{ty}"));
         }
     }
     sigs

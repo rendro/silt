@@ -25,7 +25,7 @@ impl TypeChecker {
         }
 
         // Look up the function's registered type and instantiate it
-        let fn_scheme = match env.lookup(&f.name) {
+        let fn_scheme = match env.lookup(f.name) {
             Some(s) => s.clone(),
             None => return, // already reported
         };
@@ -44,7 +44,7 @@ impl TypeChecker {
             self.active_constraints
                 .entry(*tv)
                 .or_default()
-                .push(trait_name.clone());
+                .push(*trait_name);
         }
 
         // Bind parameters
@@ -69,7 +69,7 @@ impl TypeChecker {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Ident(name) => {
-                env.define(name.clone(), Scheme::mono(ty.clone()));
+                env.define(*name, Scheme::mono(ty.clone()));
             }
             Pattern::Int(_) => {}
             Pattern::Float(_) => {}
@@ -156,16 +156,14 @@ impl TypeChecker {
                                 self.bind_pattern(sp, ft, env);
                             } else {
                                 // Shorthand: field name is also the binding
-                                env.define(field_name.clone(), Scheme::mono(ft.clone()));
+                                env.define(*field_name, Scheme::mono(ft.clone()));
                             }
+                        } else if let Some(sp) = sub_pat {
+                            let tv = self.fresh_var();
+                            self.bind_pattern(sp, &tv, env);
                         } else {
-                            if let Some(sp) = sub_pat {
-                                let tv = self.fresh_var();
-                                self.bind_pattern(sp, &tv, env);
-                            } else {
-                                let tv = self.fresh_var();
-                                env.define(field_name.clone(), Scheme::mono(tv));
-                            }
+                            let tv = self.fresh_var();
+                            env.define(*field_name, Scheme::mono(tv));
                         }
                     }
                 } else {
@@ -176,7 +174,7 @@ impl TypeChecker {
                             self.bind_pattern(sp, &tv, env);
                         } else {
                             let tv = self.fresh_var();
-                            env.define(field_name.clone(), Scheme::mono(tv));
+                            env.define(*field_name, Scheme::mono(tv));
                         }
                     }
                 }
@@ -233,8 +231,8 @@ impl TypeChecker {
                 let found = env
                     .parent
                     .as_ref()
-                    .and_then(|p| p.lookup(name).cloned())
-                    .or_else(|| env.lookup(name).cloned());
+                    .and_then(|p| p.lookup(*name).cloned())
+                    .or_else(|| env.lookup(*name).cloned());
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(
@@ -281,7 +279,7 @@ impl TypeChecker {
                         if let Some(type_name) = self.type_name_for_impl(&resolved)
                             && !self
                                 .trait_impl_set
-                                .contains(&("Display".into(), type_name.clone()))
+                                .contains(&(intern("Display"), type_name))
                         {
                             self.error(
                                 format!(
@@ -361,11 +359,11 @@ impl TypeChecker {
             }
 
             ExprKind::Ident(name) => {
-                let name = name.clone();
-                if let Some(scheme) = env.lookup(&name) {
+                let name = *name;
+                if let Some(scheme) = env.lookup(name) {
                     let scheme = scheme.clone();
                     self.instantiate(&scheme)
-                } else if name == "self" {
+                } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
                 } else {
@@ -375,10 +373,10 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess(obj, field) => {
-                let field = field.clone();
+                let field = *field;
                 // Capture module name before mutable borrow for inference
                 let module_name = if let ExprKind::Ident(n) = &obj.kind {
-                    Some(n.clone())
+                    Some(*n)
                 } else {
                     None
                 };
@@ -386,9 +384,9 @@ impl TypeChecker {
                 // Check for module-style access first (e.g., string.split)
                 // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
                 // for stdlib module names like list, string, map, io, etc.
-                if let Some(ref module_name) = module_name {
-                    let qualified = format!("{module_name}.{field}");
-                    if let Some(scheme) = env.lookup(&qualified) {
+                if let Some(module_name) = module_name {
+                    let qualified = intern(&format!("{module_name}.{field}"));
+                    if let Some(scheme) = env.lookup(qualified) {
                         let scheme = scheme.clone();
                         let result = self.instantiate(&scheme);
                         let resolved = self.apply(&result);
@@ -405,12 +403,10 @@ impl TypeChecker {
                 match &obj_ty {
                     Type::Record(rec_name, fields) => {
                         // Direct field access first
-                        if let Some((_, ft)) = fields.iter().find(|(n, _)| n == &field) {
+                        if let Some((_, ft)) = fields.iter().find(|(n, _)| *n == field) {
                             ft.clone()
-                        } else if let Some(entry) = self
-                            .method_table
-                            .get(&(rec_name.clone(), field.clone()))
-                            .cloned()
+                        } else if let Some(entry) =
+                            self.method_table.get(&(*rec_name, field)).cloned()
                         {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
@@ -426,25 +422,21 @@ impl TypeChecker {
                     Type::Generic(type_name, _) => {
                         // Check record field definitions
                         if let Some(rec_info) = self.records.get(type_name).cloned()
-                            && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| n == &field)
+                            && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
                         {
                             let resolved = self.apply(ft);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
                         // Check method table (trait methods)
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&(type_name.clone(), field.clone()))
-                            .cloned()
-                        {
+                        if let Some(entry) = self.method_table.get(&(*type_name, field)).cloned() {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
                         // Legacy fallback: check TypeEnv for "TypeName.method"
-                        let key = format!("{type_name}.{field}");
-                        if let Some(scheme) = env.lookup(&key) {
+                        let key = intern(&format!("{type_name}.{field}"));
+                        if let Some(scheme) = env.lookup(key) {
                             let scheme = scheme.clone();
                             let result = self.instantiate(&scheme);
                             let resolved = self.apply(&result);
@@ -460,18 +452,14 @@ impl TypeChecker {
                     // Primitive types — check method table for trait methods
                     Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => {
                         let type_name = match &obj_ty {
-                            Type::Int => "Int",
-                            Type::Float => "Float",
-                            Type::Bool => "Bool",
-                            Type::String => "String",
-                            Type::Unit => "()",
+                            Type::Int => intern("Int"),
+                            Type::Float => intern("Float"),
+                            Type::Bool => intern("Bool"),
+                            Type::String => intern("String"),
+                            Type::Unit => intern("()"),
                             _ => unreachable!(),
                         };
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&(type_name.to_string(), field.clone()))
-                            .cloned()
-                        {
+                        if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -484,10 +472,8 @@ impl TypeChecker {
                     }
                     // Collection types
                     Type::List(_) => {
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&("List".to_string(), field.clone()))
-                            .cloned()
+                        if let Some(entry) =
+                            self.method_table.get(&(intern("List"), field)).cloned()
                         {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
@@ -497,10 +483,8 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Tuple(_) => {
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&("Tuple".to_string(), field.clone()))
-                            .cloned()
+                        if let Some(entry) =
+                            self.method_table.get(&(intern("Tuple"), field)).cloned()
                         {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
@@ -510,10 +494,7 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Map(_, _) => {
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&("Map".to_string(), field.clone()))
-                            .cloned()
+                        if let Some(entry) = self.method_table.get(&(intern("Map"), field)).cloned()
                         {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
@@ -523,10 +504,7 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Set(_) => {
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&("Set".to_string(), field.clone()))
-                            .cloned()
+                        if let Some(entry) = self.method_table.get(&(intern("Set"), field)).cloned()
                         {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
@@ -540,13 +518,9 @@ impl TypeChecker {
                         let parent = self
                             .variant_to_enum
                             .get(variant_name)
-                            .cloned()
-                            .unwrap_or_else(|| variant_name.clone());
-                        if let Some(entry) = self
-                            .method_table
-                            .get(&(parent.clone(), field.clone()))
-                            .cloned()
-                        {
+                            .copied()
+                            .unwrap_or(*variant_name);
+                        if let Some(entry) = self.method_table.get(&(parent, field)).cloned() {
                             let resolved = self.apply(&entry.method_type);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -561,7 +535,7 @@ impl TypeChecker {
                             for trait_name in &trait_names {
                                 if let Some(trait_info) = self.traits.get(trait_name).cloned()
                                     && let Some((_, method_ty)) =
-                                        trait_info.methods.iter().find(|(n, _)| n == &field)
+                                        trait_info.methods.iter().find(|(n, _)| *n == field)
                                 {
                                     let resolved = self.apply(method_ty);
                                     expr.ty = Some(resolved.clone());
@@ -569,7 +543,11 @@ impl TypeChecker {
                                 }
                             }
                             // Method not found on any constrained trait — error
-                            let traits_str = trait_names.join(" + ");
+                            let traits_str = trait_names
+                                .iter()
+                                .map(|s| format!("{s}"))
+                                .collect::<Vec<_>>()
+                                .join(" + ");
                             self.error(
                                 format!(
                                     "no method '{field}' found in trait constraints ({traits_str})"
@@ -670,7 +648,7 @@ impl TypeChecker {
                     if let ExprKind::Call(callee, call_args) = &mut rhs.kind {
                         // Capture callee name for where clause check
                         let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
-                            Some(n.clone())
+                            Some(*n)
                         } else {
                             None
                         };
@@ -678,8 +656,7 @@ impl TypeChecker {
                         let arg_spans: Vec<Span> = call_args.iter().map(|a| a.span).collect();
 
                         // If callee is a named function, use instantiate_with_constraints
-                        let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name
-                        {
+                        let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                             if let Some(scheme) = env.lookup(name).cloned() {
                                 let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                                 (self.apply(&ty), constraints)
@@ -724,9 +701,7 @@ impl TypeChecker {
                         for (tyvar, trait_name) in &where_constraints {
                             let resolved = self.apply(&Type::Var(*tyvar));
                             if let Some(type_name) = self.type_name_for_impl(&resolved)
-                                && !self
-                                    .trait_impl_set
-                                    .contains(&(trait_name.clone(), type_name.clone()))
+                                && !self.trait_impl_set.contains(&(*trait_name, type_name))
                             {
                                 self.error(
                                     format!(
@@ -782,10 +757,10 @@ impl TypeChecker {
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
                 match &inner_ty {
-                    Type::Generic(name, args) if name == "Result" && args.len() == 2 => {
+                    Type::Generic(name, args) if *name == intern("Result") && args.len() == 2 => {
                         args[0].clone()
                     }
-                    Type::Generic(name, args) if name == "Option" && args.len() == 1 => {
+                    Type::Generic(name, args) if *name == intern("Option") && args.len() == 1 => {
                         args[0].clone()
                     }
                     Type::Var(_) => {
@@ -814,7 +789,7 @@ impl TypeChecker {
             ExprKind::Call(callee, args) => {
                 // Capture callee name and arg spans before mutable inference
                 let callee_fn_name = if let ExprKind::Ident(n) = &callee.kind {
-                    Some(n.clone())
+                    Some(*n)
                 } else {
                     None
                 };
@@ -823,7 +798,7 @@ impl TypeChecker {
 
                 // If callee is a named function, use instantiate_with_constraints
                 // to get where clause constraints with remapped type variables.
-                let (callee_ty, where_constraints) = if let Some(ref name) = callee_fn_name {
+                let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                     if let Some(scheme) = env.lookup(name).cloned() {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
                         (self.apply(&ty), constraints)
@@ -887,9 +862,7 @@ impl TypeChecker {
                 for (tyvar, trait_name) in &where_constraints {
                     let resolved = self.apply(&Type::Var(*tyvar));
                     if let Some(type_name) = self.type_name_for_impl(&resolved)
-                        && !self
-                            .trait_impl_set
-                            .contains(&(trait_name.clone(), type_name.clone()))
+                        && !self.trait_impl_set.contains(&(*trait_name, type_name))
                     {
                         self.error(
                             format!(
@@ -924,13 +897,13 @@ impl TypeChecker {
             }
 
             ExprKind::RecordCreate { name, fields } => {
-                let name = name.clone();
+                let name = *name;
                 if let Some(rec_info) = self.records.get(&name).cloned() {
-                    let field_types: Vec<(std::string::String, Type)> = fields
+                    let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
                         .map(|(n, e)| {
                             let ty = self.infer_expr(e, env);
-                            (n.clone(), ty)
+                            (*n, ty)
                         })
                         .collect();
 
@@ -944,31 +917,33 @@ impl TypeChecker {
                     }
 
                     // Check for missing fields
-                    let provided: std::collections::HashSet<&str> =
-                        field_types.iter().map(|(n, _)| n.as_str()).collect();
-                    let missing: Vec<&str> = rec_info
+                    let provided: std::collections::HashSet<Symbol> =
+                        field_types.iter().map(|(n, _)| *n).collect();
+                    let missing: Vec<Symbol> = rec_info
                         .fields
                         .iter()
-                        .filter(|(n, _)| !provided.contains(n.as_str()))
-                        .map(|(n, _)| n.as_str())
+                        .filter(|(n, _)| !provided.contains(n))
+                        .map(|(n, _)| *n)
                         .collect();
                     if !missing.is_empty() {
+                        let missing_str: Vec<String> =
+                            missing.iter().map(|s| format!("{s}")).collect();
                         self.error(
                             format!(
                                 "missing field{} in {}: {}",
                                 if missing.len() > 1 { "s" } else { "" },
                                 name,
-                                missing.join(", "),
+                                missing_str.join(", "),
                             ),
                             span,
                         );
                     }
 
                     // Check for extra fields not in the record type
-                    let declared: std::collections::HashSet<&str> =
-                        rec_info.fields.iter().map(|(n, _)| n.as_str()).collect();
+                    let declared: std::collections::HashSet<Symbol> =
+                        rec_info.fields.iter().map(|(n, _)| *n).collect();
                     for (field_name, _) in &field_types {
-                        if !declared.contains(field_name.as_str()) {
+                        if !declared.contains(field_name) {
                             self.error(format!("unknown field '{}' in {}", field_name, name), span);
                         }
                     }
@@ -976,11 +951,11 @@ impl TypeChecker {
                     Type::Record(name, rec_info.fields.clone())
                 } else {
                     // Unknown record type - infer from fields
-                    let field_types: Vec<(std::string::String, Type)> = fields
+                    let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
                         .map(|(n, e)| {
                             let ty = self.infer_expr(e, env);
-                            (n.clone(), ty)
+                            (*n, ty)
                         })
                         .collect();
                     Type::Record(name, field_types)
@@ -991,11 +966,11 @@ impl TypeChecker {
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
                 if let Type::Record(ref rec_name, ref rec_fields) = resolved {
-                    let declared: std::collections::HashMap<&str, &Type> =
-                        rec_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+                    let declared: std::collections::HashMap<Symbol, &Type> =
+                        rec_fields.iter().map(|(n, t)| (*n, t)).collect();
                     for (field_name, field_expr) in fields {
                         let ft = self.infer_expr(field_expr, env);
-                        if let Some(&declared_ty) = declared.get(field_name.as_str()) {
+                        if let Some(&declared_ty) = declared.get(field_name) {
                             self.unify(&ft, declared_ty, span);
                         } else {
                             self.error(
@@ -1097,7 +1072,7 @@ impl TypeChecker {
                 let binding_count = bindings.len();
                 for (name, value) in bindings.iter_mut() {
                     let ty = self.infer_expr(value, env);
-                    loop_env.define(name.clone(), Scheme::mono(ty));
+                    loop_env.define(*name, Scheme::mono(ty));
                 }
                 let prev_loop = self.loop_binding_count;
                 self.loop_binding_count = Some(binding_count);
@@ -1158,7 +1133,7 @@ impl TypeChecker {
                 // For let-polymorphism we need to bind with the generalized scheme
                 match pattern {
                     Pattern::Ident(name) => {
-                        env.define(name.clone(), scheme);
+                        env.define(*name, scheme);
                     }
                     _ => {
                         self.bind_pattern(pattern, &val_ty, env);
@@ -1232,7 +1207,7 @@ impl TypeChecker {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Ident(name) => {
-                env.define(name.clone(), Scheme::mono(expected.clone()));
+                env.define(*name, Scheme::mono(expected.clone()));
             }
             Pattern::Int(_) => {
                 self.unify(expected, &Type::Int, span);
@@ -1257,7 +1232,7 @@ impl TypeChecker {
             }
             Pattern::Constructor(name, sub_pats) => {
                 // Look up the constructor type
-                if let Some(scheme) = env.lookup(name).cloned() {
+                if let Some(scheme) = env.lookup(*name).cloned() {
                     let ctor_ty = self.instantiate(&scheme);
                     let ctor_ty = self.apply(&ctor_ty);
 
@@ -1301,7 +1276,7 @@ impl TypeChecker {
             Pattern::Record { name, fields, .. } => {
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
-                        let rec_ty = Type::Record(rec_name.clone(), rec_info.fields.clone());
+                        let rec_ty = Type::Record(*rec_name, rec_info.fields.clone());
                         self.unify(expected, &rec_ty, span);
 
                         for (field_name, sub_pat) in fields {
@@ -1311,7 +1286,7 @@ impl TypeChecker {
                                 if let Some(sp) = sub_pat {
                                     self.check_pattern(sp, ft, env, span);
                                 } else {
-                                    env.define(field_name.clone(), Scheme::mono(ft.clone()));
+                                    env.define(*field_name, Scheme::mono(ft.clone()));
                                 }
                             }
                         }
@@ -1323,7 +1298,7 @@ impl TypeChecker {
                         if let Some(sp) = sub_pat {
                             self.check_pattern(sp, &tv, env, span);
                         } else {
-                            env.define(field_name.clone(), Scheme::mono(tv));
+                            env.define(*field_name, Scheme::mono(tv));
                         }
                     }
                 }
@@ -1331,10 +1306,10 @@ impl TypeChecker {
             Pattern::Or(alts) => {
                 // Validate that all alternatives bind the same set of variables.
                 if alts.len() >= 2 {
-                    let first_vars: BTreeSet<String> =
+                    let first_vars: BTreeSet<Symbol> =
                         collect_pattern_vars(&alts[0]).into_iter().collect();
                     for (i, alt) in alts.iter().enumerate().skip(1) {
-                        let alt_vars: BTreeSet<String> =
+                        let alt_vars: BTreeSet<Symbol> =
                             collect_pattern_vars(alt).into_iter().collect();
                         if first_vars != alt_vars {
                             self.error(
@@ -1376,8 +1351,8 @@ impl TypeChecker {
                 let found = env
                     .parent
                     .as_ref()
-                    .and_then(|p| p.lookup(name).cloned())
-                    .or_else(|| env.lookup(name).cloned());
+                    .and_then(|p| p.lookup(*name).cloned())
+                    .or_else(|| env.lookup(*name).cloned());
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);

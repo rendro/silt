@@ -1,4 +1,6 @@
 /target
+/fuzz/target
+/fuzz/Cargo.lock
 .sediment
 .DS_Store
 .env

@@ -223,7 +223,7 @@ impl TypeChecker {
                 let used_later = bound_names.iter().any(|name| {
                     stmts[i + 1..]
                         .iter()
-                        .any(|s| Self::stmt_references_name(s, name))
+                        .any(|s| Self::stmt_references_name(s, *name))
                 });
 
                 if !used_later {
@@ -237,7 +237,7 @@ impl TypeChecker {
     }
 
     /// Check if a statement contains any reference to the given name.
-    fn stmt_references_name(stmt: &Stmt, name: &str) -> bool {
+    fn stmt_references_name(stmt: &Stmt, name: Symbol) -> bool {
         match stmt {
             Stmt::Let { value, .. } => Self::expr_references_name(value, name),
             Stmt::When {
@@ -258,9 +258,9 @@ impl TypeChecker {
     }
 
     /// Check if an expression tree contains any `Ident` reference to the given name.
-    fn expr_references_name(expr: &Expr, name: &str) -> bool {
+    fn expr_references_name(expr: &Expr, name: Symbol) -> bool {
         match &expr.kind {
-            ExprKind::Ident(n) => n == name,
+            ExprKind::Ident(n) => *n == name,
             ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
                 Self::expr_references_name(l, name) || Self::expr_references_name(r, name)
             }
@@ -611,7 +611,7 @@ fn main() { double(5) }
         // After checking, the function body should have resolved types (no bare Vars)
         for decl in &program.decls {
             if let Decl::Fn(f) = decl {
-                if f.name == "double" {
+                if f.name == crate::intern::intern("double") {
                     if let Some(ty) = &f.body.ty {
                         assert!(
                             !matches!(ty, Type::Var(_)),

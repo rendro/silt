@@ -12,7 +12,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "print".into(),
+                intern("print"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
@@ -23,7 +23,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "println".into(),
+                intern("println"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
@@ -36,7 +36,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "panic".into(),
+                intern("panic"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::String], Box::new(a)),
@@ -52,12 +52,12 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "Ok".into(),
+                intern("Ok"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
                 },
@@ -68,12 +68,12 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "Err".into(),
+                intern("Err"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![e.clone()],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
                 },
@@ -83,12 +83,12 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Some".into(),
+                intern("Some"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -98,10 +98,10 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "None".into(),
+                intern("None"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic("Option".into(), vec![a]),
+                    ty: Type::Generic(intern("Option"), vec![a]),
                     constraints: vec![],
                 },
             );
@@ -110,75 +110,77 @@ impl TypeChecker {
         // ── Builtin enum info for Option and Result ────────────────────
 
         self.enums.insert(
-            "Option".into(),
+            intern("Option"),
             EnumInfo {
-                _name: "Option".into(),
-                params: vec!["a".into()],
+                _name: intern("Option"),
+                params: vec![intern("a")],
                 variants: vec![
                     VariantInfo {
-                        name: "Some".into(),
+                        name: intern("Some"),
                         field_types: vec![Type::Var(0)], // placeholder
                     },
                     VariantInfo {
-                        name: "None".into(),
+                        name: intern("None"),
                         field_types: vec![],
                     },
                 ],
             },
         );
-        self.variant_to_enum.insert("Some".into(), "Option".into());
-        self.variant_to_enum.insert("None".into(), "Option".into());
+        self.variant_to_enum
+            .insert(intern("Some"), intern("Option"));
+        self.variant_to_enum
+            .insert(intern("None"), intern("Option"));
 
         self.enums.insert(
-            "Result".into(),
+            intern("Result"),
             EnumInfo {
-                _name: "Result".into(),
-                params: vec!["a".into(), "e".into()],
+                _name: intern("Result"),
+                params: vec![intern("a"), intern("e")],
                 variants: vec![
                     VariantInfo {
-                        name: "Ok".into(),
+                        name: intern("Ok"),
                         field_types: vec![Type::Var(0)], // placeholder
                     },
                     VariantInfo {
-                        name: "Err".into(),
+                        name: intern("Err"),
                         field_types: vec![Type::Var(1)], // placeholder
                     },
                 ],
             },
         );
-        self.variant_to_enum.insert("Ok".into(), "Result".into());
-        self.variant_to_enum.insert("Err".into(), "Result".into());
+        self.variant_to_enum.insert(intern("Ok"), intern("Result"));
+        self.variant_to_enum.insert(intern("Err"), intern("Result"));
 
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
         self.enums.insert(
-            "Step".into(),
+            intern("Step"),
             EnumInfo {
-                _name: "Step".into(),
-                params: vec!["a".into()],
+                _name: intern("Step"),
+                params: vec![intern("a")],
                 variants: vec![
                     VariantInfo {
-                        name: "Stop".into(),
+                        name: intern("Stop"),
                         field_types: vec![Type::Var(0)],
                     },
                     VariantInfo {
-                        name: "Continue".into(),
+                        name: intern("Continue"),
                         field_types: vec![Type::Var(0)],
                     },
                 ],
             },
         );
-        self.variant_to_enum.insert("Stop".into(), "Step".into());
+        self.variant_to_enum.insert(intern("Stop"), intern("Step"));
         self.variant_to_enum
-            .insert("Continue".into(), "Step".into());
+            .insert(intern("Continue"), intern("Step"));
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Stop".into(),
+                intern("Stop"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic("Step".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -187,12 +189,12 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Continue".into(),
+                intern("Continue"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic("Step".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Step"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -201,44 +203,44 @@ impl TypeChecker {
 
         // ChannelResult enum: Message(a) / Closed — for channel.receive
         self.enums.insert(
-            "ChannelResult".into(),
+            intern("ChannelResult"),
             EnumInfo {
-                _name: "ChannelResult".into(),
-                params: vec!["a".into()],
+                _name: intern("ChannelResult"),
+                params: vec![intern("a")],
                 variants: vec![
                     VariantInfo {
-                        name: "Message".into(),
+                        name: intern("Message"),
                         field_types: vec![Type::Var(0)],
                     },
                     VariantInfo {
-                        name: "Closed".into(),
+                        name: intern("Closed"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Sent".into(),
+                        name: intern("Sent"),
                         field_types: vec![],
                     },
                 ],
             },
         );
         self.variant_to_enum
-            .insert("Message".into(), "ChannelResult".into());
+            .insert(intern("Message"), intern("ChannelResult"));
         self.variant_to_enum
-            .insert("Closed".into(), "ChannelResult".into());
+            .insert(intern("Closed"), intern("ChannelResult"));
         // Also register Empty and Sent as standalones
         self.variant_to_enum
-            .insert("Empty".into(), "ChannelResult".into());
+            .insert(intern("Empty"), intern("ChannelResult"));
         self.variant_to_enum
-            .insert("Sent".into(), "ChannelResult".into());
+            .insert(intern("Sent"), intern("ChannelResult"));
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Message".into(),
+                intern("Message"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![a.clone()],
-                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                        Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -247,10 +249,10 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Closed".into(),
+                intern("Closed"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                 },
             );
@@ -258,10 +260,10 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Empty".into(),
+                intern("Empty"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                 },
             );
@@ -269,10 +271,10 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "Sent".into(),
+                intern("Sent"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic("ChannelResult".into(), vec![a]),
+                    ty: Type::Generic(intern("ChannelResult"), vec![a]),
                     constraints: vec![],
                 },
             );
@@ -285,7 +287,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (h, hv) = self.fresh_tv();
             env.define(
-                "task.spawn".into(),
+                intern("task.spawn"),
                 Scheme {
                     vars: vec![av, hv],
                     ty: Type::Fun(vec![Type::Fun(vec![], Box::new(a))], Box::new(h)),
@@ -299,7 +301,7 @@ impl TypeChecker {
             let (h, hv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "task.join".into(),
+                intern("task.join"),
                 Scheme {
                     vars: vec![hv, av],
                     ty: Type::Fun(vec![h], Box::new(a)),
@@ -312,7 +314,7 @@ impl TypeChecker {
         {
             let (h, hv) = self.fresh_tv();
             env.define(
-                "task.cancel".into(),
+                intern("task.cancel"),
                 Scheme {
                     vars: vec![hv],
                     ty: Type::Fun(vec![h], Box::new(Type::Unit)),
@@ -325,7 +327,7 @@ impl TypeChecker {
 
         // regex.is_match: (String, String) -> Bool
         env.define(
-            "regex.is_match".into(),
+            intern("regex.is_match"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Bool),
@@ -334,16 +336,16 @@ impl TypeChecker {
 
         // regex.find: (String, String) -> Option(String)
         env.define(
-            "regex.find".into(),
+            intern("regex.find"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(Type::Generic("Option".into(), vec![Type::String])),
+                Box::new(Type::Generic(intern("Option"), vec![Type::String])),
             )),
         );
 
         // regex.find_all: (String, String) -> List(String)
         env.define(
-            "regex.find_all".into(),
+            intern("regex.find_all"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -352,7 +354,7 @@ impl TypeChecker {
 
         // regex.split: (String, String) -> List(String)
         env.define(
-            "regex.split".into(),
+            intern("regex.split"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -361,7 +363,7 @@ impl TypeChecker {
 
         // regex.replace: (String, String, String) -> String
         env.define(
-            "regex.replace".into(),
+            intern("regex.replace"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String, Type::String],
                 Box::new(Type::String),
@@ -370,7 +372,7 @@ impl TypeChecker {
 
         // regex.replace_all: (String, String, String) -> String
         env.define(
-            "regex.replace_all".into(),
+            intern("regex.replace_all"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String, Type::String],
                 Box::new(Type::String),
@@ -379,7 +381,7 @@ impl TypeChecker {
 
         // regex.replace_all_with: (String, String, (String) -> String) -> String
         env.define(
-            "regex.replace_all_with".into(),
+            intern("regex.replace_all_with"),
             Scheme::mono(Type::Fun(
                 vec![
                     Type::String,
@@ -392,11 +394,11 @@ impl TypeChecker {
 
         // regex.captures: (String, String) -> Option(List(String))
         env.define(
-            "regex.captures".into(),
+            intern("regex.captures"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
-                    "Option".into(),
+                    intern("Option"),
                     vec![Type::List(Box::new(Type::String))],
                 )),
             )),
@@ -404,7 +406,7 @@ impl TypeChecker {
 
         // regex.captures_all: (String, String) -> List(List(String))
         env.define(
-            "regex.captures_all".into(),
+            intern("regex.captures_all"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::List(Box::new(Type::String))))),
@@ -417,9 +419,9 @@ impl TypeChecker {
         // The first arg is a type descriptor; the same type flows into the Result.
         {
             let (a, av) = self.fresh_tv();
-            let result_ty = Type::Generic("Result".into(), vec![a.clone(), Type::String]);
+            let result_ty = Type::Generic(intern("Result"), vec![a.clone(), Type::String]);
             env.define(
-                "json.parse".into(),
+                intern("json.parse"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
@@ -432,11 +434,11 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let result_ty = Type::Generic(
-                "Result".into(),
+                intern("Result"),
                 vec![Type::List(Box::new(a.clone())), Type::String],
             );
             env.define(
-                "json.parse_list".into(),
+                intern("json.parse_list"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
@@ -449,14 +451,14 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let result_ty = Type::Generic(
-                "Result".into(),
+                intern("Result"),
                 vec![
                     Type::Map(Box::new(Type::String), Box::new(a.clone())),
                     Type::String,
                 ],
             );
             env.define(
-                "json.parse_map".into(),
+                intern("json.parse_map"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
@@ -469,7 +471,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "json.stringify".into(),
+                intern("json.stringify"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
@@ -482,7 +484,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "json.pretty".into(),
+                intern("json.pretty"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
@@ -503,7 +505,7 @@ impl TypeChecker {
                 _ => unreachable!(),
             };
             env.define(
-                name.to_string(),
+                intern(name),
                 Scheme {
                     vars: vec![],
                     ty,
@@ -536,7 +538,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.map".into(),
+                intern("list.map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -555,7 +557,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.filter".into(),
+                intern("list.filter"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -575,7 +577,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.fold".into(),
+                intern("list.fold"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -595,7 +597,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.each".into(),
+                intern("list.each"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -614,7 +616,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.find".into(),
+                intern("list.find"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -622,7 +624,7 @@ impl TypeChecker {
                             Type::List(Box::new(a.clone())),
                             Type::Fun(vec![a.clone()], Box::new(Type::Bool)),
                         ],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -634,7 +636,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.zip".into(),
+                intern("list.zip"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -653,7 +655,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.flatten".into(),
+                intern("list.flatten"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -670,7 +672,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.sort_by".into(),
+                intern("list.sort_by"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -690,7 +692,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.flat_map".into(),
+                intern("list.flat_map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -710,7 +712,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.filter_map".into(),
+                intern("list.filter_map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -718,7 +720,7 @@ impl TypeChecker {
                             Type::List(Box::new(a.clone())),
                             Type::Fun(
                                 vec![a],
-                                Box::new(Type::Generic("Option".into(), vec![b.clone()])),
+                                Box::new(Type::Generic(intern("Option"), vec![b.clone()])),
                             ),
                         ],
                         Box::new(Type::List(Box::new(b))),
@@ -732,7 +734,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.any".into(),
+                intern("list.any"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -751,7 +753,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.all".into(),
+                intern("list.all"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -771,7 +773,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.fold_until".into(),
+                intern("list.fold_until"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -780,7 +782,7 @@ impl TypeChecker {
                             b.clone(),
                             Type::Fun(
                                 vec![b.clone(), a],
-                                Box::new(Type::Generic("Step".into(), vec![b.clone()])),
+                                Box::new(Type::Generic(intern("Step"), vec![b.clone()])),
                             ),
                         ],
                         Box::new(b),
@@ -795,7 +797,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "list.unfold".into(),
+                intern("list.unfold"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -804,7 +806,7 @@ impl TypeChecker {
                             Type::Fun(
                                 vec![a.clone()],
                                 Box::new(Type::Generic(
-                                    "Option".into(),
+                                    intern("Option"),
                                     vec![Type::Tuple(vec![b.clone(), a])],
                                 )),
                             ),
@@ -820,7 +822,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.append".into(),
+                intern("list.append"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -836,7 +838,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.prepend".into(),
+                intern("list.prepend"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -852,7 +854,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.concat".into(),
+                intern("list.concat"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -871,12 +873,12 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.get".into(),
+                intern("list.get"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::List(Box::new(a.clone())), Type::Int],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -887,7 +889,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.set".into(),
+                intern("list.set"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -903,7 +905,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.take".into(),
+                intern("list.take"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -919,7 +921,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.drop".into(),
+                intern("list.drop"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -935,7 +937,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.enumerate".into(),
+                intern("list.enumerate"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -951,12 +953,12 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.head".into(),
+                intern("list.head"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::List(Box::new(a.clone()))],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -967,7 +969,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.tail".into(),
+                intern("list.tail"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -983,12 +985,12 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.last".into(),
+                intern("list.last"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
                         vec![Type::List(Box::new(a.clone()))],
-                        Box::new(Type::Generic("Option".into(), vec![a])),
+                        Box::new(Type::Generic(intern("Option"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -999,7 +1001,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.reverse".into(),
+                intern("list.reverse"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1015,7 +1017,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.sort".into(),
+                intern("list.sort"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1031,7 +1033,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.unique".into(),
+                intern("list.unique"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1047,7 +1049,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.contains".into(),
+                intern("list.contains"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1063,7 +1065,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "list.length".into(),
+                intern("list.length"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::List(Box::new(a))], Box::new(Type::Int)),
@@ -1077,7 +1079,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (k, kv) = self.fresh_tv();
             env.define(
-                "list.group_by".into(),
+                intern("list.group_by"),
                 Scheme {
                     vars: vec![av, kv],
                     ty: Type::Fun(
@@ -1098,7 +1100,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "string.from".into(),
+                intern("string.from"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
@@ -1109,7 +1111,7 @@ impl TypeChecker {
 
         // string.split: (String, String) -> List(String)
         env.define(
-            "string.split".into(),
+            intern("string.split"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -1118,7 +1120,7 @@ impl TypeChecker {
 
         // string.join: (List(String), String) -> String
         env.define(
-            "string.join".into(),
+            intern("string.join"),
             Scheme::mono(Type::Fun(
                 vec![Type::List(Box::new(Type::String)), Type::String],
                 Box::new(Type::String),
@@ -1127,37 +1129,37 @@ impl TypeChecker {
 
         // string.trim: (String) -> String
         env.define(
-            "string.trim".into(),
+            intern("string.trim"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
         );
 
         // string.trim_start: (String) -> String
         env.define(
-            "string.trim_start".into(),
+            intern("string.trim_start"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
         );
 
         // string.trim_end: (String) -> String
         env.define(
-            "string.trim_end".into(),
+            intern("string.trim_end"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
         );
 
         // string.char_code: (String) -> Int
         env.define(
-            "string.char_code".into(),
+            intern("string.char_code"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
         );
 
         // string.from_char_code: (Int) -> String
         env.define(
-            "string.from_char_code".into(),
+            intern("string.from_char_code"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
         );
 
         // string.contains: (String, String) -> Bool
         env.define(
-            "string.contains".into(),
+            intern("string.contains"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Bool),
@@ -1166,7 +1168,7 @@ impl TypeChecker {
 
         // string.replace: (String, String, String) -> String
         env.define(
-            "string.replace".into(),
+            intern("string.replace"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String, Type::String],
                 Box::new(Type::String),
@@ -1175,31 +1177,31 @@ impl TypeChecker {
 
         // string.length: (String) -> Int
         env.define(
-            "string.length".into(),
+            intern("string.length"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
         );
 
         // string.byte_length: (String) -> Int
         env.define(
-            "string.byte_length".into(),
+            intern("string.byte_length"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
         );
 
         // string.to_upper: (String) -> String
         env.define(
-            "string.to_upper".into(),
+            intern("string.to_upper"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
         );
 
         // string.to_lower: (String) -> String
         env.define(
-            "string.to_lower".into(),
+            intern("string.to_lower"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
         );
 
         // string.starts_with: (String, String) -> Bool
         env.define(
-            "string.starts_with".into(),
+            intern("string.starts_with"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Bool),
@@ -1208,7 +1210,7 @@ impl TypeChecker {
 
         // string.ends_with: (String, String) -> Bool
         env.define(
-            "string.ends_with".into(),
+            intern("string.ends_with"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Bool),
@@ -1217,7 +1219,7 @@ impl TypeChecker {
 
         // string.chars: (String) -> List(String)
         env.define(
-            "string.chars".into(),
+            intern("string.chars"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -1226,7 +1228,7 @@ impl TypeChecker {
 
         // string.repeat: (String, Int) -> String
         env.define(
-            "string.repeat".into(),
+            intern("string.repeat"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::Int],
                 Box::new(Type::String),
@@ -1235,16 +1237,16 @@ impl TypeChecker {
 
         // string.index_of: (String, String) -> Option(Int)
         env.define(
-            "string.index_of".into(),
+            intern("string.index_of"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(Type::Generic("Option".into(), vec![Type::Int])),
+                Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
             )),
         );
 
         // string.slice: (String, Int, Int) -> String
         env.define(
-            "string.slice".into(),
+            intern("string.slice"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::Int, Type::Int],
                 Box::new(Type::String),
@@ -1253,7 +1255,7 @@ impl TypeChecker {
 
         // string.pad_left: (String, Int, String) -> String
         env.define(
-            "string.pad_left".into(),
+            intern("string.pad_left"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::Int, Type::String],
                 Box::new(Type::String),
@@ -1262,7 +1264,7 @@ impl TypeChecker {
 
         // string.pad_right: (String, Int, String) -> String
         env.define(
-            "string.pad_right".into(),
+            intern("string.pad_right"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::Int, Type::String],
                 Box::new(Type::String),
@@ -1271,43 +1273,43 @@ impl TypeChecker {
 
         // string.is_empty: (String) -> Bool
         env.define(
-            "string.is_empty".into(),
+            intern("string.is_empty"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_alpha: (String) -> Bool
         env.define(
-            "string.is_alpha".into(),
+            intern("string.is_alpha"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_digit: (String) -> Bool
         env.define(
-            "string.is_digit".into(),
+            intern("string.is_digit"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_upper: (String) -> Bool
         env.define(
-            "string.is_upper".into(),
+            intern("string.is_upper"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_lower: (String) -> Bool
         env.define(
-            "string.is_lower".into(),
+            intern("string.is_lower"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_alnum: (String) -> Bool
         env.define(
-            "string.is_alnum".into(),
+            intern("string.is_alnum"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
 
         // string.is_whitespace: (String) -> Bool
         env.define(
-            "string.is_whitespace".into(),
+            intern("string.is_whitespace"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
     }
@@ -1315,11 +1317,11 @@ impl TypeChecker {
     fn register_int_builtins(&mut self, env: &mut TypeEnv) {
         // int.parse: (String) -> Result(Int, String)
         env.define(
-            "int.parse".into(),
+            intern("int.parse"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![Type::Int, Type::String],
                 )),
             )),
@@ -1327,31 +1329,31 @@ impl TypeChecker {
 
         // int.abs: (Int) -> Int
         env.define(
-            "int.abs".into(),
+            intern("int.abs"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
         );
 
         // int.min: (Int, Int) -> Int
         env.define(
-            "int.min".into(),
+            intern("int.min"),
             Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
         );
 
         // int.max: (Int, Int) -> Int
         env.define(
-            "int.max".into(),
+            intern("int.max"),
             Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
         );
 
         // int.to_float: (Int) -> Float
         env.define(
-            "int.to_float".into(),
+            intern("int.to_float"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Float))),
         );
 
         // int.to_string: (Int) -> String
         env.define(
-            "int.to_string".into(),
+            intern("int.to_string"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::String))),
         );
     }
@@ -1359,11 +1361,11 @@ impl TypeChecker {
     fn register_float_builtins(&mut self, env: &mut TypeEnv) {
         // float.parse: (String) -> Result(Float, String)
         env.define(
-            "float.parse".into(),
+            intern("float.parse"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![Type::Float, Type::String],
                 )),
             )),
@@ -1371,31 +1373,31 @@ impl TypeChecker {
 
         // float.round: (Float) -> Float
         env.define(
-            "float.round".into(),
+            intern("float.round"),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
         );
 
         // float.ceil: (Float) -> Float
         env.define(
-            "float.ceil".into(),
+            intern("float.ceil"),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
         );
 
         // float.floor: (Float) -> Float
         env.define(
-            "float.floor".into(),
+            intern("float.floor"),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
         );
 
         // float.abs: (Float) -> Float
         env.define(
-            "float.abs".into(),
+            intern("float.abs"),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float))),
         );
 
         // float.min: (Float, Float) -> Float
         env.define(
-            "float.min".into(),
+            intern("float.min"),
             Scheme::mono(Type::Fun(
                 vec![Type::Float, Type::Float],
                 Box::new(Type::Float),
@@ -1404,7 +1406,7 @@ impl TypeChecker {
 
         // float.max: (Float, Float) -> Float
         env.define(
-            "float.max".into(),
+            intern("float.max"),
             Scheme::mono(Type::Fun(
                 vec![Type::Float, Type::Float],
                 Box::new(Type::Float),
@@ -1417,7 +1419,7 @@ impl TypeChecker {
         // arguments.  The 1-arg call still passes the arity check because
         // module-qualified calls go through FieldAccess which permits ±1.
         env.define(
-            "float.to_string".into(),
+            intern("float.to_string"),
             Scheme::mono(Type::Fun(
                 vec![Type::Float, Type::Int],
                 Box::new(Type::String),
@@ -1426,7 +1428,7 @@ impl TypeChecker {
 
         // float.to_int: (Float) -> Int
         env.define(
-            "float.to_int".into(),
+            intern("float.to_int"),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Int))),
         );
     }
@@ -1437,14 +1439,14 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.get".into(),
+                intern("map.get"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
                         vec![Type::Map(Box::new(k.clone()), Box::new(v.clone())), k],
-                        Box::new(Type::Generic("Option".into(), vec![v])),
+                        Box::new(Type::Generic(intern("Option"), vec![v])),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1454,7 +1456,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.set".into(),
+                intern("map.set"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1465,7 +1467,7 @@ impl TypeChecker {
                         ],
                         Box::new(Type::Map(Box::new(k), Box::new(v))),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1475,7 +1477,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.delete".into(),
+                intern("map.delete"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1485,7 +1487,7 @@ impl TypeChecker {
                         ],
                         Box::new(Type::Map(Box::new(k), Box::new(v))),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1495,14 +1497,14 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.contains".into(),
+                intern("map.contains"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
                         vec![Type::Map(Box::new(k.clone()), Box::new(v)), k],
                         Box::new(Type::Bool),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1512,14 +1514,14 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.keys".into(),
+                intern("map.keys"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
                         vec![Type::Map(Box::new(k.clone()), Box::new(v))],
                         Box::new(Type::List(Box::new(k))),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1529,14 +1531,14 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.values".into(),
+                intern("map.values"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
                         vec![Type::Map(Box::new(k), Box::new(v.clone()))],
                         Box::new(Type::List(Box::new(v))),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1546,7 +1548,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.merge".into(),
+                intern("map.merge"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1556,7 +1558,7 @@ impl TypeChecker {
                         ],
                         Box::new(Type::Map(Box::new(k), Box::new(v))),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1566,14 +1568,14 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.length".into(),
+                intern("map.length"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
                         vec![Type::Map(Box::new(k), Box::new(v))],
                         Box::new(Type::Int),
                     ),
-                    constraints: vec![(kv, "Hash".into())],
+                    constraints: vec![(kv, intern("Hash"))],
                 },
             );
         }
@@ -1583,7 +1585,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.filter".into(),
+                intern("map.filter"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1605,7 +1607,7 @@ impl TypeChecker {
             let (k2, k2v) = self.fresh_tv();
             let (v2, v2v) = self.fresh_tv();
             env.define(
-                "map.map".into(),
+                intern("map.map"),
                 Scheme {
                     vars: vec![kv, vv, k2v, v2v],
                     ty: Type::Fun(
@@ -1628,7 +1630,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.entries".into(),
+                intern("map.entries"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1645,7 +1647,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.from_entries".into(),
+                intern("map.from_entries"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1665,7 +1667,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.each".into(),
+                intern("map.each"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1685,7 +1687,7 @@ impl TypeChecker {
             let (k, kv) = self.fresh_tv();
             let (v, vv) = self.fresh_tv();
             env.define(
-                "map.update".into(),
+                intern("map.update"),
                 Scheme {
                     vars: vec![kv, vv],
                     ty: Type::Fun(
@@ -1708,7 +1710,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.new".into(),
+                intern("set.new"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![], Box::new(Type::Set(Box::new(a)))),
@@ -1721,7 +1723,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.from_list".into(),
+                intern("set.from_list"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1737,7 +1739,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.to_list".into(),
+                intern("set.to_list"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1753,7 +1755,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.contains".into(),
+                intern("set.contains"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1769,7 +1771,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.insert".into(),
+                intern("set.insert"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1785,7 +1787,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.remove".into(),
+                intern("set.remove"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1801,7 +1803,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.length".into(),
+                intern("set.length"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![Type::Set(Box::new(a))], Box::new(Type::Int)),
@@ -1814,7 +1816,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.union".into(),
+                intern("set.union"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1833,7 +1835,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.intersection".into(),
+                intern("set.intersection"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1852,7 +1854,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.difference".into(),
+                intern("set.difference"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1871,7 +1873,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.is_subset".into(),
+                intern("set.is_subset"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1891,7 +1893,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "set.map".into(),
+                intern("set.map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -1910,7 +1912,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.filter".into(),
+                intern("set.filter"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1929,7 +1931,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "set.each".into(),
+                intern("set.each"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
@@ -1949,7 +1951,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "set.fold".into(),
+                intern("set.fold"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
@@ -1973,15 +1975,15 @@ impl TypeChecker {
             let (b, bv) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.map_ok".into(),
+                intern("result.map_ok"),
                 Scheme {
                     vars: vec![av, bv, ev],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Result".into(), vec![a, e.clone()]),
+                            Type::Generic(intern("Result"), vec![a, e.clone()]),
                             Type::Fun(vec![Type::Var(av)], Box::new(b.clone())),
                         ],
-                        Box::new(Type::Generic("Result".into(), vec![b, e])),
+                        Box::new(Type::Generic(intern("Result"), vec![b, e])),
                     ),
                     constraints: vec![],
                 },
@@ -1993,12 +1995,12 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.unwrap_or".into(),
+                intern("result.unwrap_or"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Result".into(), vec![a.clone(), e]),
+                            Type::Generic(intern("Result"), vec![a.clone(), e]),
                             a.clone(),
                         ],
                         Box::new(a),
@@ -2014,15 +2016,15 @@ impl TypeChecker {
             let (e, ev) = self.fresh_tv();
             let (f, fv) = self.fresh_tv();
             env.define(
-                "result.map_err".into(),
+                intern("result.map_err"),
                 Scheme {
                     vars: vec![av, ev, fv],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                            Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
                             Type::Fun(vec![e], Box::new(f.clone())),
                         ],
-                        Box::new(Type::Generic("Result".into(), vec![a, f])),
+                        Box::new(Type::Generic(intern("Result"), vec![a, f])),
                     ),
                     constraints: vec![],
                 },
@@ -2034,18 +2036,18 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.flatten".into(),
+                intern("result.flatten"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
                         vec![Type::Generic(
-                            "Result".into(),
+                            intern("Result"),
                             vec![
-                                Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                                Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
                                 e.clone(),
                             ],
                         )],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
                 },
@@ -2058,21 +2060,21 @@ impl TypeChecker {
             let (b, bv) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.flat_map".into(),
+                intern("result.flat_map"),
                 Scheme {
                     vars: vec![av, bv, ev],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Result".into(), vec![a.clone(), e.clone()]),
+                            Type::Generic(intern("Result"), vec![a.clone(), e.clone()]),
                             Type::Fun(
                                 vec![a],
                                 Box::new(Type::Generic(
-                                    "Result".into(),
+                                    intern("Result"),
                                     vec![b.clone(), e.clone()],
                                 )),
                             ),
                         ],
-                        Box::new(Type::Generic("Result".into(), vec![b, e])),
+                        Box::new(Type::Generic(intern("Result"), vec![b, e])),
                     ),
                     constraints: vec![],
                 },
@@ -2084,11 +2086,11 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.is_ok".into(),
+                intern("result.is_ok"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
-                        vec![Type::Generic("Result".into(), vec![a, e])],
+                        vec![Type::Generic(intern("Result"), vec![a, e])],
                         Box::new(Type::Bool),
                     ),
                     constraints: vec![],
@@ -2101,11 +2103,11 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "result.is_err".into(),
+                intern("result.is_err"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
-                        vec![Type::Generic("Result".into(), vec![a, e])],
+                        vec![Type::Generic(intern("Result"), vec![a, e])],
                         Box::new(Type::Bool),
                     ),
                     constraints: vec![],
@@ -2120,15 +2122,15 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "option.map".into(),
+                intern("option.map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Option".into(), vec![a.clone()]),
+                            Type::Generic(intern("Option"), vec![a.clone()]),
                             Type::Fun(vec![a], Box::new(b.clone())),
                         ],
-                        Box::new(Type::Generic("Option".into(), vec![b])),
+                        Box::new(Type::Generic(intern("Option"), vec![b])),
                     ),
                     constraints: vec![],
                 },
@@ -2140,18 +2142,18 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "option.flat_map".into(),
+                intern("option.flat_map"),
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(
                         vec![
-                            Type::Generic("Option".into(), vec![a.clone()]),
+                            Type::Generic(intern("Option"), vec![a.clone()]),
                             Type::Fun(
                                 vec![a],
-                                Box::new(Type::Generic("Option".into(), vec![b.clone()])),
+                                Box::new(Type::Generic(intern("Option"), vec![b.clone()])),
                             ),
                         ],
-                        Box::new(Type::Generic("Option".into(), vec![b])),
+                        Box::new(Type::Generic(intern("Option"), vec![b])),
                     ),
                     constraints: vec![],
                 },
@@ -2162,11 +2164,11 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "option.unwrap_or".into(),
+                intern("option.unwrap_or"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
-                        vec![Type::Generic("Option".into(), vec![a.clone()]), a.clone()],
+                        vec![Type::Generic(intern("Option"), vec![a.clone()]), a.clone()],
                         Box::new(a),
                     ),
                     constraints: vec![],
@@ -2179,12 +2181,12 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (e, ev) = self.fresh_tv();
             env.define(
-                "option.to_result".into(),
+                intern("option.to_result"),
                 Scheme {
                     vars: vec![av, ev],
                     ty: Type::Fun(
-                        vec![Type::Generic("Option".into(), vec![a.clone()]), e.clone()],
-                        Box::new(Type::Generic("Result".into(), vec![a, e])),
+                        vec![Type::Generic(intern("Option"), vec![a.clone()]), e.clone()],
+                        Box::new(Type::Generic(intern("Result"), vec![a, e])),
                     ),
                     constraints: vec![],
                 },
@@ -2195,11 +2197,11 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "option.is_some".into(),
+                intern("option.is_some"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
-                        vec![Type::Generic("Option".into(), vec![a])],
+                        vec![Type::Generic(intern("Option"), vec![a])],
                         Box::new(Type::Bool),
                     ),
                     constraints: vec![],
@@ -2211,11 +2213,11 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "option.is_none".into(),
+                intern("option.is_none"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(
-                        vec![Type::Generic("Option".into(), vec![a])],
+                        vec![Type::Generic(intern("Option"), vec![a])],
                         Box::new(Type::Bool),
                     ),
                     constraints: vec![],
@@ -2229,7 +2231,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "io.inspect".into(),
+                intern("io.inspect"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a], Box::new(Type::String)),
@@ -2240,11 +2242,11 @@ impl TypeChecker {
 
         // io.read_file: (String) -> Result(String, String)
         env.define(
-            "io.read_file".into(),
+            intern("io.read_file"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![Type::String, Type::String],
                 )),
             )),
@@ -2252,11 +2254,11 @@ impl TypeChecker {
 
         // io.write_file: (String, String) -> Result((), String)
         env.define(
-            "io.write_file".into(),
+            intern("io.write_file"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![Type::Unit, Type::String],
                 )),
             )),
@@ -2264,11 +2266,11 @@ impl TypeChecker {
 
         // io.read_line: () -> Result(String, String)
         env.define(
-            "io.read_line".into(),
+            intern("io.read_line"),
             Scheme::mono(Type::Fun(
                 vec![],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![Type::String, Type::String],
                 )),
             )),
@@ -2276,7 +2278,7 @@ impl TypeChecker {
 
         // io.args: () -> List(String)
         env.define(
-            "io.args".into(),
+            intern("io.args"),
             Scheme::mono(Type::Fun(
                 vec![],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -2287,7 +2289,7 @@ impl TypeChecker {
     fn register_fs_builtins(&mut self, env: &mut TypeEnv) {
         // fs.exists: (String) -> Bool
         env.define(
-            "fs.exists".into(),
+            intern("fs.exists"),
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
         );
     }
@@ -2298,7 +2300,7 @@ impl TypeChecker {
         // arity lets the typechecker validate the message type while the
         // is_method_call arity tolerance still allows the 1-arg form.
         env.define(
-            "test.assert".into(),
+            intern("test.assert"),
             Scheme::mono(Type::Fun(
                 vec![Type::Bool, Type::String],
                 Box::new(Type::Unit),
@@ -2310,7 +2312,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "test.assert_eq".into(),
+                intern("test.assert_eq"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
@@ -2324,7 +2326,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             env.define(
-                "test.assert_ne".into(),
+                intern("test.assert_ne"),
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone(), a, Type::String], Box::new(Type::Unit)),
@@ -2347,7 +2349,7 @@ impl TypeChecker {
                 "math.acos",
                 "math.exp",
             ] {
-                env.define(name.to_string(), float_to_extfloat.clone());
+                env.define(intern(name), float_to_extfloat.clone());
             }
         }
 
@@ -2355,7 +2357,7 @@ impl TypeChecker {
         {
             let float_to_float = Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
             for name in &["math.sin", "math.cos", "math.tan", "math.atan"] {
-                env.define(name.to_string(), float_to_float.clone());
+                env.define(intern(name), float_to_float.clone());
             }
         }
 
@@ -2365,7 +2367,7 @@ impl TypeChecker {
                 vec![Type::Float, Type::Float],
                 Box::new(Type::ExtFloat),
             ));
-            env.define("math.pow".into(), ff_to_ef);
+            env.define(intern("math.pow"), ff_to_ef);
         }
 
         // math.atan2: (Float, Float) -> Float (always finite)
@@ -2374,21 +2376,21 @@ impl TypeChecker {
                 vec![Type::Float, Type::Float],
                 Box::new(Type::Float),
             ));
-            env.define("math.atan2".into(), ff_to_f);
+            env.define(intern("math.atan2"), ff_to_f);
         }
 
         // Math constants
-        env.define("math.pi".into(), Scheme::mono(Type::Float));
-        env.define("math.e".into(), Scheme::mono(Type::Float));
+        env.define(intern("math.pi"), Scheme::mono(Type::Float));
+        env.define(intern("math.e"), Scheme::mono(Type::Float));
 
         // Float constants
-        env.define("float.max_value".into(), Scheme::mono(Type::Float));
-        env.define("float.min_value".into(), Scheme::mono(Type::Float));
-        env.define("float.epsilon".into(), Scheme::mono(Type::Float));
-        env.define("float.min_positive".into(), Scheme::mono(Type::Float));
-        env.define("float.infinity".into(), Scheme::mono(Type::ExtFloat));
-        env.define("float.neg_infinity".into(), Scheme::mono(Type::ExtFloat));
-        env.define("float.nan".into(), Scheme::mono(Type::ExtFloat));
+        env.define(intern("float.max_value"), Scheme::mono(Type::Float));
+        env.define(intern("float.min_value"), Scheme::mono(Type::Float));
+        env.define(intern("float.epsilon"), Scheme::mono(Type::Float));
+        env.define(intern("float.min_positive"), Scheme::mono(Type::Float));
+        env.define(intern("float.infinity"), Scheme::mono(Type::ExtFloat));
+        env.define(intern("float.neg_infinity"), Scheme::mono(Type::ExtFloat));
+        env.define(intern("float.nan"), Scheme::mono(Type::ExtFloat));
     }
 
     fn register_channel_builtins(&mut self, env: &mut TypeEnv) {
@@ -2396,7 +2398,7 @@ impl TypeChecker {
         {
             let (ch, chv) = self.fresh_tv();
             env.define(
-                "channel.new".into(),
+                intern("channel.new"),
                 Scheme {
                     vars: vec![chv],
                     ty: Type::Fun(vec![Type::Int], Box::new(ch)),
@@ -2410,7 +2412,7 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "channel.send".into(),
+                intern("channel.send"),
                 Scheme {
                     vars: vec![chv, av],
                     ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
@@ -2424,12 +2426,12 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "channel.receive".into(),
+                intern("channel.receive"),
                 Scheme {
                     vars: vec![chv, av],
                     ty: Type::Fun(
                         vec![ch],
-                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                        Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -2440,7 +2442,7 @@ impl TypeChecker {
         {
             let (ch, chv) = self.fresh_tv();
             env.define(
-                "channel.close".into(),
+                intern("channel.close"),
                 Scheme {
                     vars: vec![chv],
                     ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
@@ -2454,7 +2456,7 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "channel.try_send".into(),
+                intern("channel.try_send"),
                 Scheme {
                     vars: vec![chv, av],
                     ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
@@ -2468,12 +2470,12 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "channel.try_receive".into(),
+                intern("channel.try_receive"),
                 Scheme {
                     vars: vec![chv, av],
                     ty: Type::Fun(
                         vec![ch],
-                        Box::new(Type::Generic("ChannelResult".into(), vec![a])),
+                        Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
                 },
@@ -2485,7 +2487,7 @@ impl TypeChecker {
             let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
-                "channel.select".into(),
+                intern("channel.select"),
                 Scheme {
                     vars: vec![chv, av],
                     ty: Type::Fun(
@@ -2503,7 +2505,7 @@ impl TypeChecker {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
-                "channel.each".into(),
+                intern("channel.each"),
                 Scheme {
                     vars: vec![chv, av, bv],
                     ty: Type::Fun(
@@ -2519,121 +2521,121 @@ impl TypeChecker {
     fn register_time_builtins(&mut self, env: &mut TypeEnv) {
         // ── Time module type definitions ──────────────────────────────
 
-        let instant_ty = Type::Record("Instant".into(), vec![("epoch_ns".into(), Type::Int)]);
+        let instant_ty = Type::Record(intern("Instant"), vec![(intern("epoch_ns"), Type::Int)]);
         let date_ty = Type::Record(
-            "Date".into(),
+            intern("Date"),
             vec![
-                ("year".into(), Type::Int),
-                ("month".into(), Type::Int),
-                ("day".into(), Type::Int),
+                (intern("year"), Type::Int),
+                (intern("month"), Type::Int),
+                (intern("day"), Type::Int),
             ],
         );
         let time_of_day_ty = Type::Record(
-            "Time".into(),
+            intern("Time"),
             vec![
-                ("hour".into(), Type::Int),
-                ("minute".into(), Type::Int),
-                ("second".into(), Type::Int),
-                ("ns".into(), Type::Int),
+                (intern("hour"), Type::Int),
+                (intern("minute"), Type::Int),
+                (intern("second"), Type::Int),
+                (intern("ns"), Type::Int),
             ],
         );
         let datetime_ty = Type::Record(
-            "DateTime".into(),
+            intern("DateTime"),
             vec![
-                ("date".into(), date_ty.clone()),
-                ("time".into(), time_of_day_ty.clone()),
+                (intern("date"), date_ty.clone()),
+                (intern("time"), time_of_day_ty.clone()),
             ],
         );
-        let duration_ty = Type::Record("Duration".into(), vec![("ns".into(), Type::Int)]);
-        let weekday_ty = Type::Generic("Weekday".into(), vec![]);
+        let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+        let weekday_ty = Type::Generic(intern("Weekday"), vec![]);
 
         // Register record types so field access type-checks
         self.records.insert(
-            "Instant".into(),
+            intern("Instant"),
             RecordInfo {
-                _name: "Instant".into(),
+                _name: intern("Instant"),
                 _params: vec![],
-                fields: vec![("epoch_ns".into(), Type::Int)],
+                fields: vec![(intern("epoch_ns"), Type::Int)],
             },
         );
         self.records.insert(
-            "Date".into(),
+            intern("Date"),
             RecordInfo {
-                _name: "Date".into(),
+                _name: intern("Date"),
                 _params: vec![],
                 fields: vec![
-                    ("year".into(), Type::Int),
-                    ("month".into(), Type::Int),
-                    ("day".into(), Type::Int),
+                    (intern("year"), Type::Int),
+                    (intern("month"), Type::Int),
+                    (intern("day"), Type::Int),
                 ],
             },
         );
         self.records.insert(
-            "Time".into(),
+            intern("Time"),
             RecordInfo {
-                _name: "Time".into(),
+                _name: intern("Time"),
                 _params: vec![],
                 fields: vec![
-                    ("hour".into(), Type::Int),
-                    ("minute".into(), Type::Int),
-                    ("second".into(), Type::Int),
-                    ("ns".into(), Type::Int),
+                    (intern("hour"), Type::Int),
+                    (intern("minute"), Type::Int),
+                    (intern("second"), Type::Int),
+                    (intern("ns"), Type::Int),
                 ],
             },
         );
         self.records.insert(
-            "DateTime".into(),
+            intern("DateTime"),
             RecordInfo {
-                _name: "DateTime".into(),
+                _name: intern("DateTime"),
                 _params: vec![],
                 fields: vec![
-                    ("date".into(), date_ty.clone()),
-                    ("time".into(), time_of_day_ty.clone()),
+                    (intern("date"), date_ty.clone()),
+                    (intern("time"), time_of_day_ty.clone()),
                 ],
             },
         );
         self.records.insert(
-            "Duration".into(),
+            intern("Duration"),
             RecordInfo {
-                _name: "Duration".into(),
+                _name: intern("Duration"),
                 _params: vec![],
-                fields: vec![("ns".into(), Type::Int)],
+                fields: vec![(intern("ns"), Type::Int)],
             },
         );
 
         // Register Weekday enum
         self.enums.insert(
-            "Weekday".into(),
+            intern("Weekday"),
             EnumInfo {
-                _name: "Weekday".into(),
+                _name: intern("Weekday"),
                 params: vec![],
                 variants: vec![
                     VariantInfo {
-                        name: "Monday".into(),
+                        name: intern("Monday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Tuesday".into(),
+                        name: intern("Tuesday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Wednesday".into(),
+                        name: intern("Wednesday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Thursday".into(),
+                        name: intern("Thursday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Friday".into(),
+                        name: intern("Friday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Saturday".into(),
+                        name: intern("Saturday"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "Sunday".into(),
+                        name: intern("Sunday"),
                         field_types: vec![],
                     },
                 ],
@@ -2648,32 +2650,31 @@ impl TypeChecker {
             "Saturday",
             "Sunday",
         ] {
-            self.variant_to_enum
-                .insert(day.to_string(), "Weekday".into());
-            env.define(day.to_string(), Scheme::mono(weekday_ty.clone()));
+            self.variant_to_enum.insert(intern(day), intern("Weekday"));
+            env.define(intern(day), Scheme::mono(weekday_ty.clone()));
         }
 
         // ── Function signatures ──────────────────────────────────────
 
         // time.now: () -> Instant
         env.define(
-            "time.now".into(),
+            intern("time.now"),
             Scheme::mono(Type::Fun(vec![], Box::new(instant_ty.clone()))),
         );
 
         // time.today: () -> Date
         env.define(
-            "time.today".into(),
+            intern("time.today"),
             Scheme::mono(Type::Fun(vec![], Box::new(date_ty.clone()))),
         );
 
         // time.date: (Int, Int, Int) -> Result(Date, String)
         env.define(
-            "time.date".into(),
+            intern("time.date"),
             Scheme::mono(Type::Fun(
                 vec![Type::Int, Type::Int, Type::Int],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![date_ty.clone(), Type::String],
                 )),
             )),
@@ -2681,11 +2682,11 @@ impl TypeChecker {
 
         // time.time: (Int, Int, Int) -> Result(Time, String)
         env.define(
-            "time.time".into(),
+            intern("time.time"),
             Scheme::mono(Type::Fun(
                 vec![Type::Int, Type::Int, Type::Int],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![time_of_day_ty.clone(), Type::String],
                 )),
             )),
@@ -2693,7 +2694,7 @@ impl TypeChecker {
 
         // time.datetime: (Date, Time) -> DateTime
         env.define(
-            "time.datetime".into(),
+            intern("time.datetime"),
             Scheme::mono(Type::Fun(
                 vec![date_ty.clone(), time_of_day_ty.clone()],
                 Box::new(datetime_ty.clone()),
@@ -2702,7 +2703,7 @@ impl TypeChecker {
 
         // time.to_datetime: (Instant, Int) -> DateTime
         env.define(
-            "time.to_datetime".into(),
+            intern("time.to_datetime"),
             Scheme::mono(Type::Fun(
                 vec![instant_ty.clone(), Type::Int],
                 Box::new(datetime_ty.clone()),
@@ -2711,7 +2712,7 @@ impl TypeChecker {
 
         // time.to_instant: (DateTime, Int) -> Instant
         env.define(
-            "time.to_instant".into(),
+            intern("time.to_instant"),
             Scheme::mono(Type::Fun(
                 vec![datetime_ty.clone(), Type::Int],
                 Box::new(instant_ty.clone()),
@@ -2720,7 +2721,7 @@ impl TypeChecker {
 
         // time.to_utc: (Instant) -> DateTime
         env.define(
-            "time.to_utc".into(),
+            intern("time.to_utc"),
             Scheme::mono(Type::Fun(
                 vec![instant_ty.clone()],
                 Box::new(datetime_ty.clone()),
@@ -2729,7 +2730,7 @@ impl TypeChecker {
 
         // time.from_utc: (DateTime) -> Instant
         env.define(
-            "time.from_utc".into(),
+            intern("time.from_utc"),
             Scheme::mono(Type::Fun(
                 vec![datetime_ty.clone()],
                 Box::new(instant_ty.clone()),
@@ -2738,7 +2739,7 @@ impl TypeChecker {
 
         // time.format: (DateTime, String) -> String
         env.define(
-            "time.format".into(),
+            intern("time.format"),
             Scheme::mono(Type::Fun(
                 vec![datetime_ty.clone(), Type::String],
                 Box::new(Type::String),
@@ -2747,7 +2748,7 @@ impl TypeChecker {
 
         // time.format_date: (Date, String) -> String
         env.define(
-            "time.format_date".into(),
+            intern("time.format_date"),
             Scheme::mono(Type::Fun(
                 vec![date_ty.clone(), Type::String],
                 Box::new(Type::String),
@@ -2756,11 +2757,11 @@ impl TypeChecker {
 
         // time.parse: (String, String) -> Result(DateTime, String)
         env.define(
-            "time.parse".into(),
+            intern("time.parse"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![datetime_ty.clone(), Type::String],
                 )),
             )),
@@ -2768,11 +2769,11 @@ impl TypeChecker {
 
         // time.parse_date: (String, String) -> Result(Date, String)
         env.define(
-            "time.parse_date".into(),
+            intern("time.parse_date"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
-                    "Result".into(),
+                    intern("Result"),
                     vec![date_ty.clone(), Type::String],
                 )),
             )),
@@ -2780,7 +2781,7 @@ impl TypeChecker {
 
         // time.add_days: (Date, Int) -> Date
         env.define(
-            "time.add_days".into(),
+            intern("time.add_days"),
             Scheme::mono(Type::Fun(
                 vec![date_ty.clone(), Type::Int],
                 Box::new(date_ty.clone()),
@@ -2789,7 +2790,7 @@ impl TypeChecker {
 
         // time.add_months: (Date, Int) -> Date
         env.define(
-            "time.add_months".into(),
+            intern("time.add_months"),
             Scheme::mono(Type::Fun(
                 vec![date_ty.clone(), Type::Int],
                 Box::new(date_ty.clone()),
@@ -2798,7 +2799,7 @@ impl TypeChecker {
 
         // time.add: (Instant, Duration) -> Instant
         env.define(
-            "time.add".into(),
+            intern("time.add"),
             Scheme::mono(Type::Fun(
                 vec![instant_ty.clone(), duration_ty.clone()],
                 Box::new(instant_ty.clone()),
@@ -2807,7 +2808,7 @@ impl TypeChecker {
 
         // time.since: (Instant, Instant) -> Duration
         env.define(
-            "time.since".into(),
+            intern("time.since"),
             Scheme::mono(Type::Fun(
                 vec![instant_ty.clone(), instant_ty.clone()],
                 Box::new(duration_ty.clone()),
@@ -2816,37 +2817,37 @@ impl TypeChecker {
 
         // time.hours: (Int) -> Duration
         env.define(
-            "time.hours".into(),
+            intern("time.hours"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
         );
 
         // time.minutes: (Int) -> Duration
         env.define(
-            "time.minutes".into(),
+            intern("time.minutes"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
         );
 
         // time.seconds: (Int) -> Duration
         env.define(
-            "time.seconds".into(),
+            intern("time.seconds"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
         );
 
         // time.ms: (Int) -> Duration
         env.define(
-            "time.ms".into(),
+            intern("time.ms"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
         );
 
         // time.weekday: (Date) -> Weekday
         env.define(
-            "time.weekday".into(),
+            intern("time.weekday"),
             Scheme::mono(Type::Fun(vec![date_ty.clone()], Box::new(weekday_ty))),
         );
 
         // time.days_between: (Date, Date) -> Int
         env.define(
-            "time.days_between".into(),
+            intern("time.days_between"),
             Scheme::mono(Type::Fun(
                 vec![date_ty.clone(), date_ty.clone()],
                 Box::new(Type::Int),
@@ -2855,19 +2856,19 @@ impl TypeChecker {
 
         // time.days_in_month: (Int, Int) -> Int
         env.define(
-            "time.days_in_month".into(),
+            intern("time.days_in_month"),
             Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
         );
 
         // time.is_leap_year: (Int) -> Bool
         env.define(
-            "time.is_leap_year".into(),
+            intern("time.is_leap_year"),
             Scheme::mono(Type::Fun(vec![Type::Int], Box::new(Type::Bool))),
         );
 
         // time.sleep: (Duration) -> Unit
         env.define(
-            "time.sleep".into(),
+            intern("time.sleep"),
             Scheme::mono(Type::Fun(vec![duration_ty], Box::new(Type::Unit))),
         );
     }
@@ -2876,40 +2877,40 @@ impl TypeChecker {
         // ── HTTP module type definitions ─────────────────────────────
 
         // Method enum
-        let method_ty = Type::Generic("Method".into(), vec![]);
+        let method_ty = Type::Generic(intern("Method"), vec![]);
 
         self.enums.insert(
-            "Method".into(),
+            intern("Method"),
             EnumInfo {
-                _name: "Method".into(),
+                _name: intern("Method"),
                 params: vec![],
                 variants: vec![
                     VariantInfo {
-                        name: "GET".into(),
+                        name: intern("GET"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "POST".into(),
+                        name: intern("POST"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "PUT".into(),
+                        name: intern("PUT"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "PATCH".into(),
+                        name: intern("PATCH"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "DELETE".into(),
+                        name: intern("DELETE"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "HEAD".into(),
+                        name: intern("HEAD"),
                         field_types: vec![],
                     },
                     VariantInfo {
-                        name: "OPTIONS".into(),
+                        name: intern("OPTIONS"),
                         field_types: vec![],
                     },
                 ],
@@ -2917,58 +2918,58 @@ impl TypeChecker {
         );
         for variant in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
             self.variant_to_enum
-                .insert(variant.to_string(), "Method".into());
-            env.define(variant.to_string(), Scheme::mono(method_ty.clone()));
+                .insert(intern(variant), intern("Method"));
+            env.define(intern(variant), Scheme::mono(method_ty.clone()));
         }
 
         // Response record
         let map_ss = Type::Map(Box::new(Type::String), Box::new(Type::String));
 
         let response_ty = Type::Record(
-            "Response".into(),
+            intern("Response"),
             vec![
-                ("status".into(), Type::Int),
-                ("body".into(), Type::String),
-                ("headers".into(), map_ss.clone()),
+                (intern("status"), Type::Int),
+                (intern("body"), Type::String),
+                (intern("headers"), map_ss.clone()),
             ],
         );
 
         self.records.insert(
-            "Response".into(),
+            intern("Response"),
             RecordInfo {
-                _name: "Response".into(),
+                _name: intern("Response"),
                 _params: vec![],
                 fields: vec![
-                    ("status".into(), Type::Int),
-                    ("body".into(), Type::String),
-                    ("headers".into(), map_ss.clone()),
+                    (intern("status"), Type::Int),
+                    (intern("body"), Type::String),
+                    (intern("headers"), map_ss.clone()),
                 ],
             },
         );
 
         // Request record
         let request_ty = Type::Record(
-            "Request".into(),
+            intern("Request"),
             vec![
-                ("method".into(), method_ty.clone()),
-                ("path".into(), Type::String),
-                ("query".into(), Type::String),
-                ("headers".into(), map_ss.clone()),
-                ("body".into(), Type::String),
+                (intern("method"), method_ty.clone()),
+                (intern("path"), Type::String),
+                (intern("query"), Type::String),
+                (intern("headers"), map_ss.clone()),
+                (intern("body"), Type::String),
             ],
         );
 
         self.records.insert(
-            "Request".into(),
+            intern("Request"),
             RecordInfo {
-                _name: "Request".into(),
+                _name: intern("Request"),
                 _params: vec![],
                 fields: vec![
-                    ("method".into(), method_ty.clone()),
-                    ("path".into(), Type::String),
-                    ("query".into(), Type::String),
-                    ("headers".into(), map_ss.clone()),
-                    ("body".into(), Type::String),
+                    (intern("method"), method_ty.clone()),
+                    (intern("path"), Type::String),
+                    (intern("query"), Type::String),
+                    (intern("headers"), map_ss.clone()),
+                    (intern("body"), Type::String),
                 ],
             },
         );
@@ -2976,11 +2977,11 @@ impl TypeChecker {
         // ── Function signatures ──────────────────────────────────────
 
         let result_response =
-            Type::Generic("Result".into(), vec![response_ty.clone(), Type::String]);
+            Type::Generic(intern("Result"), vec![response_ty.clone(), Type::String]);
 
         // http.get: (String) -> Result(Response, String)
         env.define(
-            "http.get".into(),
+            intern("http.get"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(result_response.clone()),
@@ -2989,7 +2990,7 @@ impl TypeChecker {
 
         // http.request: (Method, String, String, Map(String, String)) -> Result(Response, String)
         env.define(
-            "http.request".into(),
+            intern("http.request"),
             Scheme::mono(Type::Fun(
                 vec![method_ty, Type::String, Type::String, map_ss],
                 Box::new(result_response),
@@ -2998,7 +2999,7 @@ impl TypeChecker {
 
         // http.serve: (Int, Fn(Request) -> Response) -> Unit
         env.define(
-            "http.serve".into(),
+            intern("http.serve"),
             Scheme::mono(Type::Fun(
                 vec![
                     Type::Int,
@@ -3010,7 +3011,7 @@ impl TypeChecker {
 
         // http.segments: (String) -> List(String)
         env.define(
-            "http.segments".into(),
+            intern("http.segments"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
                 Box::new(Type::List(Box::new(Type::String))),
@@ -3068,11 +3069,20 @@ mod tests {
         let mut env = TypeEnv::new();
         checker.register_builtins(&mut env);
         // Core functions should be registered
-        assert!(env.lookup("print").is_some(), "print not registered");
-        assert!(env.lookup("println").is_some(), "println not registered");
-        assert!(env.lookup("panic").is_some(), "panic not registered");
-        assert!(env.lookup("Some").is_some(), "Some not registered");
-        assert!(env.lookup("None").is_some(), "None not registered");
+        assert!(
+            env.lookup(intern("print")).is_some(),
+            "print not registered"
+        );
+        assert!(
+            env.lookup(intern("println")).is_some(),
+            "println not registered"
+        );
+        assert!(
+            env.lookup(intern("panic")).is_some(),
+            "panic not registered"
+        );
+        assert!(env.lookup(intern("Some")).is_some(), "Some not registered");
+        assert!(env.lookup(intern("None")).is_some(), "None not registered");
     }
 
     #[test]

@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::intern::Symbol;
 use crate::lexer::Span;
 
 // ── Type representation ─────────────────────────────────────────────
@@ -30,11 +31,11 @@ pub enum Type {
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
     /// A nominal record type: name + field name/type pairs.
-    Record(std::string::String, Vec<(std::string::String, Type)>),
+    Record(Symbol, Vec<(Symbol, Type)>),
     /// A variant/constructor from an enum type.
-    Variant(std::string::String, Vec<Type>),
+    Variant(Symbol, Vec<Type>),
     /// A generic/parameterized type like Result(Int, String).
-    Generic(std::string::String, Vec<Type>),
+    Generic(Symbol, Vec<Type>),
     /// Map type: key type -> value type.
     Map(Box<Type>, Box<Type>),
     /// Set type: element type.
@@ -131,7 +132,7 @@ impl std::fmt::Display for Type {
 pub struct Scheme {
     pub vars: Vec<TyVar>,
     pub ty: Type,
-    pub constraints: Vec<(TyVar, String)>,
+    pub constraints: Vec<(TyVar, Symbol)>,
 }
 
 impl Scheme {
@@ -276,17 +277,17 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
         Type::Record(name, fields) => {
             let fields = fields
                 .iter()
-                .map(|(n, t)| (n.clone(), substitute_vars(t, mapping)))
+                .map(|(n, t)| (*n, substitute_vars(t, mapping)))
                 .collect();
-            Type::Record(name.clone(), fields)
+            Type::Record(*name, fields)
         }
         Type::Variant(name, args) => {
             let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
-            Type::Variant(name.clone(), args)
+            Type::Variant(*name, args)
         }
         Type::Generic(name, args) => {
             let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
-            Type::Generic(name.clone(), args)
+            Type::Generic(*name, args)
         }
         Type::Map(k, v) => Type::Map(
             Box::new(substitute_vars(k, mapping)),
@@ -300,11 +301,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
 /// Substitute enum type parameters with concrete type arguments.
 /// This is used when we know e.g. Result(Int, String) and want to
 /// resolve the type of a variant's field.
-pub fn substitute_enum_params(
-    field_ty: &Type,
-    param_names: &[std::string::String],
-    type_args: &[Type],
-) -> Type {
+pub fn substitute_enum_params(field_ty: &Type, param_names: &[Symbol], type_args: &[Type]) -> Type {
     match field_ty {
         Type::Var(v) => {
             // If this Var index corresponds to a param position, substitute
@@ -338,7 +335,7 @@ pub fn substitute_enum_params(
                 .iter()
                 .map(|a| substitute_enum_params(a, param_names, type_args))
                 .collect();
-            Type::Generic(name.clone(), args)
+            Type::Generic(*name, args)
         }
         _ => field_ty.clone(),
     }

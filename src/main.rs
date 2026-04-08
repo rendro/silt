@@ -405,6 +405,7 @@ fn format_file(path: &str) {
 
 /// Run a file using the bytecode VM (default path).
 fn vm_run_file(path: &str) {
+    silt::intern::reset();
     let (functions, source) = compile_file(path);
 
     let script = Arc::new(functions.into_iter().next().unwrap());
@@ -440,6 +441,7 @@ fn vm_run_file(path: &str) {
 
 /// Disassemble a file's bytecode without running it.
 fn disasm_file(path: &str) {
+    silt::intern::reset();
     let (functions, _source) = compile_file(path);
 
     // Print disassembly of each function
@@ -450,6 +452,7 @@ fn disasm_file(path: &str) {
 }
 
 fn check_file(path: &str, format: OutputFormat) {
+    silt::intern::reset();
     let result = run_compile_pipeline(path, true, true);
 
     let errors: Vec<&SourceError> = all_diagnostics(&result);
@@ -510,6 +513,7 @@ fn find_test_files(dir: &Path) -> Vec<String> {
 }
 
 fn run_tests(file: Option<&str>, filter: Option<String>) {
+    silt::intern::reset();
     let paths: Vec<String> = if let Some(f) = file {
         let p = Path::new(f);
         if p.is_dir() {
@@ -597,27 +601,28 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // Run each test function
         for decl in &program.decls {
             if let silt::ast::Decl::Fn(f) = decl {
-                if f.name.starts_with("skip_test_") {
+                let name = silt::intern::resolve(f.name);
+                if name.starts_with("skip_test_") {
                     total += 1;
-                    println!("  SKIP {path}::{}", f.name);
+                    println!("  SKIP {path}::{name}");
                     skipped += 1;
                     continue;
                 }
-                if f.name.starts_with("test_") {
+                if name.starts_with("test_") {
                     if let Some(ref filter) = filter
-                        && !f.name.contains(filter.as_str())
+                        && !name.contains(filter.as_str())
                     {
                         continue;
                     }
                     total += 1;
-                    let caller = silt::bytecode::call_global_script(&f.name);
+                    let caller = silt::bytecode::call_global_script(&name);
                     match vm.run(Arc::new(caller)) {
                         Ok(_) => {
-                            println!("  PASS {path}::{}", f.name);
+                            println!("  PASS {path}::{name}");
                             passed += 1;
                         }
                         Err(e) => {
-                            println!("  FAIL {path}::{}", f.name);
+                            println!("  FAIL {path}::{name}");
                             if let Some(span) = e.span {
                                 let source_err =
                                     SourceError::runtime_at(&e.message, span, &source, path);

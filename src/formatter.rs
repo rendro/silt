@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::intern::{Symbol, resolve};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -315,17 +316,20 @@ fn format_fn(f: &FnDecl, depth: usize) -> String {
         String::new()
     } else {
         // Group trait bounds by type param, preserving insertion order.
-        let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
+        let mut grouped: Vec<(Symbol, Vec<Symbol>)> = Vec::new();
         for (name, trait_name) in &f.where_clauses {
             if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
-                entry.1.push(trait_name.clone());
+                entry.1.push(*trait_name);
             } else {
-                grouped.push((name.clone(), vec![trait_name.clone()]));
+                grouped.push((*name, vec![*trait_name]));
             }
         }
         let clauses: Vec<String> = grouped
             .iter()
-            .map(|(name, traits)| format!("{name}: {}", traits.join(" + ")))
+            .map(|(name, traits)| {
+                let trait_strs: Vec<String> = traits.iter().map(|t| resolve(*t)).collect();
+                format!("{name}: {}", trait_strs.join(" + "))
+            })
             .collect();
         format!(" where {}", clauses.join(", "))
     };
@@ -389,7 +393,8 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     let params = if t.params.is_empty() {
         String::new()
     } else {
-        format!("({})", t.params.join(", "))
+        let param_strs: Vec<String> = t.params.iter().map(|p| resolve(*p)).collect();
+        format!("({})", param_strs.join(", "))
     };
 
     match &t.body {
@@ -458,7 +463,8 @@ fn format_import(i: &ImportTarget, depth: usize) -> String {
     match i {
         ImportTarget::Module(name) => format!("{prefix}import {name}"),
         ImportTarget::Items(module, items) => {
-            format!("{prefix}import {module}.{{ {} }}", items.join(", "))
+            let item_strs: Vec<String> = items.iter().map(|i| resolve(*i)).collect();
+            format!("{prefix}import {module}.{{ {} }}", item_strs.join(", "))
         }
         ImportTarget::Alias(module, alias) => {
             format!("{prefix}import {module} as {alias}")
@@ -535,7 +541,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             result
         }
         ExprKind::Unit => "()".to_string(),
-        ExprKind::Ident(name) => name.clone(),
+        ExprKind::Ident(name) => resolve(*name),
 
         ExprKind::List(elems) => {
             if elems.is_empty() {
@@ -799,7 +805,7 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
 fn format_pattern(pattern: &Pattern) -> String {
     match pattern {
         Pattern::Wildcard => "_".to_string(),
-        Pattern::Ident(name) => name.clone(),
+        Pattern::Ident(name) => resolve(*name),
         Pattern::Int(n) => n.to_string(),
         Pattern::Float(n) => {
             let s = n.to_string();
@@ -813,7 +819,7 @@ fn format_pattern(pattern: &Pattern) -> String {
         }
         Pattern::Constructor(name, pats) => {
             if pats.is_empty() {
-                name.clone()
+                resolve(*name)
             } else {
                 let items: Vec<String> = pats.iter().map(format_pattern).collect();
                 format!("{name}({})", items.join(", "))
@@ -830,16 +836,14 @@ fn format_pattern(pattern: &Pattern) -> String {
                     if let Some(p) = sub {
                         format!("{fname}: {}", format_pattern(p))
                     } else {
-                        fname.clone()
+                        resolve(*fname)
                     }
                 })
                 .collect();
             let rest = if *has_rest { ", .." } else { "" };
-            let name_str = name.as_deref().unwrap_or("");
-            if name_str.is_empty() {
-                format!("{{ {}{rest} }}", field_strs.join(", "))
-            } else {
-                format!("{name_str} {{ {}{rest} }}", field_strs.join(", "))
+            match name {
+                Some(n) => format!("{n} {{ {}{rest} }}", field_strs.join(", ")),
+                None => format!("{{ {}{rest} }}", field_strs.join(", ")),
             }
         }
         Pattern::List(pats, rest) => {
@@ -868,7 +872,7 @@ fn format_pattern(pattern: &Pattern) -> String {
 
 fn format_type_expr(ty: &TypeExpr) -> String {
     match ty {
-        TypeExpr::Named(name) => name.clone(),
+        TypeExpr::Named(name) => resolve(*name),
         TypeExpr::Generic(name, args) => {
             let arg_strs: Vec<String> = args.iter().map(format_type_expr).collect();
             format!("{name}({})", arg_strs.join(", "))

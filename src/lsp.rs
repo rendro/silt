@@ -24,6 +24,7 @@ use lsp_types::{
 };
 
 use crate::ast::*;
+use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{Lexer, Span};
 use crate::module;
 use crate::parser::Parser;
@@ -42,7 +43,7 @@ struct Document {
     source: String,
     program: Option<Program>,
     /// Definition map: name → definition info (built from top-level declarations).
-    definitions: HashMap<String, DefInfo>,
+    definitions: HashMap<Symbol, DefInfo>,
 }
 
 // ── Span ↔ LSP conversion ─────────────────────────────────────────
@@ -394,7 +395,7 @@ impl Server {
                 };
                 let detail = def.ty.as_ref().map(|t| format!("{t}"));
                 items.push(CompletionItem {
-                    label: name.clone(),
+                    label: name.to_string(),
                     kind: Some(kind),
                     detail,
                     ..CompletionItem::default()
@@ -476,14 +477,15 @@ impl Server {
         }
 
         // 3. Fallback: if the prefix matches a type name, offer its fields
+        let prefix_sym = intern(prefix);
         for decl in &program.decls {
             if let Decl::Type(td) = decl
-                && td.name == prefix
+                && td.name == prefix_sym
                 && let TypeBody::Record(fields) = &td.body
             {
                 for field in fields {
                     items.push(CompletionItem {
-                        label: field.name.clone(),
+                        label: field.name.to_string(),
                         kind: Some(CompletionItemKind::FIELD),
                         detail: Some(format!("{}", type_expr_to_type(&field.ty))),
                         ..CompletionItem::default()
@@ -563,7 +565,8 @@ impl Server {
         }
 
         // Look up in definitions first, then builtins.
-        let (label, params_info) = if let Some(def) = doc.definitions.get(&fn_name) {
+        let fn_sym = intern(&fn_name);
+        let (label, params_info) = if let Some(def) = doc.definitions.get(&fn_sym) {
             build_signature_from_def(&fn_name, def)
         } else if let Some(sig) = self.builtin_sigs.get(&fn_name) {
             // Show builtin type signature (no individual param info)
@@ -605,7 +608,7 @@ impl Server {
                         .and_then(|d| d.ty.as_ref())
                         .map(|t| format!("{t}"));
                     symbols.push(DocumentSymbol {
-                        name: f.name.clone(),
+                        name: f.name.to_string(),
                         detail,
                         kind: SymbolKind::FUNCTION,
                         range: span_to_range(&f.span),
@@ -621,7 +624,7 @@ impl Server {
                         TypeBody::Record(_) => SymbolKind::STRUCT,
                     };
                     symbols.push(DocumentSymbol {
-                        name: t.name.clone(),
+                        name: t.name.to_string(),
                         detail: None,
                         kind,
                         range: span_to_range(&t.span),
@@ -633,7 +636,7 @@ impl Server {
                 }
                 Decl::Trait(t) => {
                     symbols.push(DocumentSymbol {
-                        name: t.name.clone(),
+                        name: t.name.to_string(),
                         detail: None,
                         kind: SymbolKind::INTERFACE,
                         range: span_to_range(&t.span),
@@ -651,7 +654,7 @@ impl Server {
                 } => {
                     let detail = value.ty.as_ref().map(|t| format!("{t}"));
                     symbols.push(DocumentSymbol {
-                        name: name.clone(),
+                        name: name.to_string(),
                         detail,
                         kind: SymbolKind::VARIABLE,
                         range: span_to_range(span),
@@ -741,7 +744,7 @@ fn make_diagnostic(message: &str, span: &Span, severity: DiagnosticSeverity) -> 
 
 // ── Build definitions map from declarations ────────────────────────
 
-fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
+fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
     let mut defs = HashMap::new();
     for decl in &program.decls {
         match decl {
@@ -749,7 +752,7 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
                 let fn_ty = build_fn_type(f);
                 let params = fn_param_names(f);
                 defs.insert(
-                    f.name.clone(),
+                    f.name,
                     DefInfo {
                         span: f.span,
                         ty: fn_ty,
@@ -759,7 +762,7 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
             }
             Decl::Type(t) => {
                 defs.insert(
-                    t.name.clone(),
+                    t.name,
                     DefInfo {
                         span: t.span,
                         ty: None,
@@ -769,7 +772,7 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
                 if let TypeBody::Enum(variants) = &t.body {
                     for v in variants {
                         defs.insert(
-                            v.name.clone(),
+                            v.name,
                             DefInfo {
                                 span: t.span,
                                 ty: None,
@@ -781,7 +784,7 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
             }
             Decl::Trait(t) => {
                 defs.insert(
-                    t.name.clone(),
+                    t.name,
                     DefInfo {
                         span: t.span,
                         ty: None,
@@ -796,7 +799,7 @@ fn build_definitions(program: &Program) -> HashMap<String, DefInfo> {
                 ..
             } => {
                 defs.insert(
-                    name.clone(),
+                    *name,
                     DefInfo {
                         span: *span,
                         ty: value.ty.clone(),
@@ -814,7 +817,7 @@ fn fn_param_names(f: &FnDecl) -> Vec<String> {
     f.params
         .iter()
         .map(|p| match &p.pattern {
-            Pattern::Ident(name) => name.clone(),
+            Pattern::Ident(name) => name.to_string(),
             _ => "_".to_string(),
         })
         .collect()
@@ -831,12 +834,12 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
     // were bound there. But the simplest reliable source is the function's
     // own usage. As a practical approach: walk the body to find Ident nodes
     // matching param names and grab their types.
-    let param_names: Vec<&str> = f
+    let param_names: Vec<Symbol> = f
         .params
         .iter()
         .filter_map(|p| {
             if let Pattern::Ident(name) = &p.pattern {
-                Some(name.as_str())
+                Some(*name)
             } else {
                 None
             }
@@ -845,7 +848,7 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
 
     let mut param_types = Vec::new();
     for name in &param_names {
-        if let Some(ty) = find_param_type(&f.body, name) {
+        if let Some(ty) = find_param_type(&f.body, *name) {
             param_types.push(ty);
         } else {
             return None; // Can't determine a param type
@@ -856,9 +859,9 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
 }
 
 /// Find the type of the first Ident expression matching `name` in the body.
-fn find_param_type(expr: &Expr, name: &str) -> Option<Type> {
+fn find_param_type(expr: &Expr, name: Symbol) -> Option<Type> {
     if let ExprKind::Ident(n) = &expr.kind
-        && n == name
+        && *n == name
     {
         return expr.ty.clone();
     }
@@ -1044,18 +1047,19 @@ fn find_field_in_expr(
         // Find where the field name starts in the source.
         // The FieldAccess span covers the receiver. The field name is after the dot.
         // Search forward from the receiver for `.field`
+        let field_str = resolve(*field);
         let expr_start = expr.span.offset;
         if cursor >= expr_start {
             // Find the dot position in the source after the receiver
             if let Some(dot_rel) = source[expr_start..].find('.') {
                 let field_start = expr_start + dot_rel + 1;
-                let field_end = field_start + field.len();
+                let field_end = field_start + field_str.len();
                 if cursor >= field_start && cursor < field_end {
                     // Cursor is on the field name — look up the field type
                     if let Some(receiver_ty) = &receiver.ty
-                        && let Some(field_ty) = get_field_type(receiver_ty, field)
+                        && let Some(field_ty) = get_field_type(receiver_ty, *field)
                     {
-                        *result = Some((field.clone(), field_ty));
+                        *result = Some((field_str, field_ty));
                         return;
                     }
                 }
@@ -1171,13 +1175,13 @@ fn find_field_in_expr(
 }
 
 /// Look up a field's type within a record type.
-fn get_field_type(ty: &Type, field_name: &str) -> Option<Type> {
+fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
     match ty {
         Type::Record(_, fields) => fields
             .iter()
-            .find(|(n, _)| n == field_name)
+            .find(|(n, _)| *n == field_name)
             .map(|(_, t)| t.clone()),
-        Type::Tuple(elems) => field_name
+        Type::Tuple(elems) => resolve(field_name)
             .parse::<usize>()
             .ok()
             .and_then(|i| elems.get(i).cloned()),
@@ -1186,8 +1190,8 @@ fn get_field_type(ty: &Type, field_name: &str) -> Option<Type> {
 }
 
 /// Find the identifier name at the cursor byte offset.
-fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<String> {
-    let mut best: Option<String> = None;
+fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<Symbol> {
+    let mut best: Option<Symbol> = None;
     for decl in &program.decls {
         match decl {
             Decl::Fn(f) => {
@@ -1207,11 +1211,12 @@ fn find_ident_at_offset(program: &Program, cursor: usize) -> Option<String> {
     best
 }
 
-fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<String>) {
+fn find_ident_in_expr(expr: &Expr, cursor: usize, best: &mut Option<Symbol>) {
     if let ExprKind::Ident(name) = &expr.kind {
         let start = token_start(&expr.span);
-        if cursor >= start && cursor < start + name.len() {
-            *best = Some(name.clone());
+        let name_len = resolve(*name).len();
+        if cursor >= start && cursor < start + name_len {
+            *best = Some(*name);
         }
     }
     visit_expr_children(expr, |child| find_ident_in_expr(child, cursor, best));
@@ -1353,9 +1358,9 @@ fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar> {
 /// Extract variable names from a pattern (for let/when bindings and params).
 fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
     match pattern {
-        Pattern::Ident(name) if name != "_" => {
+        Pattern::Ident(name) if resolve(*name) != "_" => {
             locals.push(LocalVar {
-                name: name.clone(),
+                name: name.to_string(),
                 ty: None,
             });
         }
@@ -1375,7 +1380,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                     collect_pattern_names(p, locals);
                 } else {
                     locals.push(LocalVar {
-                        name: name.clone(),
+                        name: name.to_string(),
                         ty: None,
                     });
                 }
@@ -1457,7 +1462,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
             for (name, init) in bindings {
                 if init.span.offset <= cursor {
                     locals.push(LocalVar {
-                        name: name.clone(),
+                        name: name.to_string(),
                         ty: init.ty.clone(),
                     });
                 }
@@ -1474,9 +1479,9 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
 /// Like collect_pattern_names but attaches the type from the value expression.
 fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mut Vec<LocalVar>) {
     match pattern {
-        Pattern::Ident(name) if name != "_" => {
+        Pattern::Ident(name) if resolve(*name) != "_" => {
             locals.push(LocalVar {
-                name: name.clone(),
+                name: name.to_string(),
                 ty: ty.cloned(),
             });
         }
@@ -1489,7 +1494,8 @@ fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals:
     if let (Pattern::Constructor(ctor, fields), Some(Type::Generic(_, args))) = (pattern, expr_ty) {
         // Result(T, E): Ok(x) → x has type T, Err(x) → x has type E
         // Option(T): Some(x) → x has type T
-        let inner_ty = match ctor.as_str() {
+        let ctor_str = resolve(*ctor);
+        let inner_ty = match ctor_str.as_str() {
             "Ok" => args.first(),
             "Err" => args.get(1),
             "Some" => args.first(),
@@ -1499,7 +1505,8 @@ fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals:
             for field_pat in fields {
                 if let Pattern::Ident(name) = field_pat {
                     // Update the last local with this name to have the resolved type
-                    if let Some(local) = locals.iter_mut().rev().find(|l| l.name == *name) {
+                    let name_str = name.to_string();
+                    if let Some(local) = locals.iter_mut().rev().find(|l| l.name == name_str) {
                         local.ty = Some(ty.clone());
                     }
                 }
@@ -1549,14 +1556,15 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
 /// Walk the entire AST to find the type of a variable by name.
 /// Returns the most deeply nested (most specific) type found for the identifier.
 fn find_ident_type_by_name(program: &Program, name: &str) -> Option<Type> {
+    let sym = intern(name);
     let mut result: Option<Type> = None;
     for decl in &program.decls {
         match decl {
-            Decl::Fn(f) => find_ident_type_in_expr(&f.body, name, &mut result),
-            Decl::Let { value, .. } => find_ident_type_in_expr(value, name, &mut result),
+            Decl::Fn(f) => find_ident_type_in_expr(&f.body, sym, &mut result),
+            Decl::Let { value, .. } => find_ident_type_in_expr(value, sym, &mut result),
             Decl::TraitImpl(ti) => {
                 for method in &ti.methods {
-                    find_ident_type_in_expr(&method.body, name, &mut result);
+                    find_ident_type_in_expr(&method.body, sym, &mut result);
                 }
             }
             _ => {}
@@ -1565,9 +1573,9 @@ fn find_ident_type_by_name(program: &Program, name: &str) -> Option<Type> {
     result
 }
 
-fn find_ident_type_in_expr(expr: &Expr, name: &str, result: &mut Option<Type>) {
+fn find_ident_type_in_expr(expr: &Expr, name: Symbol, result: &mut Option<Type>) {
     if let ExprKind::Ident(ident_name) = &expr.kind
-        && ident_name == name
+        && *ident_name == name
         && let Some(ty) = &expr.ty
         && !has_unresolved_vars(ty)
     {
@@ -1580,15 +1588,20 @@ fn find_ident_type_in_expr(expr: &Expr, name: &str, result: &mut Option<Type>) {
 /// Looks up type declarations in the program if the type references a named record.
 fn record_fields_from_type(ty: &Type, program: &Program) -> Option<Vec<(String, Type)>> {
     match ty {
-        Type::Record(_, fields) => Some(fields.clone()),
+        Type::Record(_, fields) => Some(
+            fields
+                .iter()
+                .map(|(n, t)| (resolve(*n), t.clone()))
+                .collect(),
+        ),
         // If it's a named type (Generic or Variant), look up the type declaration
-        Type::Generic(name, _) => lookup_record_fields(program, name),
+        Type::Generic(name, _) => lookup_record_fields(program, *name),
         _ => None,
     }
 }
 
 /// Look up a type declaration by name and return its record fields.
-fn lookup_record_fields(program: &Program, type_name: &str) -> Option<Vec<(String, Type)>> {
+fn lookup_record_fields(program: &Program, type_name: Symbol) -> Option<Vec<(String, Type)>> {
     for decl in &program.decls {
         if let Decl::Type(td) = decl
             && td.name == type_name
@@ -1597,7 +1610,7 @@ fn lookup_record_fields(program: &Program, type_name: &str) -> Option<Vec<(Strin
             return Some(
                 fields
                     .iter()
-                    .map(|f| (f.name.clone(), type_expr_to_type(&f.ty)))
+                    .map(|f| (f.name.to_string(), type_expr_to_type(&f.ty)))
                     .collect(),
             );
         }
@@ -1608,28 +1621,32 @@ fn lookup_record_fields(program: &Program, type_name: &str) -> Option<Vec<(Strin
 /// Simple conversion from AST TypeExpr to the type system's Type for display.
 fn type_expr_to_type(te: &TypeExpr) -> Type {
     match te {
-        TypeExpr::Named(n) => match n.as_str() {
-            "Int" => Type::Int,
-            "Float" => Type::Float,
-            "String" => Type::String,
-            "Bool" => Type::Bool,
-            _ => Type::Generic(n.clone(), vec![]),
-        },
+        TypeExpr::Named(n) => {
+            let s = resolve(*n);
+            match s.as_str() {
+                "Int" => Type::Int,
+                "Float" => Type::Float,
+                "String" => Type::String,
+                "Bool" => Type::Bool,
+                _ => Type::Generic(*n, vec![]),
+            }
+        }
         TypeExpr::Generic(name, args) => {
             let targs: Vec<Type> = args.iter().map(type_expr_to_type).collect();
-            match name.as_str() {
+            let s = resolve(*name);
+            match s.as_str() {
                 "List" => {
                     if let Some(inner) = targs.into_iter().next() {
                         Type::List(Box::new(inner))
                     } else {
-                        Type::Generic("List".into(), vec![])
+                        Type::Generic(intern("List"), vec![])
                     }
                 }
-                "Option" => Type::Generic("Option".into(), targs),
-                _ => Type::Generic(name.clone(), targs),
+                "Option" => Type::Generic(intern("Option"), targs),
+                _ => Type::Generic(*name, targs),
             }
         }
-        TypeExpr::SelfType => Type::Generic("Self".into(), vec![]),
+        TypeExpr::SelfType => Type::Generic(intern("Self"), vec![]),
         _ => Type::String, // fallback
     }
 }
@@ -1980,12 +1997,12 @@ mod tests {
     #[test]
     fn test_has_unresolved_vars_nested() {
         assert!(has_unresolved_vars(&Type::Record(
-            "Foo".into(),
-            vec![("x".into(), Type::Var(0))]
+            crate::intern::intern("Foo"),
+            vec![(crate::intern::intern("x"), Type::Var(0))]
         )));
         assert!(!has_unresolved_vars(&Type::Record(
-            "Foo".into(),
-            vec![("x".into(), Type::Int)]
+            crate::intern::intern("Foo"),
+            vec![(crate::intern::intern("x"), Type::Int)]
         )));
     }
 
@@ -1994,22 +2011,40 @@ mod tests {
     #[test]
     fn test_get_field_type_record() {
         let ty = Type::Record(
-            "User".into(),
-            vec![("name".into(), Type::String), ("age".into(), Type::Int)],
+            crate::intern::intern("User"),
+            vec![
+                (crate::intern::intern("name"), Type::String),
+                (crate::intern::intern("age"), Type::Int),
+            ],
         );
-        assert_eq!(get_field_type(&ty, "name"), Some(Type::String));
-        assert_eq!(get_field_type(&ty, "age"), Some(Type::Int));
-        assert_eq!(get_field_type(&ty, "missing"), None);
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("name")),
+            Some(Type::String)
+        );
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("age")),
+            Some(Type::Int)
+        );
+        assert_eq!(get_field_type(&ty, crate::intern::intern("missing")), None);
     }
 
     #[test]
     fn test_get_field_type_tuple() {
         let ty = Type::Tuple(vec![Type::Int, Type::String, Type::Bool]);
-        assert_eq!(get_field_type(&ty, "0"), Some(Type::Int));
-        assert_eq!(get_field_type(&ty, "1"), Some(Type::String));
-        assert_eq!(get_field_type(&ty, "2"), Some(Type::Bool));
-        assert_eq!(get_field_type(&ty, "3"), None);
-        assert_eq!(get_field_type(&ty, "name"), None);
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("0")),
+            Some(Type::Int)
+        );
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("1")),
+            Some(Type::String)
+        );
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("2")),
+            Some(Type::Bool)
+        );
+        assert_eq!(get_field_type(&ty, crate::intern::intern("3")), None);
+        assert_eq!(get_field_type(&ty, crate::intern::intern("name")), None);
     }
 
     // ── build_definitions ─────────────────────────────────────────
@@ -2023,12 +2058,27 @@ mod tests {
         let _ = crate::typechecker::check(&mut program);
         let defs = build_definitions(&program);
 
-        assert!(defs.contains_key("add"), "should have fn 'add'");
-        assert!(defs.contains_key("Color"), "should have type 'Color'");
-        assert!(defs.contains_key("Red"), "should have variant 'Red'");
-        assert!(defs.contains_key("Green"), "should have variant 'Green'");
-        assert!(defs.contains_key("Blue"), "should have variant 'Blue'");
-        assert!(defs.contains_key("x"), "should have let binding 'x'");
+        assert!(defs.contains_key(&intern("add")), "should have fn 'add'");
+        assert!(
+            defs.contains_key(&intern("Color")),
+            "should have type 'Color'"
+        );
+        assert!(
+            defs.contains_key(&intern("Red")),
+            "should have variant 'Red'"
+        );
+        assert!(
+            defs.contains_key(&intern("Green")),
+            "should have variant 'Green'"
+        );
+        assert!(
+            defs.contains_key(&intern("Blue")),
+            "should have variant 'Blue'"
+        );
+        assert!(
+            defs.contains_key(&intern("x")),
+            "should have let binding 'x'"
+        );
     }
 
     #[test]
@@ -2038,7 +2088,7 @@ mod tests {
         let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
         let defs = build_definitions(&program);
 
-        let def = defs.get("greet").unwrap();
+        let def = defs.get(&intern("greet")).unwrap();
         assert_eq!(def.params, vec!["name", "times"]);
     }
 

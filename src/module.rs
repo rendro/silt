@@ -1,7 +1,7 @@
 /// Module system utilities.
 /// Known builtin module names whose functions are registered as `module.func`
 /// in the global environment rather than loaded from files.
-const BUILTIN_MODULES: &[&str] = &[
+pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
     "regex", "json", "set", "math", "time", "http", "fs",
 ];
@@ -109,7 +109,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "each",
             "update",
         ],
-        "io" => vec!["read_file", "write_file", "read_line", "args"],
+        "io" => vec!["read_file", "write_file", "read_line", "args", "inspect"],
         "int" => vec!["parse", "abs", "min", "max", "to_float", "to_string"],
         "float" => vec![
             "parse",
@@ -144,6 +144,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "test" => vec!["assert", "assert_eq", "assert_ne"],
         "math" => vec![
             "sqrt", "pow", "log", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+            "exp",
         ],
         "regex" => vec![
             "is_match",
@@ -216,6 +217,16 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         ],
         "http" => vec!["get", "request", "serve", "segments"],
         "fs" => vec!["exists", "is_file", "is_dir", "list_dir"],
+        _ => vec![],
+    }
+}
+
+/// Returns the list of builtin constants (non-function values) for a module.
+/// E.g., for "math" returns ["pi", "e"].
+pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
+    match module {
+        "math" => vec!["pi", "e"],
+        "float" => vec!["max_value", "min_value"],
         _ => vec![],
     }
 }

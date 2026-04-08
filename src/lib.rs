@@ -7,6 +7,7 @@ pub mod compiler;
 pub mod disassemble;
 pub mod errors;
 pub mod formatter;
+pub mod intern;
 pub mod lexer;
 #[cfg(feature = "lsp")]
 pub mod lsp;
