@@ -1560,6 +1560,12 @@ impl Parser {
         let mut fields = Vec::new();
         self.skip_nl();
         while !self.at(&Token::RBrace) {
+            if self.at(&Token::DotDot) || self.at(&Token::Dot) {
+                return Err(ParseError {
+                    message: "spread syntax is not supported; use `value.{ field: expr }` for record updates".into(),
+                    span: self.span(),
+                });
+            }
             let (name, _) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             self.skip_nl();
