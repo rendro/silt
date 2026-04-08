@@ -249,7 +249,11 @@ impl TypeChecker {
                 } else {
                     self.error(
                         format!("undefined variable '{name}' in pin pattern"),
-                        Span { line: 0, col: 0, offset: 0 },
+                        Span {
+                            line: 0,
+                            col: 0,
+                            offset: 0,
+                        },
                     );
                 }
             }
@@ -874,10 +878,7 @@ impl TypeChecker {
                     Type::Error => Type::Error,
                     Type::Never => Type::Never,
                     _ => {
-                        self.error(
-                            format!("type '{}' is not callable", callee_ty),
-                            span,
-                        );
+                        self.error(format!("type '{}' is not callable", callee_ty), span);
                         self.fresh_var()
                     }
                 };
@@ -968,10 +969,7 @@ impl TypeChecker {
                         rec_info.fields.iter().map(|(n, _)| n.as_str()).collect();
                     for (field_name, _) in &field_types {
                         if !declared.contains(field_name.as_str()) {
-                            self.error(
-                                format!("unknown field '{}' in {}", field_name, name),
-                                span,
-                            );
+                            self.error(format!("unknown field '{}' in {}", field_name, name), span);
                         }
                     }
 
@@ -1001,10 +999,7 @@ impl TypeChecker {
                             self.unify(&ft, declared_ty, span);
                         } else {
                             self.error(
-                                format!(
-                                    "unknown field '{}' in {}",
-                                    field_name, rec_name
-                                ),
+                                format!("unknown field '{}' in {}", field_name, rec_name),
                                 span,
                             );
                         }
@@ -1387,10 +1382,7 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
                 } else {
-                    self.error(
-                        format!("undefined variable '{name}' in pin pattern"),
-                        span,
-                    );
+                    self.error(format!("undefined variable '{name}' in pin pattern"), span);
                 }
             }
         }

@@ -4,10 +4,10 @@
 //! park tasks instead of blocking OS threads, and wakers re-enqueue
 //! them when data arrives.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::{Condvar, Mutex};
+use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -142,9 +142,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     break task;
                 }
                 // Use a timeout so we can periodically check for deadlock.
-                let wait_result = inner
-                    .condvar
-                    .wait_for(&mut queue, Duration::from_secs(1));
+                let wait_result = inner.condvar.wait_for(&mut queue, Duration::from_secs(1));
                 if wait_result.timed_out() {
                     let live = inner.live_tasks.load(Ordering::SeqCst);
                     let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
@@ -207,12 +205,8 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 if reason.is_some() {
                     inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
                     // Store the handle so we can complete it on deadlock.
-                    let handle_for_registry =
-                        task_slot.lock().as_ref().unwrap().handle.clone();
-                    inner
-                        .blocked_handles
-                        .lock()
-                        .push(handle_for_registry);
+                    let handle_for_registry = task_slot.lock().as_ref().unwrap().handle.clone();
+                    inner.blocked_handles.lock().push(handle_for_registry);
                 }
 
                 match reason {
@@ -340,7 +334,14 @@ mod tests {
     fn make_task(id: usize, src: &str) -> (Task, Arc<TaskHandle>) {
         let handle = Arc::new(TaskHandle::new(id));
         let vm = make_vm(src);
-        (Task { id, vm, handle: handle.clone() }, handle)
+        (
+            Task {
+                id,
+                vm,
+                handle: handle.clone(),
+            },
+            handle,
+        )
     }
 
     // ── Basic lifecycle ────────────────────────────────────────────
@@ -399,7 +400,10 @@ mod tests {
         // Give workers a moment to decrement.
         std::thread::sleep(Duration::from_millis(50));
         let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
-        assert_eq!(live, 0, "live_tasks should be 0 after all tasks complete, got {live}");
+        assert_eq!(
+            live, 0,
+            "live_tasks should be 0 after all tasks complete, got {live}"
+        );
     }
 
     #[test]
@@ -410,7 +414,10 @@ mod tests {
         let _ = handle.join();
         std::thread::sleep(Duration::from_millis(50));
         let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
-        assert_eq!(live, 0, "live_tasks should be 0 after failed task, got {live}");
+        assert_eq!(
+            live, 0,
+            "live_tasks should be 0 after failed task, got {live}"
+        );
     }
 
     // ── Shutdown ───────────────────────────────────────────────────

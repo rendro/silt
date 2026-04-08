@@ -1697,7 +1697,10 @@ fn main() {
 "#;
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
-        assert_eq!(first, second, "tuple literal and pattern should be idempotent");
+        assert_eq!(
+            first, second,
+            "tuple literal and pattern should be idempotent"
+        );
     }
 
     // ── Idempotency: map patterns ───────────────────────────────────

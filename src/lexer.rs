@@ -459,7 +459,9 @@ impl Lexer {
 
     fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
         // Handle hex (0x) and binary (0b) prefixes
-        if first == '0' && let Some(prefix) = self.peek() {
+        if first == '0'
+            && let Some(prefix) = self.peek()
+        {
             if prefix == 'x' || prefix == 'X' {
                 self.advance_char(); // consume 'x'
                 return self.scan_hex_int(start);

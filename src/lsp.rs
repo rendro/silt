@@ -1995,10 +1995,7 @@ mod tests {
     fn test_get_field_type_record() {
         let ty = Type::Record(
             "User".into(),
-            vec![
-                ("name".into(), Type::String),
-                ("age".into(), Type::Int),
-            ],
+            vec![("name".into(), Type::String), ("age".into(), Type::Int)],
         );
         assert_eq!(get_field_type(&ty, "name"), Some(Type::String));
         assert_eq!(get_field_type(&ty, "age"), Some(Type::Int));
@@ -2019,7 +2016,8 @@ mod tests {
 
     #[test]
     fn test_build_definitions_from_program() {
-        let source = "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
+        let source =
+            "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
         let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
         let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
         let _ = crate::typechecker::check(&mut program);

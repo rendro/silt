@@ -121,14 +121,20 @@ fn test_formatter_roundtrip_parses_on_all_examples() {
         let tokens = match Lexer::new(&formatted).tokenize() {
             Ok(t) => t,
             Err(e) => {
-                failures.push(format!("{name}: formatted code fails to lex: {}", e.message));
+                failures.push(format!(
+                    "{name}: formatted code fails to lex: {}",
+                    e.message
+                ));
                 continue;
             }
         };
 
         // Verify it still parses
         if let Err(e) = Parser::new(tokens).parse_program() {
-            failures.push(format!("{name}: formatted code fails to parse: {}", e.message));
+            failures.push(format!(
+                "{name}: formatted code fails to parse: {}",
+                e.message
+            ));
         }
     }
 
@@ -739,7 +745,8 @@ fn main() { regex.split("xyz", "hello") }
 
 #[test]
 fn test_task_error_returns_err_on_join() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import task
 fn main() {
   let h = task.spawn(fn() {
@@ -748,7 +755,8 @@ fn main() {
   })
   task.join(h)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("division") || err.contains("zero"),
         "expected division error, got: {err}"
@@ -829,14 +837,16 @@ fn main() {
 
 #[test]
 fn test_channel_send_after_close_errors() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import channel
 fn main() {
   let ch = channel.new(10)
   channel.close(ch)
   channel.send(ch, 42)
 }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("closed"),
         "expected closed channel error, got: {err}"
@@ -926,20 +936,22 @@ fn main() { result.is_err(io.write_file("/nonexistent_dir_12345/file.txt", "data
 
 #[test]
 fn test_write_and_read_roundtrip() {
-    assert_eq!(
-        run(r#"
+    let tmp = std::env::temp_dir().join("silt_hardening_test_roundtrip.txt");
+    let tmp_str = tmp.to_str().unwrap().replace('\\', "/");
+    let src = format!(
+        r#"
 import io
-fn main() {
-  let path = "/tmp/silt_hardening_test_roundtrip.txt"
+fn main() {{
+  let path = "{tmp_str}"
   io.write_file(path, "hello silt")
-  match io.read_file(path) {
+  match io.read_file(path) {{
     Ok(content) -> content
     Err(e) -> e
-  }
-}
-        "#),
-        Value::String("hello silt".into())
+  }}
+}}"#
     );
+    assert_eq!(run(&src), Value::String("hello silt".into()));
+    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
