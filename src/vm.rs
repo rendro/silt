@@ -5275,7 +5275,8 @@ mod tests {
     #[test]
     fn test_foreign_fn1_typed() {
         let mut vm = Vm::new();
-        vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 })
+            .unwrap();
         let result = run_vm_with(&mut vm, "fn main() { double(21) }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5283,7 +5284,8 @@ mod tests {
     #[test]
     fn test_foreign_fn2_typed() {
         let mut vm = Vm::new();
-        vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b }).unwrap();
+        vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b })
+            .unwrap();
         let result = run_vm_with(&mut vm, "fn main() { add(10, 32) }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5299,7 +5301,8 @@ mod tests {
     #[test]
     fn test_foreign_fn_string() {
         let mut vm = Vm::new();
-        vm.register_fn1("shout", |s: String| -> String { s.to_uppercase() }).unwrap();
+        vm.register_fn1("shout", |s: String| -> String { s.to_uppercase() })
+            .unwrap();
         let result = run_vm_with(&mut vm, r#"fn main() { shout("hello") }"#);
         assert_eq!(result, Value::String("HELLO".into()));
     }
@@ -5340,7 +5343,8 @@ mod tests {
     #[test]
     fn test_foreign_fn_higher_order() {
         let mut vm = Vm::new();
-        vm.register_fn1("square", |x: i64| -> i64 { x * x }).unwrap();
+        vm.register_fn1("square", |x: i64| -> i64 { x * x })
+            .unwrap();
         let result = run_vm_with(
             &mut vm,
             "import list\nfn main() { [1, 2, 3] |> list.map(square) }",
@@ -5354,7 +5358,8 @@ mod tests {
     #[test]
     fn test_foreign_fn_module_qualified() {
         let mut vm = Vm::new();
-        vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 }).unwrap();
+        vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 })
+            .unwrap();
         // Module-qualified names go through GetGlobal + Call, not CallBuiltin
         let result = run_vm_with(
             &mut vm,
@@ -5371,7 +5376,8 @@ mod tests {
     #[test]
     fn test_foreign_fn_type_error() {
         let mut vm = Vm::new();
-        vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 })
+            .unwrap();
         let tokens = Lexer::new(r#"fn main() { double("hello") }"#)
             .tokenize()
             .unwrap();
