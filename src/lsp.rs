@@ -1890,3 +1890,171 @@ pub fn run() {
     server.run();
     io_threads.join().unwrap();
 }
+
+// ── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Span;
+
+    // ── position_to_offset ────────────────────────────────────────
+
+    #[test]
+    fn test_position_to_offset_first_line() {
+        let source = "let x = 42\nlet y = 10";
+        let pos = Position::new(0, 4); // 'x'
+        assert_eq!(position_to_offset(source, &pos), 4);
+    }
+
+    #[test]
+    fn test_position_to_offset_second_line() {
+        let source = "let x = 42\nlet y = 10";
+        let pos = Position::new(1, 4); // 'y'
+        assert_eq!(position_to_offset(source, &pos), 15);
+    }
+
+    #[test]
+    fn test_position_to_offset_start() {
+        let source = "hello\nworld";
+        let pos = Position::new(0, 0);
+        assert_eq!(position_to_offset(source, &pos), 0);
+    }
+
+    #[test]
+    fn test_position_to_offset_past_end() {
+        let source = "ab\ncd";
+        // Line 0, col 99 — clamps to end of line
+        let pos = Position::new(0, 99);
+        assert_eq!(position_to_offset(source, &pos), 2);
+    }
+
+    // ── span_to_position ──────────────────────────────────────────
+
+    #[test]
+    fn test_span_to_position() {
+        let span = Span {
+            line: 3,
+            col: 5,
+            offset: 0,
+        };
+        let pos = span_to_position(&span);
+        assert_eq!(pos.line, 2); // 0-based
+        assert_eq!(pos.character, 4); // 0-based
+    }
+
+    #[test]
+    fn test_span_to_position_saturates() {
+        let span = Span {
+            line: 0,
+            col: 0,
+            offset: 0,
+        };
+        let pos = span_to_position(&span);
+        assert_eq!(pos.line, 0);
+        assert_eq!(pos.character, 0);
+    }
+
+    // ── has_unresolved_vars ───────────────────────────────────────
+
+    #[test]
+    fn test_has_unresolved_vars_concrete() {
+        assert!(!has_unresolved_vars(&Type::Int));
+        assert!(!has_unresolved_vars(&Type::String));
+        assert!(!has_unresolved_vars(&Type::Fun(
+            vec![Type::Int],
+            Box::new(Type::Bool)
+        )));
+    }
+
+    #[test]
+    fn test_has_unresolved_vars_with_var() {
+        assert!(has_unresolved_vars(&Type::Var(0)));
+        assert!(has_unresolved_vars(&Type::Fun(
+            vec![Type::Var(1)],
+            Box::new(Type::Int)
+        )));
+        assert!(has_unresolved_vars(&Type::List(Box::new(Type::Var(2)))));
+    }
+
+    #[test]
+    fn test_has_unresolved_vars_nested() {
+        assert!(has_unresolved_vars(&Type::Record(
+            "Foo".into(),
+            vec![("x".into(), Type::Var(0))]
+        )));
+        assert!(!has_unresolved_vars(&Type::Record(
+            "Foo".into(),
+            vec![("x".into(), Type::Int)]
+        )));
+    }
+
+    // ── get_field_type ────────────────────────────────────────────
+
+    #[test]
+    fn test_get_field_type_record() {
+        let ty = Type::Record(
+            "User".into(),
+            vec![
+                ("name".into(), Type::String),
+                ("age".into(), Type::Int),
+            ],
+        );
+        assert_eq!(get_field_type(&ty, "name"), Some(Type::String));
+        assert_eq!(get_field_type(&ty, "age"), Some(Type::Int));
+        assert_eq!(get_field_type(&ty, "missing"), None);
+    }
+
+    #[test]
+    fn test_get_field_type_tuple() {
+        let ty = Type::Tuple(vec![Type::Int, Type::String, Type::Bool]);
+        assert_eq!(get_field_type(&ty, "0"), Some(Type::Int));
+        assert_eq!(get_field_type(&ty, "1"), Some(Type::String));
+        assert_eq!(get_field_type(&ty, "2"), Some(Type::Bool));
+        assert_eq!(get_field_type(&ty, "3"), None);
+        assert_eq!(get_field_type(&ty, "name"), None);
+    }
+
+    // ── build_definitions ─────────────────────────────────────────
+
+    #[test]
+    fn test_build_definitions_from_program() {
+        let source = "fn add(a, b) { a + b }\ntype Color {\n  Red,\n  Green,\n  Blue,\n}\nlet x = 42";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        let defs = build_definitions(&program);
+
+        assert!(defs.contains_key("add"), "should have fn 'add'");
+        assert!(defs.contains_key("Color"), "should have type 'Color'");
+        assert!(defs.contains_key("Red"), "should have variant 'Red'");
+        assert!(defs.contains_key("Green"), "should have variant 'Green'");
+        assert!(defs.contains_key("Blue"), "should have variant 'Blue'");
+        assert!(defs.contains_key("x"), "should have let binding 'x'");
+    }
+
+    #[test]
+    fn test_build_definitions_fn_has_params() {
+        let source = "fn greet(name, times) { name }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let defs = build_definitions(&program);
+
+        let def = defs.get("greet").unwrap();
+        assert_eq!(def.params, vec!["name", "times"]);
+    }
+
+    // ── find_type_at_offset ──────────────────────────────────────
+
+    #[test]
+    fn test_find_type_at_offset_typed() {
+        let source = "fn main() { 42 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        // The literal 42 should have type Int
+        let ty = find_type_at_offset(&program, 13); // offset of "42"
+        assert_eq!(ty, Some(Type::Int));
+    }
+}

@@ -149,6 +149,10 @@ pub struct TypeChecker {
     /// Tracks the number of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity can be validated.
     pub(super) loop_binding_count: Option<usize>,
+    /// Active trait constraints for type variables in the current function body.
+    /// Maps type variable → list of trait names it must satisfy.
+    /// Populated during `check_fn_body` to enable method resolution on constrained vars.
+    pub(super) active_constraints: HashMap<TyVar, Vec<std::string::String>>,
 }
 
 impl Default for TypeChecker {
@@ -170,6 +174,7 @@ impl TypeChecker {
             trait_impl_set: std::collections::HashSet::new(),
             errors: Vec::new(),
             loop_binding_count: None,
+            active_constraints: HashMap::new(),
         }
     }
 

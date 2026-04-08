@@ -1001,8 +1001,7 @@ fn main() { deep(0) }
 #[test]
 fn test_runtime_tco_does_not_overflow() {
     // Tail-recursive function should NOT stack overflow
-    run_ok(
-        r#"
+    let result = run(r#"
 fn countdown(n) {
   match n {
     0 -> 0
@@ -1010,8 +1009,8 @@ fn countdown(n) {
   }
 }
 fn main() { countdown(1000000) }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Int(0));
 }
 
 #[test]

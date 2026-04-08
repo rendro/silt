@@ -36,7 +36,7 @@ impl TypeChecker {
 
         // Warn if ALL arms have guards.
         if !arms.is_empty() && arms.iter().all(|a| a.guard.is_some()) {
-            self.error(
+            self.warning(
                 "match may be non-exhaustive: all arms have guards".into(),
                 span,
             );

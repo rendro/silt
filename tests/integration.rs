@@ -295,8 +295,7 @@ fn main() {
 
 #[test]
 fn test_error_handling_pipeline() {
-    run_ok(
-        r#"
+    let result = run(r#"
 import int
 import list
 import string
@@ -321,18 +320,20 @@ fn parse_config(text) {
 }
 
 fn main() {
-  match parse_config("host=localhost\nport=8080") {
-    Ok(msg) -> println(msg)
-    Err(e) -> println("config error: {e}")
+  let ok = match parse_config("host=localhost\nport=8080") {
+    Ok(msg) -> msg
+    Err(e) -> e
   }
 
-  match parse_config("host=localhost") {
-    Ok(msg) -> println(msg)
-    Err(e) -> println("config error: {e}")
+  let err = match parse_config("host=localhost") {
+    Ok(msg) -> msg
+    Err(e) -> e
   }
+
+  ok == "connecting to localhost:8080" && err == "missing port in config"
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Bool(true));
 }
 
 // ── Phase 3: Match with guards ───────────────────────────────────────
@@ -2717,8 +2718,7 @@ fn main() {
 
 #[test]
 fn test_where_clause_with_display() {
-    run_ok(
-        r#"
+    let result = run(r#"
 type Shape { Circle(Float) Rect(Float, Float) }
 
 trait Display for Shape {
@@ -2736,16 +2736,15 @@ fn show(x: a) where a: Display {
 
 fn main() {
   let s = Circle(3.14)
-  println(show(s))
+  show(s)
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::String("Circle(3.14)".into()));
 }
 
 #[test]
 fn test_where_clause_with_equal() {
-    run_ok(
-        r#"
+    let result = run(r#"
 fn are_same(a: t, b: t) where t: Equal {
   a == b
 }
@@ -2754,14 +2753,13 @@ fn main() {
   are_same(1, 2)
   are_same("hello", "hello")
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Bool(true));
 }
 
 #[test]
 fn test_where_clause_with_compare() {
-    run_ok(
-        r#"
+    let result = run(r#"
 fn is_less(a: t, b: t) where t: Compare {
   a < b
 }
@@ -2770,14 +2768,13 @@ fn main() {
   is_less(1, 2)
   is_less("a", "b")
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Bool(true));
 }
 
 #[test]
 fn test_where_clause_multi_trait_bounds() {
-    run_ok(
-        r#"
+    let result = run(r#"
 fn check(a: t, b: t) where t: Equal + Compare {
   let eq = a == b
   let lt = a < b
@@ -2788,14 +2785,13 @@ fn main() {
   check(1, 2)
   check(3, 3)
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Bool(true));
 }
 
 #[test]
 fn test_where_clause_multi_trait_bounds_mixed() {
-    run_ok(
-        r#"
+    let result = run(r#"
 type Color { Red Blue }
 
 trait Display for Color {
@@ -2814,10 +2810,10 @@ fn show_and_compare(a: t, b: u) where t: Equal + Compare, u: Display {
 }
 
 fn main() {
-  println(show_and_compare(1, Red))
+  show_and_compare(1, Red)
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::String("Red".into()));
 }
 
 // ── Typed AST verification ──────────────────────────────────────────
@@ -6330,8 +6326,7 @@ fn main() {
 #[test]
 fn test_timeout_channel_never_selected() {
     // Create a timeout channel but never select on it — should not panic or leak.
-    run_ok(
-        r#"
+    let result = run(r#"
 import channel
 fn main() {
   let _ = channel.timeout(10)
@@ -6340,8 +6335,8 @@ fn main() {
   -- Just let them go out of scope without selecting
   42
 }
-    "#,
-    );
+    "#);
+    assert_eq!(result, Value::Int(42));
 }
 
 // ════════════════════════════════════════════════════════════════════

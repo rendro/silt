@@ -337,17 +337,27 @@ impl Vm {
     ///
     /// The function receives `&[Value]` and returns `Result<Value, VmError>`.
     /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
+    ///
+    /// # Errors
+    /// Returns an error if the VM's runtime has already been shared (e.g. via
+    /// task spawning). All foreign functions must be registered before running
+    /// any Silt code that spawns tasks.
     pub fn register_fn(
         &mut self,
         name: impl Into<String>,
         func: impl Fn(&[Value]) -> Result<Value, VmError> + Send + Sync + 'static,
-    ) {
+    ) -> Result<(), VmError> {
         let name = name.into();
-        Arc::get_mut(&mut self.runtime)
-            .expect("register_fn called after VM has been shared")
-            .foreign_fns
-            .insert(name.clone(), Arc::new(func));
+        let runtime = Arc::get_mut(&mut self.runtime).ok_or_else(|| {
+            VmError::new(format!(
+                "cannot register function '{}': VM runtime has already been shared \
+                 (register all foreign functions before spawning tasks)",
+                name
+            ))
+        })?;
+        runtime.foreign_fns.insert(name.clone(), Arc::new(func));
         self.globals.insert(name.clone(), Value::BuiltinFn(name));
+        Ok(())
     }
 
     /// Register a 0-argument foreign function with automatic marshalling.
@@ -355,7 +365,7 @@ impl Vm {
         &mut self,
         name: impl Into<String>,
         func: impl Fn() -> R + Send + Sync + 'static,
-    ) {
+    ) -> Result<(), VmError> {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
@@ -366,7 +376,7 @@ impl Vm {
                 )));
             }
             Ok(func().into_value())
-        });
+        })
     }
 
     /// Register a 1-argument foreign function with automatic marshalling.
@@ -374,7 +384,7 @@ impl Vm {
         &mut self,
         name: impl Into<String>,
         func: impl Fn(A) -> R + Send + Sync + 'static,
-    ) {
+    ) -> Result<(), VmError> {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
@@ -386,7 +396,7 @@ impl Vm {
             }
             let a = A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: {e}")))?;
             Ok(func(a).into_value())
-        });
+        })
     }
 
     /// Register a 2-argument foreign function with automatic marshalling.
@@ -394,7 +404,7 @@ impl Vm {
         &mut self,
         name: impl Into<String>,
         func: impl Fn(A, B) -> R + Send + Sync + 'static,
-    ) {
+    ) -> Result<(), VmError> {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
@@ -409,7 +419,7 @@ impl Vm {
             let b =
                 B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
             Ok(func(a, b).into_value())
-        });
+        })
     }
 
     /// Register a 3-argument foreign function with automatic marshalling.
@@ -417,7 +427,7 @@ impl Vm {
         &mut self,
         name: impl Into<String>,
         func: impl Fn(A, B, C) -> R + Send + Sync + 'static,
-    ) {
+    ) -> Result<(), VmError> {
         let n = name.into();
         let n2 = n.clone();
         self.register_fn(n, move |args: &[Value]| {
@@ -434,7 +444,7 @@ impl Vm {
             let c =
                 C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
             Ok(func(a, b, c).into_value())
-        });
+        })
     }
 
     /// Create a child VM that shares runtime state (variant types, foreign functions)
@@ -5250,7 +5260,8 @@ mod tests {
                 return Err(VmError::new("expected Int".into()));
             };
             Ok(Value::Int(n * 2))
-        });
+        })
+        .unwrap();
         let result = run_vm_with(&mut vm, "fn main() { double(21) }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5258,7 +5269,7 @@ mod tests {
     #[test]
     fn test_foreign_fn1_typed() {
         let mut vm = Vm::new();
-        vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
         let result = run_vm_with(&mut vm, "fn main() { double(21) }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5266,7 +5277,7 @@ mod tests {
     #[test]
     fn test_foreign_fn2_typed() {
         let mut vm = Vm::new();
-        vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b });
+        vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b }).unwrap();
         let result = run_vm_with(&mut vm, "fn main() { add(10, 32) }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5274,7 +5285,7 @@ mod tests {
     #[test]
     fn test_foreign_fn0_typed() {
         let mut vm = Vm::new();
-        vm.register_fn0("answer", || -> i64 { 42 });
+        vm.register_fn0("answer", || -> i64 { 42 }).unwrap();
         let result = run_vm_with(&mut vm, "fn main() { answer() }");
         assert_eq!(result, Value::Int(42));
     }
@@ -5282,7 +5293,7 @@ mod tests {
     #[test]
     fn test_foreign_fn_string() {
         let mut vm = Vm::new();
-        vm.register_fn1("shout", |s: String| -> String { s.to_uppercase() });
+        vm.register_fn1("shout", |s: String| -> String { s.to_uppercase() }).unwrap();
         let result = run_vm_with(&mut vm, r#"fn main() { shout("hello") }"#);
         assert_eq!(result, Value::String("HELLO".into()));
     }
@@ -5292,7 +5303,8 @@ mod tests {
         let mut vm = Vm::new();
         vm.register_fn1("maybe", |x: i64| -> Option<i64> {
             if x > 0 { Some(x) } else { None }
-        });
+        })
+        .unwrap();
         let result = run_vm_with(&mut vm, "fn main() { maybe(5) }");
         assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(5)]));
         let result = run_vm_with(&mut vm, "fn main() { maybe(-1) }");
@@ -5308,7 +5320,8 @@ mod tests {
             } else {
                 Err("division by zero".into())
             }
-        });
+        })
+        .unwrap();
         let result = run_vm_with(&mut vm, "fn main() { safe_div(5) }");
         assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(20)]));
         let result = run_vm_with(&mut vm, "fn main() { safe_div(0) }");
@@ -5321,7 +5334,7 @@ mod tests {
     #[test]
     fn test_foreign_fn_higher_order() {
         let mut vm = Vm::new();
-        vm.register_fn1("square", |x: i64| -> i64 { x * x });
+        vm.register_fn1("square", |x: i64| -> i64 { x * x }).unwrap();
         let result = run_vm_with(
             &mut vm,
             "import list\nfn main() { [1, 2, 3] |> list.map(square) }",
@@ -5335,7 +5348,7 @@ mod tests {
     #[test]
     fn test_foreign_fn_module_qualified() {
         let mut vm = Vm::new();
-        vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 });
+        vm.register_fn1("mylib.double", |x: i64| -> i64 { x * 2 }).unwrap();
         // Module-qualified names go through GetGlobal + Call, not CallBuiltin
         let result = run_vm_with(
             &mut vm,
@@ -5352,7 +5365,7 @@ mod tests {
     #[test]
     fn test_foreign_fn_type_error() {
         let mut vm = Vm::new();
-        vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
+        vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
         let tokens = Lexer::new(r#"fn main() { double("hello") }"#)
             .tokenize()
             .unwrap();
@@ -5362,5 +5375,127 @@ mod tests {
         let script = Arc::new(functions.into_iter().next().unwrap());
         let err = vm.run(script).unwrap_err();
         assert!(err.message.contains("expected Int"), "got: {}", err.message);
+    }
+
+    // ── Scheduler integration tests ──────────────────────────────
+
+    #[test]
+    fn test_scheduler_task_completes() {
+        // task.join returns the value directly on success
+        let result = run_vm(
+            r#"
+            import task
+            fn main() {
+                let t = task.spawn(fn() { 42 })
+                task.join(t)
+            }
+            "#,
+        );
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_scheduler_multiple_tasks() {
+        let result = run_vm(
+            r#"
+            import task
+            import list
+            fn main() {
+                let tasks = [1, 2, 3] |> list.map(fn(n) { task.spawn(fn() { n * 10 }) })
+                tasks |> list.map(fn(t) { task.join(t) })
+            }
+            "#,
+        );
+        if let Value::List(items) = &result {
+            assert_eq!(items.len(), 3);
+            // Values are returned directly (10, 20, 30) — order may vary
+            let mut vals: Vec<i64> = items
+                .iter()
+                .map(|v| match v {
+                    Value::Int(n) => *n,
+                    other => panic!("expected Int, got {:?}", other),
+                })
+                .collect();
+            vals.sort();
+            assert_eq!(vals, vec![10, 20, 30]);
+        } else {
+            panic!("expected list, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_scheduler_channel_communication() {
+        // channel.receive wraps value in Message variant
+        let result = run_vm(
+            r#"
+            import task
+            import channel
+            fn main() {
+                let ch = channel.new()
+                task.spawn(fn() { channel.send(ch, 99) })
+                channel.receive(ch)
+            }
+            "#,
+        );
+        assert_eq!(
+            result,
+            Value::Variant("Message".into(), vec![Value::Int(99)])
+        );
+    }
+
+    #[test]
+    fn test_scheduler_deadlock_detection() {
+        // Deadlock: task.join propagates as a VmError
+        let tokens = Lexer::new(
+            r#"
+            import task
+            import channel
+            fn main() {
+                let ch = channel.new()
+                let t = task.spawn(fn() { channel.receive(ch) })
+                task.join(t)
+            }
+            "#,
+        )
+        .tokenize()
+        .unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).unwrap();
+        let script = Arc::new(functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        let err = vm.run(script).unwrap_err();
+        assert!(
+            err.message.contains("deadlock"),
+            "expected deadlock error, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_scheduler_task_failure_propagates() {
+        // task.join on a failed task propagates as a VmError
+        let tokens = Lexer::new(
+            r#"
+            import task
+            fn main() {
+                let t = task.spawn(fn() { 1 / 0 })
+                task.join(t)
+            }
+            "#,
+        )
+        .tokenize()
+        .unwrap();
+        let program = Parser::new(tokens).parse_program().unwrap();
+        let mut compiler = Compiler::new();
+        let functions = compiler.compile_program(&program).unwrap();
+        let script = Arc::new(functions.into_iter().next().unwrap());
+        let mut vm = Vm::new();
+        let err = vm.run(script).unwrap_err();
+        assert!(
+            err.message.contains("division by zero") || err.message.contains("joined task failed"),
+            "expected division error, got: {}",
+            err.message
+        );
     }
 }

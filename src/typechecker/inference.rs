@@ -29,13 +29,23 @@ impl TypeChecker {
             Some(s) => s.clone(),
             None => return, // already reported
         };
-        let fn_type = self.instantiate(&fn_scheme);
+        let (fn_type, constraints) = self.instantiate_with_constraints(&fn_scheme);
         let fn_type = self.apply(&fn_type);
 
         let (param_types, ret_type) = match &fn_type {
             Type::Fun(params, ret) => (params.clone(), *ret.clone()),
             _ => return,
         };
+
+        // Populate active constraints so method resolution on type variables
+        // can check trait methods during body inference.
+        let prev_constraints = std::mem::take(&mut self.active_constraints);
+        for (tv, trait_name) in &constraints {
+            self.active_constraints
+                .entry(*tv)
+                .or_default()
+                .push(trait_name.clone());
+        }
 
         // Bind parameters
         for (i, param) in f.params.iter().enumerate() {
@@ -47,6 +57,9 @@ impl TypeChecker {
         // Infer the body and unify with declared return type
         let body_type = self.infer_expr(&mut f.body, &mut local_env);
         self.unify(&body_type, &ret_type, f.body.span);
+
+        // Restore previous constraints
+        self.active_constraints = prev_constraints;
     }
 
     // ── Pattern type binding ────────────────────────────────────────
@@ -537,9 +550,38 @@ impl TypeChecker {
                         self.error(format!("unknown method '{field}' on type {parent}"), span);
                         Type::Error
                     }
-                    Type::Var(_) | Type::Error => {
-                        // Unresolved type variable or prior error — stay lenient
-                        self.fresh_var()
+                    Type::Var(v) => {
+                        // Check if this type variable has trait constraints
+                        if let Some(trait_names) = self.active_constraints.get(&v).cloned() {
+                            // Look for the method in constrained traits
+                            for trait_name in &trait_names {
+                                if let Some(trait_info) = self.traits.get(trait_name).cloned() {
+                                    if let Some((_, method_ty)) =
+                                        trait_info.methods.iter().find(|(n, _)| n == &field)
+                                    {
+                                        let resolved = self.apply(&method_ty);
+                                        expr.ty = Some(resolved.clone());
+                                        return resolved;
+                                    }
+                                }
+                            }
+                            // Method not found on any constrained trait — error
+                            let traits_str = trait_names.join(" + ");
+                            self.error(
+                                format!(
+                                    "no method '{field}' found in trait constraints ({traits_str})"
+                                ),
+                                span,
+                            );
+                            Type::Error
+                        } else {
+                            // Unconstrained type variable — stay lenient (may resolve later)
+                            self.fresh_var()
+                        }
+                    }
+                    Type::Error => {
+                        // Prior error — propagate to prevent cascading false positives
+                        Type::Error
                     }
                     _ => {
                         self.error(
@@ -1706,6 +1748,58 @@ fn factorial(n) {
 }
 fn main() { factorial(5) }
         "#,
+        );
+    }
+
+    // ── Trait constraint checking at definition ────────────────────
+
+    #[test]
+    fn test_trait_constraint_method_resolved() {
+        // A constrained type variable should allow calling trait methods
+        assert_no_errors(
+            r#"
+trait Display for a {
+  fn display(self) -> String { "?" }
+}
+fn show(x: a) -> String where a: Display {
+  x.display()
+}
+fn main() { show(42) }
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_trait_constraint_unknown_method_errors() {
+        // A constrained type variable should NOT allow calling methods not in the trait
+        assert_has_error(
+            r#"
+trait Display for a {
+  fn display(self) -> String { "?" }
+}
+fn show(x: a) -> String where a: Display {
+  x.nonexistent()
+}
+fn main() { show(42) }
+        "#,
+            "no method 'nonexistent' found in trait constraints",
+        );
+    }
+
+    // ── Error type propagation ─────────────────────────────────────
+
+    #[test]
+    fn test_error_type_does_not_produce_fresh_var() {
+        // Accessing a field on an error type should propagate the error,
+        // not create a new unresolved type variable
+        assert_has_error(
+            r#"
+fn main() {
+  let x = undefined_var
+  x.field
+}
+        "#,
+            "undefined",
         );
     }
 }
