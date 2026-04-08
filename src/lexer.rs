@@ -453,6 +453,20 @@ impl Lexer {
     }
 
     fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
+        // Handle hex (0x) and binary (0b) prefixes
+        if first == '0' {
+            if let Some(prefix) = self.peek() {
+                if prefix == 'x' || prefix == 'X' {
+                    self.advance_char(); // consume 'x'
+                    return self.scan_hex_int(start);
+                }
+                if prefix == 'b' || prefix == 'B' {
+                    self.advance_char(); // consume 'b'
+                    return self.scan_binary_int(start);
+                }
+            }
+        }
+
         let mut num = String::new();
         num.push(first);
 
@@ -467,8 +481,11 @@ impl Lexer {
             }
         }
 
+        let mut is_float = false;
+
         // Check for float: `.` followed by a digit (not `..` for range)
         if self.peek() == Some('.') && self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit()) {
+            is_float = true;
             self.advance_char(); // consume `.`
             num.push('.');
             while let Some(ch) = self.peek() {
@@ -481,10 +498,53 @@ impl Lexer {
                     break;
                 }
             }
+        }
+
+        // Check for scientific notation: e/E followed by optional +/- and digits
+        // Scientific notation always produces a Float
+        if let Some(e) = self.peek() {
+            if e == 'e' || e == 'E' {
+                is_float = true;
+                self.advance_char(); // consume 'e'
+                num.push('e');
+                // Optional sign
+                if let Some(sign) = self.peek() {
+                    if sign == '+' || sign == '-' {
+                        self.advance_char();
+                        num.push(sign);
+                    }
+                }
+                // Must have at least one digit after e
+                if !self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    return Err(LexError {
+                        message: "expected digit after exponent".into(),
+                        span: start,
+                    });
+                }
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_digit() || ch == '_' {
+                        self.advance_char();
+                        if ch != '_' {
+                            num.push(ch);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if is_float {
             let val: f64 = num.parse().map_err(|_| LexError {
                 message: "number literal too large".into(),
                 span: start,
             })?;
+            if !val.is_finite() {
+                return Err(LexError {
+                    message: "number literal out of range (not finite)".into(),
+                    span: start,
+                });
+            }
             Ok((Token::Float(val), start))
         } else {
             let val: i64 = num.parse().map_err(|_| LexError {
@@ -493,6 +553,56 @@ impl Lexer {
             })?;
             Ok((Token::Int(val), start))
         }
+    }
+
+    fn scan_hex_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+        let mut digits = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_hexdigit() || ch == '_' {
+                self.advance_char();
+                if ch != '_' {
+                    digits.push(ch);
+                }
+            } else {
+                break;
+            }
+        }
+        if digits.is_empty() {
+            return Err(LexError {
+                message: "expected hex digit after 0x".into(),
+                span: start,
+            });
+        }
+        let val = i64::from_str_radix(&digits, 16).map_err(|_| LexError {
+            message: "hex literal too large".into(),
+            span: start,
+        })?;
+        Ok((Token::Int(val), start))
+    }
+
+    fn scan_binary_int(&mut self, start: Span) -> Result<SpannedToken, LexError> {
+        let mut digits = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '0' || ch == '1' || ch == '_' {
+                self.advance_char();
+                if ch != '_' {
+                    digits.push(ch);
+                }
+            } else {
+                break;
+            }
+        }
+        if digits.is_empty() {
+            return Err(LexError {
+                message: "expected binary digit after 0b".into(),
+                span: start,
+            });
+        }
+        let val = i64::from_str_radix(&digits, 2).map_err(|_| LexError {
+            message: "binary literal too large".into(),
+            span: start,
+        })?;
+        Ok((Token::Int(val), start))
     }
 
     fn scan_ident_or_keyword(&mut self, first: char, start: Span) -> SpannedToken {
@@ -950,5 +1060,77 @@ mod tests {
         let input = "\"\"\"\nhello\n\"\"\"";
         let tokens = lex(input);
         assert_eq!(tokens, vec![Token::StringLit("hello".into()),]);
+    }
+
+    #[test]
+    fn test_hex_literal() {
+        assert_eq!(lex("0xFF"), vec![Token::Int(255)]);
+        assert_eq!(lex("0x1A"), vec![Token::Int(26)]);
+        assert_eq!(lex("0X10"), vec![Token::Int(16)]);
+        assert_eq!(lex("0x00"), vec![Token::Int(0)]);
+    }
+
+    #[test]
+    fn test_hex_with_underscores() {
+        assert_eq!(lex("0xFF_FF"), vec![Token::Int(0xFFFF)]);
+    }
+
+    #[test]
+    fn test_binary_literal() {
+        assert_eq!(lex("0b1010"), vec![Token::Int(10)]);
+        assert_eq!(lex("0B110"), vec![Token::Int(6)]);
+        assert_eq!(lex("0b0"), vec![Token::Int(0)]);
+    }
+
+    #[test]
+    fn test_binary_with_underscores() {
+        assert_eq!(lex("0b1111_0000"), vec![Token::Int(0xF0)]);
+    }
+
+    #[test]
+    fn test_scientific_notation_always_float() {
+        assert_eq!(lex("1e5"), vec![Token::Float(1e5)]);
+        assert_eq!(lex("1E5"), vec![Token::Float(1e5)]);
+        assert_eq!(lex("2e10"), vec![Token::Float(2e10)]);
+        // Even whole-number results are Float
+        assert_eq!(lex("1e2"), vec![Token::Float(100.0)]);
+    }
+
+    #[test]
+    fn test_scientific_with_sign() {
+        assert_eq!(lex("1e+5"), vec![Token::Float(1e5)]);
+        assert_eq!(lex("1e-3"), vec![Token::Float(1e-3)]);
+    }
+
+    #[test]
+    fn test_scientific_with_decimal() {
+        assert_eq!(lex("1.5e3"), vec![Token::Float(1500.0)]);
+        assert_eq!(lex("3.14e0"), vec![Token::Float(3.14)]);
+        assert_eq!(lex("2.5e-1"), vec![Token::Float(0.25)]);
+    }
+
+    #[test]
+    fn test_scientific_rejects_overflow() {
+        // 1e999 is not finite — must be rejected
+        let result = Lexer::new("1e999").tokenize();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hex_empty_digits_error() {
+        let result = Lexer::new("0x").tokenize();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_binary_empty_digits_error() {
+        let result = Lexer::new("0b").tokenize();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scientific_no_digit_after_e_error() {
+        let result = Lexer::new("1e").tokenize();
+        assert!(result.is_err());
     }
 }
