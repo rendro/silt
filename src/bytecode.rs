@@ -181,20 +181,6 @@ pub enum Op {
     /// Narrow ExtFloat to Float: if TOS is finite, replace with Float and jump
     /// forward by u16 offset; if non-finite, pop and fall through.
     NarrowFloat, // operand: u16 offset
-
-    // ── Concurrency ────────────────────────────────────────────
-    ChanNew,
-    ChanSend,
-    ChanRecv,
-    ChanClose,
-    ChanTrySend,
-    ChanTryRecv,
-    ChanSelect,
-    TaskSpawn,
-    TaskJoin,
-    TaskCancel,
-    /// Cooperative yield point.
-    Yield,
 }
 
 impl Op {
@@ -274,17 +260,6 @@ impl Op {
             b if b == Op::Panic as u8 => Some(Op::Panic),
             b if b == Op::CallMethod as u8 => Some(Op::CallMethod),
             b if b == Op::NarrowFloat as u8 => Some(Op::NarrowFloat),
-            b if b == Op::ChanNew as u8 => Some(Op::ChanNew),
-            b if b == Op::ChanSend as u8 => Some(Op::ChanSend),
-            b if b == Op::ChanRecv as u8 => Some(Op::ChanRecv),
-            b if b == Op::ChanClose as u8 => Some(Op::ChanClose),
-            b if b == Op::ChanTrySend as u8 => Some(Op::ChanTrySend),
-            b if b == Op::ChanTryRecv as u8 => Some(Op::ChanTryRecv),
-            b if b == Op::ChanSelect as u8 => Some(Op::ChanSelect),
-            b if b == Op::TaskSpawn as u8 => Some(Op::TaskSpawn),
-            b if b == Op::TaskJoin as u8 => Some(Op::TaskJoin),
-            b if b == Op::TaskCancel as u8 => Some(Op::TaskCancel),
-            b if b == Op::Yield as u8 => Some(Op::Yield),
             _ => None,
         }
     }

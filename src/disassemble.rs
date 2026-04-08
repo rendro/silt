@@ -103,18 +103,6 @@ fn op_from_byte(byte: u8) -> Option<Op> {
         b if b == Op::CallMethod as u8 => Op::CallMethod,
         b if b == Op::NarrowFloat as u8 => Op::NarrowFloat,
 
-        b if b == Op::ChanNew as u8 => Op::ChanNew,
-        b if b == Op::ChanSend as u8 => Op::ChanSend,
-        b if b == Op::ChanRecv as u8 => Op::ChanRecv,
-        b if b == Op::ChanClose as u8 => Op::ChanClose,
-        b if b == Op::ChanTrySend as u8 => Op::ChanTrySend,
-        b if b == Op::ChanTryRecv as u8 => Op::ChanTryRecv,
-        b if b == Op::ChanSelect as u8 => Op::ChanSelect,
-        b if b == Op::TaskSpawn as u8 => Op::TaskSpawn,
-        b if b == Op::TaskJoin as u8 => Op::TaskJoin,
-        b if b == Op::TaskCancel as u8 => Op::TaskCancel,
-        b if b == Op::Yield as u8 => Op::Yield,
-
         _ => return None,
     };
     Some(op)
@@ -192,17 +180,6 @@ fn op_name(op: Op) -> &'static str {
         Op::Recur => "Recur",
         Op::QuestionMark => "QuestionMark",
         Op::Panic => "Panic",
-        Op::ChanNew => "ChanNew",
-        Op::ChanSend => "ChanSend",
-        Op::ChanRecv => "ChanRecv",
-        Op::ChanClose => "ChanClose",
-        Op::ChanTrySend => "ChanTrySend",
-        Op::ChanTryRecv => "ChanTryRecv",
-        Op::ChanSelect => "ChanSelect",
-        Op::TaskSpawn => "TaskSpawn",
-        Op::TaskJoin => "TaskJoin",
-        Op::TaskCancel => "TaskCancel",
-        Op::Yield => "Yield",
         Op::CallMethod => "CallMethod",
         Op::NarrowFloat => "NarrowFloat",
     }
@@ -266,18 +243,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         | Op::MakeRange
         | Op::ListConcat
         | Op::QuestionMark
-        | Op::Panic
-        | Op::ChanNew
-        | Op::ChanSend
-        | Op::ChanRecv
-        | Op::ChanClose
-        | Op::ChanTrySend
-        | Op::ChanTryRecv
-        | Op::ChanSelect
-        | Op::TaskSpawn
-        | Op::TaskJoin
-        | Op::TaskCancel
-        | Op::Yield => (format!("{offset:04}  {name}"), offset + 1),
+        | Op::Panic => (format!("{offset:04}  {name}"), offset + 1),
 
         // ── u8 operand ────────────────────────────────────────
         Op::StringConcat
@@ -769,17 +735,6 @@ mod tests {
             Op::Panic,
             Op::CallMethod,
             Op::NarrowFloat,
-            Op::ChanNew,
-            Op::ChanSend,
-            Op::ChanRecv,
-            Op::ChanClose,
-            Op::ChanTrySend,
-            Op::ChanTryRecv,
-            Op::ChanSelect,
-            Op::TaskSpawn,
-            Op::TaskJoin,
-            Op::TaskCancel,
-            Op::Yield,
         ];
         for op in all_ops {
             let byte = op as u8;

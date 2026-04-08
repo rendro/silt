@@ -1633,23 +1633,6 @@ impl Vm {
                     }
                 }
 
-                // ── Concurrency (stubs for Phase 2) ───────────
-                Some(Op::ChanNew)
-                | Some(Op::ChanSend)
-                | Some(Op::ChanRecv)
-                | Some(Op::ChanClose)
-                | Some(Op::ChanTrySend)
-                | Some(Op::ChanTryRecv)
-                | Some(Op::ChanSelect)
-                | Some(Op::TaskSpawn)
-                | Some(Op::TaskJoin)
-                | Some(Op::TaskCancel)
-                | Some(Op::Yield) => {
-                    return Err(VmError::new(
-                        "concurrency opcodes not yet implemented".to_string(),
-                    ));
-                }
-
                 Some(Op::NarrowFloat) => {
                     let offset = self.read_u16()? as usize;
                     let val = self.peek()?.clone();
@@ -2616,21 +2599,6 @@ impl Vm {
                         )));
                     }
                 }
-            }
-            Op::ChanNew
-            | Op::ChanSend
-            | Op::ChanRecv
-            | Op::ChanClose
-            | Op::ChanTrySend
-            | Op::ChanTryRecv
-            | Op::ChanSelect
-            | Op::TaskSpawn
-            | Op::TaskJoin
-            | Op::TaskCancel
-            | Op::Yield => {
-                return Err(VmError::new(
-                    "concurrency opcodes not yet implemented".into(),
-                ));
             }
             Op::NarrowFloat => {
                 let offset = self.read_u16()? as usize;

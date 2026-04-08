@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 
+use silt::bytecode::Function;
 use silt::compiler::Compiler;
 use silt::disassemble::disassemble_function;
 use silt::errors::SourceError;
@@ -16,6 +17,183 @@ use silt::vm::Vm;
 enum OutputFormat {
     Human,
     Json,
+}
+
+// ── Shared compilation pipeline ─────────────────────────────────────
+
+/// Result of running the full compilation pipeline (lex → parse → typecheck → compile).
+struct CompilePipelineResult {
+    /// The original source text.
+    source: String,
+    /// Parse errors (may be non-empty even when compilation proceeds).
+    parse_errors: Vec<SourceError>,
+    /// Type errors and warnings.
+    type_errors: Vec<SourceError>,
+    /// Whether any hard error (parse or type) was encountered.
+    has_hard_errors: bool,
+    /// Compiled functions — `None` if hard errors prevented compilation.
+    functions: Option<Vec<Function>>,
+    /// Compile errors (if compilation was attempted but failed).
+    compile_errors: Vec<SourceError>,
+    /// Compiler warnings (empty if compilation was not attempted).
+    compile_warnings: Vec<SourceError>,
+}
+
+/// Run the full compilation pipeline for `path`: read file → lex → parse (recovering)
+/// → typecheck → compile. Returns all diagnostics and compiled output without printing
+/// anything or exiting, so callers can decide how to present results.
+///
+/// - `skip_compile`: skip the compilation step (used by `check_file` which only needs diagnostics).
+/// - `typecheck_on_parse_errors`: run the type checker even when there are parse errors
+///   (used by `check_file` to report as many diagnostics as possible).
+fn run_compile_pipeline(
+    path: &str,
+    skip_compile: bool,
+    typecheck_on_parse_errors: bool,
+) -> CompilePipelineResult {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    let tokens = match Lexer::new(&source).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            // Lex errors are fatal for all callers. Return a result with the error
+            // so that `check_file` can format it as JSON when needed.
+            let source_err = SourceError::from_lex_error(&e, &source, path);
+            return CompilePipelineResult {
+                source,
+                parse_errors: vec![source_err],
+                type_errors: Vec::new(),
+                has_hard_errors: true,
+                functions: None,
+                compile_errors: Vec::new(),
+                compile_warnings: Vec::new(),
+            };
+        }
+    };
+
+    let (mut program, raw_parse_errors) = Parser::new(tokens).parse_program_recovering();
+
+    let parse_errors: Vec<SourceError> = raw_parse_errors
+        .iter()
+        .map(|e| SourceError::from_parse_error(e, &source, path))
+        .collect();
+    let has_parse_errors = !parse_errors.is_empty();
+
+    // Skip the type checker when there are parse errors, unless the caller opted in
+    // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
+    let (type_errors, has_type_hard_errors) = if !has_parse_errors || typecheck_on_parse_errors {
+        let raw_type_errors = typechecker::check(&mut program);
+        let hard = raw_type_errors
+            .iter()
+            .any(|e| e.severity == typechecker::Severity::Error);
+        let errs: Vec<SourceError> = raw_type_errors
+            .iter()
+            .map(|e| SourceError::from_type_error(e, &source, path))
+            .collect();
+        (errs, hard)
+    } else {
+        (Vec::new(), false)
+    };
+
+    let has_hard_errors = has_parse_errors || has_type_hard_errors;
+
+    // If there are hard errors or compilation is not requested, skip compile.
+    if has_hard_errors || skip_compile {
+        return CompilePipelineResult {
+            source,
+            parse_errors,
+            type_errors,
+            has_hard_errors,
+            functions: None,
+            compile_errors: Vec::new(),
+            compile_warnings: Vec::new(),
+        };
+    }
+
+    // Derive project root from the input file's directory.
+    let project_root = Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
+    // Compile.
+    let mut compiler = Compiler::with_project_root(project_root);
+    match compiler.compile_program(&program) {
+        Ok(functions) => {
+            let compile_warnings: Vec<SourceError> = compiler
+                .warnings()
+                .iter()
+                .map(|w| SourceError::compile_warning(&w.message, w.span, &source, path))
+                .collect();
+            CompilePipelineResult {
+                source,
+                parse_errors,
+                type_errors,
+                has_hard_errors: false,
+                functions: Some(functions),
+                compile_errors: Vec::new(),
+                compile_warnings,
+            }
+        }
+        Err(e) => {
+            let source_err = SourceError::from_compile_error(&e, &source, path);
+            CompilePipelineResult {
+                source,
+                parse_errors,
+                type_errors,
+                has_hard_errors: true,
+                functions: None,
+                compile_errors: vec![source_err],
+                compile_warnings: Vec::new(),
+            }
+        }
+    }
+}
+
+/// All diagnostics from a `CompilePipelineResult`, in order.
+fn all_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
+    result
+        .parse_errors
+        .iter()
+        .chain(result.type_errors.iter())
+        .chain(result.compile_errors.iter())
+        .chain(result.compile_warnings.iter())
+        .collect()
+}
+
+/// Print all diagnostics to stderr and exit(1) if there are hard errors.
+/// Returns the compiled functions and source on success.
+fn compile_file(path: &str) -> (Vec<Function>, String) {
+    let result = run_compile_pipeline(path, false, false);
+
+    // Print all diagnostics to stderr.
+    for err in all_diagnostics(&result) {
+        eprintln!("{err}");
+    }
+
+    if result.has_hard_errors {
+        process::exit(1);
+    }
+
+    let functions = result.functions.unwrap_or_else(|| {
+        eprintln!("{path}: internal error: compilation produced no output");
+        process::exit(1);
+    });
+
+    if functions.is_empty() {
+        eprintln!("{path}: internal error: no functions compiled");
+        process::exit(1);
+    }
+
+    (functions, result.source)
 }
 
 fn main() {
@@ -227,69 +405,7 @@ fn format_file(path: &str) {
 
 /// Run a file using the bytecode VM (default path).
 fn vm_run_file(path: &str) {
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error reading {path}: {e}");
-            process::exit(1);
-        }
-    };
-
-    let tokens = match Lexer::new(&source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("{path}:{e}");
-            process::exit(1);
-        }
-    };
-
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-
-    if !parse_errors.is_empty() {
-        for e in &parse_errors {
-            let source_err = SourceError::from_parse_error(e, &source, path);
-            eprintln!("{source_err}");
-        }
-        process::exit(1);
-    }
-
-    // Run the type checker
-    let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors
-        .iter()
-        .any(|e| e.severity == typechecker::Severity::Error);
-    for err in &type_errors {
-        let source_err = SourceError::from_type_error(err, &source, path);
-        eprintln!("{source_err}");
-    }
-    if has_hard_errors {
-        process::exit(1);
-    }
-
-    // Derive project root from the input file's directory
-    let project_root = Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(path).to_path_buf())
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-
-    // Compile
-    let mut compiler = Compiler::with_project_root(project_root);
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, &source, path);
-            eprintln!("{source_err}");
-            process::exit(1);
-        }
-    };
-
-    // Print compiler warnings
-    for w in compiler.warnings() {
-        let source_err = SourceError::compile_warning(&w.message, w.span, &source, path);
-        eprintln!("{source_err}");
-    }
+    let (functions, source) = compile_file(path);
 
     let script = Arc::new(functions.into_iter().next().unwrap());
 
@@ -324,68 +440,7 @@ fn vm_run_file(path: &str) {
 
 /// Disassemble a file's bytecode without running it.
 fn disasm_file(path: &str) {
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error reading {path}: {e}");
-            process::exit(1);
-        }
-    };
-
-    let tokens = match Lexer::new(&source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("{path}:{e}");
-            process::exit(1);
-        }
-    };
-
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-
-    if !parse_errors.is_empty() {
-        for e in &parse_errors {
-            let source_err = SourceError::from_parse_error(e, &source, path);
-            eprintln!("{source_err}");
-        }
-        process::exit(1);
-    }
-
-    // Run the type checker
-    let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = type_errors
-        .iter()
-        .any(|e| e.severity == typechecker::Severity::Error);
-    for err in &type_errors {
-        let source_err = SourceError::from_type_error(err, &source, path);
-        eprintln!("{source_err}");
-    }
-    if has_hard_errors {
-        process::exit(1);
-    }
-
-    // Derive project root
-    let project_root = Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(path).to_path_buf())
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-
-    // Compile
-    let mut compiler = Compiler::with_project_root(project_root);
-    let functions = match compiler.compile_program(&program) {
-        Ok(f) => f,
-        Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, &source, path);
-            eprintln!("{source_err}");
-            process::exit(1);
-        }
-    };
-
-    for w in compiler.warnings() {
-        let source_err = SourceError::compile_warning(&w.message, w.span, &source, path);
-        eprintln!("{source_err}");
-    }
+    let (functions, _source) = compile_file(path);
 
     // Print disassembly of each function
     for func in &functions {
@@ -395,49 +450,9 @@ fn disasm_file(path: &str) {
 }
 
 fn check_file(path: &str, format: OutputFormat) {
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error reading {path}: {e}");
-            process::exit(1);
-        }
-    };
+    let result = run_compile_pipeline(path, true, true);
 
-    let mut errors: Vec<SourceError> = Vec::new();
-
-    let tokens = match Lexer::new(&source).tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            if format == OutputFormat::Json {
-                let source_err = SourceError::from_lex_error(&e, &source, path);
-                errors.push(source_err);
-                print_json_errors(&errors);
-            } else {
-                eprintln!("{path}:{e}");
-            }
-            process::exit(1);
-        }
-    };
-
-    let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
-
-    let mut has_parse_errors = false;
-    for e in &parse_errors {
-        has_parse_errors = true;
-        let source_err = SourceError::from_parse_error(e, &source, path);
-        errors.push(source_err);
-    }
-
-    // Run the type checker even if there were parse errors (on partial program)
-    let type_errors = typechecker::check(&mut program);
-    let has_hard_errors = has_parse_errors
-        || type_errors
-            .iter()
-            .any(|e| e.severity == typechecker::Severity::Error);
-    for err in &type_errors {
-        let source_err = SourceError::from_type_error(err, &source, path);
-        errors.push(source_err);
-    }
+    let errors: Vec<&SourceError> = all_diagnostics(&result);
 
     if format == OutputFormat::Json {
         print_json_errors(&errors);
@@ -447,12 +462,12 @@ fn check_file(path: &str, format: OutputFormat) {
         }
     }
 
-    if has_hard_errors {
+    if result.has_hard_errors {
         process::exit(1);
     }
 }
 
-fn print_json_errors(errors: &[SourceError]) {
+fn print_json_errors(errors: &[&SourceError]) {
     let json_errors: Vec<serde_json::Value> = errors
         .iter()
         .map(|e| {
