@@ -1275,13 +1275,13 @@ impl Vm {
                 Some(Op::TestListMin) => {
                     let min_len = self.read_u8()? as usize;
                     let val = self.peek()?;
-                    let result = val.collection_len().map_or(false, |len| len >= min_len);
+                    let result = val.collection_len().is_some_and(|len| len >= min_len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestListExact) => {
                     let len = self.read_u8()? as usize;
                     let val = self.peek()?;
-                    let result = val.collection_len().map_or(false, |l| l == len);
+                    let result = val.collection_len() == Some(len);
                     self.push(Value::Bool(result));
                 }
                 Some(Op::TestIntRange) => {
@@ -2252,13 +2252,13 @@ impl Vm {
             Op::TestListMin => {
                 let min_len = self.read_u8()? as usize;
                 let val = self.peek()?;
-                let result = val.collection_len().map_or(false, |len| len >= min_len);
+                let result = val.collection_len().is_some_and(|len| len >= min_len);
                 self.push(Value::Bool(result));
             }
             Op::TestListExact => {
                 let len = self.read_u8()? as usize;
                 let val = self.peek()?;
-                let result = val.collection_len().map_or(false, |l| l == len);
+                let result = val.collection_len() == Some(len);
                 self.push(Value::Bool(result));
             }
             Op::TestIntRange => {

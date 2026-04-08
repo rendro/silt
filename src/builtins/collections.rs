@@ -29,11 +29,10 @@ impl ValueIter {
     /// Collect all items into a Vec, returning an error if a range exceeds
     /// the materialization limit.
     fn collect_vec(self) -> Result<Vec<Value>, VmError> {
-        if let ValueIter::Range { current, end, done } = &self {
-            if !done {
-                checked_range_len(*current, *end)
-                    .map_err(VmError::new)?;
-            }
+        if let ValueIter::Range { current, end, done } = &self
+            && !done
+        {
+            checked_range_len(*current, *end).map_err(VmError::new)?;
         }
         Ok(self.collect())
     }

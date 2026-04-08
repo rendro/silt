@@ -8081,19 +8081,21 @@ fn main() {
 
 #[test]
 fn test_async_io_read_file_in_task() {
-    let input = r#"
+    let tmp = std::env::temp_dir().join("silt_test_async.txt");
+    let tmp = tmp.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import io
 import task
 
-fn main() {
-  io.write_file("/tmp/silt_test_async.txt", "hello async")
-  let h = task.spawn(fn() {
-    io.read_file("/tmp/silt_test_async.txt")
-  })
+fn main() {{
+  io.write_file("{tmp}", "hello async")
+  let h = task.spawn(fn() {{
+    io.read_file("{tmp}")
+  }})
   task.join(h)
-}
-"#;
-    let result = run(input);
+}}
+"#);
+    let result = run(&input);
     assert!(
         matches!(result, Value::Variant(ref tag, ref args) if tag == "Ok" && args[0] == Value::String("hello async".into())),
         "expected Ok(\"hello async\"), got {result:?}"
@@ -8102,21 +8104,25 @@ fn main() {
 
 #[test]
 fn test_async_io_parallel_reads() {
-    let input = r#"
+    let tmp_a = std::env::temp_dir().join("silt_a.txt");
+    let tmp_b = std::env::temp_dir().join("silt_b.txt");
+    let tmp_a = tmp_a.to_str().unwrap().replace('\\', "/");
+    let tmp_b = tmp_b.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import io
 import task
 
-fn main() {
-  io.write_file("/tmp/silt_a.txt", "aaa")
-  io.write_file("/tmp/silt_b.txt", "bbb")
-  let h1 = task.spawn(fn() { io.read_file("/tmp/silt_a.txt") })
-  let h2 = task.spawn(fn() { io.read_file("/tmp/silt_b.txt") })
+fn main() {{
+  io.write_file("{tmp_a}", "aaa")
+  io.write_file("{tmp_b}", "bbb")
+  let h1 = task.spawn(fn() {{ io.read_file("{tmp_a}") }})
+  let h2 = task.spawn(fn() {{ io.read_file("{tmp_b}") }})
   let a = task.join(h1)
   let b = task.join(h2)
   (a, b)
-}
-"#;
-    let result = run(input);
+}}
+"#);
+    let result = run(&input);
     if let Value::Tuple(elems) = &result {
         assert!(
             matches!(&elems[0], Value::Variant(tag, _) if tag == "Ok"),
