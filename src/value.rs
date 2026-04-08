@@ -1113,7 +1113,15 @@ impl Hash for Value {
             Value::Unit => {}
             Value::Bool(b) => b.hash(state),
             Value::Int(n) => n.hash(state),
-            Value::Float(f) => f.to_bits().hash(state),
+            Value::Float(f) => {
+                // Canonicalize -0.0 to 0.0 for consistent hashing
+                let bits = if *f == 0.0 {
+                    0.0_f64.to_bits()
+                } else {
+                    f.to_bits()
+                };
+                bits.hash(state);
+            }
             Value::String(s) => s.hash(state),
             Value::List(xs) => {
                 xs.len().hash(state);

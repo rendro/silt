@@ -690,10 +690,12 @@ fn main() { list.get([1, 2, 3], 10) }
 
 #[test]
 fn test_runtime_list_get_negative_index() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import list
 fn main() { list.get([1, 2, 3], -1) }
-    "#);
+    "#,
+    );
     assert!(
         err.contains("list.get: negative index -1"),
         "expected negative index error, got: {err}"

@@ -1981,6 +1981,8 @@ fn main() {
 
 Functions for parsing, rounding, converting, and comparing floats.
 
+> **Finite-only floats:** All Float values in Silt are guaranteed to be finite. Operations that would produce NaN or Infinity (such as overflow or invalid math operations) return runtime errors instead. This means floats can be safely compared, sorted, and used as map keys.
+
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
 
@@ -1991,9 +1993,6 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `abs` | `(Float) -> Float` | Absolute value |
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
-| `is_finite` | `(Float) -> Bool` | True if neither NaN nor Infinity |
-| `is_infinite` | `(Float) -> Bool` | True if positive or negative Infinity |
-| `is_nan` | `(Float) -> Bool` | True if NaN |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
 | `parse` | `(String) -> Result(Float, String)` | Parse string to float |
@@ -2047,44 +2046,6 @@ fn main() {
     println(float.floor(-3.2))  // -4.0
 }
 ```
-
-
-### `float.is_finite`
-
-```
-float.is_finite(f: Float) -> Bool
-```
-
-Returns `true` if the float is neither NaN nor Infinity.
-
-```silt
-fn main() {
-    println(float.is_finite(1.0))  // true
-}
-```
-
-
-### `float.is_infinite`
-
-```
-float.is_infinite(f: Float) -> Bool
-```
-
-Returns `true` if the float is positive or negative Infinity.
-
-
-### `float.is_nan`
-
-```
-float.is_nan(f: Float) -> Bool
-```
-
-Returns `true` if the float is NaN (not a number).
-
-> **Note:** Silt prevents NaN and Infinity from arising in normal code —
-> operations like division by zero and `math.sqrt(-1.0)` return runtime errors
-> instead. These predicates exist for defensive checks on values from external
-> sources (e.g. `float.parse`).
 
 
 ### `float.max`

@@ -1724,9 +1724,6 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
     ("float.to_int", CompletionItemKind::FUNCTION),
     ("float.min", CompletionItemKind::FUNCTION),
     ("float.max", CompletionItemKind::FUNCTION),
-    ("float.is_finite", CompletionItemKind::FUNCTION),
-    ("float.is_nan", CompletionItemKind::FUNCTION),
-    ("float.is_infinite", CompletionItemKind::FUNCTION),
     // map
     ("map.get", CompletionItemKind::FUNCTION),
     ("map.set", CompletionItemKind::FUNCTION),

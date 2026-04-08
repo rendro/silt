@@ -1429,24 +1429,6 @@ impl TypeChecker {
             "float.to_int".into(),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Int))),
         );
-
-        // float.is_finite: (Float) -> Bool
-        env.define(
-            "float.is_finite".into(),
-            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
-        );
-
-        // float.is_nan: (Float) -> Bool
-        env.define(
-            "float.is_nan".into(),
-            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
-        );
-
-        // float.is_infinite: (Float) -> Bool
-        env.define(
-            "float.is_infinite".into(),
-            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
-        );
     }
 
     fn register_map_builtins(&mut self, env: &mut TypeEnv) {

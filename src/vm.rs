@@ -293,6 +293,15 @@ impl Default for Vm {
     }
 }
 
+/// Create a finite float Value, returning an error if the result is NaN or Infinity.
+/// Also canonicalizes -0.0 to 0.0.
+fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
+    if !f.is_finite() {
+        return Err(VmError::new(format!("float overflow: {op_desc}")));
+    }
+    Ok(Value::Float(if f == 0.0 { 0.0 } else { f }))
+}
+
 impl Vm {
     pub fn new() -> Self {
         let mut vm = Vm {
@@ -630,9 +639,6 @@ impl Vm {
             "float.to_int",
             "float.min",
             "float.max",
-            "float.is_finite",
-            "float.is_nan",
-            "float.is_infinite",
             "map.get",
             "map.set",
             "map.delete",
@@ -806,12 +812,13 @@ impl Vm {
                         Value::Int(n) => match n.checked_neg() {
                             Some(v) => self.push(Value::Int(v)),
                             None => {
-                                return Err(VmError::new(format!(
-                                    "integer overflow: -{n}"
-                                )));
+                                return Err(VmError::new(format!("integer overflow: -{n}")));
                             }
                         },
-                        Value::Float(n) => self.push(Value::Float(-n)),
+                        Value::Float(n) => {
+                            let result = if -n == 0.0 { 0.0 } else { -n };
+                            self.push(Value::Float(result));
+                        }
                         other => {
                             return Err(VmError::new(format!(
                                 "cannot negate {}",
@@ -1871,12 +1878,13 @@ impl Vm {
                     Value::Int(n) => match n.checked_neg() {
                         Some(v) => self.push(Value::Int(v)),
                         None => {
-                            return Err(VmError::new(format!(
-                                "integer overflow: -{n}"
-                            )));
+                            return Err(VmError::new(format!("integer overflow: -{n}")));
                         }
                     },
-                    Value::Float(n) => self.push(Value::Float(-n)),
+                    Value::Float(n) => {
+                        let result = if -n == 0.0 { 0.0 } else { -n };
+                        self.push(Value::Float(result));
+                    }
                     other => {
                         return Err(VmError::new(format!(
                             "cannot negate {}",
@@ -2679,21 +2687,15 @@ impl Vm {
             (Value::Int(a), Value::Int(b)) => match op {
                 Op::Add => match a.checked_add(*b) {
                     Some(v) => Value::Int(v),
-                    None => {
-                        return Err(VmError::new(format!("integer overflow: {a} + {b}")))
-                    }
+                    None => return Err(VmError::new(format!("integer overflow: {a} + {b}"))),
                 },
                 Op::Sub => match a.checked_sub(*b) {
                     Some(v) => Value::Int(v),
-                    None => {
-                        return Err(VmError::new(format!("integer overflow: {a} - {b}")))
-                    }
+                    None => return Err(VmError::new(format!("integer overflow: {a} - {b}"))),
                 },
                 Op::Mul => match a.checked_mul(*b) {
                     Some(v) => Value::Int(v),
-                    None => {
-                        return Err(VmError::new(format!("integer overflow: {a} * {b}")))
-                    }
+                    None => return Err(VmError::new(format!("integer overflow: {a} * {b}"))),
                 },
                 Op::Div => {
                     if *b == 0 {
@@ -2701,11 +2703,7 @@ impl Vm {
                     }
                     match a.checked_div(*b) {
                         Some(v) => Value::Int(v),
-                        None => {
-                            return Err(VmError::new(format!(
-                                "integer overflow: {a} / {b}"
-                            )))
-                        }
+                        None => return Err(VmError::new(format!("integer overflow: {a} / {b}"))),
                     }
                 }
                 Op::Mod => {
@@ -2714,30 +2712,26 @@ impl Vm {
                     }
                     match a.checked_rem(*b) {
                         Some(v) => Value::Int(v),
-                        None => {
-                            return Err(VmError::new(format!(
-                                "integer overflow: {a} % {b}"
-                            )))
-                        }
+                        None => return Err(VmError::new(format!("integer overflow: {a} % {b}"))),
                     }
                 }
                 _ => unreachable!(),
             },
             (Value::Float(a), Value::Float(b)) => match op {
-                Op::Add => Value::Float(a + b),
-                Op::Sub => Value::Float(a - b),
-                Op::Mul => Value::Float(a * b),
+                Op::Add => finite_float(a + b, &format!("{a} + {b}"))?,
+                Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
+                Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
                 Op::Div => {
                     if *b == 0.0 {
                         return Err(VmError::new("division by zero".to_string()));
                     }
-                    Value::Float(a / b)
+                    finite_float(a / b, &format!("{a} / {b}"))?
                 }
                 Op::Mod => {
                     if *b == 0.0 {
                         return Err(VmError::new("modulo by zero".to_string()));
                     }
-                    Value::Float(a % b)
+                    finite_float(a % b, &format!("{a} % {b}"))?
                 }
                 _ => unreachable!(),
             },

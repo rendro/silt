@@ -102,7 +102,8 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Float(f) = &args[0] else {
                 return Err(VmError::new("float.round requires a float".into()));
             };
-            Ok(Value::Float(f.round()))
+            let result = f.round();
+            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
         }
         "ceil" => {
             if args.len() != 1 {
@@ -111,7 +112,8 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Float(f) = &args[0] else {
                 return Err(VmError::new("float.ceil requires a float".into()));
             };
-            Ok(Value::Float(f.ceil()))
+            let result = f.ceil();
+            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
         }
         "floor" => {
             if args.len() != 1 {
@@ -120,7 +122,8 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Float(f) = &args[0] else {
                 return Err(VmError::new("float.floor requires a float".into()));
             };
-            Ok(Value::Float(f.floor()))
+            let result = f.floor();
+            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
         }
         "abs" => {
             if args.len() != 1 {
@@ -129,7 +132,8 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Float(f) = &args[0] else {
                 return Err(VmError::new("float.abs requires a float".into()));
             };
-            Ok(Value::Float(f.abs()))
+            let result = f.abs();
+            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
         }
         "to_string" => {
             if args.len() != 2 {
@@ -180,33 +184,6 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("float.max requires floats".into()));
             };
             Ok(Value::Float(a.max(*b)))
-        }
-        "is_finite" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_finite takes 1 argument".into()));
-            }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.is_finite requires a float".into()));
-            };
-            Ok(Value::Bool(f.is_finite()))
-        }
-        "is_nan" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_nan takes 1 argument".into()));
-            }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.is_nan requires a float".into()));
-            };
-            Ok(Value::Bool(f.is_nan()))
-        }
-        "is_infinite" => {
-            if args.len() != 1 {
-                return Err(VmError::new("float.is_infinite takes 1 argument".into()));
-            }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.is_infinite requires a float".into()));
-            };
-            Ok(Value::Bool(f.is_infinite()))
         }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }
