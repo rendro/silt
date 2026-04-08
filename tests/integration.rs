@@ -8332,3 +8332,293 @@ fn main() { math.tan(0.0) }
         Value::Float(0.0)
     );
 }
+
+// ── Edge cases: empty collections ───────────────────────────────────
+
+#[test]
+fn test_list_head_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.head([]) }
+    "#),
+        Value::Variant("None".into(), Vec::new())
+    );
+}
+
+#[test]
+fn test_list_last_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.last([]) }
+    "#),
+        Value::Variant("None".into(), Vec::new())
+    );
+}
+
+#[test]
+fn test_list_reverse_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.reverse([]) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_list_find_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.find([], { x -> x > 0 }) }
+    "#),
+        Value::Variant("None".into(), Vec::new())
+    );
+}
+
+#[test]
+fn test_list_get_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.get([], 0) }
+    "#),
+        Value::Variant("None".into(), Vec::new())
+    );
+}
+
+#[test]
+fn test_list_zip_empty_second() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.zip([1, 2], []) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_list_fold_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.fold([], 0, { acc, x -> acc + x }) }
+    "#),
+        Value::Int(0)
+    );
+}
+
+#[test]
+fn test_list_map_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.map([], { x -> x + 1 }) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_list_filter_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.filter([], { x -> x > 0 }) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_list_sort_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.sort([]) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_list_unique_empty() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() { list.unique([]) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+// ── Edge cases: strings ─────────────────────────────────────────────
+
+#[test]
+fn test_string_split_empty_input() {
+    assert_eq!(
+        run(r#"
+import string
+fn main() { string.split("", ",") }
+    "#),
+        Value::List(Arc::new(vec![Value::String("".into())]))
+    );
+}
+
+#[test]
+fn test_string_split_consecutive_delimiters() {
+    assert_eq!(
+        run(r#"
+import string
+fn main() { string.split("a,,b", ",") }
+    "#),
+        Value::List(Arc::new(vec![
+            Value::String("a".into()),
+            Value::String("".into()),
+            Value::String("b".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_string_join_empty_list() {
+    assert_eq!(
+        run(r#"
+import string
+fn main() { string.join([], ",") }
+    "#),
+        Value::String("".into())
+    );
+}
+
+#[test]
+fn test_string_chars_empty() {
+    assert_eq!(
+        run(r#"
+import string
+fn main() { string.chars("") }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+// ── Edge cases: map operations ──────────────────────────────────────
+
+#[test]
+fn test_map_keys_empty() {
+    assert_eq!(
+        run(r#"
+import map
+fn main() { map.keys(#{}) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_map_values_empty() {
+    assert_eq!(
+        run(r#"
+import map
+fn main() { map.values(#{}) }
+    "#),
+        Value::List(Arc::new(vec![]))
+    );
+}
+
+#[test]
+fn test_map_merge_empty() {
+    assert_eq!(
+        run(r#"
+import map
+fn main() { map.merge(#{}, #{}) }
+    "#),
+        Value::Map(Arc::new(std::collections::BTreeMap::new()))
+    );
+}
+
+#[test]
+fn test_map_from_entries_empty() {
+    assert_eq!(
+        run(r#"
+import map
+fn main() { map.from_entries([]) }
+    "#),
+        Value::Map(Arc::new(std::collections::BTreeMap::new()))
+    );
+}
+
+// ── Edge cases: Result/Option pass-through ──────────────────────────
+
+#[test]
+fn test_result_map_ok_on_err() {
+    assert_eq!(
+        run(r#"
+import result
+fn main() { result.map_ok(Err("x"), { v -> v + 1 }) }
+    "#),
+        Value::Variant("Err".into(), vec![Value::String("x".into())])
+    );
+}
+
+#[test]
+fn test_result_map_err_on_ok() {
+    assert_eq!(
+        run(r#"
+import result
+fn main() { result.map_err(Ok(42), { e -> e }) }
+    "#),
+        Value::Variant("Ok".into(), vec![Value::Int(42)])
+    );
+}
+
+#[test]
+fn test_result_flatten_nested_err() {
+    assert_eq!(
+        run(r#"
+import result
+fn main() { result.flatten(Ok(Err("nested"))) }
+    "#),
+        Value::Variant("Err".into(), vec![Value::String("nested".into())])
+    );
+}
+
+#[test]
+fn test_option_flat_map_none() {
+    assert_eq!(
+        run(r#"
+import option
+fn main() { option.flat_map(None, { x -> Some(x) }) }
+    "#),
+        Value::Variant("None".into(), Vec::new())
+    );
+}
+
+// ── Edge cases: math ────────────────────────────────────────────────
+
+#[test]
+fn test_math_log10_one() {
+    assert_eq!(
+        run(r#"
+import math
+fn main() { math.log10(1.0) }
+    "#),
+        Value::ExtFloat(0.0)
+    );
+}
+
+#[test]
+fn test_math_asin_one() {
+    let result = run(r#"
+import math
+fn main() { math.asin(1.0) }
+    "#);
+    match result {
+        Value::ExtFloat(f) => assert!((f - std::f64::consts::FRAC_PI_2).abs() < 1e-10),
+        other => panic!("expected ExtFloat, got {other:?}"),
+    }
+}

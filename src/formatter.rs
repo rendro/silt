@@ -1652,4 +1652,183 @@ fn main() {
         let result = format(source).unwrap();
         assert!(result.contains("return"));
     }
+
+    // ── Idempotency: string interpolation ───────────────────────────
+
+    #[test]
+    fn test_idempotent_string_interpolation() {
+        let source = r#"fn main() {
+  let name = "world"
+  println("hello {name}, count={1 + 2}")
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "string interpolation should be idempotent");
+    }
+
+    // ── Idempotency: map literals ───────────────────────────────────
+
+    #[test]
+    fn test_idempotent_map_literal() {
+        let source = r#"fn main() {
+  let m = #{"a": 1, "b": 2, "c": 3}
+  m
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "map literal should be idempotent");
+    }
+
+    // ── Idempotency: tuple literals and patterns ────────────────────
+
+    #[test]
+    fn test_idempotent_tuple() {
+        let source = r#"fn main() {
+  let t = (1, "hello", true)
+  match t {
+    (1, s, _) -> s
+    _ -> "other"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "tuple literal and pattern should be idempotent");
+    }
+
+    // ── Idempotency: map patterns ───────────────────────────────────
+
+    #[test]
+    fn test_idempotent_map_pattern() {
+        let source = r#"fn check(m) {
+  match m {
+    #{"key": v} -> v
+    _ -> "missing"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "map pattern should be idempotent");
+    }
+
+    // ── Idempotency: constructor patterns ───────────────────────────
+
+    #[test]
+    fn test_idempotent_constructor_pattern() {
+        let source = r#"fn unwrap(opt) {
+  match opt {
+    Some(x) -> x
+    None -> 0
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "constructor pattern should be idempotent");
+    }
+
+    // ── Idempotency: negative number patterns ───────────────────────
+
+    #[test]
+    fn test_idempotent_negative_pattern() {
+        let source = r#"fn classify(n) {
+  match n {
+    -1 -> "neg one"
+    0 -> "zero"
+    1 -> "one"
+    _ -> "other"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "negative pattern should be idempotent");
+    }
+
+    // ── Idempotency: range patterns ─────────────────────────────────
+
+    #[test]
+    fn test_idempotent_range_pattern() {
+        let source = r#"fn classify(n) {
+  match n {
+    1..10 -> "small"
+    10..100 -> "medium"
+    _ -> "large"
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "range pattern should be idempotent");
+    }
+
+    // ── Idempotency: complex type annotations ───────────────────────
+
+    #[test]
+    fn test_idempotent_type_annotations() {
+        let source = r#"fn add(a: Int, b: Int) -> Int {
+  a + b
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "type annotations should be idempotent");
+    }
+
+    // ── Idempotency: loop with multiple bindings ────────────────────
+
+    #[test]
+    fn test_idempotent_loop_bindings() {
+        let source = r#"fn main() {
+  loop i = 0, acc = 0 {
+    match i >= 10 {
+      true -> acc
+      _ -> loop(i + 1, acc + i)
+    }
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "loop with bindings should be idempotent");
+    }
+
+    // ── Idempotency: record pattern ─────────────────────────────────
+
+    #[test]
+    fn test_idempotent_record_pattern() {
+        let source = r#"type Point { x: Int, y: Int }
+
+fn origin(p) {
+  match p {
+    Point { x: 0, y: 0 } -> true
+    _ -> false
+  }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "record pattern should be idempotent");
+    }
+
+    // ── Idempotency: chained method calls ───────────────────────────
+
+    #[test]
+    fn test_idempotent_chained_calls() {
+        let source = r#"import list
+
+fn main() {
+  [1, 2, 3, 4, 5]
+  |> list.filter { x -> x > 2 }
+  |> list.map { x -> x * 10 }
+  |> list.fold(0) { acc, x -> acc + x }
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "chained calls should be idempotent");
+    }
 }
