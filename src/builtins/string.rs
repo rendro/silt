@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::value::Value;
+use crate::value::{Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
 /// Dispatch `string.<name>(args)`.
@@ -85,7 +85,10 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             let strs: Vec<String> = match &args[0] {
                 Value::List(xs) => xs.iter().map(|v| v.to_string()).collect(),
-                Value::Range(lo, hi) => (*lo..=*hi).map(|i| i.to_string()).collect(),
+                Value::Range(lo, hi) => {
+                    checked_range_len(*lo, *hi).map_err(VmError::new)?;
+                    (*lo..=*hi).map(|i| i.to_string()).collect()
+                }
                 _ => return Err(VmError::new("string.join requires a list or range".into())),
             };
             Ok(Value::String(strs.join(sep.as_str())))

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::value::Value;
+use crate::value::{Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
@@ -26,9 +26,16 @@ impl ValueIter {
         }
     }
 
-    /// Collect all items into a Vec (explicit materialization).
-    fn collect_vec(self) -> Vec<Value> {
-        self.collect()
+    /// Collect all items into a Vec, returning an error if a range exceeds
+    /// the materialization limit.
+    fn collect_vec(self) -> Result<Vec<Value>, VmError> {
+        if let ValueIter::Range { current, end, done } = &self {
+            if !done {
+                checked_range_len(*current, *end)
+                    .map_err(VmError::new)?;
+            }
+        }
+        Ok(self.collect())
     }
 }
 
@@ -64,7 +71,8 @@ impl Iterator for ValueIter {
                 if *done {
                     0
                 } else {
-                    (*end - *current + 1) as usize
+                    // Use saturating arithmetic to avoid overflow on huge ranges.
+                    (*end as i128 - *current as i128 + 1).min(usize::MAX as i128) as usize
                 }
             }
         };
@@ -308,10 +316,11 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             // Range fast path: iterate backwards without materializing then reversing.
             if let Value::Range(lo, hi) = &args[0] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
                 let items: Vec<Value> = (*lo..=*hi).rev().map(Value::Int).collect();
                 return Ok(Value::List(Arc::new(items)));
             }
-            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.reverse")?.collect_vec();
+            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.reverse")?.collect_vec()?;
             v.reverse();
             Ok(Value::List(Arc::new(v)))
         }
@@ -323,7 +332,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if matches!(&args[0], Value::Range(..)) {
                 return Ok(args[0].clone());
             }
-            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.sort")?.collect_vec();
+            let mut v: Vec<Value> = ValueIter::try_from(&args[0], "list.sort")?.collect_vec()?;
             v.sort();
             Ok(Value::List(Arc::new(v)))
         }
@@ -377,7 +386,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.append takes 2 arguments".into()));
             }
-            let mut v = ValueIter::try_from(&args[0], "list.append")?.collect_vec();
+            let mut v = ValueIter::try_from(&args[0], "list.append")?.collect_vec()?;
             v.push(args[1].clone());
             Ok(Value::List(Arc::new(v)))
         }
@@ -385,7 +394,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.prepend takes 2 arguments".into()));
             }
-            let mut v = ValueIter::try_from(&args[0], "list.prepend")?.collect_vec();
+            let mut v = ValueIter::try_from(&args[0], "list.prepend")?.collect_vec()?;
             v.insert(0, args[1].clone());
             Ok(Value::List(Arc::new(v)))
         }
@@ -395,6 +404,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let a = ValueIter::try_from(&args[0], "list.concat")?;
             let b = ValueIter::try_from(&args[1], "list.concat")?;
+            if let Value::Range(lo, hi) = &args[0] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            }
+            if let Value::Range(lo, hi) = &args[1] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            }
             let mut result = Vec::with_capacity(a.len() + b.len());
             result.extend(a);
             result.extend(b);
@@ -428,7 +443,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 3 {
                 return Err(VmError::new("list.set takes 3 arguments".into()));
             }
-            let mut v = ValueIter::try_from(&args[0], "list.set")?.collect_vec();
+            let mut v = ValueIter::try_from(&args[0], "list.set")?.collect_vec()?;
             let Value::Int(n) = &args[1] else {
                 return Err(VmError::new("list.set index must be int".into()));
             };
@@ -490,6 +505,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("list.enumerate takes 1 argument".into()));
             }
+            if let Value::Range(lo, hi) = &args[0] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            }
             let iter = ValueIter::try_from(&args[0], "list.enumerate")?;
             let mut result = Vec::with_capacity(iter.len());
             for (i, v) in iter.enumerate() {
@@ -500,6 +518,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         "sort_by" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.sort_by takes 2 arguments".into()));
+            }
+            if let Value::Range(lo, hi) = &args[0] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
             }
             let iter = ValueIter::try_from(&args[0], "list.sort_by")?;
             let func = &args[1];

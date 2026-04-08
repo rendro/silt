@@ -7,6 +7,28 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use crate::bytecode;
 
+/// Maximum number of elements that may be materialized from a range into a
+/// list, JSON array, or similar eager collection.  Prevents accidental OOM
+/// when a user writes something like `(1..1_000_000_000) |> list.reverse`.
+pub(crate) const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
+
+/// Return the number of elements in the inclusive range `lo..=hi`, or an error
+/// string if the count exceeds [`MAX_RANGE_MATERIALIZE`].
+pub(crate) fn checked_range_len(lo: i64, hi: i64) -> Result<usize, String> {
+    if lo > hi {
+        return Ok(0);
+    }
+    let len = (hi as i128 - lo as i128 + 1) as u128;
+    if len > MAX_RANGE_MATERIALIZE as u128 {
+        Err(format!(
+            "range {}..{} has {} elements; materializing more than {} is not allowed",
+            lo, hi, len, MAX_RANGE_MATERIALIZE,
+        ))
+    } else {
+        Ok(len as usize)
+    }
+}
+
 /// A boxed callback that re-enqueues a parked task.
 /// Called by Channel::try_send / Channel::close when data becomes available.
 pub type Waker = Box<dyn FnOnce() + Send>;
@@ -586,13 +608,15 @@ impl Value {
 
 impl Value {
     /// Materialize a Range into a List. Returns self unchanged for non-Range values.
-    pub fn materialize_range(&self) -> Value {
+    /// Returns an error if the range exceeds [`MAX_RANGE_MATERIALIZE`] elements.
+    pub fn materialize_range(&self) -> Result<Value, String> {
         match self {
             Value::Range(lo, hi) => {
+                checked_range_len(*lo, *hi)?;
                 let items: Vec<Value> = (*lo..=*hi).map(Value::Int).collect();
-                Value::List(Arc::new(items))
+                Ok(Value::List(Arc::new(items)))
             }
-            other => other.clone(),
+            other => Ok(other.clone()),
         }
     }
 
@@ -1027,7 +1051,10 @@ impl FromValue for Vec<Value> {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::List(xs) => Ok(xs.as_ref().clone()),
-            Value::Range(lo, hi) => Ok((*lo..=*hi).map(Value::Int).collect()),
+            Value::Range(lo, hi) => {
+                checked_range_len(*lo, *hi)?;
+                Ok((*lo..=*hi).map(Value::Int).collect())
+            }
             other => Err(format!("expected List, got {}", value_type_name(other))),
         }
     }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use crate::value::{TaskHandle, Value};
+use crate::value::{TaskHandle, Value, checked_range_len};
 use crate::vm::{BlockReason, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -91,56 +91,64 @@ fn json_type_name(v: &serde_json::Value) -> &'static str {
     }
 }
 
-fn value_to_json(v: &Value) -> serde_json::Value {
-    match v {
+fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
+    Ok(match v {
         Value::Int(n) => serde_json::Value::Number((*n).into()),
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
-        Value::List(xs) => serde_json::Value::Array(xs.iter().map(value_to_json).collect()),
-        Value::Range(lo, hi) => serde_json::Value::Array(
-            (*lo..=*hi)
-                .map(|i| serde_json::Value::Number(i.into()))
-                .collect(),
-        ),
-        Value::Map(m) => {
-            let obj: serde_json::Map<std::string::String, serde_json::Value> = m
-                .iter()
-                .map(|(k, v)| (k.to_string(), value_to_json(v)))
-                .collect();
-            serde_json::Value::Object(obj)
+        Value::List(xs) => {
+            let items: Result<Vec<_>, _> = xs.iter().map(value_to_json).collect();
+            serde_json::Value::Array(items?)
         }
-        Value::Tuple(vs) => serde_json::Value::Array(vs.iter().map(value_to_json).collect()),
-        Value::Record(_name, fields) => {
-            let obj: serde_json::Map<std::string::String, serde_json::Value> = fields
+        Value::Range(lo, hi) => {
+            checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            serde_json::Value::Array(
+                (*lo..=*hi)
+                    .map(|i| serde_json::Value::Number(i.into()))
+                    .collect(),
+            )
+        }
+        Value::Map(m) => {
+            let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> = m
                 .iter()
-                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .map(|(k, v)| Ok((k.to_string(), value_to_json(v)?)))
                 .collect();
-            serde_json::Value::Object(obj)
+            serde_json::Value::Object(obj?)
+        }
+        Value::Tuple(vs) => {
+            let items: Result<Vec<_>, _> = vs.iter().map(value_to_json).collect();
+            serde_json::Value::Array(items?)
+        }
+        Value::Record(_name, fields) => {
+            let obj: Result<serde_json::Map<std::string::String, serde_json::Value>, VmError> =
+                fields
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), value_to_json(v)?)))
+                    .collect();
+            serde_json::Value::Object(obj?)
         }
         Value::Variant(name, fields) if name == "None" && fields.is_empty() => {
             serde_json::Value::Null
         }
         Value::Variant(name, fields) if name == "Some" && fields.len() == 1 => {
-            value_to_json(&fields[0])
+            value_to_json(&fields[0])?
         }
         Value::Variant(name, fields) => {
             let mut obj = serde_json::Map::new();
             obj.insert("variant".into(), serde_json::Value::String(name.clone()));
             if !fields.is_empty() {
-                obj.insert(
-                    "fields".into(),
-                    serde_json::Value::Array(fields.iter().map(value_to_json).collect()),
-                );
+                let items: Result<Vec<_>, _> = fields.iter().map(value_to_json).collect();
+                obj.insert("fields".into(), serde_json::Value::Array(items?));
             }
             serde_json::Value::Object(obj)
         }
         Value::Unit => serde_json::Value::Null,
         Value::VariantConstructor(name, _) => serde_json::Value::String(name.clone()),
         _ => serde_json::Value::Null,
-    }
+    })
 }
 
 // ── Time helpers ────────────────────────────────────────────────────
@@ -935,14 +943,14 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("json.stringify takes 1 argument".into()));
             }
-            let j = value_to_json(&args[0]);
+            let j = value_to_json(&args[0])?;
             Ok(Value::String(j.to_string()))
         }
         "pretty" => {
             if args.len() != 1 {
                 return Err(VmError::new("json.pretty takes 1 argument".into()));
             }
-            let j = value_to_json(&args[0]);
+            let j = value_to_json(&args[0])?;
             Ok(Value::String(
                 serde_json::to_string_pretty(&j).unwrap_or_else(|_| j.to_string()),
             ))

@@ -15,7 +15,7 @@ use crate::builtins::data::FieldType;
 use crate::bytecode::{Chunk, Function, Op, VmClosure};
 use crate::lexer::Span;
 use crate::scheduler::{Scheduler, SliceResult};
-use crate::value::{Channel, FromValue, IntoValue, IoCompletion, TaskHandle, Value};
+use crate::value::{Channel, FromValue, IntoValue, IoCompletion, TaskHandle, Value, checked_range_len};
 
 /// Type alias for foreign (Rust-side) functions registered with the VM.
 type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
@@ -1135,7 +1135,10 @@ impl Vm {
                     let a = self.pop()?;
                     let mut result = match a {
                         Value::List(xs) => xs.as_ref().clone(),
-                        Value::Range(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+                        Value::Range(lo, hi) => {
+                            checked_range_len(lo, hi).map_err(VmError::new)?;
+                            (lo..=hi).map(Value::Int).collect()
+                        }
                         _ => {
                             return Err(VmError::new(
                                 "ListConcat: left operand is not a list or range".into(),
@@ -1144,7 +1147,10 @@ impl Vm {
                     };
                     match b {
                         Value::List(xs) => result.extend(xs.iter().cloned()),
-                        Value::Range(lo, hi) => result.extend((lo..=hi).map(Value::Int)),
+                        Value::Range(lo, hi) => {
+                            checked_range_len(lo, hi).map_err(VmError::new)?;
+                            result.extend((lo..=hi).map(Value::Int));
+                        }
                         _ => {
                             return Err(VmError::new(
                                 "ListConcat: right operand is not a list or range".into(),
@@ -2121,7 +2127,10 @@ impl Vm {
                 let a = self.pop()?;
                 let mut result = match a {
                     Value::List(xs) => xs.as_ref().clone(),
-                    Value::Range(lo, hi) => (lo..=hi).map(Value::Int).collect(),
+                    Value::Range(lo, hi) => {
+                        checked_range_len(lo, hi).map_err(VmError::new)?;
+                        (lo..=hi).map(Value::Int).collect()
+                    }
                     _ => {
                         return Err(VmError::new(
                             "ListConcat: left operand is not a list or range".into(),
@@ -2130,7 +2139,10 @@ impl Vm {
                 };
                 match b {
                     Value::List(xs) => result.extend(xs.iter().cloned()),
-                    Value::Range(lo, hi) => result.extend((lo..=hi).map(Value::Int)),
+                    Value::Range(lo, hi) => {
+                        checked_range_len(lo, hi).map_err(VmError::new)?;
+                        result.extend((lo..=hi).map(Value::Int));
+                    }
                     _ => {
                         return Err(VmError::new(
                             "ListConcat: right operand is not a list or range".into(),
