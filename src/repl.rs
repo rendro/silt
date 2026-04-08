@@ -242,6 +242,8 @@ fn builtin_names() -> Vec<String> {
         "float.to_int",
         "float.min",
         "float.max",
+        "float.min_value",
+        "float.max_value",
         "map.get",
         "map.set",
         "map.delete",

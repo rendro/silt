@@ -2382,8 +2382,8 @@ impl TypeChecker {
         env.define("math.e".into(), Scheme::mono(Type::Float));
 
         // Float constants
-        env.define("float.max".into(), Scheme::mono(Type::Float));
-        env.define("float.min".into(), Scheme::mono(Type::Float));
+        env.define("float.max_value".into(), Scheme::mono(Type::Float));
+        env.define("float.min_value".into(), Scheme::mono(Type::Float));
         env.define("float.epsilon".into(), Scheme::mono(Type::Float));
         env.define("float.min_positive".into(), Scheme::mono(Type::Float));
         env.define("float.infinity".into(), Scheme::mono(Type::ExtFloat));

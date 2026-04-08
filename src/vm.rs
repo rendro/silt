@@ -756,9 +756,9 @@ impl Vm {
         // entries.  Function calls like `float.max(a, b)` still work because
         // they compile to Op::CallBuiltin, which bypasses the global lookup.
         self.globals
-            .insert("float.max".into(), Value::Float(f64::MAX));
+            .insert("float.max_value".into(), Value::Float(f64::MAX));
         self.globals
-            .insert("float.min".into(), Value::Float(f64::MIN));
+            .insert("float.min_value".into(), Value::Float(f64::MIN));
         self.globals
             .insert("float.epsilon".into(), Value::Float(f64::EPSILON));
         self.globals
@@ -1811,6 +1811,13 @@ impl Vm {
                         closure.function.name,
                         closure.function.arity,
                         args.len()
+                    )));
+                }
+                const MAX_FRAMES: usize = 100_000;
+                if self.frames.len() >= MAX_FRAMES {
+                    return Err(VmError::new(format!(
+                        "stack overflow: recursion depth exceeded {} frames (tip: put the recursive call in tail position to avoid this limit)",
+                        MAX_FRAMES
                     )));
                 }
                 // Save state

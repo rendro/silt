@@ -121,6 +121,8 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "to_int",
             "min",
             "max",
+            "min_value",
+            "max_value",
         ],
         "result" => vec![
             "unwrap_or",

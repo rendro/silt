@@ -2004,8 +2004,8 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `to_int` | `(Float) -> Int` | Truncate to integer |
 | `to_string` | `(Float, Int) -> String` | Format with decimal places |
 | **Constants** | | |
-| `float.max` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
-| `float.min` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
+| `float.max_value` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
+| `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
 | `float.epsilon` | `Float` | Machine epsilon (`2.220446049250313e-16`) |
 | `float.min_positive` | `Float` | Smallest positive normal (`2.2250738585072014e-308`) |
 | `float.infinity` | `ExtFloat` | Positive infinity |
@@ -2164,15 +2164,15 @@ fn main() {
 
 | Constant | Type | Value |
 |----------|------|-------|
-| `float.max` | `Float` | `1.7976931348623157e+308` |
-| `float.min` | `Float` | `-1.7976931348623157e+308` |
+| `float.max_value` | `Float` | `1.7976931348623157e+308` |
+| `float.min_value` | `Float` | `-1.7976931348623157e+308` |
 | `float.epsilon` | `Float` | `2.220446049250313e-16` |
 | `float.min_positive` | `Float` | `2.2250738585072014e-308` |
 | `float.infinity` | `ExtFloat` | Positive infinity |
 | `float.neg_infinity` | `ExtFloat` | Negative infinity |
 | `float.nan` | `ExtFloat` | Not a Number |
 
-`float.max` and `float.min` are `Float` values (they're finite). The non-finite
+`float.max_value` and `float.min_value` are `Float` values (they're finite). The non-finite
 constants are `ExtFloat` — use `else` to handle them if needed.
 
 

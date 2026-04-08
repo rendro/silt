@@ -233,8 +233,12 @@ impl TypeChecker {
                             offset: 0,
                         },
                     );
+                } else {
+                    self.error(
+                        format!("undefined variable '{name}' in pin pattern"),
+                        Span { line: 0, col: 0, offset: 0 },
+                    );
                 }
-                // If not found, we just skip — the runtime will handle the missing variable.
             }
         }
     }
@@ -826,8 +830,13 @@ impl TypeChecker {
                         self.unify(&callee_ty, &fn_ty, span);
                         ret
                     }
+                    Type::Error => Type::Error,
+                    Type::Never => Type::Never,
                     _ => {
-                        // Lenient: might be a constructor or something we can't resolve
+                        self.error(
+                            format!("type '{}' is not callable", callee_ty),
+                            span,
+                        );
                         self.fresh_var()
                     }
                 };
@@ -1336,6 +1345,11 @@ impl TypeChecker {
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
+                } else {
+                    self.error(
+                        format!("undefined variable '{name}' in pin pattern"),
+                        span,
+                    );
                 }
             }
         }

@@ -8106,12 +8106,12 @@ fn main() { math.log(0.0) else 0.0 }
     "#),
         Value::Float(0.0)
     );
-    // pow overflow — use float.max to get a huge number
+    // pow overflow — use float.max_value to get a huge number
     assert_eq!(
         run(r#"
 import math
 import float
-fn main() { math.pow(float.max, 2.0) else 0.0 }
+fn main() { math.pow(float.max_value, 2.0) else 0.0 }
     "#),
         Value::Float(0.0)
     );
@@ -8131,14 +8131,14 @@ fn test_ext_float_named_constants() {
     assert_eq!(
         run(r#"
 import float
-fn main() { float.max }
+fn main() { float.max_value }
     "#),
         Value::Float(f64::MAX)
     );
     assert_eq!(
         run(r#"
 import float
-fn main() { float.min }
+fn main() { float.min_value }
     "#),
         Value::Float(f64::MIN)
     );
@@ -8205,7 +8205,7 @@ fn test_ext_float_else_fallback_value() {
     assert_eq!(
         run(r#"
 import float
-fn main() { 1.0 / 0.0 else float.max }
+fn main() { 1.0 / 0.0 else float.max_value }
     "#),
         Value::Float(f64::MAX)
     );
