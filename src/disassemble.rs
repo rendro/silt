@@ -100,6 +100,9 @@ fn op_from_byte(byte: u8) -> Option<Op> {
         b if b == Op::QuestionMark as u8 => Op::QuestionMark,
         b if b == Op::Panic as u8 => Op::Panic,
 
+        b if b == Op::CallMethod as u8 => Op::CallMethod,
+        b if b == Op::NarrowFloat as u8 => Op::NarrowFloat,
+
         b if b == Op::ChanNew as u8 => Op::ChanNew,
         b if b == Op::ChanSend as u8 => Op::ChanSend,
         b if b == Op::ChanRecv as u8 => Op::ChanRecv,
@@ -201,6 +204,7 @@ fn op_name(op: Op) -> &'static str {
         Op::TaskCancel => "TaskCancel",
         Op::Yield => "Yield",
         Op::CallMethod => "CallMethod",
+        Op::NarrowFloat => "NarrowFloat",
     }
 }
 
@@ -361,7 +365,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
         }
 
         // ── Jump instructions: show target offset ─────────────
-        Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue => {
+        Op::Jump | Op::JumpIfFalse | Op::JumpIfTrue | Op::NarrowFloat => {
             let jump_offset = read_u16(code, offset + 1) as usize;
             let target = offset + 3 + jump_offset;
             (
@@ -763,6 +767,8 @@ mod tests {
             Op::Recur,
             Op::QuestionMark,
             Op::Panic,
+            Op::CallMethod,
+            Op::NarrowFloat,
             Op::ChanNew,
             Op::ChanSend,
             Op::ChanRecv,

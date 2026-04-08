@@ -97,6 +97,10 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, VmError> {
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
+        Value::ExtFloat(f) if f.is_finite() => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::ExtFloat(_) => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::String(s) => serde_json::Value::String(s.clone()),
         Value::List(xs) => {

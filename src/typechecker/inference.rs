@@ -555,9 +555,32 @@ impl TypeChecker {
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                        self.unify(&lt, &rt, span);
-                        lt
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                        let resolved_l = self.apply(&lt);
+                        let resolved_r = self.apply(&rt);
+                        match (&resolved_l, &resolved_r) {
+                            (Type::Float, Type::ExtFloat)
+                            | (Type::ExtFloat, Type::Float)
+                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            _ => {
+                                self.unify(&lt, &rt, span);
+                                lt
+                            }
+                        }
+                    }
+                    BinOp::Div => {
+                        let resolved_l = self.apply(&lt);
+                        let resolved_r = self.apply(&rt);
+                        match (&resolved_l, &resolved_r) {
+                            (Type::Float, Type::Float)
+                            | (Type::Float, Type::ExtFloat)
+                            | (Type::ExtFloat, Type::Float)
+                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            _ => {
+                                self.unify(&lt, &rt, span);
+                                lt
+                            }
+                        }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
                         self.unify(&lt, &rt, span);
@@ -1002,6 +1025,14 @@ impl TypeChecker {
                     );
                 }
                 self.fresh_var()
+            }
+
+            ExprKind::FloatElse(expr, fallback) => {
+                let expr_ty = self.infer_expr(expr, env);
+                let fallback_ty = self.infer_expr(fallback, env);
+                self.unify(&expr_ty, &Type::ExtFloat, expr.span);
+                self.unify(&fallback_ty, &Type::Float, fallback.span);
+                Type::Float
             }
         };
         let resolved = self.apply(&ty);

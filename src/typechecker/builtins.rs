@@ -2335,38 +2335,60 @@ impl TypeChecker {
     }
 
     fn register_math_builtins(&mut self, env: &mut TypeEnv) {
-        // math.sqrt, math.log, math.log10, math.sin, math.cos, math.tan,
-        // math.asin, math.acos, math.atan: (Float) -> Float
+        // Functions that can produce non-finite results: (Float) -> ExtFloat
         {
-            let float_to_float = Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
+            let float_to_extfloat =
+                Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::ExtFloat)));
             for name in &[
                 "math.sqrt",
                 "math.log",
                 "math.log10",
-                "math.sin",
-                "math.cos",
-                "math.tan",
                 "math.asin",
                 "math.acos",
-                "math.atan",
+                "math.exp",
             ] {
+                env.define(name.to_string(), float_to_extfloat.clone());
+            }
+        }
+
+        // Functions that always produce finite results: (Float) -> Float
+        {
+            let float_to_float = Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Float)));
+            for name in &["math.sin", "math.cos", "math.tan", "math.atan"] {
                 env.define(name.to_string(), float_to_float.clone());
             }
         }
 
-        // math.pow, math.atan2: (Float, Float) -> Float
+        // math.pow: (Float, Float) -> ExtFloat (can overflow)
+        {
+            let ff_to_ef = Scheme::mono(Type::Fun(
+                vec![Type::Float, Type::Float],
+                Box::new(Type::ExtFloat),
+            ));
+            env.define("math.pow".into(), ff_to_ef);
+        }
+
+        // math.atan2: (Float, Float) -> Float (always finite)
         {
             let ff_to_f = Scheme::mono(Type::Fun(
                 vec![Type::Float, Type::Float],
                 Box::new(Type::Float),
             ));
-            env.define("math.pow".into(), ff_to_f.clone());
             env.define("math.atan2".into(), ff_to_f);
         }
 
-        // math.pi, math.e: Float (constants — typed as zero-arg functions)
+        // Math constants
         env.define("math.pi".into(), Scheme::mono(Type::Float));
         env.define("math.e".into(), Scheme::mono(Type::Float));
+
+        // Float constants
+        env.define("float.max".into(), Scheme::mono(Type::Float));
+        env.define("float.min".into(), Scheme::mono(Type::Float));
+        env.define("float.epsilon".into(), Scheme::mono(Type::Float));
+        env.define("float.min_positive".into(), Scheme::mono(Type::Float));
+        env.define("float.infinity".into(), Scheme::mono(Type::ExtFloat));
+        env.define("float.neg_infinity".into(), Scheme::mono(Type::ExtFloat));
+        env.define("float.nan".into(), Scheme::mono(Type::ExtFloat));
     }
 
     fn register_channel_builtins(&mut self, env: &mut TypeEnv) {

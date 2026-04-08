@@ -659,7 +659,9 @@ impl Parser {
         {
             self.advance(); // consume `=`
             self.skip_nl();
-            let expr = self.parse_expr()?;
+            // Use min_bp=11 to prevent `else` from being consumed as the
+            // infix FloatElse operator (which has l_bp=10).
+            let expr = self.parse_expr_bp(11)?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
             return Ok(Stmt::When {
@@ -671,7 +673,9 @@ impl Parser {
 
         // Boolean form: when <expr> else { <block> }
         self.restore(saved);
-        let condition = self.parse_expr()?;
+        // Use min_bp=11 to prevent `else` from being consumed as the
+        // infix FloatElse operator (which has l_bp=10).
+        let condition = self.parse_expr_bp(11)?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
         Ok(Stmt::WhenBool {
@@ -957,6 +961,24 @@ impl Parser {
                     let type_expr = self.parse_type_expr()?;
                     let span = left.span;
                     left = Expr::new(ExprKind::Ascription(Box::new(left), type_expr), span);
+                    continue;
+                }
+
+                // Float narrowing: expr else fallback
+                Token::Else => {
+                    let (l_bp, r_bp) = (10, 11);
+                    if l_bp < min_bp {
+                        self.restore(saved);
+                        break;
+                    }
+                    self.advance();
+                    self.skip_nl();
+                    let fallback = self.parse_expr_bp(r_bp)?;
+                    let span = left.span;
+                    left = Expr::new(
+                        ExprKind::FloatElse(Box::new(left), Box::new(fallback)),
+                        span,
+                    );
                     continue;
                 }
 

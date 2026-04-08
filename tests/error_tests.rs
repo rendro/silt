@@ -573,9 +573,9 @@ fn test_runtime_modulo_by_zero() {
 
 #[test]
 fn test_runtime_float_division_by_zero() {
-    // Float division by zero should produce a runtime error (no NaN/Infinity)
-    let err = run_err("fn main() { 1.0 / 0.0 }");
-    assert!(err.contains("division by zero"), "got: {err}");
+    // Float division by zero now produces ExtFloat(Infinity) instead of a runtime error
+    let result = run("fn main() { 1.0 / 0.0 }");
+    assert_eq!(result, Value::ExtFloat(f64::INFINITY));
 }
 
 #[test]

@@ -54,6 +54,8 @@ pub enum ExprKind {
     Pipe(Box<Expr>, Box<Expr>),
     Range(Box<Expr>, Box<Expr>),
     QuestionMark(Box<Expr>),
+    /// Float else: `expr else fallback` — narrows ExtFloat to Float.
+    FloatElse(Box<Expr>, Box<Expr>),
     Ascription(Box<Expr>, TypeExpr),
 
     // Function-related

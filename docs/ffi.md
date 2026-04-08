@@ -76,7 +76,7 @@ silt types:
 | Rust type | Silt type | Notes |
 |-----------|-----------|-------|
 | `i64` | `Int` | |
-| `f64` | `Float` | Also accepts `Int` (coerces) |
+| `f64` | `Float` / `ExtFloat` | Also accepts `Int` (coerces) |
 | `bool` | `Bool` | |
 | `String` | `String` | |
 | `()` | `Unit` | |

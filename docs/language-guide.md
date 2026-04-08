@@ -208,7 +208,8 @@ fn get_or_die(opt) {
 | Type     | Description                       | Examples                  |
 |----------|-----------------------------------|---------------------------|
 | `Int`    | 64-bit signed integer (overflow is a runtime error) | `42`, `-7`, `0`           |
-| `Float`  | 64-bit floating-point (no NaN/Infinity) | `3.14`, `-0.5`, `1.0`    |
+| `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1.0`    |
+| `ExtFloat` | 64-bit floating-point (IEEE 754, allows NaN/Infinity) | Division and some math results |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `Unit`   | No meaningful value               | (returned by `println`)   |
@@ -1133,6 +1134,7 @@ is cheap. All `list.*` functions work on ranges directly.
 | Field      | `.`                                       |
 | Range      | `..`                                      |
 | Question   | `?` (error propagation)                   |
+| Float recovery | `else` (narrows ExtFloat → Float)        |
 
 
 # Part 3: Design Trade-offs
@@ -1169,6 +1171,21 @@ Silt uses 64-bit signed integers. Arithmetic that overflows (e.g.
 This matches the "explicit over implicit" philosophy -- silent wrong answers
 are worse than crashes. `int.abs` also errors on the single unrepresentable
 value (`int.abs(-9223372036854775808)`).
+
+## Float Safety
+
+Silt uses two float types: `Float` (guaranteed finite) and `ExtFloat` (full IEEE 754).
+Division and functions that can produce NaN or Infinity return `ExtFloat`. The `else`
+keyword narrows back to `Float` with an inline fallback:
+
+```silt
+let x: Float = 1.0 / 3.0 else 0.0       // finite result → 0.333...
+let y: Float = 1.0 / 0.0 else 0.0       // infinity → fallback 0.0
+let z: Float = math.sqrt(-1.0) else 0.0  // NaN → fallback 0.0
+```
+
+Non-division arithmetic (`+`, `-`, `*`) on `Float` values still returns `Float` and
+panics on overflow to Infinity, matching the integer overflow philosophy.
 
 ## No Negative Indexing
 

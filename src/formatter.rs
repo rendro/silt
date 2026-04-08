@@ -730,6 +730,13 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 format!("loop({})", arg_strs.join(", "))
             }
         }
+        ExprKind::FloatElse(expr, fallback) => {
+            format!(
+                "{} else {}",
+                format_expr(expr, depth),
+                format_expr(fallback, depth)
+            )
+        }
     }
 }
 

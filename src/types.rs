@@ -17,6 +17,7 @@ pub type TyVar = usize;
 pub enum Type {
     Int,
     Float,
+    ExtFloat,
     Bool,
     String,
     Unit,
@@ -49,6 +50,7 @@ impl std::fmt::Display for Type {
         match self {
             Type::Int => write!(f, "Int"),
             Type::Float => write!(f, "Float"),
+            Type::ExtFloat => write!(f, "ExtFloat"),
             Type::Bool => write!(f, "Bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
@@ -243,6 +245,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
         Type::Set(inner) => free_vars_in(inner),
         Type::Int
         | Type::Float
+        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit

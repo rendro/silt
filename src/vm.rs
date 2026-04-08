@@ -687,6 +687,7 @@ impl Vm {
             "math.acos",
             "math.atan",
             "math.atan2",
+            "math.exp",
             "regex.is_match",
             "regex.find",
             "regex.find_all",
@@ -748,6 +749,28 @@ impl Vm {
             self.globals
                 .insert(name.into(), Value::BuiltinFn(name.into()));
         }
+
+        // Float constants — registered after builtin function names so that
+        // `float.max` and `float.min` resolve to the constant values (f64::MAX,
+        // f64::MIN) when used as bare expressions, overriding the BuiltinFn
+        // entries.  Function calls like `float.max(a, b)` still work because
+        // they compile to Op::CallBuiltin, which bypasses the global lookup.
+        self.globals
+            .insert("float.max".into(), Value::Float(f64::MAX));
+        self.globals
+            .insert("float.min".into(), Value::Float(f64::MIN));
+        self.globals
+            .insert("float.epsilon".into(), Value::Float(f64::EPSILON));
+        self.globals
+            .insert("float.min_positive".into(), Value::Float(f64::MIN_POSITIVE));
+        self.globals
+            .insert("float.infinity".into(), Value::ExtFloat(f64::INFINITY));
+        self.globals.insert(
+            "float.neg_infinity".into(),
+            Value::ExtFloat(f64::NEG_INFINITY),
+        );
+        self.globals
+            .insert("float.nan".into(), Value::ExtFloat(f64::NAN));
     }
 
     /// Load a compiled top-level function and execute it.
@@ -818,6 +841,9 @@ impl Vm {
                         Value::Float(n) => {
                             let result = if -n == 0.0 { 0.0 } else { -n };
                             self.push(Value::Float(result));
+                        }
+                        Value::ExtFloat(n) => {
+                            self.push(Value::ExtFloat(-n));
                         }
                         other => {
                             return Err(VmError::new(format!(
@@ -1608,6 +1634,31 @@ impl Vm {
                     ));
                 }
 
+                Some(Op::NarrowFloat) => {
+                    let offset = self.read_u16()? as usize;
+                    let val = self.peek()?.clone();
+                    match val {
+                        Value::ExtFloat(f) if f.is_finite() => {
+                            self.pop()?;
+                            self.push(Value::Float(if f == 0.0 { 0.0 } else { f }));
+                            let frame = self.current_frame_mut()?;
+                            frame.ip += offset;
+                        }
+                        Value::ExtFloat(_) => {
+                            self.pop()?;
+                        }
+                        Value::Float(_) => {
+                            let frame = self.current_frame_mut()?;
+                            frame.ip += offset;
+                        }
+                        _ => {
+                            return Err(VmError::new(
+                                "NarrowFloat: expected float value".to_string(),
+                            ));
+                        }
+                    }
+                }
+
                 None => {
                     return Err(VmError::new(format!("unknown opcode: {op_byte}")));
                 }
@@ -1884,6 +1935,9 @@ impl Vm {
                     Value::Float(n) => {
                         let result = if -n == 0.0 { 0.0 } else { -n };
                         self.push(Value::Float(result));
+                    }
+                    Value::ExtFloat(n) => {
+                        self.push(Value::ExtFloat(-n));
                     }
                     other => {
                         return Err(VmError::new(format!(
@@ -2555,6 +2609,28 @@ impl Vm {
                     "concurrency opcodes not yet implemented".into(),
                 ));
             }
+            Op::NarrowFloat => {
+                let offset = self.read_u16()? as usize;
+                let val = self.peek()?.clone();
+                match val {
+                    Value::ExtFloat(f) if f.is_finite() => {
+                        self.pop()?;
+                        self.push(Value::Float(if f == 0.0 { 0.0 } else { f }));
+                        self.current_frame_mut()?.ip += offset;
+                    }
+                    Value::ExtFloat(_) => {
+                        self.pop()?;
+                    }
+                    Value::Float(_) => {
+                        self.current_frame_mut()?.ip += offset;
+                    }
+                    _ => {
+                        return Err(VmError::new(
+                            "NarrowFloat: expected float value".to_string(),
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -2722,10 +2798,8 @@ impl Vm {
                 Op::Sub => finite_float(a - b, &format!("{a} - {b}"))?,
                 Op::Mul => finite_float(a * b, &format!("{a} * {b}"))?,
                 Op::Div => {
-                    if *b == 0.0 {
-                        return Err(VmError::new("division by zero".to_string()));
-                    }
-                    finite_float(a / b, &format!("{a} / {b}"))?
+                    let result = a / b;
+                    Value::ExtFloat(if result == 0.0 { 0.0 } else { result })
                 }
                 Op::Mod => {
                     if *b == 0.0 {
@@ -2735,6 +2809,39 @@ impl Vm {
                 }
                 _ => unreachable!(),
             },
+            (Value::ExtFloat(a), Value::ExtFloat(b)) => {
+                let (a, b) = (*a, *b);
+                match op {
+                    Op::Add => Value::ExtFloat(a + b),
+                    Op::Sub => Value::ExtFloat(a - b),
+                    Op::Mul => Value::ExtFloat(a * b),
+                    Op::Div => Value::ExtFloat(a / b),
+                    Op::Mod => Value::ExtFloat(a % b),
+                    _ => unreachable!(),
+                }
+            }
+            (Value::Float(a), Value::ExtFloat(b)) => {
+                let (a, b) = (*a, *b);
+                match op {
+                    Op::Add => Value::ExtFloat(a + b),
+                    Op::Sub => Value::ExtFloat(a - b),
+                    Op::Mul => Value::ExtFloat(a * b),
+                    Op::Div => Value::ExtFloat(a / b),
+                    Op::Mod => Value::ExtFloat(a % b),
+                    _ => unreachable!(),
+                }
+            }
+            (Value::ExtFloat(a), Value::Float(b)) => {
+                let (a, b) = (*a, *b);
+                match op {
+                    Op::Add => Value::ExtFloat(a + b),
+                    Op::Sub => Value::ExtFloat(a - b),
+                    Op::Mul => Value::ExtFloat(a * b),
+                    Op::Div => Value::ExtFloat(a / b),
+                    Op::Mod => Value::ExtFloat(a % b),
+                    _ => unreachable!(),
+                }
+            }
             (Value::String(a), Value::String(b)) if op == Op::Add => {
                 Value::String(format!("{a}{b}"))
             }
@@ -2773,6 +2880,9 @@ impl Vm {
             (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).ok_or_else(|| {
                 VmError::new("cannot compare non-finite float values".to_string())
             })?,
+            (Value::ExtFloat(a), Value::ExtFloat(b)) => a
+                .partial_cmp(b)
+                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
             (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
@@ -2811,6 +2921,7 @@ impl Vm {
             Value::Bool(true) => "true".to_string(),
             Value::Bool(false) => "false".to_string(),
             Value::Float(f) => f.to_string(),
+            Value::ExtFloat(f) => f.to_string(),
             Value::Range(lo, hi) => format!("{lo}..{hi}"),
             _ => format!("{val}"),
         }
@@ -2827,6 +2938,7 @@ impl Vm {
         match val {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
+            Value::ExtFloat(_) => "ExtFloat",
             Value::Bool(_) => "Bool",
             Value::String(_) => "String",
             Value::List(_) => "List",
@@ -2855,22 +2967,23 @@ impl Vm {
         match val {
             Value::Int(_) => 0,
             Value::Float(_) => 1,
-            Value::Bool(_) => 2,
-            Value::String(_) => 3,
-            Value::List(_) | Value::Range(..) => 4,
-            Value::Map(_) => 5,
-            Value::Set(_) => 6,
-            Value::Tuple(_) => 7,
-            Value::Record(..) => 8,
-            Value::Variant(..) => 9,
-            Value::Unit => 10,
-            Value::Channel(_) => 11,
-            Value::Handle(_) => 12,
-            Value::VmClosure(_) => 13,
-            Value::BuiltinFn(_) => 14,
-            Value::VariantConstructor(..) => 15,
-            Value::RecordDescriptor(_) => 16,
-            Value::PrimitiveDescriptor(_) => 17,
+            Value::ExtFloat(_) => 2,
+            Value::Bool(_) => 3,
+            Value::String(_) => 4,
+            Value::List(_) | Value::Range(..) => 5,
+            Value::Map(_) => 6,
+            Value::Set(_) => 7,
+            Value::Tuple(_) => 8,
+            Value::Record(..) => 9,
+            Value::Variant(..) => 10,
+            Value::Unit => 11,
+            Value::Channel(_) => 12,
+            Value::Handle(_) => 13,
+            Value::VmClosure(_) => 14,
+            Value::BuiltinFn(_) => 15,
+            Value::VariantConstructor(..) => 16,
+            Value::RecordDescriptor(_) => 17,
+            Value::PrimitiveDescriptor(_) => 18,
         }
     }
 

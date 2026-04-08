@@ -73,6 +73,16 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+/// Extract an f64 from a Float, ExtFloat, or Int value.
+fn extract_float(val: &Value, fn_name: &str) -> Result<f64, VmError> {
+    match val {
+        Value::Float(f) => Ok(*f),
+        Value::ExtFloat(f) => Ok(*f),
+        Value::Int(n) => Ok(*n as f64),
+        _ => Err(VmError::new(format!("{fn_name} requires a number"))),
+    }
+}
+
 /// Dispatch `float.<name>(args)`.
 pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -99,48 +109,62 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("float.round takes 1 argument".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.round requires a float".into()));
-            };
-            let result = f.round();
-            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            match &args[0] {
+                Value::Float(f) => {
+                    let result = f.round();
+                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                }
+                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.round())),
+                _ => Err(VmError::new("float.round requires a float".into())),
+            }
         }
         "ceil" => {
             if args.len() != 1 {
                 return Err(VmError::new("float.ceil takes 1 argument".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.ceil requires a float".into()));
-            };
-            let result = f.ceil();
-            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            match &args[0] {
+                Value::Float(f) => {
+                    let result = f.ceil();
+                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                }
+                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.ceil())),
+                _ => Err(VmError::new("float.ceil requires a float".into())),
+            }
         }
         "floor" => {
             if args.len() != 1 {
                 return Err(VmError::new("float.floor takes 1 argument".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.floor requires a float".into()));
-            };
-            let result = f.floor();
-            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            match &args[0] {
+                Value::Float(f) => {
+                    let result = f.floor();
+                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                }
+                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.floor())),
+                _ => Err(VmError::new("float.floor requires a float".into())),
+            }
         }
         "abs" => {
             if args.len() != 1 {
                 return Err(VmError::new("float.abs takes 1 argument".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.abs requires a float".into()));
-            };
-            let result = f.abs();
-            Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            match &args[0] {
+                Value::Float(f) => {
+                    let result = f.abs();
+                    Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+                }
+                Value::ExtFloat(f) => Ok(Value::ExtFloat(f.abs())),
+                _ => Err(VmError::new("float.abs requires a float".into())),
+            }
         }
         "to_string" => {
             if args.len() != 2 {
                 return Err(VmError::new("float.to_string takes 2 arguments".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.to_string requires a float".into()));
+            let f = match &args[0] {
+                Value::Float(f) => *f,
+                Value::ExtFloat(f) => *f,
+                _ => return Err(VmError::new("float.to_string requires a float".into())),
             };
             let Value::Int(decimals) = &args[1] else {
                 return Err(VmError::new(
@@ -157,33 +181,33 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("float.to_int takes 1 argument".into()));
             }
-            let Value::Float(f) = &args[0] else {
-                return Err(VmError::new("float.to_int requires a float".into()));
+            let f = match &args[0] {
+                Value::Float(f) => *f,
+                Value::ExtFloat(f) => *f,
+                _ => return Err(VmError::new("float.to_int requires a float".into())),
             };
             if f.is_nan() || f.is_infinite() {
                 return Err(VmError::new(
                     "float.to_int: cannot convert non-finite float to int".into(),
                 ));
             }
-            Ok(Value::Int(*f as i64))
+            Ok(Value::Int(f as i64))
         }
         "min" => {
             if args.len() != 2 {
                 return Err(VmError::new("float.min takes 2 arguments".into()));
             }
-            let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("float.min requires floats".into()));
-            };
-            Ok(Value::Float(a.min(*b)))
+            let a = extract_float(&args[0], "float.min")?;
+            let b = extract_float(&args[1], "float.min")?;
+            Ok(Value::Float(a.min(b)))
         }
         "max" => {
             if args.len() != 2 {
                 return Err(VmError::new("float.max takes 2 arguments".into()));
             }
-            let (Value::Float(a), Value::Float(b)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("float.max requires floats".into()));
-            };
-            Ok(Value::Float(a.max(*b)))
+            let a = extract_float(&args[0], "float.max")?;
+            let b = extract_float(&args[1], "float.max")?;
+            Ok(Value::Float(a.max(b)))
         }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }
@@ -196,159 +220,107 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 1 {
                 return Err(VmError::new("math.sqrt takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.sqrt requires a number".into())),
-            };
-            if f < 0.0 {
-                return Err(VmError::new(
-                    "math.sqrt: cannot take square root of negative number".into(),
-                ));
-            }
-            Ok(Value::Float(f.sqrt()))
+            let f = extract_float(&args[0], "math.sqrt")?;
+            Ok(Value::ExtFloat(f.sqrt()))
         }
         "pow" => {
             if args.len() != 2 {
                 return Err(VmError::new("math.pow takes 2 arguments".into()));
             }
-            let base = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.pow requires numbers".into())),
-            };
-            let exp = match &args[1] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.pow requires numbers".into())),
-            };
-            let result = base.powf(exp);
-            if result.is_nan() || result.is_infinite() {
-                return Err(VmError::new(
-                    "math.pow: result is not a finite number".into(),
-                ));
-            }
-            Ok(Value::Float(result))
+            let base = extract_float(&args[0], "math.pow")?;
+            let exp = extract_float(&args[1], "math.pow")?;
+            Ok(Value::ExtFloat(base.powf(exp)))
         }
         "log" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.log takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.log requires a number".into())),
-            };
-            if f <= 0.0 {
-                return Err(VmError::new("math.log: argument must be positive".into()));
-            }
-            Ok(Value::Float(f.ln()))
+            let f = extract_float(&args[0], "math.log")?;
+            Ok(Value::ExtFloat(f.ln()))
         }
         "log10" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.log10 takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.log10 requires a number".into())),
-            };
-            if f <= 0.0 {
-                return Err(VmError::new("math.log10: argument must be positive".into()));
-            }
-            Ok(Value::Float(f.log10()))
+            let f = extract_float(&args[0], "math.log10")?;
+            Ok(Value::ExtFloat(f.log10()))
         }
         "sin" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.sin takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.sin requires a number".into())),
-            };
-            Ok(Value::Float(f.sin()))
+            let f = extract_float(&args[0], "math.sin")?;
+            if matches!(&args[0], Value::ExtFloat(_)) {
+                Ok(Value::ExtFloat(f.sin()))
+            } else {
+                Ok(Value::Float(f.sin()))
+            }
         }
         "cos" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.cos takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.cos requires a number".into())),
-            };
-            Ok(Value::Float(f.cos()))
+            let f = extract_float(&args[0], "math.cos")?;
+            if matches!(&args[0], Value::ExtFloat(_)) {
+                Ok(Value::ExtFloat(f.cos()))
+            } else {
+                Ok(Value::Float(f.cos()))
+            }
         }
         "tan" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.tan takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.tan requires a number".into())),
-            };
-            Ok(Value::Float(f.tan()))
+            let f = extract_float(&args[0], "math.tan")?;
+            if matches!(&args[0], Value::ExtFloat(_)) {
+                Ok(Value::ExtFloat(f.tan()))
+            } else {
+                Ok(Value::Float(f.tan()))
+            }
         }
         "asin" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.asin takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.asin requires a number".into())),
-            };
-            if !(-1.0..=1.0).contains(&f) {
-                return Err(VmError::new(
-                    "math.asin: argument must be between -1 and 1".into(),
-                ));
-            }
-            Ok(Value::Float(f.asin()))
+            let f = extract_float(&args[0], "math.asin")?;
+            Ok(Value::ExtFloat(f.asin()))
         }
         "acos" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.acos takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.acos requires a number".into())),
-            };
-            if !(-1.0..=1.0).contains(&f) {
-                return Err(VmError::new(
-                    "math.acos: argument must be between -1 and 1".into(),
-                ));
-            }
-            Ok(Value::Float(f.acos()))
+            let f = extract_float(&args[0], "math.acos")?;
+            Ok(Value::ExtFloat(f.acos()))
         }
         "atan" => {
             if args.len() != 1 {
                 return Err(VmError::new("math.atan takes 1 argument".into()));
             }
-            let f = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.atan requires a number".into())),
-            };
-            Ok(Value::Float(f.atan()))
+            let f = extract_float(&args[0], "math.atan")?;
+            if matches!(&args[0], Value::ExtFloat(_)) {
+                Ok(Value::ExtFloat(f.atan()))
+            } else {
+                Ok(Value::Float(f.atan()))
+            }
         }
         "atan2" => {
             if args.len() != 2 {
                 return Err(VmError::new("math.atan2 takes 2 arguments".into()));
             }
-            let y = match &args[0] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.atan2 requires numbers".into())),
-            };
-            let x = match &args[1] {
-                Value::Float(f) => *f,
-                Value::Int(n) => *n as f64,
-                _ => return Err(VmError::new("math.atan2 requires numbers".into())),
-            };
-            Ok(Value::Float(y.atan2(x)))
+            let y = extract_float(&args[0], "math.atan2")?;
+            let x = extract_float(&args[1], "math.atan2")?;
+            if matches!(&args[0], Value::ExtFloat(_)) || matches!(&args[1], Value::ExtFloat(_)) {
+                Ok(Value::ExtFloat(y.atan2(x)))
+            } else {
+                Ok(Value::Float(y.atan2(x)))
+            }
+        }
+        "exp" => {
+            if args.len() != 1 {
+                return Err(VmError::new("math.exp takes 1 argument".into()));
+            }
+            let f = extract_float(&args[0], "math.exp")?;
+            Ok(Value::ExtFloat(f.exp()))
         }
         _ => Err(VmError::new(format!("unknown math function: {name}"))),
     }

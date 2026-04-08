@@ -1519,6 +1519,13 @@ impl Compiler {
                 let jump_back_dist = current_offset + 3 - loop_start; // +3 for opcode + u16
                 self.current_chunk().emit_op(Op::JumpBack, span);
                 self.current_chunk().emit_u16(jump_back_dist as u16, span);
+            }
+
+            ExprKind::FloatElse(expr, fallback) => {
+                self.compile_expr(expr)?;
+                let jump = self.current_chunk().emit_jump(Op::NarrowFloat, span);
+                self.compile_expr(fallback)?;
+                self.current_chunk().patch_jump(jump);
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }

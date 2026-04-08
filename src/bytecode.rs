@@ -178,6 +178,10 @@ pub enum Op {
     /// operands: u16 method_name_index, u8 argc (including receiver)
     CallMethod,
 
+    /// Narrow ExtFloat to Float: if TOS is finite, replace with Float and jump
+    /// forward by u16 offset; if non-finite, pop and fall through.
+    NarrowFloat, // operand: u16 offset
+
     // ── Concurrency ────────────────────────────────────────────
     ChanNew,
     ChanSend,
@@ -269,6 +273,7 @@ impl Op {
             b if b == Op::QuestionMark as u8 => Some(Op::QuestionMark),
             b if b == Op::Panic as u8 => Some(Op::Panic),
             b if b == Op::CallMethod as u8 => Some(Op::CallMethod),
+            b if b == Op::NarrowFloat as u8 => Some(Op::NarrowFloat),
             b if b == Op::ChanNew as u8 => Some(Op::ChanNew),
             b if b == Op::ChanSend as u8 => Some(Op::ChanSend),
             b if b == Op::ChanRecv as u8 => Some(Op::ChanRecv),

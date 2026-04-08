@@ -37,6 +37,7 @@ pub type Waker = Box<dyn FnOnce() + Send>;
 pub enum Value {
     Int(i64),
     Float(f64),
+    ExtFloat(f64),
     Bool(bool),
     String(String),
     List(Arc<Vec<Value>>),
@@ -489,6 +490,7 @@ impl fmt::Debug for Value {
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
+            Value::ExtFloat(n) => write!(f, "ExtFloat({n})"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "\"{s}\""),
             Value::List(xs) => f.debug_list().entries(xs.iter()).finish(),
@@ -557,6 +559,7 @@ impl Value {
         match self {
             Value::Int(n) => format!("{n}"),
             Value::Float(n) => format!("{n}"),
+            Value::ExtFloat(n) => format!("{n}"),
             Value::Bool(b) => format!("{b}"),
             Value::String(s) => format!("\"{s}\""),
             Value::List(xs) => {
@@ -721,6 +724,7 @@ impl fmt::Display for Value {
         match self {
             Value::Int(n) => write!(f, "{n}"),
             Value::Float(n) => write!(f, "{n}"),
+            Value::ExtFloat(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::String(s) => write!(f, "{s}"),
             Value::List(xs) => {
@@ -836,6 +840,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits() == b.to_bits(),
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
@@ -870,21 +875,22 @@ impl Ord for Value {
                 Value::Bool(_) => 1,
                 Value::Int(_) => 2,
                 Value::Float(_) => 3,
-                Value::String(_) => 4,
-                Value::List(_) => 5,
-                Value::Range(..) => 5, // same discriminant as List for ordering
-                Value::Tuple(_) => 6,
-                Value::Map(_) => 7,
-                Value::Set(_) => 8,
-                Value::Record(..) => 9,
-                Value::Variant(..) => 10,
-                Value::Channel(_) => 11,
-                Value::Handle(_) => 12,
-                Value::VmClosure(_) => 13,
-                Value::BuiltinFn(_) => 14,
-                Value::VariantConstructor(..) => 15,
-                Value::RecordDescriptor(_) => 16,
-                Value::PrimitiveDescriptor(_) => 17,
+                Value::ExtFloat(_) => 4,
+                Value::String(_) => 5,
+                Value::List(_) => 6,
+                Value::Range(..) => 6, // same discriminant as List for ordering
+                Value::Tuple(_) => 7,
+                Value::Map(_) => 8,
+                Value::Set(_) => 9,
+                Value::Record(..) => 10,
+                Value::Variant(..) => 11,
+                Value::Channel(_) => 12,
+                Value::Handle(_) => 13,
+                Value::VmClosure(_) => 14,
+                Value::BuiltinFn(_) => 15,
+                Value::VariantConstructor(..) => 16,
+                Value::RecordDescriptor(_) => 17,
+                Value::PrimitiveDescriptor(_) => 18,
             }
         };
         let d1 = disc(self);
@@ -902,6 +908,7 @@ impl Ord for Value {
                     a.to_bits().cmp(&b.to_bits())
                 })
             }
+            (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits().cmp(&b.to_bits()),
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
             (Value::Range(a1, a2), Value::Range(b1, b2)) => a1.cmp(b1).then_with(|| a2.cmp(b2)),
@@ -984,6 +991,7 @@ impl FromValue for f64 {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Float(n) => Ok(*n),
+            Value::ExtFloat(n) => Ok(*n),
             Value::Int(n) => Ok(*n as f64),
             other => Err(format!("expected Float, got {}", value_type_name(other))),
         }
@@ -1088,6 +1096,7 @@ fn value_type_name(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "Int",
         Value::Float(_) => "Float",
+        Value::ExtFloat(_) => "ExtFloat",
         Value::Bool(_) => "Bool",
         Value::String(_) => "String",
         Value::List(_) => "List",
@@ -1114,6 +1123,15 @@ impl Hash for Value {
             Value::Bool(b) => b.hash(state),
             Value::Int(n) => n.hash(state),
             Value::Float(f) => {
+                // Canonicalize -0.0 to 0.0 for consistent hashing
+                let bits = if *f == 0.0 {
+                    0.0_f64.to_bits()
+                } else {
+                    f.to_bits()
+                };
+                bits.hash(state);
+            }
+            Value::ExtFloat(f) => {
                 // Canonicalize -0.0 to 0.0 for consistent hashing
                 let bits = if *f == 0.0 {
                     0.0_f64.to_bits()

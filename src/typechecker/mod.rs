@@ -232,6 +232,7 @@ impl TypeChecker {
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)
             | (Type::Float, Type::Float)
+            | (Type::ExtFloat, Type::ExtFloat)
             | (Type::Bool, Type::Bool)
             | (Type::String, Type::String)
             | (Type::Unit, Type::Unit) => {}
@@ -1255,6 +1256,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Set(inner) => occurs_in(var, inner),
         Type::Int
         | Type::Float
+        | Type::ExtFloat
         | Type::Bool
         | Type::String
         | Type::Unit

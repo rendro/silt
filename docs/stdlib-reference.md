@@ -1981,7 +1981,11 @@ fn main() {
 
 Functions for parsing, rounding, converting, and comparing floats.
 
-> **Finite-only floats:** All Float values in Silt are guaranteed to be finite. Operations that would produce NaN or Infinity (such as overflow or invalid math operations) return runtime errors instead. This means floats can be safely compared, sorted, and used as map keys.
+> **Two-tier float system:** `Float` values are guaranteed finite — no NaN, no Infinity.
+> Operations that may produce non-finite results (division, `sqrt`, `log`, `pow`, `exp`,
+> `asin`, `acos`) return `ExtFloat` instead. Use the `else` keyword to narrow back to
+> `Float` with a fallback: `a / b else 0.0`. Non-division arithmetic (`+`, `-`, `*`) on
+> `Float` panics on overflow rather than producing Infinity.
 
 > **Note:** `round`, `ceil`, and `floor` return `Float`, not `Int`. Use
 > `float.to_int` to convert the result to an integer.
@@ -1999,6 +2003,14 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
 | `to_string` | `(Float, Int) -> String` | Format with decimal places |
+| **Constants** | | |
+| `float.max` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
+| `float.min` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
+| `float.epsilon` | `Float` | Machine epsilon (`2.220446049250313e-16`) |
+| `float.min_positive` | `Float` | Smallest positive normal (`2.2250738585072014e-308`) |
+| `float.infinity` | `ExtFloat` | Positive infinity |
+| `float.neg_infinity` | `ExtFloat` | Negative infinity |
+| `float.nan` | `ExtFloat` | Not a Number |
 
 
 ### `float.abs`
@@ -2120,8 +2132,8 @@ fn main() {
 float.to_int(f: Float) -> Int
 ```
 
-Truncates toward zero, converting to an integer. Returns a runtime error if
-the float is NaN or Infinity.
+Truncates toward zero, converting to an integer. Accepts both `Float` and
+`ExtFloat`. Returns a runtime error if the value is NaN or Infinity.
 
 ```silt
 fn main() {
@@ -2146,6 +2158,22 @@ fn main() {
     println(float.to_string(42.0, 0))     // "42"
 }
 ```
+
+
+### Float Constants
+
+| Constant | Type | Value |
+|----------|------|-------|
+| `float.max` | `Float` | `1.7976931348623157e+308` |
+| `float.min` | `Float` | `-1.7976931348623157e+308` |
+| `float.epsilon` | `Float` | `2.220446049250313e-16` |
+| `float.min_positive` | `Float` | `2.2250738585072014e-308` |
+| `float.infinity` | `ExtFloat` | Positive infinity |
+| `float.neg_infinity` | `ExtFloat` | Negative infinity |
+| `float.nan` | `ExtFloat` | Not a Number |
+
+`float.max` and `float.min` are `Float` values (they're finite). The non-finite
+constants are `ExtFloat` — use `else` to handle them if needed.
 
 
 ## result
@@ -2925,38 +2953,43 @@ fn main() {
 
 ## math
 
-Mathematical functions and constants. All functions operate on `Float` values.
+Mathematical functions and constants. Functions that always produce finite results from
+finite inputs return `Float`. Functions that may produce NaN or Infinity return `ExtFloat`
+— use `else` to narrow back to `Float`.
 
 ### Summary
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `acos` | `(Float) -> Float` | Arccosine (radians) |
-| `asin` | `(Float) -> Float` | Arcsine (radians) |
+| `acos` | `(Float) -> ExtFloat` | Arccosine (radians) |
+| `asin` | `(Float) -> ExtFloat` | Arcsine (radians) |
 | `atan` | `(Float) -> Float` | Arctangent (radians) |
 | `atan2` | `(Float, Float) -> Float` | Two-argument arctangent |
 | `cos` | `(Float) -> Float` | Cosine |
 | `e` | `Float` | Euler's number (2.71828...) |
-| `log` | `(Float) -> Float` | Natural logarithm (ln) |
-| `log10` | `(Float) -> Float` | Base-10 logarithm |
+| `exp` | `(Float) -> ExtFloat` | Exponential (e^x) |
+| `log` | `(Float) -> ExtFloat` | Natural logarithm (ln) |
+| `log10` | `(Float) -> ExtFloat` | Base-10 logarithm |
 | `pi` | `Float` | Pi (3.14159...) |
-| `pow` | `(Float, Float) -> Float` | Exponentiation |
+| `pow` | `(Float, Float) -> ExtFloat` | Exponentiation |
 | `sin` | `(Float) -> Float` | Sine |
-| `sqrt` | `(Float) -> Float` | Square root |
+| `sqrt` | `(Float) -> ExtFloat` | Square root |
 | `tan` | `(Float) -> Float` | Tangent |
 
 
 ### `math.acos`
 
 ```
-math.acos(x: Float) -> Float
+math.acos(x: Float) -> ExtFloat
 ```
 
-Returns the arccosine of `x` in radians. `x` must be between -1 and 1.
+Returns the arccosine of `x` in radians. Returns `NaN` for inputs outside [-1, 1].
+Use `else` to narrow:
 
 ```silt
 fn main() {
-    println(math.acos(1.0))  // 0.0
+    let angle = math.acos(1.0) else 0.0
+    println(angle)  // 0.0
 }
 ```
 
@@ -2964,14 +2997,16 @@ fn main() {
 ### `math.asin`
 
 ```
-math.asin(x: Float) -> Float
+math.asin(x: Float) -> ExtFloat
 ```
 
-Returns the arcsine of `x` in radians. `x` must be between -1 and 1.
+Returns the arcsine of `x` in radians. Returns `NaN` for inputs outside [-1, 1].
+Use `else` to narrow:
 
 ```silt
 fn main() {
-    println(math.asin(1.0))  // 1.5707... (pi/2)
+    let angle = math.asin(1.0) else 0.0
+    println(angle)  // 1.5707... (pi/2)
 }
 ```
 
@@ -3039,18 +3074,36 @@ fn main() {
 ```
 
 
-### `math.log`
+### `math.exp`
 
 ```
-math.log(x: Float) -> Float
+math.exp(x: Float) -> ExtFloat
 ```
 
-Returns the natural logarithm (base e) of `x`. `x` must be positive.
+Returns e raised to the power of `x`. May overflow to Infinity for large inputs.
+Use `else` to narrow:
 
 ```silt
 fn main() {
-    println(math.log(math.e))  // 1.0
-    println(math.log(1.0))     // 0.0
+    let result = math.exp(1.0) else 0.0
+    println(result)  // 2.718281828459045
+}
+```
+
+
+### `math.log`
+
+```
+math.log(x: Float) -> ExtFloat
+```
+
+Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
+`NaN` for negative inputs. Use `else` to narrow:
+
+```silt
+fn main() {
+    let result = math.log(math.e) else 0.0
+    println(result)  // 1.0
 }
 ```
 
@@ -3058,14 +3111,16 @@ fn main() {
 ### `math.log10`
 
 ```
-math.log10(x: Float) -> Float
+math.log10(x: Float) -> ExtFloat
 ```
 
-Returns the base-10 logarithm of `x`. `x` must be positive.
+Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
+`NaN` for negative inputs. Use `else` to narrow:
 
 ```silt
 fn main() {
-    println(math.log10(100.0))  // 2.0
+    let result = math.log10(100.0) else 0.0
+    println(result)  // 2.0
 }
 ```
 
@@ -3089,15 +3144,16 @@ fn main() {
 ### `math.pow`
 
 ```
-math.pow(base: Float, exponent: Float) -> Float
+math.pow(base: Float, exponent: Float) -> ExtFloat
 ```
 
-Returns `base` raised to the power of `exponent`. Returns a runtime error if
-the result would be NaN or Infinity.
+Returns `base` raised to the power of `exponent`. Returns `ExtFloat` — may be
+Infinity for large results. Use `else` to narrow:
 
 ```silt
 fn main() {
-    println(math.pow(2.0, 10.0))  // 1024.0
+    let result = math.pow(2.0, 10.0) else 0.0
+    println(result)  // 1024.0
 }
 ```
 
@@ -3121,15 +3177,16 @@ fn main() {
 ### `math.sqrt`
 
 ```
-math.sqrt(x: Float) -> Float
+math.sqrt(x: Float) -> ExtFloat
 ```
 
-Returns the square root of `x`. `x` must be non-negative.
+Returns the square root of `x`. Returns `NaN` for negative inputs. Use `else`
+to narrow:
 
 ```silt
 fn main() {
-    println(math.sqrt(4.0))   // 2.0
-    println(math.sqrt(2.0))   // 1.4142...
+    let result = math.sqrt(4.0) else 0.0
+    println(result)  // 2.0
 }
 ```
 
