@@ -207,14 +207,36 @@ fn get_or_die(opt) {
 
 | Type     | Description                       | Examples                  |
 |----------|-----------------------------------|---------------------------|
-| `Int`    | 64-bit signed integer (overflow is a runtime error) | `42`, `-7`, `0`           |
-| `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1.0`    |
+| `Int`    | 64-bit signed integer (overflow is a runtime error) | `42`, `-7`, `0xFF`, `0b1010` |
+| `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1e5`, `2.5e-3` |
 | `ExtFloat` | 64-bit floating-point (IEEE 754, allows NaN/Infinity) | Division and some math results |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `Unit`   | No meaningful value               | (returned by `println`)   |
 
 No implicit conversions. Use `int.to_float()` or `float.to_int()` explicitly.
+
+#### Numeric Literals
+
+All numeric literals support `_` as a visual separator: `1_000_000`, `0xFF_FF`.
+
+```silt
+-- Decimal
+let n = 42
+let big = 1_000_000
+
+-- Hex and binary (always Int)
+let mask = 0xFF
+let flags = 0b1010_0001
+
+-- Scientific notation (always Float)
+let avogadro = 6.022e23
+let tiny = 1e-9
+let hundred = 1e2       -- Float(100.0), not Int
+```
+
+Scientific notation always produces a `Float`, even when the value is a whole number.
+Non-finite results like `1e999` are rejected at compile time.
 
 ### Enums (Tagged Unions)
 
