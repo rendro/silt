@@ -851,15 +851,16 @@ with `{expr}` interpolation.
 | `ends_with` | `(String, String) -> Bool` | Check suffix |
 | `from_char_code` | `(Int) -> String` | Character from Unicode code point |
 | `index_of` | `(String, String) -> Option(Int)` | Byte position of first occurrence |
-| `is_alnum` | `(String) -> Bool` | First char is alphanumeric |
-| `is_alpha` | `(String) -> Bool` | First char is alphabetic |
-| `is_digit` | `(String) -> Bool` | First char is ASCII digit |
+| `byte_length` | `(String) -> Int` | Length in bytes |
+| `is_alnum` | `(String) -> Bool` | All chars are alphanumeric |
+| `is_alpha` | `(String) -> Bool` | All chars are alphabetic |
+| `is_digit` | `(String) -> Bool` | All chars are ASCII digits |
 | `is_empty` | `(String) -> Bool` | String has zero length |
-| `is_lower` | `(String) -> Bool` | First char is lowercase |
-| `is_upper` | `(String) -> Bool` | First char is uppercase |
-| `is_whitespace` | `(String) -> Bool` | First char is whitespace |
+| `is_lower` | `(String) -> Bool` | All chars are lowercase |
+| `is_upper` | `(String) -> Bool` | All chars are uppercase |
+| `is_whitespace` | `(String) -> Bool` | All chars are whitespace |
 | `join` | `(List(String), String) -> String` | Join list with separator |
-| `length` | `(String) -> Int` | Byte length |
+| `length` | `(String) -> Int` | Length in characters |
 | `pad_left` | `(String, Int, String) -> String` | Pad to width on the left |
 | `pad_right` | `(String, Int, String) -> String` | Pad to width on the right |
 | `repeat` | `(String, Int) -> String` | Repeat string n times |
@@ -973,14 +974,14 @@ fn main() {
 string.is_alnum(s: String) -> Bool
 ```
 
-Returns `true` if the first character is alphanumeric. Returns `false` for empty
+Returns `true` if all characters are alphanumeric. Returns `false` for empty
 strings.
 
 ```silt
 fn main() {
-    println(string.is_alnum("a"))   // true
-    println(string.is_alnum("3"))   // true
-    println(string.is_alnum("!"))   // false
+    println(string.is_alnum("abc123"))  // true
+    println(string.is_alnum("abc!"))    // false
+    println(string.is_alnum(""))        // false
 }
 ```
 
@@ -991,13 +992,14 @@ fn main() {
 string.is_alpha(s: String) -> Bool
 ```
 
-Returns `true` if the first character is alphabetic. Returns `false` for empty
+Returns `true` if all characters are alphabetic. Returns `false` for empty
 strings.
 
 ```silt
 fn main() {
-    println(string.is_alpha("a"))  // true
-    println(string.is_alpha("1"))  // false
+    println(string.is_alpha("hello"))   // true
+    println(string.is_alpha("abc123"))  // false
+    println(string.is_alpha(""))        // false
 }
 ```
 
@@ -1008,13 +1010,14 @@ fn main() {
 string.is_digit(s: String) -> Bool
 ```
 
-Returns `true` if the first character is an ASCII digit (0-9). Returns `false`
+Returns `true` if all characters are ASCII digits (0-9). Returns `false`
 for empty strings.
 
 ```silt
 fn main() {
-    println(string.is_digit("5"))  // true
-    println(string.is_digit("a"))  // false
+    println(string.is_digit("123"))   // true
+    println(string.is_digit("12a"))   // false
+    println(string.is_digit(""))      // false
 }
 ```
 
@@ -1041,13 +1044,14 @@ fn main() {
 string.is_lower(s: String) -> Bool
 ```
 
-Returns `true` if the first character is lowercase. Returns `false` for empty
+Returns `true` if all characters are lowercase. Returns `false` for empty
 strings.
 
 ```silt
 fn main() {
-    println(string.is_lower("a"))  // true
-    println(string.is_lower("A"))  // false
+    println(string.is_lower("hello"))  // true
+    println(string.is_lower("Hello"))  // false
+    println(string.is_lower(""))       // false
 }
 ```
 
@@ -1058,13 +1062,14 @@ fn main() {
 string.is_upper(s: String) -> Bool
 ```
 
-Returns `true` if the first character is uppercase. Returns `false` for empty
+Returns `true` if all characters are uppercase. Returns `false` for empty
 strings.
 
 ```silt
 fn main() {
-    println(string.is_upper("A"))  // true
-    println(string.is_upper("a"))  // false
+    println(string.is_upper("HELLO"))  // true
+    println(string.is_upper("Hello"))  // false
+    println(string.is_upper(""))       // false
 }
 ```
 
@@ -1075,13 +1080,14 @@ fn main() {
 string.is_whitespace(s: String) -> Bool
 ```
 
-Returns `true` if the first character is whitespace. Returns `false` for empty
+Returns `true` if all characters are whitespace. Returns `false` for empty
 strings.
 
 ```silt
 fn main() {
-    println(string.is_whitespace(" "))   // true
-    println(string.is_whitespace("a"))   // false
+    println(string.is_whitespace("  \t"))  // true
+    println(string.is_whitespace(" a "))   // false
+    println(string.is_whitespace(""))      // false
 }
 ```
 
@@ -1102,17 +1108,36 @@ fn main() {
 ```
 
 
+### `string.byte_length`
+
+```
+string.byte_length(s: String) -> Int
+```
+
+Returns the length of the string in bytes (UTF-8 encoding). See also
+`string.length` which counts characters.
+
+```silt
+fn main() {
+    println(string.byte_length("hello"))  // 5
+    println(string.byte_length("café"))   // 5 (é is 2 bytes)
+}
+```
+
+
 ### `string.length`
 
 ```
 string.length(s: String) -> Int
 ```
 
-Returns the byte length of the string.
+Returns the number of characters in the string. Use `string.byte_length` if
+you need the size in bytes.
 
 ```silt
 fn main() {
     println(string.length("hello"))  // 5
+    println(string.length("café"))   // 4
 }
 ```
 
@@ -1962,6 +1987,9 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `abs` | `(Float) -> Float` | Absolute value |
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
+| `is_finite` | `(Float) -> Bool` | True if neither NaN nor Infinity |
+| `is_infinite` | `(Float) -> Bool` | True if positive or negative Infinity |
+| `is_nan` | `(Float) -> Bool` | True if NaN |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
 | `parse` | `(String) -> Result(Float, String)` | Parse string to float |
@@ -2017,6 +2045,44 @@ fn main() {
 ```
 
 
+### `float.is_finite`
+
+```
+float.is_finite(f: Float) -> Bool
+```
+
+Returns `true` if the float is neither NaN nor Infinity.
+
+```silt
+fn main() {
+    println(float.is_finite(1.0))  // true
+}
+```
+
+
+### `float.is_infinite`
+
+```
+float.is_infinite(f: Float) -> Bool
+```
+
+Returns `true` if the float is positive or negative Infinity.
+
+
+### `float.is_nan`
+
+```
+float.is_nan(f: Float) -> Bool
+```
+
+Returns `true` if the float is NaN (not a number).
+
+> **Note:** Silt prevents NaN and Infinity from arising in normal code —
+> operations like division by zero and `math.sqrt(-1.0)` return runtime errors
+> instead. These predicates exist for defensive checks on values from external
+> sources (e.g. `float.parse`).
+
+
 ### `float.max`
 
 ```
@@ -2054,7 +2120,8 @@ float.parse(s: String) -> Result(Float, String)
 ```
 
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
-`Ok(f)` on success, `Err(message)` on failure.
+`Ok(f)` on success, `Err(message)` on failure. Strings like `"NaN"` and
+`"Infinity"` are rejected.
 
 ```silt
 fn main() {
@@ -2088,7 +2155,8 @@ fn main() {
 float.to_int(f: Float) -> Int
 ```
 
-Truncates toward zero, converting to an integer.
+Truncates toward zero, converting to an integer. Returns a runtime error if
+the float is NaN or Infinity.
 
 ```silt
 fn main() {
@@ -2919,7 +2987,7 @@ Mathematical functions and constants. All functions operate on `Float` values.
 math.acos(x: Float) -> Float
 ```
 
-Returns the arccosine of `x` in radians.
+Returns the arccosine of `x` in radians. `x` must be between -1 and 1.
 
 ```silt
 fn main() {
@@ -2934,7 +3002,7 @@ fn main() {
 math.asin(x: Float) -> Float
 ```
 
-Returns the arcsine of `x` in radians.
+Returns the arcsine of `x` in radians. `x` must be between -1 and 1.
 
 ```silt
 fn main() {
@@ -3012,7 +3080,7 @@ fn main() {
 math.log(x: Float) -> Float
 ```
 
-Returns the natural logarithm (base e) of `x`.
+Returns the natural logarithm (base e) of `x`. `x` must be positive.
 
 ```silt
 fn main() {
@@ -3028,7 +3096,7 @@ fn main() {
 math.log10(x: Float) -> Float
 ```
 
-Returns the base-10 logarithm of `x`.
+Returns the base-10 logarithm of `x`. `x` must be positive.
 
 ```silt
 fn main() {
@@ -3059,7 +3127,8 @@ fn main() {
 math.pow(base: Float, exponent: Float) -> Float
 ```
 
-Returns `base` raised to the power of `exponent`.
+Returns `base` raised to the power of `exponent`. Returns a runtime error if
+the result would be NaN or Infinity.
 
 ```silt
 fn main() {
@@ -3090,7 +3159,7 @@ fn main() {
 math.sqrt(x: Float) -> Float
 ```
 
-Returns the square root of `x`.
+Returns the square root of `x`. `x` must be non-negative.
 
 ```silt
 fn main() {

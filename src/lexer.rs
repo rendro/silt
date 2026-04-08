@@ -452,7 +452,7 @@ impl Lexer {
         result_lines.join("\n")
     }
 
-    fn scan_number(&mut self, first: char, start: Span) -> SpannedToken {
+    fn scan_number(&mut self, first: char, start: Span) -> Result<SpannedToken, LexError> {
         let mut num = String::new();
         num.push(first);
 
@@ -481,11 +481,17 @@ impl Lexer {
                     break;
                 }
             }
-            let val: f64 = num.parse().unwrap();
-            (Token::Float(val), start)
+            let val: f64 = num.parse().map_err(|_| LexError {
+                message: "number literal too large".into(),
+                span: start,
+            })?;
+            Ok((Token::Float(val), start))
         } else {
-            let val: i64 = num.parse().unwrap();
-            (Token::Int(val), start)
+            let val: i64 = num.parse().map_err(|_| LexError {
+                message: "number literal too large".into(),
+                span: start,
+            })?;
+            Ok((Token::Int(val), start))
         }
     }
 
@@ -575,7 +581,7 @@ impl Lexer {
             }
 
             // Numbers
-            '0'..='9' => Ok(self.scan_number(ch, start)),
+            '0'..='9' => self.scan_number(ch, start),
 
             // Identifiers and keywords
             'a'..='z' | 'A'..='Z' | '_' => Ok(self.scan_ident_or_keyword(ch, start)),

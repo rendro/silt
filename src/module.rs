@@ -41,6 +41,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "replace",
             "join",
             "length",
+            "byte_length",
             "to_upper",
             "to_lower",
             "starts_with",
@@ -120,6 +121,9 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "to_int",
             "min",
             "max",
+            "is_finite",
+            "is_nan",
+            "is_infinite",
         ],
         "result" => vec![
             "unwrap_or",

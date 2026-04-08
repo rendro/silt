@@ -572,13 +572,10 @@ fn test_runtime_modulo_by_zero() {
 }
 
 #[test]
-fn test_runtime_float_division_by_zero_is_inf() {
-    // Float division by zero should produce Inf, not an error (IEEE 754)
-    let result = run("fn main() { 1.0 / 0.0 }");
-    match result {
-        Value::Float(f) => assert!(f.is_infinite(), "expected infinity, got {f}"),
-        other => panic!("expected Float, got {other:?}"),
-    }
+fn test_runtime_float_division_by_zero() {
+    // Float division by zero should produce a runtime error (no NaN/Infinity)
+    let err = run_err("fn main() { 1.0 / 0.0 }");
+    assert!(err.contains("division by zero"), "got: {err}");
 }
 
 #[test]

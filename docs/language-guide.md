@@ -208,7 +208,7 @@ fn get_or_die(opt) {
 | Type     | Description                       | Examples                  |
 |----------|-----------------------------------|---------------------------|
 | `Int`    | 64-bit signed integer             | `42`, `-7`, `0`           |
-| `Float`  | 64-bit floating-point             | `3.14`, `-0.5`, `1.0`    |
+| `Float`  | 64-bit floating-point (no NaN/Infinity) | `3.14`, `-0.5`, `1.0`    |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `Unit`   | No meaningful value               | (returned by `println`)   |

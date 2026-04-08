@@ -65,7 +65,14 @@ fn position_to_offset(source: &str, pos: &Position) -> usize {
     let mut offset = 0;
     for (i, line) in source.lines().enumerate() {
         if i == pos.line as usize {
-            return offset + (pos.character as usize).min(line.len());
+            let mut utf16_offset = 0u32;
+            for (byte_idx, ch) in line.char_indices() {
+                if utf16_offset >= pos.character {
+                    return offset + byte_idx;
+                }
+                utf16_offset += ch.len_utf16() as u32;
+            }
+            return offset + line.len();
         }
         offset += line.len() + 1; // +1 for '\n'
     }
@@ -1511,7 +1518,17 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
     if col == 0 {
         return None;
     }
-    let before = &line[..col.min(line.len())];
+    // Convert UTF-16 offset to byte offset
+    let mut utf16_offset = 0usize;
+    let mut byte_offset = line.len();
+    for (byte_idx, ch) in line.char_indices() {
+        if utf16_offset >= col {
+            byte_offset = byte_idx;
+            break;
+        }
+        utf16_offset += ch.len_utf16();
+    }
+    let before = &line[..byte_offset];
     // The last character should be '.' (cursor is right after it)
     if !before.ends_with('.') {
         return None;
@@ -1670,6 +1687,7 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
     ("string.trim", CompletionItemKind::FUNCTION),
     ("string.join", CompletionItemKind::FUNCTION),
     ("string.length", CompletionItemKind::FUNCTION),
+    ("string.byte_length", CompletionItemKind::FUNCTION),
     ("string.contains", CompletionItemKind::FUNCTION),
     ("string.replace", CompletionItemKind::FUNCTION),
     ("string.to_upper", CompletionItemKind::FUNCTION),
@@ -1706,6 +1724,9 @@ const BUILTINS: &[(&str, CompletionItemKind)] = &[
     ("float.to_int", CompletionItemKind::FUNCTION),
     ("float.min", CompletionItemKind::FUNCTION),
     ("float.max", CompletionItemKind::FUNCTION),
+    ("float.is_finite", CompletionItemKind::FUNCTION),
+    ("float.is_nan", CompletionItemKind::FUNCTION),
+    ("float.is_infinite", CompletionItemKind::FUNCTION),
     // map
     ("map.get", CompletionItemKind::FUNCTION),
     ("map.set", CompletionItemKind::FUNCTION),

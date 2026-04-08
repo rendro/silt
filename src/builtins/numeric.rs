@@ -81,6 +81,10 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("float.parse requires a string".into()));
             };
             match s.trim().parse::<f64>() {
+                Ok(n) if n.is_nan() || n.is_infinite() => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String("parsed value is not a finite number".into())],
+                )),
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Float(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
@@ -149,6 +153,11 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Float(f) = &args[0] else {
                 return Err(VmError::new("float.to_int requires a float".into()));
             };
+            if f.is_nan() || f.is_infinite() {
+                return Err(VmError::new(
+                    "float.to_int: cannot convert non-finite float to int".into(),
+                ));
+            }
             Ok(Value::Int(*f as i64))
         }
         "min" => {
@@ -169,6 +178,33 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             Ok(Value::Float(a.max(*b)))
         }
+        "is_finite" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_finite takes 1 argument".into()));
+            }
+            let Value::Float(f) = &args[0] else {
+                return Err(VmError::new("float.is_finite requires a float".into()));
+            };
+            Ok(Value::Bool(f.is_finite()))
+        }
+        "is_nan" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_nan takes 1 argument".into()));
+            }
+            let Value::Float(f) = &args[0] else {
+                return Err(VmError::new("float.is_nan requires a float".into()));
+            };
+            Ok(Value::Bool(f.is_nan()))
+        }
+        "is_infinite" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_infinite takes 1 argument".into()));
+            }
+            let Value::Float(f) = &args[0] else {
+                return Err(VmError::new("float.is_infinite requires a float".into()));
+            };
+            Ok(Value::Bool(f.is_infinite()))
+        }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }
 }
@@ -185,6 +221,11 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.sqrt requires a number".into())),
             };
+            if f < 0.0 {
+                return Err(VmError::new(
+                    "math.sqrt: cannot take square root of negative number".into(),
+                ));
+            }
             Ok(Value::Float(f.sqrt()))
         }
         "pow" => {
@@ -201,7 +242,13 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.pow requires numbers".into())),
             };
-            Ok(Value::Float(base.powf(exp)))
+            let result = base.powf(exp);
+            if result.is_nan() || result.is_infinite() {
+                return Err(VmError::new(
+                    "math.pow: result is not a finite number".into(),
+                ));
+            }
+            Ok(Value::Float(result))
         }
         "log" => {
             if args.len() != 1 {
@@ -212,6 +259,9 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.log requires a number".into())),
             };
+            if f <= 0.0 {
+                return Err(VmError::new("math.log: argument must be positive".into()));
+            }
             Ok(Value::Float(f.ln()))
         }
         "log10" => {
@@ -223,6 +273,9 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.log10 requires a number".into())),
             };
+            if f <= 0.0 {
+                return Err(VmError::new("math.log10: argument must be positive".into()));
+            }
             Ok(Value::Float(f.log10()))
         }
         "sin" => {
@@ -267,6 +320,11 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.asin requires a number".into())),
             };
+            if f < -1.0 || f > 1.0 {
+                return Err(VmError::new(
+                    "math.asin: argument must be between -1 and 1".into(),
+                ));
+            }
             Ok(Value::Float(f.asin()))
         }
         "acos" => {
@@ -278,6 +336,11 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Value::Int(n) => *n as f64,
                 _ => return Err(VmError::new("math.acos requires a number".into())),
             };
+            if f < -1.0 || f > 1.0 {
+                return Err(VmError::new(
+                    "math.acos: argument must be between -1 and 1".into(),
+                ));
+            }
             Ok(Value::Float(f.acos()))
         }
         "atan" => {

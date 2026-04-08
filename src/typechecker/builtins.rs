@@ -1179,6 +1179,12 @@ impl TypeChecker {
             Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
         );
 
+        // string.byte_length: (String) -> Int
+        env.define(
+            "string.byte_length".into(),
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Int))),
+        );
+
         // string.to_upper: (String) -> String
         env.define(
             "string.to_upper".into(),
@@ -1422,6 +1428,24 @@ impl TypeChecker {
         env.define(
             "float.to_int".into(),
             Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Int))),
+        );
+
+        // float.is_finite: (Float) -> Bool
+        env.define(
+            "float.is_finite".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
+        );
+
+        // float.is_nan: (Float) -> Bool
+        env.define(
+            "float.is_nan".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
+        );
+
+        // float.is_infinite: (Float) -> Bool
+        env.define(
+            "float.is_infinite".into(),
+            Scheme::mono(Type::Fun(vec![Type::Float], Box::new(Type::Bool))),
         );
     }
 

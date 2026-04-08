@@ -100,6 +100,15 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::String(s) = &args[0] else {
                 return Err(VmError::new("string.length requires a string".into()));
             };
+            Ok(Value::Int(s.chars().count() as i64))
+        }
+        "byte_length" => {
+            if args.len() != 1 {
+                return Err(VmError::new("string.byte_length takes 1 argument".into()));
+            }
+            let Value::String(s) = &args[0] else {
+                return Err(VmError::new("string.byte_length requires a string".into()));
+            };
             Ok(Value::Int(s.len() as i64))
         }
         "to_upper" => {
@@ -209,10 +218,10 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             let width = *width as usize;
             let pad_char = pad.chars().next().unwrap_or(' ');
-            if s.len() >= width {
+            if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
             } else {
-                let padding: String = (0..width - s.len()).map(|_| pad_char).collect();
+                let padding: String = (0..width - s.chars().count()).map(|_| pad_char).collect();
                 Ok(Value::String(format!("{padding}{s}")))
             }
         }
@@ -231,10 +240,10 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             let width = *width as usize;
             let pad_char = pad.chars().next().unwrap_or(' ');
-            if s.len() >= width {
+            if s.chars().count() >= width {
                 Ok(Value::String(s.clone()))
             } else {
-                let padding: String = (0..width - s.len()).map(|_| pad_char).collect();
+                let padding: String = (0..width - s.chars().count()).map(|_| pad_char).collect();
                 Ok(Value::String(format!("{s}{padding}")))
             }
         }
@@ -281,7 +290,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.is_alpha requires a string".into()));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_alphabetic()),
+                !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
             ))
         }
         "is_digit" => {
@@ -292,7 +301,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.is_digit requires a string".into()));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_ascii_digit()),
+                !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
             ))
         }
         "is_upper" => {
@@ -303,7 +312,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.is_upper requires a string".into()));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_uppercase()),
+                !s.is_empty() && s.chars().all(|c| c.is_uppercase()),
             ))
         }
         "is_lower" => {
@@ -314,7 +323,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.is_lower requires a string".into()));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_lowercase()),
+                !s.is_empty() && s.chars().all(|c| c.is_lowercase()),
             ))
         }
         "is_alnum" => {
@@ -325,7 +334,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.is_alnum requires a string".into()));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_alphanumeric()),
+                !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()),
             ))
         }
         "is_whitespace" => {
@@ -338,7 +347,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             };
             Ok(Value::Bool(
-                s.chars().next().is_some_and(|c| c.is_whitespace()),
+                !s.is_empty() && s.chars().all(|c| c.is_whitespace()),
             ))
         }
         _ => Err(VmError::new(format!("unknown string function: {name}"))),

@@ -597,6 +597,7 @@ impl Vm {
             "string.replace",
             "string.join",
             "string.length",
+            "string.byte_length",
             "string.to_upper",
             "string.to_lower",
             "string.starts_with",
@@ -629,6 +630,9 @@ impl Vm {
             "float.to_int",
             "float.min",
             "float.max",
+            "float.is_finite",
+            "float.is_nan",
+            "float.is_infinite",
             "map.get",
             "map.set",
             "map.delete",
@@ -2680,8 +2684,18 @@ impl Vm {
                 Op::Add => Value::Float(a + b),
                 Op::Sub => Value::Float(a - b),
                 Op::Mul => Value::Float(a * b),
-                Op::Div => Value::Float(a / b),
-                Op::Mod => Value::Float(a % b),
+                Op::Div => {
+                    if *b == 0.0 {
+                        return Err(VmError::new("division by zero".to_string()));
+                    }
+                    Value::Float(a / b)
+                }
+                Op::Mod => {
+                    if *b == 0.0 {
+                        return Err(VmError::new("modulo by zero".to_string()));
+                    }
+                    Value::Float(a % b)
+                }
                 _ => unreachable!(),
             },
             (Value::String(a), Value::String(b)) if op == Op::Add => {
@@ -2719,9 +2733,9 @@ impl Vm {
         let a = self.pop()?;
         let ordering = match (&a, &b) {
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            }
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).ok_or_else(|| {
+                VmError::new("cannot compare non-finite float values".to_string())
+            })?,
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
             (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
