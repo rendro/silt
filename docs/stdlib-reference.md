@@ -2549,6 +2549,9 @@ Filesystem path queries.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `exists` | `(String) -> Bool` | Check if path exists |
+| `is_file` | `(String) -> Bool` | Check if path is a file |
+| `is_dir` | `(String) -> Bool` | Check if path is a directory |
+| `list_dir` | `(String) -> Result(List(String), String)` | List entries in a directory |
 
 
 ### `fs.exists`
@@ -2563,6 +2566,57 @@ Returns `true` if the file or directory at `path` exists.
 fn main() {
     when fs.exists("config.toml") -> println("found config")
     else -> println("no config")
+}
+```
+
+
+### `fs.is_file`
+
+```
+fs.is_file(path: String) -> Bool
+```
+
+Returns `true` if the path exists and is a regular file.
+
+```silt
+fn main() {
+    when fs.is_file("data.csv") -> println("it's a file")
+    else -> println("not a file")
+}
+```
+
+
+### `fs.is_dir`
+
+```
+fs.is_dir(path: String) -> Bool
+```
+
+Returns `true` if the path exists and is a directory.
+
+```silt
+fn main() {
+    when fs.is_dir("src") -> println("it's a directory")
+    else -> println("not a directory")
+}
+```
+
+
+### `fs.list_dir`
+
+```
+fs.list_dir(path: String) -> List(String)
+```
+
+Returns a list of entry names in the given directory. Returns an error
+if the path does not exist or is not a directory.
+
+```silt
+import fs
+
+fn main() {
+    let entries = fs.list_dir(".")
+    list.each(entries, fn(name) { println(name) })
 }
 ```
 

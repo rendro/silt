@@ -480,7 +480,13 @@ fn print_json_errors(errors: &[&SourceError]) {
             })
         })
         .collect();
-    println!("{}", serde_json::to_string(&json_errors).unwrap());
+    match serde_json::to_string(&json_errors) {
+        Ok(json) => println!("{json}"),
+        Err(e) => {
+            eprintln!("internal error: failed to serialize diagnostics: {e}");
+            process::exit(1);
+        }
+    }
 }
 
 fn find_test_files(dir: &Path) -> Vec<String> {
@@ -575,7 +581,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         };
 
         // Run the setup script to register all globals in the VM
-        let script = Arc::new(functions.into_iter().next().unwrap());
+        let Some(first) = functions.into_iter().next() else {
+            eprintln!("{path}: internal error: no functions compiled");
+            failed += 1;
+            continue;
+        };
+        let script = Arc::new(first);
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
             eprintln!("{path}: setup error: {e}");

@@ -3891,6 +3891,31 @@ fn main() {
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
 
+#[test]
+fn test_regex_captures_all() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_all("(\\w+)@(\\w+)", "alice@home bob@work")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::List(Arc::new(vec![
+                Value::String("alice@home".into()),
+                Value::String("alice".into()),
+                Value::String("home".into()),
+            ])),
+            Value::List(Arc::new(vec![
+                Value::String("bob@work".into()),
+                Value::String("bob".into()),
+                Value::String("work".into()),
+            ])),
+        ]))
+    );
+}
+
 // ── Assertion messages ──────────────────────────────────────────────
 
 #[test]

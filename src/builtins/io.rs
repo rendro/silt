@@ -183,6 +183,53 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             Ok(Value::Bool(std::path::Path::new(path).exists()))
         }
+        "is_file" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.is_file takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.is_file requires a string path".into()));
+            };
+            Ok(Value::Bool(std::path::Path::new(path).is_file()))
+        }
+        "is_dir" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.is_dir takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.is_dir requires a string path".into()));
+            };
+            Ok(Value::Bool(std::path::Path::new(path).is_dir()))
+        }
+        "list_dir" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.list_dir takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.list_dir requires a string path".into()));
+            };
+            match std::fs::read_dir(path) {
+                Ok(entries) => {
+                    let mut items = Vec::new();
+                    for entry in entries {
+                        match entry {
+                            Ok(e) => {
+                                items.push(Value::String(
+                                    e.file_name().to_string_lossy().into_owned(),
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(VmError::new(format!(
+                                    "fs.list_dir: error reading entry: {e}"
+                                )));
+                            }
+                        }
+                    }
+                    Ok(Value::List(Arc::new(items)))
+                }
+                Err(e) => Err(VmError::new(format!("fs.list_dir: {e}"))),
+            }
+        }
         _ => Err(VmError::new(format!("unknown fs function: {name}"))),
     }
 }

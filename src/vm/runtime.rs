@@ -1,0 +1,210 @@
+//! VM runtime types: call frames, blocking reasons, timer manager, I/O pool,
+//! shared runtime state, and regex cache.
+
+use regex::Regex;
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::bytecode::VmClosure;
+use crate::value::{Channel, IoCompletion, TaskHandle, Value};
+
+use super::VmError;
+
+/// Type alias for foreign (Rust-side) functions registered with the VM.
+pub(crate) type ForeignFn = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
+
+// ── Call frame ────────────────────────────────────────────────────
+
+pub(crate) struct CallFrame {
+    pub(crate) closure: Arc<VmClosure>,
+    pub(crate) ip: usize,
+    pub(crate) base_slot: usize,
+}
+
+// ── Block reason (for M:N scheduler) ────────────────────────────
+
+/// Describes whether a select operation is a receive or send.
+#[derive(Clone)]
+pub(crate) enum SelectOpKind {
+    Receive,
+    Send,
+}
+
+pub(crate) enum BlockReason {
+    /// Blocked on channel.receive (channel was empty).
+    Receive(Arc<Channel>),
+    /// Blocked on channel.send (channel buffer was full).
+    Send(Arc<Channel>),
+    /// Blocked on channel.select — carries channels with their operation kinds.
+    Select(Vec<(Arc<Channel>, SelectOpKind)>),
+    /// Blocked on task.join (target task not yet complete).
+    Join(Arc<TaskHandle>),
+    /// Blocked on I/O completion.
+    Io(Arc<IoCompletion>),
+}
+
+// ── Timer manager (shared single-thread timer wheel) ────────────
+
+/// Manages all pending channel timeouts on a single background thread.
+/// Instead of spawning one OS thread per `channel.timeout`, all deadlines
+/// are submitted here and fired from a single long-lived thread.
+pub(crate) struct TimerManager {
+    sender: parking_lot::Mutex<std::sync::mpsc::Sender<(Instant, Arc<Channel>)>>,
+}
+
+impl TimerManager {
+    pub(super) fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<(Instant, Arc<Channel>)>();
+        std::thread::spawn(move || {
+            let mut deadlines: BTreeMap<Instant, Vec<Arc<Channel>>> = BTreeMap::new();
+            loop {
+                // Calculate how long to sleep until the next deadline.
+                let timeout = deadlines
+                    .first_key_value()
+                    .map(|(deadline, _)| deadline.saturating_duration_since(Instant::now()))
+                    .unwrap_or(Duration::from_secs(60));
+
+                // Wait for a new timeout request or until the next deadline fires.
+                match rx.recv_timeout(timeout) {
+                    Ok((deadline, ch)) => {
+                        deadlines.entry(deadline).or_default().push(ch);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+
+                // Fire all expired deadlines.
+                let now = Instant::now();
+                let expired: Vec<Instant> = deadlines.range(..=now).map(|(k, _)| *k).collect();
+                for key in expired {
+                    if let Some(channels) = deadlines.remove(&key) {
+                        for ch in channels {
+                            ch.close();
+                        }
+                    }
+                }
+            }
+        });
+        TimerManager {
+            sender: parking_lot::Mutex::new(tx),
+        }
+    }
+
+    /// Schedule a channel to be closed after `delay`.
+    pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
+        let deadline = Instant::now() + delay;
+        let _ = self.sender.lock().send((deadline, ch));
+    }
+}
+
+// ── I/O thread pool ─────────────────────────────────────────────
+
+pub(crate) struct IoPool {
+    sender: parking_lot::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+}
+
+impl IoPool {
+    pub(super) fn new(num_threads: usize) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let rx = Arc::new(parking_lot::Mutex::new(rx));
+        for _ in 0..num_threads {
+            let rx = rx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let task = {
+                        let rx = rx.lock();
+                        rx.recv()
+                    };
+                    match task {
+                        Ok(f) => f(),
+                        Err(_) => break, // Channel closed
+                    }
+                }
+            });
+        }
+        IoPool {
+            sender: parking_lot::Mutex::new(tx),
+        }
+    }
+
+    /// Submit a blocking I/O operation. Returns a completion handle.
+    pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
+        let completion = IoCompletion::new();
+        let completion2 = completion.clone();
+        let _ = self.sender.lock().send(Box::new(move || {
+            let result = f();
+            completion2.complete(result);
+        }));
+        completion
+    }
+}
+
+// ── Runtime (shared state) ───────────────────────────────────────
+
+/// Shared, read-only-after-init state for a Silt program.
+/// Created once during initialization, then shared across spawned tasks via `Arc`.
+pub struct Runtime {
+    /// Maps variant tag names to their parent type name, for method dispatch.
+    #[allow(dead_code)]
+    pub(super) variant_types: HashMap<String, String>,
+
+    // ── Foreign function interface ──────────────────────────────
+    pub(super) foreign_fns: HashMap<String, ForeignFn>,
+
+    // ── M:N scheduler ──────────────────────────────────────────
+    /// The shared scheduler for spawned tasks (None until first task.spawn).
+    pub(super) scheduler: parking_lot::Mutex<Option<Arc<crate::scheduler::Scheduler>>>,
+
+    // ── Timer manager ──────────────────────────────────────────
+    /// Shared timer thread for `channel.timeout`.
+    pub(crate) timer: TimerManager,
+
+    // ── I/O pool ────────────────────────────────────────────────
+    /// Thread pool for async I/O operations.
+    pub(crate) io_pool: IoPool,
+}
+
+// ── Regex cache ──────────────────────────────────────────────────
+
+/// Bounded cache for compiled regex patterns.
+///
+/// Tracks insertion order with a `VecDeque`. When the cache exceeds
+/// `MAX_ENTRIES`, the oldest 25% of entries are evicted instead of
+/// clearing the entire cache.
+pub(crate) struct RegexCache {
+    map: HashMap<String, Regex>,
+    order: VecDeque<String>,
+}
+
+impl RegexCache {
+    const MAX_ENTRIES: usize = 256;
+    const EVICT_COUNT: usize = 64; // 25% of MAX_ENTRIES
+
+    pub(super) fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    /// Return a reference to the cached `Regex` for `pattern`, compiling and
+    /// caching it if necessary.
+    pub(super) fn get(&mut self, pattern: &str) -> Result<&Regex, VmError> {
+        if !self.map.contains_key(pattern) {
+            let re =
+                Regex::new(pattern).map_err(|e| VmError::new(format!("invalid regex: {e}")))?;
+            if self.map.len() >= Self::MAX_ENTRIES {
+                // Evict the oldest 25% of entries.
+                for _ in 0..Self::EVICT_COUNT {
+                    if let Some(old_key) = self.order.pop_front() {
+                        self.map.remove(&old_key);
+                    }
+                }
+            }
+            self.order.push_back(pattern.to_string());
+            self.map.insert(pattern.to_string(), re);
+        }
+        Ok(self.map.get(pattern).unwrap())
+    }
+}
