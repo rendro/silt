@@ -100,7 +100,7 @@ pub(crate) enum BlockReason {
 /// Instead of spawning one OS thread per `channel.timeout`, all deadlines
 /// are submitted here and fired from a single long-lived thread.
 pub(crate) struct TimerManager {
-    sender: std::sync::Mutex<std::sync::mpsc::Sender<(Instant, Arc<Channel>)>>,
+    sender: parking_lot::Mutex<std::sync::mpsc::Sender<(Instant, Arc<Channel>)>>,
 }
 
 impl TimerManager {
@@ -137,33 +137,33 @@ impl TimerManager {
             }
         });
         TimerManager {
-            sender: std::sync::Mutex::new(tx),
+            sender: parking_lot::Mutex::new(tx),
         }
     }
 
     /// Schedule a channel to be closed after `delay`.
     pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
         let deadline = Instant::now() + delay;
-        let _ = self.sender.lock().unwrap().send((deadline, ch));
+        let _ = self.sender.lock().send((deadline, ch));
     }
 }
 
 // ── I/O thread pool ─────────────────────────────────────────────
 
 pub(crate) struct IoPool {
-    sender: std::sync::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+    sender: parking_lot::Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
 }
 
 impl IoPool {
     fn new(num_threads: usize) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
-        let rx = Arc::new(std::sync::Mutex::new(rx));
+        let rx = Arc::new(parking_lot::Mutex::new(rx));
         for _ in 0..num_threads {
             let rx = rx.clone();
             std::thread::spawn(move || {
                 loop {
                     let task = {
-                        let rx = rx.lock().unwrap();
+                        let rx = rx.lock();
                         rx.recv()
                     };
                     match task {
@@ -174,7 +174,7 @@ impl IoPool {
             });
         }
         IoPool {
-            sender: std::sync::Mutex::new(tx),
+            sender: parking_lot::Mutex::new(tx),
         }
     }
 
@@ -182,7 +182,7 @@ impl IoPool {
     pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
         let completion = IoCompletion::new();
         let completion2 = completion.clone();
-        let _ = self.sender.lock().unwrap().send(Box::new(move || {
+        let _ = self.sender.lock().send(Box::new(move || {
             let result = f();
             completion2.complete(result);
         }));
@@ -204,7 +204,7 @@ pub struct Runtime {
 
     // ── M:N scheduler ──────────────────────────────────────────
     /// The shared scheduler for spawned tasks (None until first task.spawn).
-    scheduler: std::sync::Mutex<Option<Arc<Scheduler>>>,
+    scheduler: parking_lot::Mutex<Option<Arc<Scheduler>>>,
 
     // ── Timer manager ──────────────────────────────────────────
     /// Shared timer thread for `channel.timeout`.
@@ -308,7 +308,7 @@ impl Vm {
             runtime: Arc::new(Runtime {
                 variant_types: HashMap::new(),
                 foreign_fns: HashMap::new(),
-                scheduler: std::sync::Mutex::new(None),
+                scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
                 io_pool: IoPool::new(
                     std::thread::available_parallelism()
@@ -458,7 +458,7 @@ impl Vm {
 
     /// Get or create the shared scheduler.
     pub(crate) fn get_or_create_scheduler(&self) -> Arc<Scheduler> {
-        let mut guard = self.runtime.scheduler.lock().unwrap();
+        let mut guard = self.runtime.scheduler.lock();
         if let Some(ref sched) = *guard {
             sched.clone()
         } else {

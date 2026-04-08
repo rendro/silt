@@ -198,6 +198,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 match val {
                     Value::List(inner) => result.extend(inner.iter().cloned()),
                     Value::Range(lo, hi) => {
+                        checked_range_len(lo, hi).map_err(VmError::new)?;
                         for i in lo..=hi {
                             result.push(Value::Int(i));
                         }
@@ -250,6 +251,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 match item {
                     Value::List(inner) => result.extend(inner.iter().cloned()),
                     Value::Range(lo, hi) => {
+                        checked_range_len(lo, hi).map_err(VmError::new)?;
                         for i in lo..=hi {
                             result.push(Value::Int(i));
                         }

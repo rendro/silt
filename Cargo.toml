@@ -34,6 +34,7 @@ notify = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
 rustyline = { version = "15", optional = true }
+parking_lot = "0.12"
 serde_json = "1"
 ureq = { version = "3", optional = true }
 tiny_http = { version = "0.12", optional = true }

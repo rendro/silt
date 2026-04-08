@@ -892,6 +892,39 @@ impl TypeChecker {
                         }
                     }
 
+                    // Check for missing fields
+                    let provided: std::collections::HashSet<&str> =
+                        field_types.iter().map(|(n, _)| n.as_str()).collect();
+                    let missing: Vec<&str> = rec_info
+                        .fields
+                        .iter()
+                        .filter(|(n, _)| !provided.contains(n.as_str()))
+                        .map(|(n, _)| n.as_str())
+                        .collect();
+                    if !missing.is_empty() {
+                        self.error(
+                            format!(
+                                "missing field{} in {}: {}",
+                                if missing.len() > 1 { "s" } else { "" },
+                                name,
+                                missing.join(", "),
+                            ),
+                            span,
+                        );
+                    }
+
+                    // Check for extra fields not in the record type
+                    let declared: std::collections::HashSet<&str> =
+                        rec_info.fields.iter().map(|(n, _)| n.as_str()).collect();
+                    for (field_name, _) in &field_types {
+                        if !declared.contains(field_name.as_str()) {
+                            self.error(
+                                format!("unknown field '{}' in {}", field_name, name),
+                                span,
+                            );
+                        }
+                    }
+
                     Type::Record(name, rec_info.fields.clone())
                 } else {
                     // Unknown record type - infer from fields
@@ -908,9 +941,29 @@ impl TypeChecker {
 
             ExprKind::RecordUpdate { expr: base, fields } => {
                 let base_ty = self.infer_expr(base, env);
-                // Infer the field types but the result is the same as the base
-                for (_, field_expr) in fields {
-                    let _ft = self.infer_expr(field_expr, env);
+                let resolved = self.apply(&base_ty);
+                if let Type::Record(ref rec_name, ref rec_fields) = resolved {
+                    let declared: std::collections::HashMap<&str, &Type> =
+                        rec_fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+                    for (field_name, field_expr) in fields {
+                        let ft = self.infer_expr(field_expr, env);
+                        if let Some(&declared_ty) = declared.get(field_name.as_str()) {
+                            self.unify(&ft, declared_ty, span);
+                        } else {
+                            self.error(
+                                format!(
+                                    "unknown field '{}' in {}",
+                                    field_name, rec_name
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                } else {
+                    // Base type not resolved to a record — still infer field exprs
+                    for (_, field_expr) in fields {
+                        let _ft = self.infer_expr(field_expr, env);
+                    }
                 }
                 base_ty
             }

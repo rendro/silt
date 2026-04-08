@@ -1,6 +1,7 @@
 //! Concurrency builtin functions (`channel.*`, `task.*`).
 
-use std::sync::{Arc, Condvar, Mutex};
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
@@ -196,7 +197,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 let pair2 = pair.clone();
                 let waker = Box::new(move || {
                     let (lock, cvar) = &*pair2;
-                    *lock.lock().unwrap() = true;
+                    *lock.lock() = true;
                     cvar.notify_one();
                 });
                 match op {
@@ -214,12 +215,9 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                     return Ok(result);
                 }
                 let (lock, cvar) = &*pair;
-                let mut notified = lock.lock().unwrap();
+                let mut notified = lock.lock();
                 if !*notified {
-                    let result = cvar
-                        .wait_timeout(notified, std::time::Duration::from_secs(1))
-                        .unwrap();
-                    notified = result.0;
+                    cvar.wait_for(&mut notified, std::time::Duration::from_secs(1));
                 }
                 *notified = false;
             }

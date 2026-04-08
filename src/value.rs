@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Condvar, Mutex};
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 
 use crate::bytecode;
 
@@ -126,7 +127,7 @@ impl Channel {
             // Rendezvous: only succeed if a receiver is already waiting AND
             // the handoff slot is empty (no other sender already parked).
             let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
-            let mut slot = self.handoff.lock().unwrap();
+            let mut slot = self.handoff.lock();
             if has_receiver && slot.is_none() {
                 *slot = Some(val);
                 drop(slot);
@@ -138,7 +139,7 @@ impl Channel {
             }
         } else {
             // Buffered: succeed if there's room in the buffer.
-            let mut buf = self.buffer.lock().unwrap();
+            let mut buf = self.buffer.lock();
             if buf.len() < self.capacity {
                 buf.push_back(val);
                 drop(buf);
@@ -154,7 +155,7 @@ impl Channel {
     pub fn try_receive(&self) -> TryReceiveResult {
         if self.is_rendezvous() {
             // Rendezvous: check the handoff slot for a parked sender's value.
-            let mut slot = self.handoff.lock().unwrap();
+            let mut slot = self.handoff.lock();
             if let Some(val) = slot.take() {
                 drop(slot);
                 // Sender completed the handshake — wake it.
@@ -167,7 +168,7 @@ impl Channel {
             }
         } else {
             // Buffered: pop from the buffer.
-            let mut buf = self.buffer.lock().unwrap();
+            let mut buf = self.buffer.lock();
             if let Some(val) = buf.pop_front() {
                 let was_full = buf.len() + 1 >= self.capacity;
                 drop(buf);
@@ -190,7 +191,7 @@ impl Channel {
             self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
             // Wake any parked sender now that a receiver is available.
             self.wake_send();
-            let mut slot = self.handoff.lock().unwrap();
+            let mut slot = self.handoff.lock();
             loop {
                 if let Some(val) = slot.take() {
                     self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
@@ -202,10 +203,10 @@ impl Channel {
                     self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
                     return TryReceiveResult::Closed;
                 }
-                slot = self.condvar.wait(slot).unwrap();
+                self.condvar.wait(&mut slot);
             }
         } else {
-            let mut buf = self.buffer.lock().unwrap();
+            let mut buf = self.buffer.lock();
             loop {
                 if let Some(val) = buf.pop_front() {
                     return TryReceiveResult::Value(val);
@@ -213,7 +214,7 @@ impl Channel {
                 if self.closed.load(AtomicOrdering::Acquire) {
                     return TryReceiveResult::Closed;
                 }
-                buf = self.condvar.wait(buf).unwrap();
+                self.condvar.wait(&mut buf);
             }
         }
     }
@@ -221,7 +222,7 @@ impl Channel {
     pub fn close(&self) {
         self.closed.store(true, AtomicOrdering::Release);
         // Clear any pending handoff value.
-        *self.handoff.lock().unwrap() = None;
+        *self.handoff.lock() = None;
         self.condvar.notify_all();
         // Wake ALL tasks blocked on receive or send — channel is done.
         self.wake_all_recv();
@@ -240,18 +241,18 @@ impl Channel {
     /// the waker fires immediately.
     pub fn register_recv_waker(&self, waker: Waker) {
         self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
-        self.recv_wakers.lock().unwrap().push_back(waker);
+        self.recv_wakers.lock().push_back(waker);
         // Double-check: if data is now available or channel closed, wake immediately.
         let has_data_or_closed = if self.is_rendezvous() {
-            self.handoff.lock().unwrap().is_some() || self.closed.load(AtomicOrdering::Acquire)
+            self.handoff.lock().is_some() || self.closed.load(AtomicOrdering::Acquire)
         } else {
-            let buf = self.buffer.lock().unwrap();
+            let buf = self.buffer.lock();
             !buf.is_empty() || self.closed.load(AtomicOrdering::Acquire)
         };
         if has_data_or_closed {
             // Drain and fire all recv wakers — the channel state changed.
             let wakers: VecDeque<Waker> = {
-                let mut guard = self.recv_wakers.lock().unwrap();
+                let mut guard = self.recv_wakers.lock();
                 std::mem::take(&mut *guard)
             };
             let count = wakers.len();
@@ -274,22 +275,22 @@ impl Channel {
     /// re-checks buffer space availability. If space opened up between the
     /// caller's `try_send` and this registration, the waker fires immediately.
     pub fn register_send_waker(&self, waker: Waker) {
-        self.send_wakers.lock().unwrap().push_back(waker);
+        self.send_wakers.lock().push_back(waker);
         // Double-check: if we can now proceed or channel closed, wake immediately.
         let has_space_or_closed = if self.is_rendezvous() {
             // For rendezvous, sender can proceed if a receiver is waiting and
             // the handoff slot is empty, or if the channel is closed.
             let has_receiver = self.waiting_receivers.load(AtomicOrdering::Acquire) > 0;
-            let slot_empty = self.handoff.lock().unwrap().is_none();
+            let slot_empty = self.handoff.lock().is_none();
             (has_receiver && slot_empty) || self.closed.load(AtomicOrdering::Acquire)
         } else {
-            let buf = self.buffer.lock().unwrap();
+            let buf = self.buffer.lock();
             buf.len() < self.capacity || self.closed.load(AtomicOrdering::Acquire)
         };
         if has_space_or_closed {
             // Drain and fire all send wakers — the channel state changed.
             let wakers: VecDeque<Waker> = {
-                let mut guard = self.send_wakers.lock().unwrap();
+                let mut guard = self.send_wakers.lock();
                 std::mem::take(&mut *guard)
             };
             for w in wakers {
@@ -300,7 +301,7 @@ impl Channel {
 
     /// Wake one task blocked on receive (FIFO — oldest waiter first).
     fn wake_recv(&self) {
-        let waker = self.recv_wakers.lock().unwrap().pop_front();
+        let waker = self.recv_wakers.lock().pop_front();
         if let Some(w) = waker {
             self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
             w();
@@ -310,7 +311,7 @@ impl Channel {
     /// Wake all tasks blocked on receive (used when channel is closed).
     fn wake_all_recv(&self) {
         let wakers: VecDeque<Waker> = {
-            let mut guard = self.recv_wakers.lock().unwrap();
+            let mut guard = self.recv_wakers.lock();
             std::mem::take(&mut *guard)
         };
         let count = wakers.len();
@@ -323,7 +324,7 @@ impl Channel {
 
     /// Wake one task blocked on send (FIFO — oldest waiter first).
     fn wake_send(&self) {
-        let waker = self.send_wakers.lock().unwrap().pop_front();
+        let waker = self.send_wakers.lock().pop_front();
         if let Some(w) = waker {
             w();
         }
@@ -332,7 +333,7 @@ impl Channel {
     /// Wake all tasks blocked on send (used when channel is closed).
     fn wake_all_send(&self) {
         let wakers: VecDeque<Waker> = {
-            let mut guard = self.send_wakers.lock().unwrap();
+            let mut guard = self.send_wakers.lock();
             std::mem::take(&mut *guard)
         };
         for w in wakers {
@@ -363,13 +364,13 @@ impl TaskHandle {
     /// Store the task result and notify any joiners.
     pub fn complete(&self, result: Result<Value, String>) {
         {
-            let mut guard = self.result.lock().unwrap();
+            let mut guard = self.result.lock();
             *guard = Some(result);
         }
         self.condvar.notify_all();
         // Wake all tasks blocked on join.
         let wakers: Vec<Waker> = {
-            let mut guard = self.join_wakers.lock().unwrap();
+            let mut guard = self.join_wakers.lock();
             std::mem::take(&mut *guard)
         };
         for w in wakers {
@@ -379,33 +380,33 @@ impl TaskHandle {
 
     /// Block until the task produces a result.
     pub fn join(&self) -> Result<Value, String> {
-        let mut guard = self.result.lock().unwrap();
+        let mut guard = self.result.lock();
         loop {
             if let Some(result) = guard.take() {
                 return result;
             }
-            guard = self.condvar.wait(guard).unwrap();
+            self.condvar.wait(&mut guard);
         }
     }
 
     /// Non-blocking poll.
     pub fn try_get(&self) -> Option<Result<Value, String>> {
-        self.result.lock().unwrap().clone()
+        self.result.lock().clone()
     }
 
     /// Register a waker to be called when the task completes.
     pub fn register_join_waker(&self, waker: Waker) {
         // Check if already complete to avoid missed wakeups.
-        let already_done = self.result.lock().unwrap().is_some();
+        let already_done = self.result.lock().is_some();
         if already_done {
             waker();
         } else {
-            self.join_wakers.lock().unwrap().push(waker);
+            self.join_wakers.lock().push(waker);
             // Double-check to avoid race: if result was set between our check and push.
-            if self.result.lock().unwrap().is_some() {
+            if self.result.lock().is_some() {
                 // It completed in the meantime; drain and fire.
                 let wakers: Vec<Waker> = {
-                    let mut guard = self.join_wakers.lock().unwrap();
+                    let mut guard = self.join_wakers.lock();
                     std::mem::take(&mut *guard)
                 };
                 for w in wakers {
@@ -435,12 +436,12 @@ impl IoCompletion {
     /// Store the I/O result and notify all waiters.
     pub fn complete(&self, value: Value) {
         {
-            let mut guard = self.result.lock().unwrap();
+            let mut guard = self.result.lock();
             *guard = Some(value);
         }
         self.condvar.notify_all();
         let wakers: Vec<Waker> = {
-            let mut guard = self.wakers.lock().unwrap();
+            let mut guard = self.wakers.lock();
             std::mem::take(&mut *guard)
         };
         for w in wakers {
@@ -450,31 +451,31 @@ impl IoCompletion {
 
     /// Non-blocking poll.
     pub fn try_get(&self) -> Option<Value> {
-        self.result.lock().unwrap().clone()
+        self.result.lock().clone()
     }
 
     /// Blocking wait (for main thread).
     pub fn wait(&self) -> Value {
-        let mut guard = self.result.lock().unwrap();
+        let mut guard = self.result.lock();
         loop {
             if let Some(result) = guard.take() {
                 return result;
             }
-            guard = self.condvar.wait(guard).unwrap();
+            self.condvar.wait(&mut guard);
         }
     }
 
     /// Register a waker with double-check pattern (prevents missed wakeups).
     pub fn register_waker(&self, waker: Waker) {
-        let already_done = self.result.lock().unwrap().is_some();
+        let already_done = self.result.lock().is_some();
         if already_done {
             waker();
         } else {
-            self.wakers.lock().unwrap().push(waker);
+            self.wakers.lock().push(waker);
             // Double-check: result may have arrived between check and push
-            if self.result.lock().unwrap().is_some() {
+            if self.result.lock().is_some() {
                 let wakers: Vec<Waker> = {
-                    let mut guard = self.wakers.lock().unwrap();
+                    let mut guard = self.wakers.lock();
                     std::mem::take(&mut *guard)
                 };
                 for w in wakers {

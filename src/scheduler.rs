@@ -6,7 +6,8 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -80,7 +81,7 @@ impl Scheduler {
 
     /// Ensure worker threads are running.
     fn ensure_workers(&self) {
-        let mut guard = self.workers.lock().unwrap();
+        let mut guard = self.workers.lock();
         if guard.is_some() {
             return;
         }
@@ -109,7 +110,7 @@ impl Scheduler {
     pub fn submit(&self, task: Task) {
         self.ensure_workers();
         self.inner.live_tasks.fetch_add(1, Ordering::SeqCst);
-        let mut queue = self.inner.run_queue.lock().unwrap();
+        let mut queue = self.inner.run_queue.lock();
         queue.push_back(task);
         self.inner.condvar.notify_one();
     }
@@ -119,7 +120,7 @@ impl Drop for Scheduler {
     fn drop(&mut self) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
         self.inner.condvar.notify_all();
-        if let Some(workers) = self.workers.lock().unwrap().take() {
+        if let Some(workers) = self.workers.lock().take() {
             for w in workers {
                 let _ = w.join();
             }
@@ -132,7 +133,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
     loop {
         // Dequeue a task.
         let task = {
-            let mut queue = inner.run_queue.lock().unwrap();
+            let mut queue = inner.run_queue.lock();
             loop {
                 if inner.shutdown.load(Ordering::SeqCst) {
                     return;
@@ -141,11 +142,9 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     break task;
                 }
                 // Use a timeout so we can periodically check for deadlock.
-                let (new_queue, wait_result) = inner
+                let wait_result = inner
                     .condvar
-                    .wait_timeout(queue, Duration::from_secs(1))
-                    .unwrap();
-                queue = new_queue;
+                    .wait_for(&mut queue, Duration::from_secs(1));
                 if wait_result.timed_out() {
                     let live = inner.live_tasks.load(Ordering::SeqCst);
                     let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
@@ -158,7 +157,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             // Complete all blocked task handles with a deadlock error
                             // so that joiners (including the main thread) unblock.
                             let handles: Vec<Arc<TaskHandle>> = {
-                                let mut guard = inner.blocked_handles.lock().unwrap();
+                                let mut guard = inner.blocked_handles.lock();
                                 std::mem::take(&mut *guard)
                             };
                             for handle in handles {
@@ -185,7 +184,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
         match result {
             SliceResult::Yielded => {
                 // Task still runnable — put it back.
-                let mut queue = inner.run_queue.lock().unwrap();
+                let mut queue = inner.run_queue.lock();
                 queue.push_back(Task { id, vm, handle });
                 inner.condvar.notify_one();
             }
@@ -209,11 +208,10 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
                     // Store the handle so we can complete it on deadlock.
                     let handle_for_registry =
-                        task_slot.lock().unwrap().as_ref().unwrap().handle.clone();
+                        task_slot.lock().as_ref().unwrap().handle.clone();
                     inner
                         .blocked_handles
                         .lock()
-                        .unwrap()
                         .push(handle_for_registry);
                 }
 
@@ -222,7 +220,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         ch.register_recv_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().unwrap().take() {
+                            if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task);
                             }
                         }));
@@ -231,7 +229,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         ch.register_send_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().unwrap().take() {
+                            if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task);
                             }
                         }));
@@ -249,7 +247,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                 if cancelled2.load(Ordering::Acquire) {
                                     return; // Another waker already fired
                                 }
-                                if let Some(task) = slot.lock().unwrap().take() {
+                                if let Some(task) = slot.lock().take() {
                                     cancelled2.store(true, Ordering::Release);
                                     requeue(&inner2, task);
                                 }
@@ -264,7 +262,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         target_handle.register_join_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().unwrap().take() {
+                            if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task);
                             }
                         }));
@@ -273,15 +271,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         completion.register_waker(Box::new(move || {
-                            if let Some(task) = slot.lock().unwrap().take() {
+                            if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task);
                             }
                         }));
                     }
                     None => {
                         // No block reason — shouldn't happen but treat as yield.
-                        if let Some(task) = task_slot.lock().unwrap().take() {
-                            let mut queue = inner.run_queue.lock().unwrap();
+                        if let Some(task) = task_slot.lock().take() {
+                            let mut queue = inner.run_queue.lock();
                             queue.push_back(task);
                             inner.condvar.notify_one();
                         }
@@ -298,12 +296,12 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task) {
     // Remove this task's handle from the blocked registry.
     {
         let task_id = task.id;
-        let mut handles = inner.blocked_handles.lock().unwrap();
+        let mut handles = inner.blocked_handles.lock();
         if let Some(pos) = handles.iter().position(|h| h.id == task_id) {
             handles.swap_remove(pos);
         }
     }
-    let mut queue = inner.run_queue.lock().unwrap();
+    let mut queue = inner.run_queue.lock();
     queue.push_back(task);
     inner.condvar.notify_one();
 }
