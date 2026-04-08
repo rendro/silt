@@ -308,8 +308,13 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => {
+                    let message = if !self.interp_stack.is_empty() {
+                        "unterminated string interpolation; use \\{ for a literal brace".to_string()
+                    } else {
+                        "unterminated string".to_string()
+                    };
                     return Err(LexError {
-                        message: "unterminated string".to_string(),
+                        message,
                         span: start,
                     });
                 }

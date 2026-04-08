@@ -1217,7 +1217,9 @@ impl Parser {
                 }
                 _ => {
                     return Err(ParseError {
-                        message: format!("expected string continuation, found {}", self.peek()),
+                        message: format!(
+                            "invalid expression in string interpolation; use \\{{ for a literal brace"
+                        ),
                         span: self.span(),
                     });
                 }
