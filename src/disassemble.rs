@@ -500,7 +500,7 @@ mod tests {
     fn test_constant_op() {
         let mut chunk = Chunk::new();
         let span = dummy_span();
-        let idx = chunk.add_constant(Value::Int(42));
+        let idx = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span);
         chunk.emit_u16(idx, span);
         chunk.emit_op(Op::Return, span);
@@ -549,7 +549,7 @@ mod tests {
 
         // Add a function constant
         let func = Value::String("<fn>".into());
-        let idx = chunk.add_constant(func);
+        let idx = chunk.add_constant(func).unwrap();
 
         chunk.emit_op(Op::MakeClosure, span);
         chunk.emit_u16(idx, span);
@@ -573,9 +573,9 @@ mod tests {
         let mut chunk = Chunk::new();
         let span = dummy_span();
 
-        let type_idx = chunk.add_constant(Value::String("Point".into()));
-        let x_idx = chunk.add_constant(Value::String("x".into()));
-        let y_idx = chunk.add_constant(Value::String("y".into()));
+        let type_idx = chunk.add_constant(Value::String("Point".into())).unwrap();
+        let x_idx = chunk.add_constant(Value::String("x".into())).unwrap();
+        let y_idx = chunk.add_constant(Value::String("y".into())).unwrap();
 
         chunk.emit_op(Op::MakeRecord, span);
         chunk.emit_u16(type_idx, span);
@@ -596,7 +596,7 @@ mod tests {
         let mut chunk = Chunk::new();
         let span = dummy_span();
 
-        let name_idx = chunk.add_constant(Value::String("print".into()));
+        let name_idx = chunk.add_constant(Value::String("print".into())).unwrap();
         chunk.emit_op(Op::CallBuiltin, span);
         chunk.emit_u16(name_idx, span);
         chunk.emit_u8(1, span);
@@ -648,7 +648,7 @@ mod tests {
         let mut chunk = Chunk::new();
         let span = dummy_span();
 
-        let x_idx = chunk.add_constant(Value::String("x".into()));
+        let x_idx = chunk.add_constant(Value::String("x".into())).unwrap();
 
         chunk.emit_op(Op::RecordUpdate, span);
         chunk.emit_u8(1, span); // 1 field
