@@ -464,7 +464,7 @@ fn adjust_error_span_type(e: &typechecker::TypeError, prefix_len: usize) -> type
     typechecker::TypeError {
         message: e.message.clone(),
         span: adjust_span(e.span, prefix_len),
-        severity: e.severity.clone(),
+        severity: e.severity,
     }
 }
 
