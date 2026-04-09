@@ -1975,3 +1975,30 @@ fn main() {
         "expected gated pattern error, got: {err}"
     );
 }
+
+// ── float.to_string negative decimals ─────────────────────────────
+
+#[test]
+fn test_float_to_string_negative_decimals_error() {
+    let err = run_err(
+        r#"
+import float
+fn main() { float.to_string(3.14159, -1) }
+    "#,
+    );
+    assert!(
+        err.contains("decimals must be non-negative"),
+        "expected non-negative decimals error, got: {err}"
+    );
+}
+
+#[test]
+fn test_float_to_string_positive_decimals_still_works() {
+    let result = run(
+        r#"
+import float
+fn main() { float.to_string(3.14, 2) }
+    "#,
+    );
+    assert_eq!(result, Value::String("3.14".into()));
+}

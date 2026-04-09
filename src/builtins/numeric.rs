@@ -171,6 +171,11 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.to_string requires an int for decimals".into(),
                 ));
             };
+            if *decimals < 0 {
+                return Err(VmError::new(
+                    "float.to_string: decimals must be non-negative".into(),
+                ));
+            }
             Ok(Value::String(format!(
                 "{:.prec$}",
                 f,
