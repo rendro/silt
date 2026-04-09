@@ -1189,3 +1189,28 @@ fn main() {
         ]))
     );
 }
+
+// ── Cancel-while-blocked ───────────────────────────────────────────
+
+#[test]
+fn test_cancel_task_blocked_on_channel_receive() {
+    // A task blocked on channel.receive on a rendezvous channel (no sender)
+    // should be cleanly cancelled. The test itself is a liveness check:
+    // if the cancel-while-blocked path is broken, this test will hang.
+    let err = run_err(
+        r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new()
+  let h = task.spawn(fn() { channel.receive(ch) })
+  task.cancel(h)
+  task.join(h)
+}
+    "#,
+    );
+    assert!(
+        err.contains("cancelled"),
+        "expected cancellation error, got: {err}"
+    );
+}
