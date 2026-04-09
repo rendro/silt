@@ -8654,7 +8654,8 @@ fn main() { math.asin(1.0) }
 fn test_fs_mkdir_and_remove() {
     let dir = std::env::temp_dir().join("silt_test_mkdir_42");
     let dir = dir.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import fs
 fn main() {{
     let dir = "{dir}"
@@ -8664,9 +8665,13 @@ fn main() {{
     let gone = fs.is_dir(dir)
     (exists, gone)
 }}
-    "#);
+    "#
+    );
     let result = run(&input);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -8675,7 +8680,8 @@ fn test_fs_rename() {
     let dst = std::env::temp_dir().join("silt_test_rename_dst.txt");
     let src = src.to_str().unwrap().replace('\\', "/");
     let dst = dst.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import fs
 import io
 fn main() {{
@@ -8686,9 +8692,13 @@ fn main() {{
     let _ = fs.remove("{dst}")
     (exists_dst, exists_src)
 }}
-    "#);
+    "#
+    );
     let result = run(&input);
-    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
 }
 
 #[test]
@@ -8697,7 +8707,8 @@ fn test_fs_copy() {
     let dst = std::env::temp_dir().join("silt_test_copy_dst.txt");
     let src = src.to_str().unwrap().replace('\\', "/");
     let dst = dst.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import fs
 import io
 fn main() {{
@@ -8708,7 +8719,8 @@ fn main() {{
     let _ = fs.remove("{dst}")
     content
 }}
-    "#);
+    "#
+    );
     let result = run(&input);
     assert_eq!(
         result,
@@ -8720,12 +8732,14 @@ fn main() {{
 fn test_fs_remove_nonexistent_returns_err() {
     let path = std::env::temp_dir().join("silt_test_nonexistent_file_that_does_not_exist");
     let path = path.to_str().unwrap().replace('\\', "/");
-    let input = format!(r#"
+    let input = format!(
+        r#"
 import fs
 fn main() {{
     fs.remove("{path}")
 }}
-    "#);
+    "#
+    );
     let result = run(&input);
     match result {
         Value::Variant(tag, _) => assert_eq!(tag, "Err"),

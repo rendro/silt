@@ -216,7 +216,9 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "sleep",
         ],
         "http" => vec!["get", "request", "serve", "segments"],
-        "fs" => vec!["exists", "is_file", "is_dir", "list_dir", "mkdir", "remove", "rename", "copy"],
+        "fs" => vec![
+            "exists", "is_file", "is_dir", "list_dir", "mkdir", "remove", "rename", "copy",
+        ],
         "env" => vec!["get", "set"],
         _ => vec![],
     }

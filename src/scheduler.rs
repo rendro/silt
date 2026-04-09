@@ -235,7 +235,10 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         .expect("task_slot just initialized")
                         .handle
                         .clone();
-                    inner.blocked_handles.lock().push(handle_for_registry.clone());
+                    inner
+                        .blocked_handles
+                        .lock()
+                        .push(handle_for_registry.clone());
 
                     // Register cancel cleanup: if the task is cancelled while
                     // blocked, take it from the slot (making the waker a no-op),

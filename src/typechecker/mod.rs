@@ -608,7 +608,9 @@ impl TypeChecker {
                     }
                 } else {
                     self.warning(
-                        format!("unknown module '{module_str}'; imported items will not be type-checked"),
+                        format!(
+                            "unknown module '{module_str}'; imported items will not be type-checked"
+                        ),
                         Span::new(0, 0),
                     );
                 }

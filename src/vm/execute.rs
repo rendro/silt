@@ -204,11 +204,14 @@ impl Vm {
                 Some(Op::GetUpvalue) => {
                     let index = self.read_u8()? as usize;
                     let upvalues = &self.current_frame()?.closure.upvalues;
-                    let value = upvalues.get(index)
-                        .ok_or_else(|| VmError::new(format!(
-                            "upvalue index {index} out of bounds (count {})",
-                            upvalues.len()
-                        )))?
+                    let value = upvalues
+                        .get(index)
+                        .ok_or_else(|| {
+                            VmError::new(format!(
+                                "upvalue index {index} out of bounds (count {})",
+                                upvalues.len()
+                            ))
+                        })?
                         .clone();
                     self.push(value);
                 }
@@ -1342,11 +1345,15 @@ impl Vm {
             Op::GetLocal => {
                 let slot = self.read_u16()? as usize;
                 let base = self.current_frame()?.base_slot;
-                let value = self.stack.get(base + slot)
-                    .ok_or_else(|| VmError::new(format!(
-                        "stack index out of bounds (slot {slot}, base {base}, stack len {})",
-                        self.stack.len()
-                    )))?
+                let value = self
+                    .stack
+                    .get(base + slot)
+                    .ok_or_else(|| {
+                        VmError::new(format!(
+                            "stack index out of bounds (slot {slot}, base {base}, stack len {})",
+                            self.stack.len()
+                        ))
+                    })?
                     .clone();
                 self.push(value);
             }
@@ -1379,11 +1386,14 @@ impl Vm {
             Op::GetUpvalue => {
                 let index = self.read_u8()? as usize;
                 let upvalues = &self.current_frame()?.closure.upvalues;
-                let value = upvalues.get(index)
-                    .ok_or_else(|| VmError::new(format!(
-                        "upvalue index {index} out of bounds (count {})",
-                        upvalues.len()
-                    )))?
+                let value = upvalues
+                    .get(index)
+                    .ok_or_else(|| {
+                        VmError::new(format!(
+                            "upvalue index {index} out of bounds (count {})",
+                            upvalues.len()
+                        ))
+                    })?
                     .clone();
                 self.push(value);
             }

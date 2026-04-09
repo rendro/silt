@@ -271,9 +271,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.rename takes 2 arguments".into()));
             }
             let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "fs.rename requires string arguments".into(),
-                ));
+                return Err(VmError::new("fs.rename requires string arguments".into()));
             };
             match std::fs::rename(from, to) {
                 Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
@@ -288,9 +286,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.copy takes 2 arguments".into()));
             }
             let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "fs.copy requires string arguments".into(),
-                ));
+                return Err(VmError::new("fs.copy requires string arguments".into()));
             };
             match std::fs::copy(from, to) {
                 Ok(_) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
@@ -324,9 +320,7 @@ pub fn call_env(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("env.set takes 2 arguments".into()));
             }
             let (Value::String(key), Value::String(val)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "env.set requires string arguments".into(),
-                ));
+                return Err(VmError::new("env.set requires string arguments".into()));
             };
             // SAFETY: Silt is single-threaded at the env-access level; no other
             // thread inspects the environment concurrently.

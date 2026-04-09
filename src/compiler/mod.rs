@@ -1703,7 +1703,13 @@ impl Compiler {
 
     // ── Pipe compilation ─────────────────────────────────────────
 
-    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span, tail: bool) -> Result<(), CompileError> {
+    fn compile_pipe(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        span: Span,
+        tail: bool,
+    ) -> Result<(), CompileError> {
         // Compile the left value first
         self.compile_expr(left)?;
 
@@ -1961,7 +1967,11 @@ impl Compiler {
         self.resolve_upvalue_in(name, current_idx)
     }
 
-    fn resolve_upvalue_in(&mut self, name: Symbol, context_index: usize) -> Result<Option<u8>, CompileError> {
+    fn resolve_upvalue_in(
+        &mut self,
+        name: Symbol,
+        context_index: usize,
+    ) -> Result<Option<u8>, CompileError> {
         if context_index == 0 {
             return Ok(None); // No more enclosing scopes.
         }
@@ -1985,7 +1995,9 @@ impl Compiler {
             }
             let index = if slot > u8::MAX as u16 {
                 return Err(CompileError {
-                    message: format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
+                    message: format!(
+                        "cannot capture local in slot {slot} as upvalue (max slot 255)"
+                    ),
                     span: Span::new(0, 0),
                 });
             } else {

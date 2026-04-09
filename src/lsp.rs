@@ -2427,10 +2427,7 @@ mod tests {
 
         if let Decl::Fn(f) = &program.decls[0] {
             let ty = build_fn_type(f);
-            assert_eq!(
-                ty,
-                Some(Type::Fun(vec![Type::Int], Box::new(Type::Int)))
-            );
+            assert_eq!(ty, Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))));
         } else {
             panic!("expected Fn decl");
         }

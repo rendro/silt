@@ -2290,8 +2290,7 @@ impl TypeChecker {
 
     fn register_fs_builtins(&mut self, env: &mut TypeEnv) {
         // fs.exists / fs.is_file / fs.is_dir: (String) -> Bool
-        let string_to_bool =
-            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool)));
+        let string_to_bool = Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool)));
         for name in &["fs.exists", "fs.is_file", "fs.is_dir"] {
             env.define(intern(name), string_to_bool.clone());
         }
@@ -2308,7 +2307,10 @@ impl TypeChecker {
         // fs.mkdir / fs.remove: (String) -> Result(Unit, String)
         let string_to_result = Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Generic(intern("Result"), vec![Type::Unit, Type::String])),
+            Box::new(Type::Generic(
+                intern("Result"),
+                vec![Type::Unit, Type::String],
+            )),
         ));
         for name in &["fs.mkdir", "fs.remove"] {
             env.define(intern(name), string_to_result.clone());
@@ -2317,7 +2319,10 @@ impl TypeChecker {
         // fs.rename / fs.copy: (String, String) -> Result(Unit, String)
         let ss_to_result = Scheme::mono(Type::Fun(
             vec![Type::String, Type::String],
-            Box::new(Type::Generic(intern("Result"), vec![Type::Unit, Type::String])),
+            Box::new(Type::Generic(
+                intern("Result"),
+                vec![Type::Unit, Type::String],
+            )),
         ));
         for name in &["fs.rename", "fs.copy"] {
             env.define(intern(name), ss_to_result.clone());
