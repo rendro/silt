@@ -608,6 +608,23 @@ impl TypeChecker {
                 let rt = self.infer_expr(rhs, env);
 
                 match op {
+                    // ── Implicit Float → ExtFloat widening ─────────────────
+                    //
+                    // Mixed Float/ExtFloat operands are widened to ExtFloat
+                    // *without* going through unification. This is intentional:
+                    // Float and ExtFloat are distinct concrete types that do not
+                    // unify, but arithmetic between them should silently promote
+                    // to the wider type (analogous to f32 → f64 in other
+                    // languages).
+                    //
+                    // For Div the result is always ExtFloat when *either* operand
+                    // is a float type, because division may produce fractional
+                    // results even from two Floats.
+                    //
+                    // IMPORTANT: any new numeric binary operators must replicate
+                    // this widening logic; otherwise mixed Float/ExtFloat
+                    // expressions will produce a unification error.
+                    // ─────────────────────────────────────────────────────────
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);

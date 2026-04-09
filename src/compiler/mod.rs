@@ -1861,11 +1861,25 @@ impl Compiler {
     // ── Context & scope helpers ───────────────────────────────────
 
     fn ctx(&self) -> &CompileContext {
-        self.contexts.last().expect("no active compile context")
+        debug_assert!(
+            !self.contexts.is_empty(),
+            "Compiler::ctx() called with empty context stack — \
+             this indicates a mismatched push_context/pop_context pair"
+        );
+        self.contexts
+            .last()
+            .expect("Compiler::ctx(): no active compile context (context stack is empty)")
     }
 
     fn ctx_mut(&mut self) -> &mut CompileContext {
-        self.contexts.last_mut().expect("no active compile context")
+        debug_assert!(
+            !self.contexts.is_empty(),
+            "Compiler::ctx_mut() called with empty context stack — \
+             this indicates a mismatched push_context/pop_context pair"
+        );
+        self.contexts
+            .last_mut()
+            .expect("Compiler::ctx_mut(): no active compile context (context stack is empty)")
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {

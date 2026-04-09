@@ -248,6 +248,20 @@ fn main() {
     }
 
     match args[1].as_str() {
+        "--help" | "-h" | "help" => {
+            eprintln!("silt — a statically-typed, expression-based language");
+            eprintln!();
+            eprintln!("Usage:");
+            eprintln!("  silt run [--watch] <file.silt>    Run a program");
+            eprintln!("  silt check [--watch] <file.silt>  Type-check without running");
+            eprintln!("  silt test [--watch] [path]        Run test functions");
+            eprintln!("  silt fmt <file.silt>              Format source code");
+            eprintln!("  silt repl                         Interactive REPL");
+            eprintln!("  silt init                         Create a new main.silt");
+            eprintln!("  silt lsp                          Start the language server");
+            eprintln!("  silt disasm <file.silt>           Show bytecode disassembly");
+            process::exit(0);
+        }
         "run" => {
             if args.len() < 3 {
                 eprintln!("Usage: silt run <file.silt>");
@@ -530,6 +544,41 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
 
     if paths.is_empty() {
         println!("no test files found");
+        return;
+    }
+
+    // When a filter is provided, skip files that can't possibly contain matching tests.
+    // We do a quick text scan for `fn test_` / `fn skip_test_` names rather than a full parse.
+    let paths: Vec<String> = if let Some(ref filter) = filter {
+        paths
+            .into_iter()
+            .filter(|path| {
+                let source = match fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(_) => return true, // keep the file so the error is reported later
+                };
+                // Scan for function names like `fn test_...` or `fn skip_test_...`
+                for line in source.lines() {
+                    let trimmed = line.trim_start();
+                    if let Some(rest) = trimmed.strip_prefix("fn ") {
+                        let name: String = rest
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        if name.starts_with("test_") && name.contains(filter.as_str()) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .collect()
+    } else {
+        paths
+    };
+
+    if paths.is_empty() {
+        println!("no matching test files found");
         return;
     }
 

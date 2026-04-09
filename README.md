@@ -93,8 +93,13 @@ type Todo { id: Int, title: String, done: Bool }
 fn main() {
   http.serve(8080, fn(req) {
     match (req.method, http.segments(req.path)) {
-      (GET, ["todos"]) ->
-        Response { status: 200, body: json.stringify(todos()), headers: #{} }
+      (GET, ["todos"]) -> {
+        let todos = [
+          Todo { id: 1, title: "Learn silt", done: true },
+          Todo { id: 2, title: "Build an API", done: false },
+        ]
+        Response { status: 200, body: json.stringify(todos), headers: #{} }
+      }
       (POST, ["todos"]) ->
         match json.parse(Todo, req.body) {
           Ok(todo) -> Response { status: 201, body: json.stringify(todo), headers: #{} }

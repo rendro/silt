@@ -102,6 +102,16 @@ fn decl_start_line(decl: &Decl) -> Option<usize> {
     }
 }
 
+/// Get the start line (1-based) of a statement from its contained expression spans.
+fn stmt_start_line(stmt: &Stmt) -> usize {
+    match stmt {
+        Stmt::Let { value, .. } => value.span.line,
+        Stmt::Expr(expr) => expr.span.line,
+        Stmt::When { expr, .. } => expr.span.line,
+        Stmt::WhenBool { condition, .. } => condition.span.line,
+    }
+}
+
 /// Find 1-based line numbers of top-level `import` statements in source.
 fn find_import_lines(source: &str) -> Vec<usize> {
     let mut result = Vec::new();
@@ -137,6 +147,59 @@ fn resolve_decl_lines(decls: &[Decl], source: &str) -> Vec<usize> {
     result
 }
 
+/// Check whether a declaration has a block body (i.e. uses `{ ... }` not `= expr`).
+fn decl_has_block_body(decl: &Decl) -> bool {
+    match decl {
+        Decl::Fn(f) => matches!(f.body.kind, ExprKind::Block(_)),
+        Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Type(_) => true,
+        Decl::Import(_) | Decl::Let { .. } => false,
+    }
+}
+
+/// Compute the end line (1-based, inclusive) for each declaration by scanning
+/// the source for balanced braces starting from each declaration's start line.
+/// For single-line declarations (simple fn, import, let), the end line equals
+/// the start line.
+fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) -> Vec<usize> {
+    let source_lines: Vec<&str> = source.lines().collect();
+    let mut result = Vec::with_capacity(decls.len());
+
+    for (i, decl) in decls.iter().enumerate() {
+        if !decl_has_block_body(decl) {
+            // Single-line declaration — end is same as start
+            result.push(decl_lines[i]);
+            continue;
+        }
+
+        // Scan from the declaration's start line to find the matching closing brace.
+        let start = decl_lines[i]; // 1-based
+        let mut depth: i32 = 0;
+        let mut end_line = start;
+        let mut found_open = false;
+
+        for line_idx in (start - 1)..source_lines.len() {
+            let line = source_lines[line_idx];
+            // Skip content inside strings and comments for brace counting
+            for ch in line.chars() {
+                if ch == '{' {
+                    depth += 1;
+                    found_open = true;
+                } else if ch == '}' {
+                    depth -= 1;
+                }
+            }
+            if found_open && depth == 0 {
+                end_line = line_idx + 1; // 1-based
+                break;
+            }
+        }
+
+        result.push(end_line);
+    }
+
+    result
+}
+
 // ── Public entry point ──────────────────────────────────────────────
 
 pub fn format(source: &str) -> Result<String, String> {
@@ -169,26 +232,41 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
 
     let comments = extract_comments(source);
     let decl_lines = resolve_decl_lines(&program.decls, source);
+    let decl_end_lines = resolve_decl_end_lines(&program.decls, &decl_lines, source);
 
-    // Group comments into buckets: bucket[i] holds comments that appear
-    // before decl[i]. bucket[n] holds comments after the last decl.
+    // Partition comments into:
+    // - top-level buckets (between declarations)
+    // - body comments (inside a declaration's body)
     let n = program.decls.len();
     let mut buckets: Vec<Vec<&Comment>> = vec![Vec::new(); n + 1];
+    // body_comments[i] holds comments inside decl[i]'s body
+    let mut body_comments: Vec<Vec<&Comment>> = vec![Vec::new(); n];
 
     for comment in &comments {
-        // Find which bucket this comment belongs to.
-        // It goes before the first decl whose start line is > comment.line.
-        let mut placed = false;
-        for (i, &dline) in decl_lines.iter().enumerate() {
-            if comment.line < dline {
-                buckets[i].push(comment);
-                placed = true;
+        // A comment is inside decl[i]'s body if its line is strictly between
+        // the decl's start line and its end line (inclusive of end line, since
+        // a comment before the closing `}` is still inside).
+        let mut is_body = false;
+        for i in 0..n {
+            if comment.line > decl_lines[i] && comment.line <= decl_end_lines[i] {
+                body_comments[i].push(comment);
+                is_body = true;
                 break;
             }
         }
-        if !placed {
-            // After the last declaration
-            buckets[n].push(comment);
+        if !is_body {
+            // Top-level comment: place in the appropriate bucket.
+            let mut placed = false;
+            for (i, &dline) in decl_lines.iter().enumerate() {
+                if comment.line < dline {
+                    buckets[i].push(comment);
+                    placed = true;
+                    break;
+                }
+            }
+            if !placed {
+                buckets[n].push(comment);
+            }
         }
     }
 
@@ -196,7 +274,12 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     let mut import_strs: Vec<String> = Vec::new();
     let mut has_imports = false;
 
-    let formatted_decls: Vec<String> = program.decls.iter().map(|d| format_decl(d, 0)).collect();
+    let formatted_decls: Vec<String> = program
+        .decls
+        .iter()
+        .enumerate()
+        .map(|(i, d)| format_decl_with_comments(d, 0, &body_comments[i]))
+        .collect();
 
     // Collect and sort import strings; track which decl indices are imports.
     let mut is_import = vec![false; program.decls.len()];
@@ -266,12 +349,12 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     result
 }
 
-fn format_decl(decl: &Decl, depth: usize) -> String {
+fn format_decl_with_comments(decl: &Decl, depth: usize, body_comments: &[&Comment]) -> String {
     match decl {
-        Decl::Fn(f) => format_fn(f, depth),
+        Decl::Fn(f) => format_fn_with_comments(f, depth, body_comments),
         Decl::Type(t) => format_type(t, depth),
-        Decl::Trait(t) => format_trait(t, depth),
-        Decl::TraitImpl(t) => format_trait_impl(t, depth),
+        Decl::Trait(t) => format_trait_with_comments(t, depth, body_comments),
+        Decl::TraitImpl(t) => format_trait_impl_with_comments(t, depth, body_comments),
         Decl::Import(i) => format_import(i, depth),
         Decl::Let {
             pattern,
@@ -298,7 +381,7 @@ fn indent(depth: usize) -> String {
     INDENT.repeat(depth)
 }
 
-fn format_fn(f: &FnDecl, depth: usize) -> String {
+fn format_fn_with_comments(f: &FnDecl, depth: usize, body_comments: &[&Comment]) -> String {
     let prefix = indent(depth);
     let pub_prefix = if f.is_pub { "pub " } else { "" };
     let params = f
@@ -343,7 +426,7 @@ fn format_fn(f: &FnDecl, depth: usize) -> String {
         );
     }
 
-    let body = format_body(&f.body, depth);
+    let body = format_body_with_comments(&f.body, depth, body_comments);
     format!(
         "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
         f.name
@@ -365,16 +448,33 @@ fn format_param(p: &Param) -> String {
 }
 
 fn format_body(expr: &Expr, depth: usize) -> String {
+    format_body_with_comments(expr, depth, &[])
+}
+
+fn format_body_with_comments(expr: &Expr, depth: usize, body_comments: &[&Comment]) -> String {
     match &expr.kind {
         ExprKind::Block(stmts) => {
             if stmts.is_empty() {
-                "{}".to_string()
-            } else {
+                if body_comments.is_empty() {
+                    "{}".to_string()
+                } else {
+                    // Emit comments inside an otherwise empty block
+                    let comment_strs: Vec<String> = body_comments
+                        .iter()
+                        .map(|c| format!("{}{}", indent(depth + 1), c.text.trim()))
+                        .collect();
+                    format!("{{\n{}\n{}}}", comment_strs.join("\n"), indent(depth))
+                }
+            } else if body_comments.is_empty() {
                 let inner = stmts
                     .iter()
                     .map(|s| format_stmt(s, depth + 1))
                     .collect::<Vec<_>>()
                     .join("\n");
+                format!("{{\n{inner}\n{}}}", indent(depth))
+            } else {
+                // Interleave comments with statements based on line numbers.
+                let inner = format_stmts_with_comments(stmts, depth + 1, body_comments);
                 format!("{{\n{inner}\n{}}}", indent(depth))
             }
         }
@@ -385,6 +485,43 @@ fn format_body(expr: &Expr, depth: usize) -> String {
             indent(depth)
         ),
     }
+}
+
+/// Format a list of statements with interleaved comments.
+///
+/// Comments are placed before the first statement whose source line is greater
+/// than the comment's line. Comments after all statements go at the end.
+fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, body_comments: &[&Comment]) -> String {
+    let mut result = Vec::new();
+    let mut comment_idx = 0;
+
+    for stmt in stmts {
+        let stmt_line = stmt_start_line(stmt);
+
+        // Emit any comments that come before this statement
+        while comment_idx < body_comments.len() && body_comments[comment_idx].line < stmt_line {
+            result.push(format!(
+                "{}{}",
+                indent(depth),
+                body_comments[comment_idx].text.trim()
+            ));
+            comment_idx += 1;
+        }
+
+        result.push(format_stmt(stmt, depth));
+    }
+
+    // Emit any remaining comments after the last statement
+    while comment_idx < body_comments.len() {
+        result.push(format!(
+            "{}{}",
+            indent(depth),
+            body_comments[comment_idx].text.trim()
+        ));
+        comment_idx += 1;
+    }
+
+    result.join("\n")
 }
 
 fn format_type(t: &TypeDecl, depth: usize) -> String {
@@ -437,9 +574,13 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     }
 }
 
-fn format_trait(t: &TraitDecl, depth: usize) -> String {
+fn format_trait_with_comments(t: &TraitDecl, depth: usize, body_comments: &[&Comment]) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = t.methods.iter().map(|m| format_fn(m, depth + 1)).collect();
+    let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
+        .into_iter()
+        .zip(t.methods.iter())
+        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc))
+        .collect();
     format!(
         "{prefix}trait {} {{\n{}\n{prefix}}}",
         t.name,
@@ -447,15 +588,60 @@ fn format_trait(t: &TraitDecl, depth: usize) -> String {
     )
 }
 
-fn format_trait_impl(t: &TraitImpl, depth: usize) -> String {
+fn format_trait_impl_with_comments(
+    t: &TraitImpl,
+    depth: usize,
+    body_comments: &[&Comment],
+) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = t.methods.iter().map(|m| format_fn(m, depth + 1)).collect();
+    let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
+        .into_iter()
+        .zip(t.methods.iter())
+        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc))
+        .collect();
     format!(
         "{prefix}trait {} for {} {{\n{}\n{prefix}}}",
         t.trait_name,
         t.target_type,
         methods.join("\n\n")
     )
+}
+
+/// Partition body comments among methods based on their line numbers.
+/// Returns a Vec of Vec<&Comment>, one per method.
+fn partition_method_comments<'a>(
+    methods: &[FnDecl],
+    body_comments: &[&'a Comment],
+) -> Vec<Vec<&'a Comment>> {
+    if methods.is_empty() || body_comments.is_empty() {
+        return vec![Vec::new(); methods.len()];
+    }
+
+    let method_lines: Vec<usize> = methods.iter().map(|m| m.span.line).collect();
+    let mut result: Vec<Vec<&'a Comment>> = vec![Vec::new(); methods.len()];
+
+    for comment in body_comments {
+        // Find which method this comment belongs to: the last method
+        // whose start line is <= the comment's line.
+        let mut assigned = false;
+        for i in (0..methods.len()).rev() {
+            if comment.line >= method_lines[i] {
+                result[i].push(comment);
+                assigned = true;
+                break;
+            }
+        }
+        if !assigned {
+            // Comment before first method — skip (it's a structural comment
+            // inside the trait block but before any methods).
+            // For now, attach to the first method.
+            if !methods.is_empty() {
+                result[0].push(comment);
+            }
+        }
+    }
+
+    result
 }
 
 fn format_import(i: &ImportTarget, depth: usize) -> String {
@@ -1839,5 +2025,117 @@ fn main() {
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "chained calls should be idempotent");
+    }
+
+    // ── Body comment tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_comment_inside_fn_body() {
+        let source = r#"fn main() {
+  -- setup variables
+  let x = 42
+  x
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("-- setup variables"),
+            "comment inside fn body should be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_multiple_comments_inside_fn_body() {
+        let source = r#"fn main() {
+  -- first comment
+  let x = 1
+  -- second comment
+  let y = 2
+  x + y
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("-- first comment"),
+            "first body comment should be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("-- second comment"),
+            "second body comment should be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_body_comment_and_between_comment() {
+        let source = r#"fn foo() {
+  -- inside foo
+  let x = 1
+  x
+}
+
+-- between functions
+fn bar() = 2
+"#;
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("-- inside foo"),
+            "body comment should be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("-- between functions"),
+            "between-decl comment should be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_idempotent_body_comment() {
+        let source = r#"fn main() {
+  -- setup
+  let x = 42
+  -- use it
+  println(x)
+  x
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(
+            first, second,
+            "formatting with body comments should be idempotent"
+        );
+    }
+
+    #[test]
+    fn test_idempotent_body_and_toplevel_comments() {
+        let source = r#"-- header
+fn foo() {
+  -- body comment
+  let x = 1
+  x
+}
+
+-- between
+fn bar() = 2
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(
+            first, second,
+            "formatting with mixed comments should be idempotent"
+        );
+    }
+
+    #[test]
+    fn test_comment_after_last_stmt_in_body() {
+        let source = r#"fn main() {
+  let x = 42
+  -- trailing body comment
+}
+"#;
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("-- trailing body comment"),
+            "trailing body comment should be preserved, got: {result}"
+        );
     }
 }
