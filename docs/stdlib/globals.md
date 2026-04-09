@@ -1,5 +1,7 @@
 ---
 title: "Globals"
+section: "Standard Library"
+order: 1
 ---
 
 # Globals

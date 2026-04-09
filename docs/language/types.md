@@ -1,5 +1,7 @@
 ---
 title: "Types"
+section: "Language"
+order: 2
 ---
 
 # Types

@@ -1,5 +1,7 @@
 ---
 title: "io / fs"
+section: "Standard Library"
+order: 8
 ---
 
 # io

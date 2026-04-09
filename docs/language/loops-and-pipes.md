@@ -1,5 +1,7 @@
 ---
 title: "Loops, Pipes, and Other Features"
+section: "Language"
+order: 6
 ---
 
 # Loops, Pipes, and Other Features

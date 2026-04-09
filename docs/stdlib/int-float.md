@@ -1,5 +1,7 @@
 ---
 title: "int / float"
+section: "Standard Library"
+order: 6
 ---
 
 # int

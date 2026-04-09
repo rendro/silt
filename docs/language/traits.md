@@ -1,5 +1,7 @@
 ---
 title: "Traits"
+section: "Language"
+order: 7
 ---
 
 # Traits

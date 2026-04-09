@@ -1,5 +1,7 @@
 ---
 title: "Standard Library"
+section: "Standard Library"
+order: 0
 ---
 
 # Silt Standard Library Reference

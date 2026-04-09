@@ -1,5 +1,6 @@
 ---
 title: "Getting Started"
+section: "Guide"
 order: 1
 description: "Install silt, write your first program, and tour the language through runnable examples."
 ---

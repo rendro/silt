@@ -1,5 +1,7 @@
 ---
 title: "Design Decisions"
+section: "Language"
+order: 9
 ---
 
 # Design Trade-offs

@@ -1,5 +1,7 @@
 ---
 title: "time"
+section: "Standard Library"
+order: 13
 ---
 
 # time

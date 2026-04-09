@@ -1,5 +1,7 @@
 ---
 title: "math"
+section: "Standard Library"
+order: 11
 ---
 
 # math

@@ -1,5 +1,7 @@
 ---
 title: "set"
+section: "Standard Library"
+order: 5
 ---
 
 # set

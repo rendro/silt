@@ -1,5 +1,7 @@
 ---
 title: "map"
+section: "Standard Library"
+order: 4
 ---
 
 # map

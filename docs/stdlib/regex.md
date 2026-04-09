@@ -1,5 +1,7 @@
 ---
 title: "regex"
+section: "Standard Library"
+order: 9
 ---
 
 # regex

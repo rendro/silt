@@ -1,6 +1,7 @@
 ---
 title: "FFI Guide"
-order: 5
+section: "Guide"
+order: 4
 description: "Embed silt in Rust applications. Register foreign functions, marshal values with FromValue and IntoValue traits."
 ---
 

@@ -1,5 +1,7 @@
 ---
 title: "list"
+section: "Standard Library"
+order: 2
 ---
 
 # list

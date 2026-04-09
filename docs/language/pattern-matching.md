@@ -1,5 +1,7 @@
 ---
 title: "Pattern Matching"
+section: "Language"
+order: 3
 ---
 
 # Pattern Matching

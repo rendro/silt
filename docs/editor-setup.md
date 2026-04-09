@@ -1,6 +1,7 @@
 ---
 title: "Editor Setup"
-order: 6
+section: "Guide"
+order: 5
 description: "Configure Neovim, VS Code, and other editors to use silt's LSP server for diagnostics, hover types, completion, and formatting."
 ---
 

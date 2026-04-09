@@ -1,5 +1,7 @@
 ---
 title: "result / option"
+section: "Standard Library"
+order: 7
 ---
 
 # result

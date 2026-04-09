@@ -1,6 +1,7 @@
 ---
 title: "Concurrency"
-order: 4
+section: "Guide"
+order: 3
 description: "silt's CSP concurrency model: parallel tasks, typed channels, select with pin patterns."
 ---
 

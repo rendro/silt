@@ -1,5 +1,7 @@
 ---
 title: "string"
+section: "Standard Library"
+order: 3
 ---
 
 # string

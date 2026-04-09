@@ -1,5 +1,7 @@
 ---
 title: "Bindings and Functions"
+section: "Language"
+order: 1
 ---
 
 # Bindings and Functions

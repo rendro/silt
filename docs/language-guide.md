@@ -1,5 +1,6 @@
 ---
 title: "Language Guide"
+section: "Guide"
 order: 2
 description: "A complete reference to silt's features: pattern matching, types, traits, closures, concurrency, and error handling."
 ---

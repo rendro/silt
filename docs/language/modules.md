@@ -1,5 +1,7 @@
 ---
 title: "Modules"
+section: "Language"
+order: 8
 ---
 
 # Modules

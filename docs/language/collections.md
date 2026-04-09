@@ -1,5 +1,7 @@
 ---
 title: "Collections"
+section: "Language"
+order: 5
 ---
 
 # Collections
