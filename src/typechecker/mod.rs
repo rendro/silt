@@ -337,16 +337,12 @@ impl TypeChecker {
                 if let (Some(rec_info), Some(param_var_ids)) = (
                     self.records.get(n1).cloned(),
                     self.record_param_var_ids.get(n1).cloned(),
-                ) && param_var_ids.len() == a2.len() {
+                ) && param_var_ids.len() == a2.len()
+                {
                     for (field_name, field_template_ty) in &rec_info.fields {
-                        let substituted = substitute_enum_params(
-                            field_template_ty,
-                            &param_var_ids,
-                            a2,
-                        );
-                        if let Some((_, concrete_ty)) =
-                            f1.iter().find(|(n, _)| n == field_name)
-                        {
+                        let substituted =
+                            substitute_enum_params(field_template_ty, &param_var_ids, a2);
+                        if let Some((_, concrete_ty)) = f1.iter().find(|(n, _)| n == field_name) {
                             self.unify(concrete_ty, &substituted, span);
                         }
                     }
@@ -357,16 +353,12 @@ impl TypeChecker {
                 if let (Some(rec_info), Some(param_var_ids)) = (
                     self.records.get(n2).cloned(),
                     self.record_param_var_ids.get(n2).cloned(),
-                ) && param_var_ids.len() == a1.len() {
+                ) && param_var_ids.len() == a1.len()
+                {
                     for (field_name, field_template_ty) in &rec_info.fields {
-                        let substituted = substitute_enum_params(
-                            field_template_ty,
-                            &param_var_ids,
-                            a1,
-                        );
-                        if let Some((_, concrete_ty)) =
-                            f2.iter().find(|(n, _)| n == field_name)
-                        {
+                        let substituted =
+                            substitute_enum_params(field_template_ty, &param_var_ids, a1);
+                        if let Some((_, concrete_ty)) = f2.iter().find(|(n, _)| n == field_name) {
                             self.unify(concrete_ty, &substituted, span);
                         }
                     }

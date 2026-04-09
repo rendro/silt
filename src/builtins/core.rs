@@ -11,7 +11,9 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
                 return Err(VmError::new("result.unwrap_or takes 2 arguments".into()));
             }
             match &args[0] {
-                Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => Ok(fields[0].clone()),
+                Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
+                    Ok(fields[0].clone())
+                }
                 Value::Variant(tag, _) if tag == "Err" => Ok(args[1].clone()),
                 _ => Err(VmError::new("result.unwrap_or requires a Result".into())),
             }
@@ -101,7 +103,9 @@ pub fn call_option(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
                 return Err(VmError::new("option.unwrap_or takes 2 arguments".into()));
             }
             match &args[0] {
-                Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => Ok(fields[0].clone()),
+                Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
+                    Ok(fields[0].clone())
+                }
                 Value::Variant(tag, _) if tag == "None" => Ok(args[1].clone()),
                 _ => Err(VmError::new("option.unwrap_or requires an Option".into())),
             }

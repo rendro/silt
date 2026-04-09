@@ -2748,9 +2748,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -2801,9 +2799,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -2854,9 +2850,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -2907,9 +2901,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -2960,9 +2952,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3013,9 +3003,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3066,9 +3054,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3119,9 +3105,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3172,9 +3156,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3225,9 +3207,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3278,9 +3258,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3331,9 +3309,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3384,9 +3360,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3437,9 +3411,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3490,9 +3462,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3543,9 +3513,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3596,9 +3564,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3649,9 +3615,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3702,9 +3666,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3755,9 +3717,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3808,9 +3768,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3861,9 +3819,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3914,9 +3870,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -3967,9 +3921,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4020,9 +3972,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4073,9 +4023,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4126,9 +4074,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4179,9 +4125,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4232,9 +4176,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4285,9 +4227,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4338,9 +4278,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4391,9 +4329,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4444,9 +4380,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4497,9 +4431,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4550,9 +4482,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4603,9 +4533,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4656,9 +4584,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4709,9 +4635,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4762,9 +4686,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4815,9 +4737,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4868,9 +4788,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4921,9 +4839,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -4974,9 +4890,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5027,9 +4941,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5080,9 +4992,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5133,9 +5043,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5186,9 +5094,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5239,9 +5145,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5292,9 +5196,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5345,9 +5247,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5398,9 +5298,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5451,9 +5349,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5504,9 +5400,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5557,9 +5451,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5610,9 +5502,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5663,9 +5553,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (
@@ -5716,9 +5604,7 @@ impl TypeChecker {
                 col: 0,
                 offset: 0,
             };
-            let time_type_names = [
-                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
-            ];
+            let time_type_names = ["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
             let trait_methods: &[(&str, Type)] = &[
                 (

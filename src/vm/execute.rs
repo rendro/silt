@@ -43,7 +43,10 @@ impl Vm {
                     self.stack.truncate(func_slot);
                     self.push(result);
                 }
-                DispatchResult::EarlyReturn { value, finished_base } => {
+                DispatchResult::EarlyReturn {
+                    value,
+                    finished_base,
+                } => {
                     if self.frames.is_empty() {
                         return Ok(value);
                     }
@@ -82,7 +85,9 @@ impl Vm {
             let op_byte = try_or_fail!(self.read_byte());
             let op = match Op::from_byte(op_byte) {
                 Some(op) => op,
-                None => return SliceResult::Failed(VmError::new(format!("unknown opcode: {op_byte}"))),
+                None => {
+                    return SliceResult::Failed(VmError::new(format!("unknown opcode: {op_byte}")));
+                }
             };
             match self.dispatch_one(op) {
                 Ok(DispatchResult::Continue) => {}
@@ -96,7 +101,10 @@ impl Vm {
                     self.stack.truncate(func_slot);
                     self.push(result);
                 }
-                Ok(DispatchResult::EarlyReturn { value, finished_base }) => {
+                Ok(DispatchResult::EarlyReturn {
+                    value,
+                    finished_base,
+                }) => {
                     if self.frames.is_empty() {
                         return SliceResult::Completed(value);
                     }
@@ -247,7 +255,10 @@ impl Vm {
                             self.stack.truncate(inner_func_slot);
                             self.push(result);
                         }
-                        Ok(DispatchResult::EarlyReturn { value, finished_base }) => {
+                        Ok(DispatchResult::EarlyReturn {
+                            value,
+                            finished_base,
+                        }) => {
                             // QuestionMark popped a frame. Check if we've returned to our level.
                             if self.frames.len() <= saved_frame_count {
                                 self.stack.truncate(func_slot);
@@ -1039,7 +1050,10 @@ impl Vm {
                             let value = self.pop()?;
                             let finished_base = self.current_frame()?.base_slot;
                             self.frames.pop();
-                            return Ok(DispatchResult::EarlyReturn { value, finished_base });
+                            return Ok(DispatchResult::EarlyReturn {
+                                value,
+                                finished_base,
+                            });
                         }
                         _ => return Err(VmError::new(format!("? on non-Result/Option: {tag}"))),
                     },

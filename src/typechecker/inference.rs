@@ -132,10 +132,7 @@ impl TypeChecker {
                     return;
                 }
                 // Fallback: report error and bind sub-patterns with fresh vars
-                self.error(
-                    format!("undefined constructor '{name}' in pattern"),
-                    span,
-                );
+                self.error(format!("undefined constructor '{name}' in pattern"), span);
                 for sp in sub_pats {
                     let tv = self.fresh_var();
                     self.bind_pattern(sp, &tv, env, span);
@@ -220,10 +217,7 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(ty, &pinned_ty, span);
                 } else {
-                    self.error(
-                        format!("undefined variable '{name}' in pin pattern"),
-                        span,
-                    );
+                    self.error(format!("undefined variable '{name}' in pin pattern"), span);
                 }
             }
         }
