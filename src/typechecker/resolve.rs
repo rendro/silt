@@ -167,6 +167,10 @@ impl TypeChecker {
                     self.check_unresolved_in_expr(a);
                 }
             }
+            ExprKind::FloatElse(expr, fallback) => {
+                self.check_unresolved_in_expr(expr);
+                self.check_unresolved_in_expr(fallback);
+            }
             _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }
     }
@@ -462,6 +466,10 @@ impl TypeChecker {
                 for a in args {
                     self.resolve_expr_types(a);
                 }
+            }
+            ExprKind::FloatElse(expr, fallback) => {
+                self.resolve_expr_types(expr);
+                self.resolve_expr_types(fallback);
             }
             _ => {} // Int, Float, Bool, StringLit, Ident, Unit, Return(None)
         }

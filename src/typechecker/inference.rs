@@ -582,13 +582,34 @@ impl TypeChecker {
                     // this widening logic; otherwise mixed Float/ExtFloat
                     // expressions will produce a unification error.
                     // ─────────────────────────────────────────────────────────
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                    BinOp::Add => {
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
                         match (&resolved_l, &resolved_r) {
                             (Type::Float, Type::ExtFloat)
                             | (Type::ExtFloat, Type::Float)
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            _ => {
+                                self.unify(&lt, &rt, span);
+                                lt
+                            }
+                        }
+                    }
+                    BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                        let resolved_l = self.apply(&lt);
+                        let resolved_r = self.apply(&rt);
+                        match (&resolved_l, &resolved_r) {
+                            (Type::Float, Type::ExtFloat)
+                            | (Type::ExtFloat, Type::Float)
+                            | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
+                            (Type::String, _) | (_, Type::String) => {
+                                self.error(
+                                    "type mismatch: operator requires numeric types, got String"
+                                        .to_string(),
+                                    span,
+                                );
+                                lt
+                            }
                             _ => {
                                 self.unify(&lt, &rt, span);
                                 lt
@@ -938,6 +959,26 @@ impl TypeChecker {
             ExprKind::RecordCreate { name, fields } => {
                 let name = *name;
                 if let Some(rec_info) = self.records.get(&name).cloned() {
+                    // For parameterized record types, create fresh type variables
+                    // for each type parameter and substitute them into field types.
+                    // This prevents different instantiations from sharing the same
+                    // template variables (e.g., Box { value: 42 } and Box { value: "hi" }).
+                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.record_param_var_ids.get(&name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> = param_var_ids
+                            .iter()
+                            .map(|&v| (v, self.fresh_var()))
+                            .collect();
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
+
                     let field_types: Vec<(Symbol, Type)> = fields
                         .iter_mut()
                         .map(|(n, e)| {
@@ -946,10 +987,10 @@ impl TypeChecker {
                         })
                         .collect();
 
-                    // Unify with declared field types
+                    // Unify with declared field types (using instantiated copies)
                     for (field_name, inferred_ty) in &field_types {
                         if let Some((_, declared_ty)) =
-                            rec_info.fields.iter().find(|(n, _)| n == field_name)
+                            instantiated_fields.iter().find(|(n, _)| n == field_name)
                         {
                             self.unify(inferred_ty, declared_ty, span);
                         }
@@ -987,7 +1028,7 @@ impl TypeChecker {
                         }
                     }
 
-                    Type::Record(name, rec_info.fields.clone())
+                    Type::Record(name, instantiated_fields)
                 } else {
                     // Unknown record type - infer from fields
                     let field_types: Vec<(Symbol, Type)> = fields
@@ -1858,6 +1899,72 @@ fn main() {
 }
         "#,
             "undefined",
+        );
+    }
+
+    // ── B2: String Sub/Mul/Mod should be rejected ──────────────────
+
+    #[test]
+    fn test_string_add_is_allowed() {
+        assert_no_errors(
+            r#"
+fn main() {
+  "hello" + " world"
+}
+        "#,
+        );
+    }
+
+    #[test]
+    fn test_string_sub_is_rejected() {
+        assert_has_error(
+            r#"
+fn main() {
+  "hello" - "world"
+}
+        "#,
+            "operator requires numeric types",
+        );
+    }
+
+    #[test]
+    fn test_string_mul_is_rejected() {
+        assert_has_error(
+            r#"
+fn main() {
+  "hello" * "world"
+}
+        "#,
+            "operator requires numeric types",
+        );
+    }
+
+    #[test]
+    fn test_string_mod_is_rejected() {
+        assert_has_error(
+            r#"
+fn main() {
+  "hello" % "world"
+}
+        "#,
+            "operator requires numeric types",
+        );
+    }
+
+    // ── L1: Parameterized records should get fresh type vars ───────
+
+    #[test]
+    fn test_parameterized_record_different_instantiations() {
+        assert_no_errors(
+            r#"
+type Box(a) { value: a }
+fn main() {
+  let int_box = Box { value: 42 }
+  let str_box = Box { value: "hello" }
+  int_box.value + 1
+  str_box.value + " world"
+}
+        "#,
         );
     }
 }

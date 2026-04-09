@@ -239,6 +239,10 @@ impl TypeChecker {
                         name: intern("Sent"),
                         field_types: vec![],
                     },
+                    VariantInfo {
+                        name: intern("Empty"),
+                        field_types: vec![],
+                    },
                 ],
             },
         );
