@@ -8652,51 +8652,64 @@ fn main() { math.asin(1.0) }
 
 #[test]
 fn test_fs_mkdir_and_remove() {
-    let result = run(r#"
+    let dir = std::env::temp_dir().join("silt_test_mkdir_42");
+    let dir = dir.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import fs
-fn main() {
-    let dir = "/tmp/silt_test_mkdir_42"
+fn main() {{
+    let dir = "{dir}"
     let r = fs.mkdir(dir)
     let exists = fs.is_dir(dir)
     let _ = fs.remove(dir)
     let gone = fs.is_dir(dir)
     (exists, gone)
-}
+}}
     "#);
+    let result = run(&input);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
 }
 
 #[test]
 fn test_fs_rename() {
-    let result = run(r#"
+    let src = std::env::temp_dir().join("silt_test_rename_src.txt");
+    let dst = std::env::temp_dir().join("silt_test_rename_dst.txt");
+    let src = src.to_str().unwrap().replace('\\', "/");
+    let dst = dst.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import fs
 import io
-fn main() {
-    let _ = io.write_file("/tmp/silt_test_rename_src.txt", "hello")
-    let r = fs.rename("/tmp/silt_test_rename_src.txt", "/tmp/silt_test_rename_dst.txt")
-    let exists_dst = fs.exists("/tmp/silt_test_rename_dst.txt")
-    let exists_src = fs.exists("/tmp/silt_test_rename_src.txt")
-    let _ = fs.remove("/tmp/silt_test_rename_dst.txt")
+fn main() {{
+    let _ = io.write_file("{src}", "hello")
+    let r = fs.rename("{src}", "{dst}")
+    let exists_dst = fs.exists("{dst}")
+    let exists_src = fs.exists("{src}")
+    let _ = fs.remove("{dst}")
     (exists_dst, exists_src)
-}
+}}
     "#);
+    let result = run(&input);
     assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
 }
 
 #[test]
 fn test_fs_copy() {
-    let result = run(r#"
+    let src = std::env::temp_dir().join("silt_test_copy_src.txt");
+    let dst = std::env::temp_dir().join("silt_test_copy_dst.txt");
+    let src = src.to_str().unwrap().replace('\\', "/");
+    let dst = dst.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import fs
 import io
-fn main() {
-    let _ = io.write_file("/tmp/silt_test_copy_src.txt", "data")
-    let _ = fs.copy("/tmp/silt_test_copy_src.txt", "/tmp/silt_test_copy_dst.txt")
-    let content = io.read_file("/tmp/silt_test_copy_dst.txt")
-    let _ = fs.remove("/tmp/silt_test_copy_src.txt")
-    let _ = fs.remove("/tmp/silt_test_copy_dst.txt")
+fn main() {{
+    let _ = io.write_file("{src}", "data")
+    let _ = fs.copy("{src}", "{dst}")
+    let content = io.read_file("{dst}")
+    let _ = fs.remove("{src}")
+    let _ = fs.remove("{dst}")
     content
-}
+}}
     "#);
+    let result = run(&input);
     assert_eq!(
         result,
         Value::Variant("Ok".into(), vec![Value::String("data".into())])
@@ -8705,12 +8718,15 @@ fn main() {
 
 #[test]
 fn test_fs_remove_nonexistent_returns_err() {
-    let result = run(r#"
+    let path = std::env::temp_dir().join("silt_test_nonexistent_file_that_does_not_exist");
+    let path = path.to_str().unwrap().replace('\\', "/");
+    let input = format!(r#"
 import fs
-fn main() {
-    fs.remove("/tmp/silt_test_nonexistent_file_that_does_not_exist")
-}
+fn main() {{
+    fs.remove("{path}")
+}}
     "#);
+    let result = run(&input);
     match result {
         Value::Variant(tag, _) => assert_eq!(tag, "Err"),
         other => panic!("expected Err variant, got {other:?}"),
