@@ -342,7 +342,8 @@ impl Chunk {
 
     /// Add a constant to the pool, returning its index.
     /// Deduplicates integers, booleans, strings, and floats via O(1) HashMap lookup.
-    pub fn add_constant(&mut self, value: Value) -> u16 {
+    /// Returns an error if the constant pool exceeds the u16 limit.
+    pub fn add_constant(&mut self, value: Value) -> Result<u16, String> {
         let key = match &value {
             Value::Int(n) => Some(ConstantKey::Int(*n)),
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
@@ -353,20 +354,24 @@ impl Chunk {
 
         if let Some(k) = key {
             if let Some(&idx) = self.constant_dedup.get(&k) {
-                return idx;
+                return Ok(idx);
             }
             let index = self.constants.len();
-            assert!(index <= u16::MAX as usize, "constant pool overflow");
+            if index > u16::MAX as usize {
+                return Err("constant pool overflow: too many constants in function".into());
+            }
             self.constants.push(value);
             let idx = index as u16;
             self.constant_dedup.insert(k, idx);
-            return idx;
+            return Ok(idx);
         }
 
         let index = self.constants.len();
-        assert!(index <= u16::MAX as usize, "constant pool overflow");
+        if index > u16::MAX as usize {
+            return Err("constant pool overflow: too many constants in function".into());
+        }
         self.constants.push(value);
-        index as u16
+        Ok(index as u16)
     }
 
     /// Emit a placeholder jump and return the offset to patch later.
@@ -378,13 +383,17 @@ impl Chunk {
     }
 
     /// Patch a previously emitted jump's u16 operand to point to the current offset.
-    pub fn patch_jump(&mut self, patch_offset: usize) {
+    /// Returns an error if the jump offset exceeds the u16 limit.
+    pub fn patch_jump(&mut self, patch_offset: usize) -> Result<(), String> {
         let target = self.code.len();
         let jump_base = patch_offset + 2; // after the u16 operand
         let offset = target - jump_base;
-        assert!(offset <= u16::MAX as usize, "jump offset overflow");
+        if offset > u16::MAX as usize {
+            return Err("jump offset overflow: function body too large".into());
+        }
         self.code[patch_offset] = offset as u8;
         self.code[patch_offset + 1] = (offset >> 8) as u8;
+        Ok(())
     }
 
     /// Get the source span for a bytecode offset.
@@ -445,7 +454,10 @@ impl Function {
 pub fn call_global_script(name: &str) -> Function {
     let span = Span::new(0, 0);
     let mut func = Function::new(format!("<call:{name}>"), 0);
-    let idx = func.chunk.add_constant(Value::String(name.into()));
+    let idx = func
+        .chunk
+        .add_constant(Value::String(name.into()))
+        .expect("constant pool overflow in call_global_script");
     func.chunk.emit_op(Op::GetGlobal, span);
     func.chunk.emit_u16(idx, span);
     func.chunk.emit_op(Op::Call, span);

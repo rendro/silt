@@ -385,9 +385,14 @@ impl TaskHandle {
     }
 
     /// Store the task result and notify any joiners.
+    /// If the task has already completed, this is a no-op (prevents
+    /// cancel from overwriting a finished task's result).
     pub fn complete(&self, result: Result<Value, String>) {
         {
             let mut guard = self.result.lock();
+            if guard.is_some() {
+                return; // Already completed, don't overwrite
+            }
             *guard = Some(result);
         }
         // Fire cancel cleanup (removes stale waker state for blocked tasks).

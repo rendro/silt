@@ -31,7 +31,7 @@ fn run_vm(source: &str) -> Value {
 #[test]
 fn test_constant_and_return() {
     let script = make_function(|chunk| {
-        let idx = chunk.add_constant(Value::Int(42));
+        let idx = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(idx, span());
         chunk.emit_op(Op::Return, span());
@@ -44,8 +44,8 @@ fn test_constant_and_return() {
 #[test]
 fn test_arithmetic_add_int() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(2));
-        let b = chunk.add_constant(Value::Int(3));
+        let a = chunk.add_constant(Value::Int(2)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -61,9 +61,9 @@ fn test_arithmetic_add_int() {
 #[test]
 fn test_arithmetic_expression() {
     let script = make_function(|chunk| {
-        let two = chunk.add_constant(Value::Int(2));
-        let three = chunk.add_constant(Value::Int(3));
-        let four = chunk.add_constant(Value::Int(4));
+        let two = chunk.add_constant(Value::Int(2)).unwrap();
+        let three = chunk.add_constant(Value::Int(3)).unwrap();
+        let four = chunk.add_constant(Value::Int(4)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(two, span());
         chunk.emit_op(Op::Constant, span());
@@ -82,8 +82,8 @@ fn test_arithmetic_expression() {
 #[test]
 fn test_float_arithmetic() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Float(1.5));
-        let b = chunk.add_constant(Value::Float(2.5));
+        let a = chunk.add_constant(Value::Float(1.5)).unwrap();
+        let b = chunk.add_constant(Value::Float(2.5)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -99,7 +99,7 @@ fn test_float_arithmetic() {
 #[test]
 fn test_negate() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10));
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Negate, span());
@@ -113,8 +113,8 @@ fn test_negate() {
 #[test]
 fn test_comparison() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(3));
-        let b = chunk.add_constant(Value::Int(5));
+        let a = chunk.add_constant(Value::Int(3)).unwrap();
+        let b = chunk.add_constant(Value::Int(5)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -142,8 +142,8 @@ fn test_boolean_not() {
 #[test]
 fn test_globals() {
     let script = make_function(|chunk| {
-        let name = chunk.add_constant(Value::String("x".to_string()));
-        let val = chunk.add_constant(Value::Int(42));
+        let name = chunk.add_constant(Value::String("x".to_string())).unwrap();
+        let val = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::SetGlobal, span());
@@ -160,7 +160,7 @@ fn test_globals() {
 #[test]
 fn test_locals() {
     let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(10));
+        let val = chunk.add_constant(Value::Int(10)).unwrap();
         chunk.emit_op(Op::Unit, span());
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
@@ -179,9 +179,13 @@ fn test_locals() {
 #[test]
 fn test_string_concat() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::String("hello".to_string()));
-        let b = chunk.add_constant(Value::String(" ".to_string()));
-        let c = chunk.add_constant(Value::String("world".to_string()));
+        let a = chunk
+            .add_constant(Value::String("hello".to_string()))
+            .unwrap();
+        let b = chunk.add_constant(Value::String(" ".to_string())).unwrap();
+        let c = chunk
+            .add_constant(Value::String("world".to_string()))
+            .unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -200,7 +204,7 @@ fn test_string_concat() {
 #[test]
 fn test_display_value() {
     let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(42));
+        let val = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::DisplayValue, span());
@@ -214,8 +218,8 @@ fn test_display_value() {
 #[test]
 fn test_jump_if_false() {
     let script = make_function(|chunk| {
-        let one = chunk.add_constant(Value::Int(1));
-        let two = chunk.add_constant(Value::Int(2));
+        let one = chunk.add_constant(Value::Int(1)).unwrap();
+        let two = chunk.add_constant(Value::Int(2)).unwrap();
         chunk.emit_op(Op::False, span());
         let patch = chunk.emit_jump(Op::JumpIfFalse, span());
         chunk.emit_op(Op::Constant, span());
@@ -235,8 +239,10 @@ fn test_jump_if_false() {
 #[test]
 fn test_builtin_println() {
     let script = make_function(|chunk| {
-        let name = chunk.add_constant(Value::String("println".to_string()));
-        let val = chunk.add_constant(Value::Int(42));
+        let name = chunk
+            .add_constant(Value::String("println".to_string()))
+            .unwrap();
+        let val = chunk.add_constant(Value::Int(42)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::CallBuiltin, span());
@@ -252,8 +258,8 @@ fn test_builtin_println() {
 #[test]
 fn test_make_tuple() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(1));
-        let b = chunk.add_constant(Value::Int(2));
+        let a = chunk.add_constant(Value::Int(1)).unwrap();
+        let b = chunk.add_constant(Value::Int(2)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -270,8 +276,8 @@ fn test_make_tuple() {
 #[test]
 fn test_make_list() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10));
-        let b = chunk.add_constant(Value::Int(20));
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
+        let b = chunk.add_constant(Value::Int(20)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -291,8 +297,8 @@ fn test_make_list() {
 #[test]
 fn test_division_by_zero() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(10));
-        let b = chunk.add_constant(Value::Int(0));
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
+        let b = chunk.add_constant(Value::Int(0)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -309,7 +315,7 @@ fn test_division_by_zero() {
 #[test]
 fn test_unit_and_pop() {
     let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(99));
+        let val = chunk.add_constant(Value::Int(99)).unwrap();
         chunk.emit_op(Op::Unit, span());
         chunk.emit_op(Op::Pop, span());
         chunk.emit_op(Op::Constant, span());
@@ -324,7 +330,7 @@ fn test_unit_and_pop() {
 #[test]
 fn test_dup() {
     let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(5));
+        let val = chunk.add_constant(Value::Int(5)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::Dup, span());
@@ -339,7 +345,7 @@ fn test_dup() {
 #[test]
 fn test_eq_neq() {
     let script = make_function(|chunk| {
-        let val = chunk.add_constant(Value::Int(5));
+        let val = chunk.add_constant(Value::Int(5)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(val, span());
         chunk.emit_op(Op::Constant, span());
@@ -351,8 +357,8 @@ fn test_eq_neq() {
     assert_eq!(vm.run(script).unwrap(), Value::Bool(true));
 
     let script2 = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(5));
-        let b = chunk.add_constant(Value::Int(3));
+        let a = chunk.add_constant(Value::Int(5)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());
@@ -367,9 +373,9 @@ fn test_eq_neq() {
 #[test]
 fn test_popn() {
     let script = make_function(|chunk| {
-        let a = chunk.add_constant(Value::Int(1));
-        let b = chunk.add_constant(Value::Int(2));
-        let c = chunk.add_constant(Value::Int(3));
+        let a = chunk.add_constant(Value::Int(1)).unwrap();
+        let b = chunk.add_constant(Value::Int(2)).unwrap();
+        let c = chunk.add_constant(Value::Int(3)).unwrap();
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(a, span());
         chunk.emit_op(Op::Constant, span());

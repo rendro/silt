@@ -222,9 +222,7 @@ impl Compiler {
 
         // Emit: GetGlobal "main", Call 0, Return
         let span = Span::new(0, 0);
-        let name_idx = self
-            .current_chunk()
-            .add_constant(Value::String("main".into()));
+        let name_idx = self.add_constant(Value::String("main".into()), span)?;
         self.current_chunk().emit_op(Op::GetGlobal, span);
         self.current_chunk().emit_u16(name_idx, span);
         self.current_chunk().emit_op(Op::Call, span);
@@ -348,13 +346,11 @@ impl Compiler {
                     upvalues: vec![],
                 });
                 let closure_val = Value::VmClosure(vm_closure);
-                let fi = self.current_chunk().add_constant(closure_val);
+                let fi = self.add_constant(closure_val, span)?;
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(fi, span);
 
-                let name_idx = self
-                    .current_chunk()
-                    .add_constant(Value::String(resolve(fn_decl.name)));
+                let name_idx = self.add_constant(Value::String(resolve(fn_decl.name)), span)?;
                 self.current_chunk().emit_op(Op::SetGlobal, span);
                 self.current_chunk().emit_u16(name_idx, span);
                 self.current_chunk().emit_op(Op::Pop, span);
@@ -373,9 +369,7 @@ impl Compiler {
 
                 match pattern {
                     Pattern::Ident(name) => {
-                        let name_idx = self
-                            .current_chunk()
-                            .add_constant(Value::String(resolve(*name)));
+                        let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -401,31 +395,26 @@ impl Compiler {
                             if arity == 0 {
                                 // Nullary variant: register as a Variant value
                                 let val = Value::Variant(vname.clone(), Vec::new());
-                                let val_idx = self.current_chunk().add_constant(val);
+                                let val_idx = self.add_constant(val, span)?;
                                 self.current_chunk().emit_op(Op::Constant, span);
                                 self.current_chunk().emit_u16(val_idx, span);
                             } else {
                                 // Variant constructor
                                 let val = Value::VariantConstructor(vname.clone(), arity);
-                                let val_idx = self.current_chunk().add_constant(val);
+                                let val_idx = self.add_constant(val, span)?;
                                 self.current_chunk().emit_op(Op::Constant, span);
                                 self.current_chunk().emit_u16(val_idx, span);
                             }
-                            let name_idx = self
-                                .current_chunk()
-                                .add_constant(Value::String(vname.clone()));
+                            let name_idx = self.add_constant(Value::String(vname.clone()), span)?;
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(name_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
 
                             // Register variant -> type mapping for method dispatch.
                             let mapping_key = format!("__type_of__{vname}");
-                            let key_idx = self
-                                .current_chunk()
-                                .add_constant(Value::String(mapping_key));
-                            let type_val_idx = self
-                                .current_chunk()
-                                .add_constant(Value::String(resolve(type_decl.name)));
+                            let key_idx = self.add_constant(Value::String(mapping_key), span)?;
+                            let type_val_idx =
+                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(type_val_idx, span);
                             self.current_chunk().emit_op(Op::SetGlobal, span);
@@ -436,12 +425,11 @@ impl Compiler {
                     crate::ast::TypeBody::Record(fields) => {
                         // Register the record type name as a RecordDescriptor global.
                         let val = Value::RecordDescriptor(resolve(type_decl.name));
-                        let val_idx = self.current_chunk().add_constant(val);
+                        let val_idx = self.add_constant(val, span)?;
                         self.current_chunk().emit_op(Op::Constant, span);
                         self.current_chunk().emit_u16(val_idx, span);
-                        let name_idx = self
-                            .current_chunk()
-                            .add_constant(Value::String(resolve(type_decl.name)));
+                        let name_idx =
+                            self.add_constant(Value::String(resolve(type_decl.name)), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -450,24 +438,21 @@ impl Compiler {
                         // Format: list of alternating [field_name, type_encoding, ...]
                         let field_count = fields.len();
                         for f in fields {
-                            let fname = self
-                                .current_chunk()
-                                .add_constant(Value::String(resolve(f.name)));
+                            let fname = self.add_constant(Value::String(resolve(f.name)), span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(fname, span);
-                            let ftype = self
-                                .current_chunk()
-                                .add_constant(Value::String(encode_type_expr(&f.ty)));
+                            let ftype =
+                                self.add_constant(Value::String(encode_type_expr(&f.ty)), span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(ftype, span);
                         }
                         self.current_chunk().emit_op(Op::MakeList, span);
                         self.current_chunk()
                             .emit_u16((field_count * 2) as u16, span);
-                        let meta_key = self.current_chunk().add_constant(Value::String(format!(
-                            "__record_fields__{}",
-                            type_decl.name
-                        )));
+                        let meta_key = self.add_constant(
+                            Value::String(format!("__record_fields__{}", type_decl.name)),
+                            span,
+                        )?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(meta_key, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -518,13 +503,11 @@ impl Compiler {
                         upvalues: vec![],
                     });
                     let closure_val = Value::VmClosure(vm_closure);
-                    let fi = self.current_chunk().add_constant(closure_val);
+                    let fi = self.add_constant(closure_val, span)?;
                     self.current_chunk().emit_op(Op::Constant, span);
                     self.current_chunk().emit_u16(fi, span);
 
-                    let name_idx = self
-                        .current_chunk()
-                        .add_constant(Value::String(qualified_name));
+                    let name_idx = self.add_constant(Value::String(qualified_name), span)?;
                     self.current_chunk().emit_op(Op::SetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -565,10 +548,10 @@ impl Compiler {
                     for item in items {
                         let item_str = resolve(*item);
                         let qualified = format!("{mod_str}.{item_str}");
-                        let qi = self.current_chunk().add_constant(Value::String(qualified));
+                        let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op(Op::GetGlobal, span);
                         self.current_chunk().emit_u16(qi, span);
-                        let bare_i = self.current_chunk().add_constant(Value::String(item_str));
+                        let bare_i = self.add_constant(Value::String(item_str), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(bare_i, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -582,10 +565,10 @@ impl Compiler {
                 for item in items {
                     let item_str = resolve(*item);
                     let qualified = format!("{mod_str}.{item_str}");
-                    let qi = self.current_chunk().add_constant(Value::String(qualified));
+                    let qi = self.add_constant(Value::String(qualified), span)?;
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(qi, span);
-                    let bare_i = self.current_chunk().add_constant(Value::String(item_str));
+                    let bare_i = self.add_constant(Value::String(item_str), span)?;
                     self.current_chunk().emit_op(Op::SetGlobal, span);
                     self.current_chunk().emit_u16(bare_i, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -604,11 +587,11 @@ impl Compiler {
                         .chain(module::builtin_module_constants(&mod_str));
                     for func in names {
                         let qualified = format!("{mod_str}.{func}");
-                        let qi = self.current_chunk().add_constant(Value::String(qualified));
+                        let qi = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op(Op::GetGlobal, span);
                         self.current_chunk().emit_u16(qi, span);
                         let alias_name = format!("{alias_str}.{func}");
-                        let ai = self.current_chunk().add_constant(Value::String(alias_name));
+                        let ai = self.add_constant(Value::String(alias_name), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(ai, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -621,11 +604,11 @@ impl Compiler {
                 let span = Span::new(0, 0);
                 for name in &public_names {
                     let original = format!("{mod_str}.{name}");
-                    let qi = self.current_chunk().add_constant(Value::String(original));
+                    let qi = self.add_constant(Value::String(original), span)?;
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(qi, span);
                     let alias_name = format!("{alias_str}.{name}");
-                    let ai = self.current_chunk().add_constant(Value::String(alias_name));
+                    let ai = self.add_constant(Value::String(alias_name), span)?;
                     self.current_chunk().emit_op(Op::SetGlobal, span);
                     self.current_chunk().emit_u16(ai, span);
                     self.current_chunk().emit_op(Op::Pop, span);
@@ -768,14 +751,14 @@ impl Compiler {
                         upvalues: vec![],
                     });
                     let closure_val = Value::VmClosure(vm_closure);
-                    let fi = self.current_chunk().add_constant(closure_val);
+                    let fi = self.add_constant(closure_val, span)?;
                     self.current_chunk().emit_op(Op::Constant, span);
                     self.current_chunk().emit_u16(fi, span);
 
                     if public_fns.contains(&fn_decl.name) {
                         // Register as "module_name.fn_name"
                         let qualified = format!("{module_name}.{}", fn_decl.name);
-                        let name_idx = self.current_chunk().add_constant(Value::String(qualified));
+                        let name_idx = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -784,9 +767,7 @@ impl Compiler {
                         // Internal function — still register so closures / calls work,
                         // but under a mangled private name.
                         let private_name = format!("__{module_name}__{}", fn_decl.name);
-                        let name_idx = self
-                            .current_chunk()
-                            .add_constant(Value::String(private_name));
+                        let name_idx = self.add_constant(Value::String(private_name), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         self.current_chunk().emit_op(Op::Pop, span);
@@ -802,14 +783,12 @@ impl Compiler {
                             for variant in variants {
                                 // Copy bare "VariantName" -> "module.VariantName"
                                 let vname = resolve(variant.name);
-                                let bare_idx = self
-                                    .current_chunk()
-                                    .add_constant(Value::String(vname.clone()));
+                                let bare_idx =
+                                    self.add_constant(Value::String(vname.clone()), span)?;
                                 self.current_chunk().emit_op(Op::GetGlobal, span);
                                 self.current_chunk().emit_u16(bare_idx, span);
                                 let qual = format!("{module_name}.{vname}");
-                                let qual_idx =
-                                    self.current_chunk().add_constant(Value::String(qual));
+                                let qual_idx = self.add_constant(Value::String(qual), span)?;
                                 self.current_chunk().emit_op(Op::SetGlobal, span);
                                 self.current_chunk().emit_u16(qual_idx, span);
                                 self.current_chunk().emit_op(Op::Pop, span);
@@ -818,25 +797,24 @@ impl Compiler {
                             // Register the type name itself as a qualified global
                             // (pointing to the type name string for use in `import mod.{ Type }`).
                             let type_val = Value::String(resolve(type_decl.name));
-                            let type_val_idx = self.current_chunk().add_constant(type_val);
+                            let type_val_idx = self.add_constant(type_val, span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(type_val_idx, span);
                             let qual_type = format!("{module_name}.{}", type_decl.name);
                             let qual_type_idx =
-                                self.current_chunk().add_constant(Value::String(qual_type));
+                                self.add_constant(Value::String(qual_type), span)?;
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(qual_type_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
                         }
                         crate::ast::TypeBody::Record(_) => {
                             // Copy bare type name -> "module.TypeName"
-                            let bare_idx = self
-                                .current_chunk()
-                                .add_constant(Value::String(resolve(type_decl.name)));
+                            let bare_idx =
+                                self.add_constant(Value::String(resolve(type_decl.name)), span)?;
                             self.current_chunk().emit_op(Op::GetGlobal, span);
                             self.current_chunk().emit_u16(bare_idx, span);
                             let qual = format!("{module_name}.{}", type_decl.name);
-                            let qual_idx = self.current_chunk().add_constant(Value::String(qual));
+                            let qual_idx = self.add_constant(Value::String(qual), span)?;
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(qual_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);
@@ -928,13 +906,13 @@ impl Compiler {
                 let end_jump = self.current_chunk().emit_jump(Op::Jump, condition.span);
 
                 // Else block: condition was false
-                self.current_chunk().patch_jump(else_jump);
+                self.patch_jump(else_jump, condition.span)?;
                 self.compile_expr(else_body)?;
                 // The else body must diverge (return or panic).
                 // If it doesn't, we just pop its value and continue.
                 self.current_chunk().emit_op(Op::Pop, condition.span);
 
-                self.current_chunk().patch_jump(end_jump);
+                self.patch_jump(end_jump, condition.span)?;
 
                 if is_last {
                     self.current_chunk().emit_op(Op::Unit, condition.span);
@@ -962,13 +940,13 @@ impl Compiler {
 
                 // Pattern didn't match
                 for fj in fail_jumps {
-                    self.current_chunk().patch_jump(fj);
+                    self.patch_jump(fj, span)?;
                 }
                 self.current_chunk().emit_op(Op::Pop, span); // pop scrutinee
                 self.compile_expr(else_body)?;
                 self.current_chunk().emit_op(Op::Pop, span); // pop else result
 
-                self.current_chunk().patch_jump(end_jump);
+                self.patch_jump(end_jump, span)?;
 
                 if is_last {
                     self.current_chunk().emit_op(Op::Unit, span);
@@ -987,13 +965,13 @@ impl Compiler {
 
         match &expr.kind {
             ExprKind::Int(n) => {
-                let idx = self.current_chunk().add_constant(Value::Int(*n));
+                let idx = self.add_constant(Value::Int(*n), span)?;
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(idx, span);
             }
 
             ExprKind::Float(n) => {
-                let idx = self.current_chunk().add_constant(Value::Float(*n));
+                let idx = self.add_constant(Value::Float(*n), span)?;
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(idx, span);
             }
@@ -1007,7 +985,7 @@ impl Compiler {
             }
 
             ExprKind::StringLit(s) => {
-                let idx = self.current_chunk().add_constant(Value::String(s.clone()));
+                let idx = self.add_constant(Value::String(s.clone()), span)?;
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(idx, span);
             }
@@ -1027,7 +1005,7 @@ impl Compiler {
                         // Left was truthy, discard it and evaluate right
                         self.current_chunk().emit_op(Op::Pop, span);
                         self.compile_expr(right)?;
-                        self.current_chunk().patch_jump(jump);
+                        self.patch_jump(jump, span)?;
                     }
                     BinOp::Or => {
                         // Short-circuit: if left is true, skip right
@@ -1038,7 +1016,7 @@ impl Compiler {
                         // Left was falsy, discard it and evaluate right
                         self.current_chunk().emit_op(Op::Pop, span);
                         self.compile_expr(right)?;
-                        self.current_chunk().patch_jump(jump);
+                        self.patch_jump(jump, span)?;
                     }
                     _ => {
                         self.compile_expr(left)?;
@@ -1108,7 +1086,7 @@ impl Compiler {
                             span,
                         });
                     }
-                    let name_idx = self.current_chunk().add_constant(Value::String(name_str));
+                    let name_idx = self.add_constant(Value::String(name_str), span)?;
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -1122,9 +1100,7 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = args.len() as u8;
-                    let name_idx = self
-                        .current_chunk()
-                        .add_constant(Value::String(builtin_name));
+                    let name_idx = self.add_constant(Value::String(builtin_name), span)?;
                     self.current_chunk().emit_op(Op::CallBuiltin, span);
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
@@ -1152,8 +1128,7 @@ impl Compiler {
                             }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
-                            let name_idx =
-                                self.current_chunk().add_constant(Value::String(qualified));
+                            let name_idx = self.add_constant(Value::String(qualified), span)?;
                             self.current_chunk().emit_op(Op::GetGlobal, span);
                             self.current_chunk().emit_u16(name_idx, span);
                             for arg in args {
@@ -1177,9 +1152,8 @@ impl Compiler {
                             self.compile_expr(arg)?;
                         }
                         let argc = (args.len() + 1) as u8; // receiver + args
-                        let method_idx = self
-                            .current_chunk()
-                            .add_constant(Value::String(resolve(*method)));
+                        let method_idx =
+                            self.add_constant(Value::String(resolve(*method)), span)?;
                         self.current_chunk().emit_op(Op::CallMethod, span);
                         self.current_chunk().emit_u16(method_idx, span);
                         self.current_chunk().emit_u8(argc, span);
@@ -1223,7 +1197,7 @@ impl Compiler {
                         }
                         // Module-qualified global: list.map, string.length, etc.
                         let qualified = format!("{name}.{field}");
-                        let name_idx = self.current_chunk().add_constant(Value::String(qualified));
+                        let name_idx = self.add_constant(Value::String(qualified), span)?;
                         self.current_chunk().emit_op(Op::GetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
                         return Ok(());
@@ -1238,7 +1212,7 @@ impl Compiler {
                 } else {
                     // Compile the expression and access field
                     self.compile_expr(expr)?;
-                    let name_idx = self.current_chunk().add_constant(Value::String(field_str));
+                    let name_idx = self.add_constant(Value::String(field_str), span)?;
                     self.current_chunk().emit_op(Op::GetField, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -1249,7 +1223,7 @@ impl Compiler {
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let idx = self.current_chunk().add_constant(Value::String(s.clone()));
+                            let idx = self.add_constant(Value::String(s.clone()), span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(idx, span);
                             count += 1;
@@ -1331,7 +1305,7 @@ impl Compiler {
                     upvalues: vec![],
                 });
                 let closure_val = Value::VmClosure(vm_closure);
-                let fi = self.current_chunk().add_constant(closure_val);
+                let fi = self.add_constant(closure_val, span)?;
 
                 if upvalue_descs.is_empty() {
                     // No upvalues: just push the constant directly.
@@ -1477,16 +1451,12 @@ impl Compiler {
                 for (_, val) in fields {
                     self.compile_expr(val)?;
                 }
-                let type_name_idx = self
-                    .current_chunk()
-                    .add_constant(Value::String(resolve(*name)));
+                let type_name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                 self.current_chunk().emit_op(Op::MakeRecord, span);
                 self.current_chunk().emit_u16(type_name_idx, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
                 for fname in &field_names {
-                    let field_idx = self
-                        .current_chunk()
-                        .add_constant(Value::String(resolve(*fname)));
+                    let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
                     self.current_chunk().emit_u16(field_idx, span);
                 }
             }
@@ -1506,9 +1476,7 @@ impl Compiler {
                 self.current_chunk().emit_op(Op::RecordUpdate, span);
                 self.current_chunk().emit_u8(field_names.len() as u8, span);
                 for fname in &field_names {
-                    let field_idx = self
-                        .current_chunk()
-                        .add_constant(Value::String(resolve(*fname)));
+                    let field_idx = self.add_constant(Value::String(resolve(*fname)), span)?;
                     self.current_chunk().emit_u16(field_idx, span);
                 }
             }
@@ -1555,7 +1523,7 @@ impl Compiler {
                 self.compile_expr(expr)?;
                 let jump = self.current_chunk().emit_jump(Op::NarrowFloat, span);
                 self.compile_expr(fallback)?;
-                self.current_chunk().patch_jump(jump);
+                self.patch_jump(jump, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -1631,17 +1599,18 @@ impl Compiler {
 
             // 9. Patch failure / guard jumps to here (next arm)
             if let Some(gj) = guard_jump {
-                self.current_chunk().patch_jump(gj);
+                self.patch_jump(gj, span)?;
             }
             for fj in fail_jumps {
-                self.current_chunk().patch_jump(fj);
+                self.patch_jump(fj, span)?;
             }
         }
 
         // No arm matched — panic
-        let msg_idx = self
-            .current_chunk()
-            .add_constant(Value::String("non-exhaustive match: no arm matched".into()));
+        let msg_idx = self.add_constant(
+            Value::String("non-exhaustive match: no arm matched".into()),
+            span,
+        )?;
         self.current_chunk().emit_op(Op::Constant, span);
         self.current_chunk().emit_u16(msg_idx, span);
         self.current_chunk().emit_op(Op::Panic, span);
@@ -1650,7 +1619,7 @@ impl Compiler {
 
         // Patch all end jumps to here
         for ej in end_jumps {
-            self.current_chunk().patch_jump(ej);
+            self.patch_jump(ej, span)?;
         }
 
         Ok(())
@@ -1676,7 +1645,7 @@ impl Compiler {
                 let end_jump = self.current_chunk().emit_jump(Op::Jump, span);
                 end_jumps.push(end_jump);
 
-                self.current_chunk().patch_jump(fail_jump);
+                self.patch_jump(fail_jump, span)?;
             } else {
                 // Wildcard / default arm — always matches
                 self.in_tail_position = tail;
@@ -1687,15 +1656,16 @@ impl Compiler {
         }
 
         // No arm matched — panic
-        let msg_idx = self.current_chunk().add_constant(Value::String(
-            "non-exhaustive match: no condition was true".into(),
-        ));
+        let msg_idx = self.add_constant(
+            Value::String("non-exhaustive match: no condition was true".into()),
+            span,
+        )?;
         self.current_chunk().emit_op(Op::Constant, span);
         self.current_chunk().emit_u16(msg_idx, span);
         self.current_chunk().emit_op(Op::Panic, span);
 
         for ej in end_jumps {
-            self.current_chunk().patch_jump(ej);
+            self.patch_jump(ej, span)?;
         }
 
         Ok(())
@@ -1724,9 +1694,7 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = (args.len() + 1) as u8;
-                    let name_idx = self
-                        .current_chunk()
-                        .add_constant(Value::String(builtin_name));
+                    let name_idx = self.add_constant(Value::String(builtin_name), span)?;
                     self.current_chunk().emit_op(Op::CallBuiltin, span);
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
@@ -1884,6 +1852,20 @@ impl Compiler {
 
     fn current_chunk(&mut self) -> &mut Chunk {
         &mut self.ctx_mut().function.chunk
+    }
+
+    /// Add a constant to the current chunk, converting overflow to `CompileError`.
+    fn add_constant(&mut self, value: Value, span: Span) -> Result<u16, CompileError> {
+        self.current_chunk()
+            .add_constant(value)
+            .map_err(|msg| CompileError { message: msg, span })
+    }
+
+    /// Patch a jump in the current chunk, converting overflow to `CompileError`.
+    fn patch_jump(&mut self, patch_offset: usize, span: Span) -> Result<(), CompileError> {
+        self.current_chunk()
+            .patch_jump(patch_offset)
+            .map_err(|msg| CompileError { message: msg, span })
     }
 
     fn begin_scope(&mut self) {
