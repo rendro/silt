@@ -3,6 +3,8 @@
 A delightful language for programmers who've suffered enough. Types without annotations. Threads without locks. Errors without surprises.
 
 ```silt
+import list
+
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -43,6 +45,10 @@ fn eval(expr) {
 Spawn lightweight tasks that run in parallel on a fixed thread pool. Communicate through channels. Every value is immutable, so there are no data races to debug. I/O operations transparently yield to the scheduler — no async/await needed.
 
 ```silt
+import channel
+import list
+import task
+
 fn main() {
   let ch = channel.new(10)
 
@@ -66,6 +72,9 @@ fn main() {
 Every function that can fail returns a Result. The `?` operator propagates errors without nesting. Nothing is thrown or caught.
 
 ```silt
+import io
+import json
+
 fn read_config(path) {
   let content = io.read_file(path)?
   let config = json.parse(Config, content)?

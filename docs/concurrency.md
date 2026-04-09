@@ -385,9 +385,10 @@ channel is closed). For a send, "succeeds" means there is space in the buffer
 (or a receiver is waiting, for rendezvous channels).
 
 If no operation is ready, the task is parked until one of the channels becomes
-ready (via waker-based notification). When all channels are closed,
-it returns `(channel, Closed)`. If no tasks can make progress
-and no channels have data, it detects a deadlock and reports an error.
+ready (via waker-based notification). When it encounters a closed channel
+during its sweep, it returns `(channel, Closed)` for the first closed channel
+found. If no tasks can make progress and no channels have data, it detects a
+deadlock and reports an error.
 
 
 ## 5. Patterns
@@ -564,7 +565,7 @@ fn main() {
       (^urgent, Message(msg)) -> println("URGENT: {msg}")
       (^normal, Message(msg)) -> println("normal: {msg}")
       (_, Closed) -> {
-        println("all channels closed")
+        println("a channel closed")
         return ()
       }
     }

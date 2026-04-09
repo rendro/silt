@@ -44,6 +44,8 @@ files needed):
 | `test`    | `assert`, `assert_eq`, `assert_ne`                           |
 | `channel` | `new`, `send`, `receive`, `close`, `select`, `each`         |
 | `task`    | `spawn`, `join`, `cancel`                                    |
+| `env`     | `get`, `set`                                                 |
+| `math`    | `sqrt`, `pow`, `exp`, `log`, `log10`, `sin`, `cos`, `tan`, `random`, `pi`, `e`, ... |
 | `time`    | `now`, `today`, `date`, `format`, `parse`, `add_days`, `weekday`, `sleep` |
 | `fs`      | `exists`, `is_file`, `is_dir`, `list_dir`, `mkdir`, `remove`, `copy`, `rename` |
 | `http`    | `get`, `request`, `serve`, `segments`                        |

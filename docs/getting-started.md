@@ -113,6 +113,9 @@ fn area(shape) {
 No exceptions. Fallible functions return `Result`. The `?` operator propagates errors:
 
 ```silt
+import io
+import json
+
 fn read_config(path) {
   let content = io.read_file(path)?
   let config = json.parse(Config, content)?
@@ -134,6 +137,8 @@ match read_config("app.json") {
 The `|>` operator passes the left value as the first argument of the right:
 
 ```silt
+import list
+
 [1, 2, 3, 4, 5]
 |> list.filter { n -> n > 2 }
 |> list.map { n -> n * n }
@@ -145,6 +150,9 @@ The `|>` operator passes the left value as the first argument of the right:
 Spawn lightweight tasks that run in parallel. Communicate through channels. I/O inside tasks transparently yields — no async/await.
 
 ```silt
+import channel
+import task
+
 fn main() {
   let ch = channel.new(10)
 
