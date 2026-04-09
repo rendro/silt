@@ -7,6 +7,7 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::value::Value;
 use silt::vm::Vm;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -963,5 +964,228 @@ import result
 fn main() { result.is_err(io.read_file("")) }
         "#),
         Value::Bool(true)
+    );
+}
+
+// ── invoke_callable regression tests ───────────────────────────────
+// These tests exercise various opcodes through the `invoke_callable`
+// path (closures passed to builtins like `list.map`). They serve as
+// regression guards for a subsequent VM dispatch refactor.
+
+/// Test A: QuestionMark (Ok) inside list.map — unwraps Ok values.
+#[test]
+fn test_invoke_callable_question_mark_ok_in_map() {
+    assert_eq!(
+        run(r#"
+import list
+fn try_map() {
+  Ok(list.map([Ok(1), Ok(2), Ok(3)], fn(x) { x? }))
+}
+fn main() {
+  match try_map() {
+    Ok(xs) -> xs
+    Err(e) -> e
+  }
+}
+        "#),
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
+}
+
+/// Test B: QuestionMark (Err) inside list.map — closure early return.
+/// `?` on an Err inside a closure causes early return from the closure,
+/// so `list.map` receives `Err("fail")` as the mapped element result.
+/// The enclosing function `try_map` wraps everything in Ok, and the
+/// match on Ok extracts the list containing the un-propagated Err.
+#[test]
+fn test_invoke_callable_question_mark_err_in_map() {
+    assert_eq!(
+        run(
+            r#"
+import list
+fn try_map() {
+  Ok(list.map([Ok(1), Err("fail"), Ok(3)], fn(x) { x? }))
+}
+fn main() {
+  match try_map() {
+    Ok(xs) -> xs
+    Err(e) -> e
+  }
+}
+        "#,
+        ),
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Variant("Err".into(), vec![Value::String("fail".into())]),
+            Value::Int(3),
+        ]))
+    );
+}
+
+/// Test C: QuestionMark (None) inside a closure — Option variant.
+/// `?` on None inside a closure causes early return from the closure,
+/// so `list.map` receives `None` as the mapped element result.
+/// The enclosing function `try_extract` wraps everything in Some,
+/// and the match on Some extracts the list containing the un-propagated None.
+#[test]
+fn test_invoke_callable_question_mark_none_in_map() {
+    assert_eq!(
+        run(
+            r#"
+import list
+fn try_extract() {
+  Some(list.map([Some(1), None, Some(3)], fn(x) { x? }))
+}
+fn main() {
+  match try_extract() {
+    Some(xs) -> xs
+    None -> "none"
+  }
+}
+        "#,
+        ),
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Variant("None".into(), vec![]),
+            Value::Int(3),
+        ]))
+    );
+}
+
+/// Test D: Panic inside a closure passed to list.map.
+#[test]
+fn test_invoke_callable_panic_in_map() {
+    let err = run_err(
+        r#"
+import list
+fn main() {
+  list.map([1, 2, 3], fn(x) {
+    match x {
+      2 -> panic("boom")
+      n -> n * 10
+    }
+  })
+}
+        "#,
+    );
+    assert!(
+        err.contains("boom"),
+        "expected panic message containing 'boom', got: {err}"
+    );
+}
+
+/// Test E: Nested function call inside a closure passed to a builtin.
+#[test]
+fn test_invoke_callable_nested_fn_call_in_map() {
+    assert_eq!(
+        run(r#"
+import list
+fn double(x) = x * 2
+fn main() {
+  list.map([1, 2, 3], fn(x) { double(x) + 1 })
+}
+        "#),
+        Value::List(Arc::new(vec![Value::Int(3), Value::Int(5), Value::Int(7)]))
+    );
+}
+
+/// Test F: Field access and function call on records inside a closure
+/// passed to a builtin.
+#[test]
+fn test_invoke_callable_field_access_in_map() {
+    assert_eq!(
+        run(r#"
+import list
+type Point { x: Int, y: Int }
+fn sum(p: Point) -> Int = p.x + p.y
+fn main() {
+  let pts = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+  list.map(pts, fn(p) { sum(p) })
+}
+        "#),
+        Value::List(Arc::new(vec![Value::Int(3), Value::Int(7)]))
+    );
+}
+
+/// Test G: Return from nested function called inside closure.
+#[test]
+fn test_invoke_callable_return_in_nested_fn_in_map() {
+    assert_eq!(
+        run(r#"
+import list
+fn maybe_double(x) {
+  match x > 2 {
+    true -> return x * 2
+    false -> x
+  }
+}
+fn main() {
+  list.map([1, 2, 3, 4], fn(x) { maybe_double(x) })
+}
+        "#),
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(6),
+            Value::Int(8),
+        ]))
+    );
+}
+
+/// Test H: Closure-returning-closure inside list.map (MakeClosure inside invoke_callable).
+#[test]
+fn test_invoke_callable_closure_returning_closure_in_map() {
+    assert_eq!(
+        run(r#"
+import list
+fn main() {
+  let adders = list.map([1, 2, 3], fn(n) { fn(x) { x + n } })
+  list.map(adders, fn(f) { f(10) })
+}
+        "#),
+        Value::List(Arc::new(vec![
+            Value::Int(11),
+            Value::Int(12),
+            Value::Int(13),
+        ]))
+    );
+}
+
+/// Test I: map.map through invoke_callable.
+#[test]
+fn test_invoke_callable_map_map() {
+    let result = run(r#"
+import map
+fn main() {
+  let m = #{"a": 1, "b": 2}
+  map.map(m) { k, v -> (k, v * 10) }
+}
+        "#);
+    let mut expected = BTreeMap::new();
+    expected.insert(Value::String("a".into()), Value::Int(10));
+    expected.insert(Value::String("b".into()), Value::Int(20));
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+/// Test J: RecordUpdate inside a closure passed to a builtin.
+#[test]
+fn test_invoke_callable_record_update_in_map() {
+    let result = run(r#"
+import list
+type Config { name: String, value: Int }
+fn main() {
+  let base = Config { name: "base", value: 0 }
+  list.map([1, 2, 3], fn(v) { base.{ value: v } })
+}
+        "#);
+    let make_config = |v: i64| {
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), Value::String("base".into()));
+        fields.insert("value".to_string(), Value::Int(v));
+        Value::Record("Config".to_string(), Arc::new(fields))
+    };
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![make_config(1), make_config(2), make_config(3)]))
     );
 }

@@ -43,7 +43,7 @@ Use `else` to narrow:
 ```silt
 fn main() {
     let angle = math.acos(1.0) else 0.0
-    println(angle)  // 0.0
+    println(angle)  -- 0.0
 }
 ```
 
@@ -60,7 +60,7 @@ Use `else` to narrow:
 ```silt
 fn main() {
     let angle = math.asin(1.0) else 0.0
-    println(angle)  // 1.5707... (pi/2)
+    println(angle)  -- 1.5707... (pi/2)
 }
 ```
 
@@ -75,7 +75,7 @@ Returns the arctangent of `x` in radians.
 
 ```silt
 fn main() {
-    println(math.atan(1.0))  // 0.7853... (pi/4)
+    println(math.atan(1.0))  -- 0.7853... (pi/4)
 }
 ```
 
@@ -91,7 +91,7 @@ Handles all quadrants correctly.
 
 ```silt
 fn main() {
-    println(math.atan2(1.0, 1.0))  // 0.7853... (pi/4)
+    println(math.atan2(1.0, 1.0))  -- 0.7853... (pi/4)
 }
 ```
 
@@ -106,8 +106,8 @@ Returns the cosine of `x` (in radians).
 
 ```silt
 fn main() {
-    println(math.cos(0.0))       // 1.0
-    println(math.cos(math.pi))   // -1.0
+    println(math.cos(0.0))       -- 1.0
+    println(math.cos(math.pi))   -- -1.0
 }
 ```
 
@@ -123,7 +123,7 @@ function.
 
 ```silt
 fn main() {
-    println(math.e)  // 2.718281828459045
+    println(math.e)  -- 2.718281828459045
 }
 ```
 
@@ -140,7 +140,7 @@ Use `else` to narrow:
 ```silt
 fn main() {
     let result = math.exp(1.0) else 0.0
-    println(result)  // 2.718281828459045
+    println(result)  -- 2.718281828459045
 }
 ```
 
@@ -157,7 +157,7 @@ Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
 ```silt
 fn main() {
     let result = math.log(math.e) else 0.0
-    println(result)  // 1.0
+    println(result)  -- 1.0
 }
 ```
 
@@ -174,7 +174,7 @@ Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
 ```silt
 fn main() {
     let result = math.log10(100.0) else 0.0
-    println(result)  // 2.0
+    println(result)  -- 2.0
 }
 ```
 
@@ -207,7 +207,7 @@ Infinity for large results. Use `else` to narrow:
 ```silt
 fn main() {
     let result = math.pow(2.0, 10.0) else 0.0
-    println(result)  // 1024.0
+    println(result)  -- 1024.0
 }
 ```
 
@@ -238,8 +238,8 @@ Returns the sine of `x` (in radians).
 
 ```silt
 fn main() {
-    println(math.sin(0.0))           // 0.0
-    println(math.sin(math.pi / 2.0)) // 1.0
+    println(math.sin(0.0))           -- 0.0
+    println(math.sin(math.pi / 2.0)) -- 1.0
 }
 ```
 
@@ -256,7 +256,7 @@ to narrow:
 ```silt
 fn main() {
     let result = math.sqrt(4.0) else 0.0
-    println(result)  // 2.0
+    println(result)  -- 2.0
 }
 ```
 
@@ -271,7 +271,7 @@ Returns the tangent of `x` (in radians).
 
 ```silt
 fn main() {
-    println(math.tan(0.0))           // 0.0
-    println(math.tan(math.pi / 4.0)) // 1.0 (approximately)
+    println(math.tan(0.0))           -- 0.0
+    println(math.tan(math.pi / 4.0)) -- 1.0 (approximately)
 }
 ```

@@ -112,7 +112,7 @@ fn main() {
 
       let total_len = total_word_length(normalized)
       let avg_len = match word_count > 0 {
-        true -> int.to_float(total_len) / int.to_float(word_count)
+        true -> (int.to_float(total_len) / int.to_float(word_count)) else 0.0
         _ -> 0.0
       }
 

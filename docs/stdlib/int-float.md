@@ -31,8 +31,8 @@ Returns the absolute value. Runtime error if `n` is `Int` minimum
 
 ```silt
 fn main() {
-    println(int.abs(-42))  // 42
-    println(int.abs(7))    // 7
+    println(int.abs(-42))  -- 42
+    println(int.abs(7))    -- 7
 }
 ```
 
@@ -47,7 +47,7 @@ Returns the larger of two integers.
 
 ```silt
 fn main() {
-    println(int.max(3, 7))  // 7
+    println(int.max(3, 7))  -- 7
 }
 ```
 
@@ -62,7 +62,7 @@ Returns the smaller of two integers.
 
 ```silt
 fn main() {
-    println(int.min(3, 7))  // 3
+    println(int.min(3, 7))  -- 3
 }
 ```
 
@@ -97,7 +97,7 @@ Converts an integer to a float.
 ```silt
 fn main() {
     let f = int.to_float(42)
-    println(f)  // 42.0
+    println(f)  -- 42.0
 }
 ```
 
@@ -113,7 +113,7 @@ Converts an integer to its string representation.
 ```silt
 fn main() {
     let s = int.to_string(42)
-    println(s)  // "42"
+    println(s)  -- "42"
 }
 ```
 
@@ -166,7 +166,7 @@ Returns the absolute value.
 
 ```silt
 fn main() {
-    println(float.abs(-3.14))  // 3.14
+    println(float.abs(-3.14))  -- 3.14
 }
 ```
 
@@ -181,8 +181,8 @@ Rounds up to the nearest integer, returned as a Float.
 
 ```silt
 fn main() {
-    println(float.ceil(3.2))   // 4.0
-    println(float.ceil(-3.2))  // -3.0
+    println(float.ceil(3.2))   -- 4.0
+    println(float.ceil(-3.2))  -- -3.0
 }
 ```
 
@@ -197,8 +197,8 @@ Rounds down to the nearest integer, returned as a Float.
 
 ```silt
 fn main() {
-    println(float.floor(3.9))   // 3.0
-    println(float.floor(-3.2))  // -4.0
+    println(float.floor(3.9))   -- 3.0
+    println(float.floor(-3.2))  -- -4.0
 }
 ```
 
@@ -213,7 +213,7 @@ Returns the larger of two floats.
 
 ```silt
 fn main() {
-    println(float.max(1.5, 2.5))  // 2.5
+    println(float.max(1.5, 2.5))  -- 2.5
 }
 ```
 
@@ -228,7 +228,7 @@ Returns the smaller of two floats.
 
 ```silt
 fn main() {
-    println(float.min(1.5, 2.5))  // 1.5
+    println(float.min(1.5, 2.5))  -- 1.5
 }
 ```
 
@@ -263,8 +263,8 @@ Rounds to the nearest integer, returned as a Float. Ties round away from zero.
 
 ```silt
 fn main() {
-    println(float.round(3.6))  // 4.0
-    println(float.round(3.4))  // 3.0
+    println(float.round(3.6))  -- 4.0
+    println(float.round(3.4))  -- 3.0
 }
 ```
 
@@ -280,8 +280,8 @@ Truncates toward zero, converting to an integer. Accepts both `Float` and
 
 ```silt
 fn main() {
-    println(float.to_int(3.9))   // 3
-    println(float.to_int(-3.9))  // -3
+    println(float.to_int(3.9))   -- 3
+    println(float.to_int(-3.9))  -- -3
 }
 ```
 
@@ -297,8 +297,8 @@ Formats a float as a string with exactly `decimals` decimal places. The
 
 ```silt
 fn main() {
-    println(float.to_string(3.14159, 2))  // "3.14"
-    println(float.to_string(42.0, 0))     // "42"
+    println(float.to_string(3.14159, 2))  -- "3.14"
+    println(float.to_string(42.0, 0))     -- "42"
 }
 ```
 

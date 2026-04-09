@@ -1,6 +1,7 @@
 use silt::compiler::Compiler;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
+use silt::types::Severity;
 use silt::value::Value;
 use silt::vm::Vm;
 use std::sync::Arc;
@@ -42,11 +43,62 @@ fn run_err(input: &str) -> String {
     format!("{err}")
 }
 
+/// Like `run`, but asserts that the typechecker produces no hard errors
+/// (warnings are allowed). This catches typechecker regressions that would
+/// incorrectly reject valid code.
+fn run_typed(input: &str) -> Value {
+    let tokens = Lexer::new(input).tokenize().expect("lexer error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let type_errors = silt::typechecker::check(&mut program);
+    let hard_errors: Vec<_> = type_errors
+        .iter()
+        .filter(|e| e.severity == Severity::Error)
+        .collect();
+    assert!(
+        hard_errors.is_empty(),
+        "expected no type errors, got: {:?}",
+        hard_errors
+            .iter()
+            .map(|e| &e.message)
+            .collect::<Vec<_>>()
+    );
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Arc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error")
+}
+
+/// Like `run_ok`, but asserts that the typechecker produces no hard errors.
+#[allow(dead_code)]
+fn run_typed_ok(input: &str) {
+    let tokens = Lexer::new(input).tokenize().expect("lexer error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let type_errors = silt::typechecker::check(&mut program);
+    let hard_errors: Vec<_> = type_errors
+        .iter()
+        .filter(|e| e.severity == Severity::Error)
+        .collect();
+    assert!(
+        hard_errors.is_empty(),
+        "expected no type errors, got: {:?}",
+        hard_errors
+            .iter()
+            .map(|e| &e.message)
+            .collect::<Vec<_>>()
+    );
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Arc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    vm.run(script).expect("runtime error");
+}
+
 // ── Phase 3: Hello World ─────────────────────────────────────────────
 
 #[test]
 fn test_hello_world() {
-    run_ok(
+    run_typed_ok(
         r#"
 fn main() {
   println("hello, world")
@@ -59,7 +111,7 @@ fn main() {
 
 #[test]
 fn test_fizzbuzz_logic() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -92,7 +144,7 @@ fn main() {
 
 #[test]
 fn test_fizzbuzz_with_pipe() {
-    run_ok(
+    run_typed_ok(
         r#"
 import list
 fn fizzbuzz(n) {
@@ -117,7 +169,7 @@ fn main() {
 
 #[test]
 fn test_question_mark_operator() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn process(x) {
   let val = Ok(x)?
   Ok(val * 2)
@@ -135,7 +187,7 @@ fn main() {
 
 #[test]
 fn test_question_mark_propagates_error() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn process(x) {
   let val = Err("oops")?
   Ok(val)
@@ -153,7 +205,7 @@ fn main() {
 
 #[test]
 fn test_when_else() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn safe_div(a, b) {
   when Ok(divisor) = if_nonzero(b) else {
     return Err("division by zero")
@@ -221,7 +273,7 @@ fn main() {
 
 #[test]
 fn test_record_update() {
-    let result = run(r#"
+    let result = run_typed(r#"
 type User {
   name: String,
   age: Int,
@@ -340,7 +392,7 @@ fn main() {
 
 #[test]
 fn test_match_guards() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn classify(n) {
   match n {
     0 -> "zero"
@@ -367,7 +419,7 @@ fn main() {
 
 #[test]
 fn test_fold() {
-    let result = run(r#"
+    let result = run_typed(r#"
 import list
 fn main() {
   [1, 2, 3, 4, 5]
@@ -381,7 +433,7 @@ fn main() {
 
 #[test]
 fn test_nested_closures() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn make_adder(n) {
   fn(x) { x + n }
 }
@@ -398,7 +450,7 @@ fn main() {
 
 #[test]
 fn test_string_interpolation_complex() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn main() {
   let name = "world"
   let n = 42
@@ -415,7 +467,7 @@ fn main() {
 
 #[test]
 fn test_map_literal() {
-    run_ok(
+    run_typed_ok(
         r#"
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
@@ -429,7 +481,7 @@ fn main() {
 
 #[test]
 fn test_single_expr_fn() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn square(x) = x * x
 fn add(a, b) = a + b
 
@@ -444,7 +496,7 @@ fn main() {
 
 #[test]
 fn test_shadowing() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn main() {
   let x = 1
   let x = x + 1
@@ -1058,7 +1110,7 @@ fn main() {
 
 #[test]
 fn test_list_pattern_exact() {
-    let result = run(r#"
+    let result = run_typed(r#"
 fn main() {
   match [1, 2, 3] {
     [a, b, c] -> a + b + c

@@ -2741,6 +2741,3027 @@ impl TypeChecker {
             env.define(intern(day), Scheme::mono(weekday_ty.clone()));
         }
 
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── Register Display (and other builtin traits) for time types ──
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let time_type_names = [
+                "Instant", "Date", "Time", "DateTime", "Duration", "Weekday",
+            ];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![self.fresh_var(), self.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &time_type_names {
+                for trait_name in &all_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
         // ── Function signatures ──────────────────────────────────────
 
         // time.now: () -> Instant

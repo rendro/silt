@@ -21,23 +21,32 @@ fn next_birthday(dob: Date) -> Date {
   let year = today.year
   let this_year = match time.date(year, dob.month, dob.day) {
     Ok(d) -> d
-    Err(_) -> time.date(year, dob.month, 28)?
+    Err(_) -> match time.date(year, dob.month, 28) {
+      Ok(d) -> d
+      Err(_) -> panic("invalid fallback date")
+    }
   }
   match this_year > today || this_year == today {
     true -> this_year
     false -> match time.date(year + 1, dob.month, dob.day) {
       Ok(d) -> d
-      Err(_) -> time.date(year + 1, dob.month, 28)?
+      Err(_) -> match time.date(year + 1, dob.month, 28) {
+        Ok(d) -> d
+        Err(_) -> panic("invalid fallback date")
+      }
     }
   }
 }
 
 fn main() {
-  let people = json.parse_list(Person, """[
+  let people = match json.parse_list(Person, """[
     {"name": "Alice",  "dob": "1990-07-20"},
     {"name": "Bob",    "dob": "1984-02-29"},
     {"name": "Carol",  "dob": "2000-12-25"}
-  ]""")?
+  ]""") {
+    Ok(p) -> p
+    Err(e) -> panic("Failed to parse people: {e}")
+  }
   people
   |> list.each { p ->
     let bday = next_birthday(p.dob)

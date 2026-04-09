@@ -155,6 +155,10 @@ pub struct TypeChecker {
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
     pub(super) active_constraints: HashMap<TyVar, Vec<Symbol>>,
+    /// The expected return type of the enclosing function (if any).
+    pub(super) current_return_type: Option<Type>,
+    /// Maps record type names to their type parameter TyVar ids.
+    pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
 }
 
 impl Default for TypeChecker {
@@ -177,6 +181,8 @@ impl TypeChecker {
             errors: Vec::new(),
             loop_binding_count: None,
             active_constraints: HashMap::new(),
+            current_return_type: None,
+            record_param_var_ids: HashMap::new(),
         }
     }
 
@@ -326,9 +332,46 @@ impl TypeChecker {
                 }
             }
 
-            // Record(name, fields) is compatible with Generic(name, []) when
-            // the Generic refers to a record type with no type params.
+            // Record(name, fields) is compatible with Generic(name, args)
+            (Type::Record(n1, f1), Type::Generic(n2, a2)) if n1 == n2 && !a2.is_empty() => {
+                if let (Some(rec_info), Some(param_var_ids)) = (
+                    self.records.get(n1).cloned(),
+                    self.record_param_var_ids.get(n1).cloned(),
+                ) && param_var_ids.len() == a2.len() {
+                    for (field_name, field_template_ty) in &rec_info.fields {
+                        let substituted = substitute_enum_params(
+                            field_template_ty,
+                            &param_var_ids,
+                            a2,
+                        );
+                        if let Some((_, concrete_ty)) =
+                            f1.iter().find(|(n, _)| n == field_name)
+                        {
+                            self.unify(concrete_ty, &substituted, span);
+                        }
+                    }
+                }
+            }
             (Type::Record(n1, _), Type::Generic(n2, a2)) if n1 == n2 && a2.is_empty() => {}
+            (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
+                if let (Some(rec_info), Some(param_var_ids)) = (
+                    self.records.get(n2).cloned(),
+                    self.record_param_var_ids.get(n2).cloned(),
+                ) && param_var_ids.len() == a1.len() {
+                    for (field_name, field_template_ty) in &rec_info.fields {
+                        let substituted = substitute_enum_params(
+                            field_template_ty,
+                            &param_var_ids,
+                            a1,
+                        );
+                        if let Some((_, concrete_ty)) =
+                            f2.iter().find(|(n, _)| n == field_name)
+                        {
+                            self.unify(concrete_ty, &substituted, span);
+                        }
+                    }
+                }
+            }
             (Type::Generic(n1, a1), Type::Record(n2, _)) if n1 == n2 && a1.is_empty() => {}
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
@@ -694,7 +737,7 @@ impl TypeChecker {
                 if let Pattern::Ident(name) = pattern {
                     env.define(*name, scheme);
                 } else {
-                    self.bind_pattern(pattern, &val_ty, &mut env);
+                    self.bind_pattern(pattern, &val_ty, &mut env, span);
                 }
             }
         }
@@ -890,6 +933,19 @@ impl TypeChecker {
                         (f.name, ty)
                     })
                     .collect();
+
+                // Store param_var_ids for parameterized record types
+                if !td.params.is_empty() {
+                    let var_ids: Vec<TyVar> = td
+                        .params
+                        .iter()
+                        .map(|p| match &param_vars[p] {
+                            Type::Var(v) => *v,
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    self.record_param_var_ids.insert(td.name, var_ids);
+                }
 
                 self.records.insert(
                     td.name,
@@ -2700,7 +2756,7 @@ fn main() {
             r#"
 fn process(result) {
   when Ok(v) = result else {
-    return "error"
+    return 0
   }
   v + 10
 }

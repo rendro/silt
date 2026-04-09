@@ -50,22 +50,33 @@ impl TypeChecker {
         // Bind parameters
         for (i, param) in f.params.iter().enumerate() {
             if let Some(ty) = param_types.get(i) {
-                self.bind_pattern(&param.pattern, ty, &mut local_env);
+                self.bind_pattern(&param.pattern, ty, &mut local_env, f.span);
             }
         }
+
+        // Set the expected return type for return and ? validation
+        let prev_return_type = self.current_return_type.take();
+        self.current_return_type = Some(ret_type.clone());
 
         // Infer the body and unify with declared return type
         let body_type = self.infer_expr(&mut f.body, &mut local_env);
         self.unify(&body_type, &ret_type, f.body.span);
 
-        // Restore previous constraints
+        // Restore previous constraints and return type
+        self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;
     }
 
     // ── Pattern type binding ────────────────────────────────────────
 
     /// Bind names in a pattern to their types in the environment.
-    pub(super) fn bind_pattern(&mut self, pattern: &Pattern, ty: &Type, env: &mut TypeEnv) {
+    pub(super) fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        ty: &Type,
+        env: &mut TypeEnv,
+        span: Span,
+    ) {
         match pattern {
             Pattern::Wildcard => {}
             Pattern::Ident(name) => {
@@ -80,14 +91,14 @@ impl TypeChecker {
                 match &resolved {
                     Type::Tuple(elems) => {
                         for (p, t) in pats.iter().zip(elems.iter()) {
-                            self.bind_pattern(p, t, env);
+                            self.bind_pattern(p, t, env, span);
                         }
                     }
                     _ => {
                         // Create fresh vars for each sub-pattern
                         for p in pats {
                             let tv = self.fresh_var();
-                            self.bind_pattern(p, &tv, env);
+                            self.bind_pattern(p, &tv, env, span);
                         }
                     }
                 }
@@ -112,10 +123,10 @@ impl TypeChecker {
                                 &enum_info.param_var_ids,
                                 &type_args,
                             );
-                            self.bind_pattern(sp, &field_ty, env);
+                            self.bind_pattern(sp, &field_ty, env, span);
                         } else {
                             let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env);
+                            self.bind_pattern(sp, &tv, env, span);
                         }
                     }
                     return;
@@ -123,36 +134,24 @@ impl TypeChecker {
                 // Fallback: report error and bind sub-patterns with fresh vars
                 self.error(
                     format!("undefined constructor '{name}' in pattern"),
-                    Span {
-                        line: 0,
-                        col: 0,
-                        offset: 0,
-                    },
+                    span,
                 );
                 for sp in sub_pats {
                     let tv = self.fresh_var();
-                    self.bind_pattern(sp, &tv, env);
+                    self.bind_pattern(sp, &tv, env, span);
                 }
             }
             Pattern::List(pats, rest) => {
                 let elem_ty = self.fresh_var();
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
-                self.unify(
-                    ty,
-                    &list_ty,
-                    Span {
-                        line: 0,
-                        col: 0,
-                        offset: 0,
-                    },
-                );
+                self.unify(ty, &list_ty, span);
                 let resolved_elem = self.apply(&elem_ty);
                 for p in pats {
-                    self.bind_pattern(p, &resolved_elem, env);
+                    self.bind_pattern(p, &resolved_elem, env, span);
                 }
                 if let Some(rest_pat) = rest {
                     let rest_ty = Type::List(Box::new(resolved_elem));
-                    self.bind_pattern(rest_pat, &rest_ty, env);
+                    self.bind_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
             Pattern::Record { fields, .. } => {
@@ -161,14 +160,14 @@ impl TypeChecker {
                     for (field_name, sub_pat) in fields {
                         if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {
-                                self.bind_pattern(sp, ft, env);
+                                self.bind_pattern(sp, ft, env, span);
                             } else {
                                 // Shorthand: field name is also the binding
                                 env.define(*field_name, Scheme::mono(ft.clone()));
                             }
                         } else if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env);
+                            self.bind_pattern(sp, &tv, env, span);
                         } else {
                             let tv = self.fresh_var();
                             env.define(*field_name, Scheme::mono(tv));
@@ -179,7 +178,7 @@ impl TypeChecker {
                     for (field_name, sub_pat) in fields {
                         if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
-                            self.bind_pattern(sp, &tv, env);
+                            self.bind_pattern(sp, &tv, env, span);
                         } else {
                             let tv = self.fresh_var();
                             env.define(*field_name, Scheme::mono(tv));
@@ -189,47 +188,23 @@ impl TypeChecker {
             }
             Pattern::Or(alts) => {
                 for alt in alts {
-                    self.bind_pattern(alt, ty, env);
+                    self.bind_pattern(alt, ty, env, span);
                 }
             }
             Pattern::Range(_, _) => {
-                self.unify(
-                    ty,
-                    &Type::Int,
-                    Span {
-                        line: 0,
-                        col: 0,
-                        offset: 0,
-                    },
-                );
+                self.unify(ty, &Type::Int, span);
             }
             Pattern::FloatRange(_, _) => {
-                self.unify(
-                    ty,
-                    &Type::Float,
-                    Span {
-                        line: 0,
-                        col: 0,
-                        offset: 0,
-                    },
-                );
+                self.unify(ty, &Type::Float, span);
             }
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
-                self.unify(
-                    ty,
-                    &map_ty,
-                    Span {
-                        line: 0,
-                        col: 0,
-                        offset: 0,
-                    },
-                );
+                self.unify(ty, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);
                 for (_key, pat) in entries {
-                    self.bind_pattern(pat, &resolved_val, env);
+                    self.bind_pattern(pat, &resolved_val, env, span);
                 }
             }
             Pattern::Pin(name) => {
@@ -243,23 +218,11 @@ impl TypeChecker {
                     .or_else(|| env.lookup(*name).cloned());
                 if let Some(scheme) = found {
                     let pinned_ty = self.instantiate(&scheme);
-                    self.unify(
-                        ty,
-                        &pinned_ty,
-                        Span {
-                            line: 0,
-                            col: 0,
-                            offset: 0,
-                        },
-                    );
+                    self.unify(ty, &pinned_ty, span);
                 } else {
                     self.error(
                         format!("undefined variable '{name}' in pin pattern"),
-                        Span {
-                            line: 0,
-                            col: 0,
-                            offset: 0,
-                        },
+                        span,
                     );
                 }
             }
@@ -669,7 +632,23 @@ impl TypeChecker {
                 let operand_span = operand.span;
                 let t = self.infer_expr(operand, env);
                 match op {
-                    UnaryOp::Neg => t,
+                    UnaryOp::Neg => {
+                        let resolved = self.apply(&t);
+                        match &resolved {
+                            Type::Int | Type::Float | Type::ExtFloat => {}
+                            Type::Var(_) => {}
+                            _ => {
+                                self.error(
+                                    format!(
+                                        "unary '-' requires Int, Float, or ExtFloat, got '{}'",
+                                        resolved
+                                    ),
+                                    operand_span,
+                                );
+                            }
+                        }
+                        t
+                    }
                     UnaryOp::Not => {
                         self.unify(&t, &Type::Bool, operand_span);
                         Type::Bool
@@ -801,9 +780,32 @@ impl TypeChecker {
                 // ? operator on Option(a) returns a, propagates None
                 match &inner_ty {
                     Type::Generic(name, args) if *name == intern("Result") && args.len() == 2 => {
+                        if let Some(expected_ret) = self.current_return_type.clone() {
+                            let err_ty = args[1].clone();
+                            let fresh_ok = self.fresh_var();
+                            let expected_result =
+                                Type::Generic(intern("Result"), vec![fresh_ok, err_ty]);
+                            self.unify(&expected_ret, &expected_result, span);
+                        } else {
+                            self.error(
+                                "? operator can only be used inside a function that returns Result or Option".to_string(),
+                                span,
+                            );
+                        }
                         args[0].clone()
                     }
                     Type::Generic(name, args) if *name == intern("Option") && args.len() == 1 => {
+                        if let Some(expected_ret) = self.current_return_type.clone() {
+                            let fresh_inner = self.fresh_var();
+                            let expected_option =
+                                Type::Generic(intern("Option"), vec![fresh_inner]);
+                            self.unify(&expected_ret, &expected_option, span);
+                        } else {
+                            self.error(
+                                "? operator can only be used inside a function that returns Result or Option".to_string(),
+                                span,
+                            );
+                        }
                         args[0].clone()
                     }
                     Type::Var(_) => {
@@ -930,7 +932,7 @@ impl TypeChecker {
                         } else {
                             self.fresh_var()
                         };
-                        self.bind_pattern(&p.pattern, &ty, &mut local_env);
+                        self.bind_pattern(&p.pattern, &ty, &mut local_env, span);
                         ty
                     })
                     .collect();
@@ -1093,8 +1095,13 @@ impl TypeChecker {
             }
 
             ExprKind::Return(maybe_expr) => {
-                if let Some(e) = maybe_expr {
-                    self.infer_expr(e, env);
+                let ret_val_ty = if let Some(e) = maybe_expr {
+                    self.infer_expr(e, env)
+                } else {
+                    Type::Unit
+                };
+                if let Some(expected_ret) = self.current_return_type.clone() {
+                    self.unify(&ret_val_ty, &expected_ret, span);
                 }
                 Type::Never
             }
@@ -1189,7 +1196,7 @@ impl TypeChecker {
                         env.define(*name, scheme);
                     }
                     _ => {
-                        self.bind_pattern(pattern, &val_ty, env);
+                        self.bind_pattern(pattern, &val_ty, env, value_span);
                     }
                 }
 
@@ -1201,13 +1208,14 @@ impl TypeChecker {
                 expr,
                 else_body,
             } => {
+                let expr_span = expr.span;
                 let expr_ty = self.infer_expr(expr, env);
 
                 // Type check the else body
                 let _else_ty = self.infer_expr(else_body, env);
 
                 // Bind the pattern in the current scope (type narrowing)
-                self.bind_pattern(pattern, &expr_ty, env);
+                self.bind_pattern(pattern, &expr_ty, env, expr_span);
 
                 // For constructor patterns, narrow the type
                 // e.g., when Ok(value) = expr, value has the inner type
@@ -1228,7 +1236,7 @@ impl TypeChecker {
                                     &enum_info.param_var_ids,
                                     &type_args,
                                 );
-                                self.bind_pattern(sp, &field_ty, env);
+                                self.bind_pattern(sp, &field_ty, env, expr_span);
                             }
                         }
                     }

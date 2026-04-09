@@ -47,8 +47,8 @@ type User {
 }
 
 fn main() {
-    let json = "{\"name\": \"Alice\", \"age\": 30}"
-    match json.parse(User, json) {
+    let input = "{\"name\": \"Alice\", \"age\": 30}"
+    match json.parse(User, input) {
         Ok(user) -> println(user.name)
         Err(e) -> println("Error: {e}")
     }
@@ -88,8 +88,8 @@ type Point {
 }
 
 fn main() {
-    let json = "[{\"x\": 1, \"y\": 2}, {\"x\": 3, \"y\": 4}]"
-    match json.parse_list(Point, json) {
+    let input = "[{\"x\": 1, \"y\": 2}, {\"x\": 3, \"y\": 4}]"
+    match json.parse_list(Point, input) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
         Err(e) -> println("Error: {e}")
     }
@@ -108,8 +108,8 @@ descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 fn main() {
-    let json = "{\"x\": 10, \"y\": 20}"
-    match json.parse_map(Int, json) {
+    let input = "{\"x\": 10, \"y\": 20}"
+    match json.parse_map(Int, input) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
         Err(e) -> println("Error: {e}")
     }

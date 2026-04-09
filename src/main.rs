@@ -248,6 +248,10 @@ fn main() {
     }
 
     match args[1].as_str() {
+        "--version" | "-V" => {
+            println!("silt {}", env!("CARGO_PKG_VERSION"));
+            process::exit(0);
+        }
         "--help" | "-h" | "help" => {
             eprintln!("silt — a statically-typed, expression-based language");
             eprintln!();
@@ -355,11 +359,38 @@ fn main() {
             silt::repl::run_repl();
         }
         "fmt" => {
-            if args.len() < 3 {
-                eprintln!("Usage: silt fmt <file.silt>");
-                process::exit(1);
+            let mut check_mode = false;
+            let mut files: Vec<String> = Vec::new();
+            for arg in &args[2..] {
+                if arg == "--check" {
+                    check_mode = true;
+                } else {
+                    files.push(arg.clone());
+                }
             }
-            format_file(&args[2]);
+            // If no files given, find all .silt files in the current directory recursively.
+            if files.is_empty() {
+                files = find_silt_files(Path::new("."));
+                if files.is_empty() {
+                    eprintln!("no .silt files found in current directory");
+                    process::exit(1);
+                }
+            }
+            if check_mode {
+                let mut any_unformatted = false;
+                for file in &files {
+                    if !check_format(file) {
+                        any_unformatted = true;
+                    }
+                }
+                if any_unformatted {
+                    process::exit(1);
+                }
+            } else {
+                for file in &files {
+                    format_file(file);
+                }
+            }
         }
         "init" => {
             init_project();
@@ -415,6 +446,53 @@ fn format_file(path: &str) {
             process::exit(1);
         }
     }
+}
+
+/// Check if a file is already formatted. Returns true if it is, false otherwise.
+/// Prints a message for files that would be changed.
+fn check_format(path: &str) -> bool {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            return false;
+        }
+    };
+    match silt::formatter::format(&source) {
+        Ok(formatted) => {
+            if source == formatted {
+                true
+            } else {
+                eprintln!("{path}: not formatted");
+                false
+            }
+        }
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            false
+        }
+    }
+}
+
+/// Recursively find all .silt files in a directory.
+fn find_silt_files(dir: &Path) -> Vec<String> {
+    let mut results = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return results;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            results.extend(find_silt_files(&path));
+        } else {
+            let name = path.to_string_lossy().to_string();
+            if name.ends_with(".silt") {
+                results.push(name);
+            }
+        }
+    }
+    results.sort();
+    results
 }
 
 /// Run a file using the bytecode VM (default path).

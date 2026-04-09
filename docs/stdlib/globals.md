@@ -6,9 +6,9 @@ order: 1
 
 # Globals
 
-Always available. No import or qualification needed.
+## Always Available
 
-## Summary
+No import or qualification needed.
 
 | Name | Signature | Description |
 |------|-----------|-------------|
@@ -19,13 +19,6 @@ Always available. No import or qualification needed.
 | `Err` | `(e) -> Result(a, e)` | Construct an error Result |
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
 | `None` | `Option(a)` | The absent Option value (not a function) |
-| `Stop` | `(a) -> Step(a)` | Signal early termination in `list.fold_until` |
-| `Continue` | `(a) -> Step(a)` | Signal continuation in `list.fold_until` |
-| `Message` | `(a) -> ChannelResult(a)` | Wraps a received channel value |
-| `Closed` | `ChannelResult(a)` | Channel is closed |
-| `Empty` | `ChannelResult(a)` | Channel buffer empty (non-blocking receive) |
-| `Sent` | `ChannelResult(a)` | Value was sent successfully (select send) |
-| `Monday`..`Sunday` | `Weekday` | Day-of-week constructors (require `import time`) |
 
 Additionally, four **type descriptors** are in the global namespace for use with
 `json.parse_map` and similar type-directed APIs:
@@ -36,6 +29,21 @@ Additionally, four **type descriptors** are in the global namespace for use with
 | `Float` | Float type descriptor |
 | `String` | String type descriptor |
 | `Bool` | Boolean type descriptor |
+
+## Available After Import
+
+These constructors become available after importing their respective modules.
+No module qualification is needed once imported.
+
+| Name | Signature | Import | Description |
+|------|-----------|--------|-------------|
+| `Stop` | `(a) -> Step(a)` | `import list` | Signal early termination in `list.fold_until` |
+| `Continue` | `(a) -> Step(a)` | `import list` | Signal continuation in `list.fold_until` |
+| `Message` | `(a) -> ChannelResult(a)` | `import channel` | Wraps a received channel value |
+| `Closed` | `ChannelResult(a)` | `import channel` | Channel is closed |
+| `Empty` | `ChannelResult(a)` | `import channel` | Channel buffer empty (non-blocking receive) |
+| `Sent` | `ChannelResult(a)` | `import channel` | Value was sent successfully (select send) |
+| `Monday`..`Sunday` | `Weekday` | `import time` | Day-of-week constructors |
 
 
 ## `print`

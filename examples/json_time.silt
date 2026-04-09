@@ -20,26 +20,38 @@ type Schedule {
 
 fn main() {
   -- Parse JSON with Date field
-  let event = json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""")?
+  let event = match json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""") {
+    Ok(e) -> e
+    Err(e) -> panic("parse error: {e}")
+  }
   println("event: {event.name}")
   println("date: {event.date}")
   let wd = event.date |> time.weekday
   println("weekday: {wd}")
 
   -- Parse JSON with DateTime field
-  let meeting = json.parse(Meeting, """{"title": "standup", "start": "2024-03-15T09:00:00"}""")?
+  let meeting = match json.parse(Meeting, """{"title": "standup", "start": "2024-03-15T09:00:00"}""") {
+    Ok(m) -> m
+    Err(e) -> panic("parse error: {e}")
+  }
   println("meeting: {meeting.title} at {meeting.start}")
 
   -- Parse JSON with Time field
-  let sched = json.parse(Schedule, """{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""")?
+  let sched = match json.parse(Schedule, """{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""") {
+    Ok(s) -> s
+    Err(e) -> panic("parse error: {e}")
+  }
   println("schedule: {sched.event} on {sched.date} at {sched.time}")
 
   -- Parse a list of events
-  let events = json.parse_list(Event, """[
+  let events = match json.parse_list(Event, """[
     {"name": "alpha", "date": "2024-01-15"},
     {"name": "beta", "date": "2024-06-01"},
     {"name": "gamma", "date": "2024-12-25"}
-  ]""")?
+  ]""") {
+    Ok(e) -> e
+    Err(e) -> panic("parse error: {e}")
+  }
   events |> list.each { e ->
     let day = e.date |> time.weekday
     println("  {e.name}: {e.date} ({day})")
@@ -51,5 +63,8 @@ fn main() {
 
   -- Invalid date in JSON
   let bad = json.parse(Event, """{"name": "oops", "date": "not-a-date"}""")
-  println("bad date: {bad}")
+  match bad {
+    Ok(e) -> println("bad date: parsed as {e.name}")
+    Err(e) -> println("bad date: {e}")
+  }
 }

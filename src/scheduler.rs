@@ -347,6 +347,9 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task) {
             handles.swap_remove(pos);
         }
     }
+    // Clear the stale cancel-cleanup so it won't double-decrement
+    // blocked_tasks when the task completes normally.
+    task.handle.clear_cancel_cleanup();
     let mut queue = inner.run_queue.lock();
     queue.push_back(task);
     inner.condvar.notify_one();

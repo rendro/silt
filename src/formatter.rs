@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
 use crate::lexer::Lexer;
@@ -14,13 +16,23 @@ struct Comment {
     text: String, // the raw comment text including `--` or `{- ... -}`
 }
 
-/// Extract standalone comments from source text.
+/// A trailing comment that shares a line with code (e.g., `let x = 42 -- note`).
+#[derive(Debug, Clone)]
+struct TrailingComment {
+    line: usize,  // 1-based line number
+    text: String, // the comment text including `--` prefix
+}
+
+/// Extract standalone comments and trailing comments from source text.
 ///
 /// A "standalone" comment is one that occupies its own line(s) — the line has
 /// only whitespace before the comment marker and nothing after it (for line
 /// comments) or the block comment starts on its own line.
-fn extract_comments(source: &str) -> Vec<Comment> {
+///
+/// A "trailing" comment shares a line with code (e.g., `let x = 42 -- note`).
+fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
     let mut comments = Vec::new();
+    let mut trailing = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
     let mut i = 0;
     while i < lines.len() {
@@ -85,9 +97,50 @@ fn extract_comments(source: &str) -> Vec<Comment> {
             continue;
         }
 
+        // Check for trailing comment: code followed by ` -- ...`
+        if let Some(comment_text) = extract_trailing_comment_from_line(line) {
+            trailing.push(TrailingComment {
+                line: i + 1, // 1-based
+                text: comment_text,
+            });
+        }
+
         i += 1;
     }
-    comments
+    (comments, trailing)
+}
+
+/// Extract the trailing comment from a line of code, if present.
+/// Skips `--` that appear inside string literals.
+fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
+    let mut in_string = false;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_string {
+            if ch == '\\' {
+                i += 2;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            let comment: String = chars[i..].iter().collect();
+            return Some(comment.trim_end().to_string());
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Get the start line (1-based) of a declaration from its span, if available.
@@ -243,7 +296,7 @@ pub fn format(source: &str) -> Result<String, String> {
 fn format_program_with_comments(program: &Program, source: &str) -> String {
     if program.decls.is_empty() {
         // Even with no declarations, there might be comments
-        let comments = extract_comments(source);
+        let (comments, _trailing) = extract_comments(source);
         if comments.is_empty() {
             return String::from("\n");
         }
@@ -258,9 +311,15 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         return result;
     }
 
-    let comments = extract_comments(source);
+    let (comments, trailing_comments) = extract_comments(source);
     let decl_lines = resolve_decl_lines(&program.decls, source);
     let decl_end_lines = resolve_decl_end_lines(&program.decls, &decl_lines, source);
+
+    // Build a map from original source line number to trailing comment text.
+    let trailing_map: HashMap<usize, String> = trailing_comments
+        .into_iter()
+        .map(|tc| (tc.line, tc.text))
+        .collect();
 
     // Partition comments into:
     // - top-level buckets (between declarations)
@@ -306,7 +365,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         .decls
         .iter()
         .enumerate()
-        .map(|(i, d)| format_decl_with_comments(d, 0, &body_comments[i]))
+        .map(|(i, d)| format_decl_with_comments(d, 0, &body_comments[i], &trailing_map))
         .collect();
 
     // Collect and sort import strings; track which decl indices are imports.
@@ -377,19 +436,26 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     result
 }
 
-fn format_decl_with_comments(decl: &Decl, depth: usize, body_comments: &[&Comment]) -> String {
+fn format_decl_with_comments(
+    decl: &Decl,
+    depth: usize,
+    body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
+) -> String {
     match decl {
-        Decl::Fn(f) => format_fn_with_comments(f, depth, body_comments),
+        Decl::Fn(f) => format_fn_with_comments(f, depth, body_comments, trailing_map),
         Decl::Type(t) => format_type(t, depth),
-        Decl::Trait(t) => format_trait_with_comments(t, depth, body_comments),
-        Decl::TraitImpl(t) => format_trait_impl_with_comments(t, depth, body_comments),
+        Decl::Trait(t) => format_trait_with_comments(t, depth, body_comments, trailing_map),
+        Decl::TraitImpl(t) => {
+            format_trait_impl_with_comments(t, depth, body_comments, trailing_map)
+        }
         Decl::Import(i) => format_import(i, depth),
         Decl::Let {
             pattern,
             ty,
             value,
             is_pub,
-            ..
+            span,
         } => {
             let indent = "  ".repeat(depth);
             let pub_prefix = if *is_pub { "pub " } else { "" };
@@ -400,7 +466,11 @@ fn format_decl_with_comments(decl: &Decl, depth: usize, body_comments: &[&Commen
                 String::new()
             };
             let val = format_expr(value, depth);
-            format!("{indent}{pub_prefix}let {pat}{ty_str} = {val}")
+            let trailing = trailing_map
+                .get(&span.line)
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            format!("{indent}{pub_prefix}let {pat}{ty_str} = {val}{trailing}")
         }
     }
 }
@@ -409,7 +479,12 @@ fn indent(depth: usize) -> String {
     INDENT.repeat(depth)
 }
 
-fn format_fn_with_comments(f: &FnDecl, depth: usize, body_comments: &[&Comment]) -> String {
+fn format_fn_with_comments(
+    f: &FnDecl,
+    depth: usize,
+    body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
+) -> String {
     let prefix = indent(depth);
     let pub_prefix = if f.is_pub { "pub " } else { "" };
     let params = f
@@ -447,14 +522,18 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize, body_comments: &[&Comment])
 
     // Check if body is a simple expression (single-expression function using =)
     if is_simple_body(&f.body) {
+        let trailing = trailing_map
+            .get(&f.span.line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {}{trailing}",
             f.name,
             format_expr(&f.body, depth)
         );
     }
 
-    let body = format_body_with_comments(&f.body, depth, body_comments);
+    let body = format_body_with_comments(&f.body, depth, body_comments, trailing_map);
     format!(
         "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
         f.name
@@ -476,10 +555,15 @@ fn format_param(p: &Param) -> String {
 }
 
 fn format_body(expr: &Expr, depth: usize) -> String {
-    format_body_with_comments(expr, depth, &[])
+    format_body_with_comments(expr, depth, &[], &HashMap::new())
 }
 
-fn format_body_with_comments(expr: &Expr, depth: usize, body_comments: &[&Comment]) -> String {
+fn format_body_with_comments(
+    expr: &Expr,
+    depth: usize,
+    body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
+) -> String {
     match &expr.kind {
         ExprKind::Block(stmts) => {
             if stmts.is_empty() {
@@ -493,7 +577,7 @@ fn format_body_with_comments(expr: &Expr, depth: usize, body_comments: &[&Commen
                         .collect();
                     format!("{{\n{}\n{}}}", comment_strs.join("\n"), indent(depth))
                 }
-            } else if body_comments.is_empty() {
+            } else if body_comments.is_empty() && trailing_map.is_empty() {
                 let inner = stmts
                     .iter()
                     .map(|s| format_stmt(s, depth + 1))
@@ -502,7 +586,8 @@ fn format_body_with_comments(expr: &Expr, depth: usize, body_comments: &[&Commen
                 format!("{{\n{inner}\n{}}}", indent(depth))
             } else {
                 // Interleave comments with statements based on line numbers.
-                let inner = format_stmts_with_comments(stmts, depth + 1, body_comments);
+                let inner =
+                    format_stmts_with_comments(stmts, depth + 1, body_comments, trailing_map);
                 format!("{{\n{inner}\n{}}}", indent(depth))
             }
         }
@@ -519,7 +604,12 @@ fn format_body_with_comments(expr: &Expr, depth: usize, body_comments: &[&Commen
 ///
 /// Comments are placed before the first statement whose source line is greater
 /// than the comment's line. Comments after all statements go at the end.
-fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, body_comments: &[&Comment]) -> String {
+fn format_stmts_with_comments(
+    stmts: &[Stmt],
+    depth: usize,
+    body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
+) -> String {
     let mut result = Vec::new();
     let mut comment_idx = 0;
 
@@ -536,7 +626,13 @@ fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, body_comments: &[&Co
             comment_idx += 1;
         }
 
-        result.push(format_stmt(stmt, depth));
+        let mut formatted = format_stmt(stmt, depth);
+        // Append trailing comment from the original source line, if any.
+        if let Some(tc) = trailing_map.get(&stmt_line) {
+            formatted.push(' ');
+            formatted.push_str(tc);
+        }
+        result.push(formatted);
     }
 
     // Emit any remaining comments after the last statement
@@ -602,12 +698,17 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     }
 }
 
-fn format_trait_with_comments(t: &TraitDecl, depth: usize, body_comments: &[&Comment]) -> String {
+fn format_trait_with_comments(
+    t: &TraitDecl,
+    depth: usize,
+    body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
+) -> String {
     let prefix = indent(depth);
     let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
         .into_iter()
         .zip(t.methods.iter())
-        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc))
+        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc, trailing_map))
         .collect();
     format!(
         "{prefix}trait {} {{\n{}\n{prefix}}}",
@@ -620,12 +721,13 @@ fn format_trait_impl_with_comments(
     t: &TraitImpl,
     depth: usize,
     body_comments: &[&Comment],
+    trailing_map: &HashMap<usize, String>,
 ) -> String {
     let prefix = indent(depth);
     let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
         .into_iter()
         .zip(t.methods.iter())
-        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc))
+        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc, trailing_map))
         .collect();
     format!(
         "{prefix}trait {} for {} {{\n{}\n{prefix}}}",
@@ -1263,7 +1365,7 @@ fn c() = 3
 
     #[test]
     fn test_extract_comments_basic() {
-        let comments = extract_comments("-- hello\nfn foo() = 1\n-- bye");
+        let (comments, _trailing) = extract_comments("-- hello\nfn foo() = 1\n-- bye");
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[0].line, 1);
         assert_eq!(comments[0].text, "-- hello");
@@ -1273,7 +1375,7 @@ fn c() = 3
 
     #[test]
     fn test_extract_block_comment() {
-        let comments = extract_comments("{- block\ncomment -}\nfn foo() = 1");
+        let (comments, _trailing) = extract_comments("{- block\ncomment -}\nfn foo() = 1");
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line, 1);
         assert!(comments[0].text.contains("{- block"));

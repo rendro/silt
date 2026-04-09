@@ -21,7 +21,7 @@ use silt::parser::Parser;
 let mut vm = Vm::new();
 
 // Register a typed function (auto-marshalling)
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
+vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
 
 // Compile and run silt code
 let tokens = Lexer::new("fn main() { double(21) }").tokenize().unwrap();
@@ -46,7 +46,7 @@ vm.register_fn("my_func", |args: &[Value]| -> Result<Value, VmError> {
         return Err(VmError::new("expected Int".into()));
     };
     Ok(Value::Int(n * 2))
-});
+}).unwrap();
 ```
 
 ### Typed registration (auto-marshalling)
@@ -55,12 +55,12 @@ The `register_fn0` through `register_fn3` methods handle argument extraction
 and type checking automatically:
 
 ```rust
-vm.register_fn0("answer", || -> i64 { 42 });
-vm.register_fn1("double", |x: i64| -> i64 { x * 2 });
-vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b });
+vm.register_fn0("answer", || -> i64 { 42 }).unwrap();
+vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
+vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b }).unwrap();
 vm.register_fn3("clamp", |x: i64, lo: i64, hi: i64| -> i64 {
     x.max(lo).min(hi)
-});
+}).unwrap();
 ```
 
 Type mismatches produce clear errors:
@@ -93,7 +93,7 @@ silt types:
 ```rust
 vm.register_fn1("find_user", |id: i64| -> Option<String> {
     if id == 1 { Some("alice".into()) } else { None }
-});
+}).unwrap();
 ```
 
 From silt:
@@ -109,7 +109,7 @@ match find_user(1) {
 ```rust
 vm.register_fn1("parse_int", |s: String| -> Result<i64, String> {
     s.parse::<i64>().map_err(|e| e.to_string())
-});
+}).unwrap();
 ```
 
 From silt:
@@ -123,7 +123,7 @@ Foreign functions work as first-class values. They can be passed to
 `list.map`, `list.filter`, piped with `|>`, and stored in data structures:
 
 ```rust
-vm.register_fn1("square", |x: i64| -> i64 { x * x });
+vm.register_fn1("square", |x: i64| -> i64 { x * x }).unwrap();
 ```
 
 ```silt
@@ -137,7 +137,7 @@ any thread in the task scheduler's pool. This is enforced by the type system:
 
 ```rust
 // This works:
-vm.register_fn1("pure", |x: i64| -> i64 { x * 2 });
+vm.register_fn1("pure", |x: i64| -> i64 { x * 2 }).unwrap();
 
 // This won't compile (captures non-Send state):
 // let cell = std::cell::RefCell::new(0);

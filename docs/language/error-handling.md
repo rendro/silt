@@ -42,7 +42,11 @@ fn parse_config(text) {
   when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
+  let host = host_line |> string.replace("host=", "")
 
+  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
+    return Err("missing port in config")
+  }
   when Ok(port) = port_line |> string.replace("port=", "") |> int.parse() else {
     return Err("invalid port number")
   }

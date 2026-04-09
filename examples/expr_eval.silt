@@ -167,7 +167,7 @@ fn complexity(expr) {
   let d = depth(expr)
   let n = node_count(expr)
   -- Score = nodes * 2^depth, giving exponential weight to deep expressions
-  let score = float.to_int(math.pow(2.0, int.to_float(d))) * n
+  let score = float.to_int(math.pow(2.0, int.to_float(d)) else 0.0) * n
   match {
     d == 0 -> "constant"
     score <= 6 -> "simple"

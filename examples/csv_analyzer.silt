@@ -65,7 +65,7 @@ fn avg(nums) {
   let count = list.length(nums)
   match {
     count == 0 -> 0.0
-    _ -> int.to_float(total) / int.to_float(count)
+    _ -> (int.to_float(total) / int.to_float(count)) else 0.0
   }
 }
 

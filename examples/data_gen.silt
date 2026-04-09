@@ -99,7 +99,7 @@ fn median(nums) {
     0 -> {
       let a = list.get(sorted, mid - 1) |> option.unwrap_or(0.0)
       let b = list.get(sorted, mid) |> option.unwrap_or(0.0)
-      (a + b) / 2.0
+      ((a + b) / 2.0) else 0.0
     }
     _ -> list.get(sorted, mid) |> option.unwrap_or(0.0)
   }
@@ -112,7 +112,7 @@ fn std_deviation(nums) {
     let diff = x - avg
     acc + diff * diff
   }
-  math.sqrt(sum_sq / int.to_float(n))
+  math.sqrt((sum_sq / int.to_float(n)) else 0.0)
 }
 
 -- Histogram: bucket values into ranges and display bars
@@ -122,12 +122,12 @@ fn histogram(label, values, bucket_size) {
   let min_val = list.head(sorted) |> option.unwrap_or(0.0)
   let max_val = list.last(sorted) |> option.unwrap_or(0.0)
 
-  let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size))) * bucket_size
-  let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size))) * bucket_size
+  let min_bucket = float.to_int(float.floor((min_val / int.to_float(bucket_size)) else 0.0)) * bucket_size
+  let max_bucket = float.to_int(float.floor((max_val / int.to_float(bucket_size)) else 0.0)) * bucket_size
 
   -- Build frequency map: bucket_start -> count
   let counts = values |> list.fold(#{}) { acc, v ->
-    let bucket_key = float.to_int(float.floor(v / int.to_float(bucket_size))) * bucket_size
+    let bucket_key = (float.to_int(v) / bucket_size) * bucket_size
     map.update(acc, bucket_key, 0) { n -> n + 1 }
   }
 

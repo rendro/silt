@@ -10,8 +10,10 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
+use crate::ast::{Decl, Pattern};
 use crate::compiler::{CompileError, Compiler};
 use crate::errors::SourceError;
+use crate::intern;
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
 use crate::typechecker;
@@ -129,7 +131,7 @@ pub fn run_repl() {
 
                 let _ = rl.add_history_entry(&input);
 
-                eval_input(&mut vm, &input);
+                eval_input(&mut vm, &input, &names);
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -226,15 +228,15 @@ fn is_declaration(input: &str) -> bool {
 /// Evaluate a single REPL input.  Declarations are compiled and loaded into
 /// the persistent VM.  Expressions are wrapped in a throwaway function,
 /// compiled, and run; the result is printed if it is not Unit.
-fn eval_input(vm: &mut Vm, input: &str) {
+fn eval_input(vm: &mut Vm, input: &str, names: &Rc<RefCell<Vec<String>>>) {
     if is_declaration(input) {
-        eval_declaration(vm, input);
+        eval_declaration(vm, input, names);
     } else {
         eval_expression(vm, input);
     }
 }
 
-fn eval_declaration(vm: &mut Vm, input: &str) {
+fn eval_declaration(vm: &mut Vm, input: &str, names: &Rc<RefCell<Vec<String>>>) {
     let tokens = match Lexer::new(input).tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -286,6 +288,73 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
         } else {
             eprintln!("{e}");
         }
+        return;
+    }
+
+    // After successful evaluation, add newly defined names to the completion list.
+    let mut new_names = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => {
+                new_names.push(intern::resolve(f.name));
+            }
+            Decl::Let { pattern, .. } => {
+                collect_pattern_names(pattern, &mut new_names);
+            }
+            Decl::Type(t) => {
+                new_names.push(intern::resolve(t.name));
+            }
+            Decl::Trait(t) => {
+                new_names.push(intern::resolve(t.name));
+            }
+            _ => {}
+        }
+    }
+    if !new_names.is_empty() {
+        let mut names_ref = names.borrow_mut();
+        for name in new_names {
+            if !names_ref.contains(&name) {
+                names_ref.push(name);
+            }
+        }
+    }
+}
+
+/// Collect bound names from a pattern (for let bindings).
+fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
+    match pattern {
+        Pattern::Ident(sym) => {
+            names.push(intern::resolve(*sym));
+        }
+        Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_names(p, names);
+            }
+        }
+        Pattern::Constructor(_, pats) => {
+            for p in pats {
+                collect_pattern_names(p, names);
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for (field_name, sub) in fields {
+                if let Some(p) = sub {
+                    collect_pattern_names(p, names);
+                } else {
+                    // Shorthand field: `{ x }` binds `x`
+                    names.push(intern::resolve(*field_name));
+                }
+            }
+        }
+        Pattern::List(pats, rest) => {
+            for p in pats {
+                collect_pattern_names(p, names);
+            }
+            if let Some(rest_pat) = rest {
+                collect_pattern_names(rest_pat, names);
+            }
+        }
+        _ => {} // Wildcard, Int, Float, Bool, StringLit, Or, Range, etc.
     }
 }
 
