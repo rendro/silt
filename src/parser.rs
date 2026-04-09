@@ -200,7 +200,7 @@ impl Parser {
                                 is_pub: true,
                                 span,
                             }),
-                            _ => unreachable!(),
+                            _ => unreachable!("parse_let_decl always returns Decl::Let"),
                         }
                     }
                     _ => Err(ParseError {
@@ -895,7 +895,7 @@ impl Parser {
                         Token::Gt => BinOp::Gt,
                         Token::LtEq => BinOp::Leq,
                         Token::GtEq => BinOp::Geq,
-                        _ => unreachable!(),
+                        _ => unreachable!("guarded by Token::Lt | Token::Gt | Token::LtEq | Token::GtEq arm"),
                     };
                     let (l_bp, r_bp) = (50, 51);
                     if l_bp < min_bp {
@@ -935,7 +935,7 @@ impl Parser {
                         Token::Star => BinOp::Mul,
                         Token::Slash => BinOp::Div,
                         Token::Percent => BinOp::Mod,
-                        _ => unreachable!(),
+                        _ => unreachable!("guarded by Token::Star | Token::Slash | Token::Percent arm"),
                     };
                     let (l_bp, r_bp) = (80, 81);
                     if l_bp < min_bp {
