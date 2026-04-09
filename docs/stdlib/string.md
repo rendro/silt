@@ -19,7 +19,7 @@ with `{expr}` interpolation.
 | `ends_with` | `(String, String) -> Bool` | Check suffix |
 | `from` | `(a) -> String` | Convert any value to its display string |
 | `from_char_code` | `(Int) -> String` | Character from Unicode code point |
-| `index_of` | `(String, String) -> Option(Int)` | Byte position of first occurrence |
+| `index_of` | `(String, String) -> Option(Int)` | Character index of first occurrence |
 | `byte_length` | `(String) -> Int` | Length in bytes |
 | `is_alnum` | `(String) -> Bool` | All chars are alphanumeric |
 | `is_alpha` | `(String) -> Bool` | All chars are alphabetic |
@@ -144,8 +144,8 @@ fn main() {
 string.index_of(s: String, needle: String) -> Option(Int)
 ```
 
-Returns `Some(byte_index)` of the first occurrence of `needle` in `s`, or
-`None` if not found.
+Returns `Some(index)` with the character index of the first occurrence of
+`needle` in `s`, or `None` if not found.
 
 ```silt
 fn main() {

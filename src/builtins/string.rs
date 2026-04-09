@@ -183,7 +183,13 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("string.index_of requires strings".into()));
             };
             match s.find(needle.as_str()) {
-                Some(idx) => Ok(Value::Variant("Some".into(), vec![Value::Int(idx as i64)])),
+                Some(byte_pos) => {
+                    let char_pos = s[..byte_pos].chars().count();
+                    Ok(Value::Variant(
+                        "Some".into(),
+                        vec![Value::Int(char_pos as i64)],
+                    ))
+                }
                 None => Ok(Value::Variant("None".into(), Vec::new())),
             }
         }
