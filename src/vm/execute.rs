@@ -158,7 +158,12 @@ impl Vm {
                 Some(Op::GetLocal) => {
                     let slot = self.read_u16()? as usize;
                     let base = self.current_frame()?.base_slot;
-                    let value = self.stack[base + slot].clone();
+                    let value = self.stack.get(base + slot)
+                        .ok_or_else(|| VmError::new(format!(
+                            "stack index out of bounds (slot {slot}, base {base}, stack len {})",
+                            self.stack.len()
+                        )))?
+                        .clone();
                     self.push(value);
                 }
                 Some(Op::SetLocal) => {
@@ -192,7 +197,13 @@ impl Vm {
                 // ── Upvalues ──────────────────────────────────
                 Some(Op::GetUpvalue) => {
                     let index = self.read_u8()? as usize;
-                    let value = self.current_frame()?.closure.upvalues[index].clone();
+                    let upvalues = &self.current_frame()?.closure.upvalues;
+                    let value = upvalues.get(index)
+                        .ok_or_else(|| VmError::new(format!(
+                            "upvalue index {index} out of bounds (count {})",
+                            upvalues.len()
+                        )))?
+                        .clone();
                     self.push(value);
                 }
 
@@ -273,9 +284,20 @@ impl Vm {
                         let index = self.read_u8()? as usize;
                         let val = if is_local {
                             let base = self.current_frame()?.base_slot;
-                            self.stack[base + index].clone()
+                            self.stack.get(base + index)
+                                .ok_or_else(|| VmError::new(format!(
+                                    "closure capture: stack index out of bounds (index {index}, base {base}, stack len {})",
+                                    self.stack.len()
+                                )))?
+                                .clone()
                         } else {
-                            self.current_frame()?.closure.upvalues[index].clone()
+                            let upvalues = &self.current_frame()?.closure.upvalues;
+                            upvalues.get(index)
+                                .ok_or_else(|| VmError::new(format!(
+                                    "closure capture: upvalue index {index} out of bounds (count {})",
+                                    upvalues.len()
+                                )))?
+                                .clone()
                         };
                         upvalues.push(val);
                     }

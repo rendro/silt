@@ -40,6 +40,8 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
     /// Set type: element type.
     Set(Box<Type>),
+    /// Channel type: element type carried through the channel.
+    Channel(Box<Type>),
     /// An error type used to allow inference to continue after errors.
     Error,
     /// A bottom type for expressions that never produce a value (return, panic).
@@ -117,6 +119,7 @@ impl std::fmt::Display for Type {
             }
             Type::Map(k, v) => write!(f, "Map({k}, {v})"),
             Type::Set(inner) => write!(f, "Set({inner})"),
+            Type::Channel(inner) => write!(f, "Channel({inner})"),
             Type::Error => write!(f, "<error>"),
             Type::Never => write!(f, "Never"),
         }
@@ -244,6 +247,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             fvs
         }
         Type::Set(inner) => free_vars_in(inner),
+        Type::Channel(inner) => free_vars_in(inner),
         Type::Int
         | Type::Float
         | Type::ExtFloat
@@ -294,6 +298,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             Box::new(substitute_vars(v, mapping)),
         ),
         Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
+        Type::Channel(inner) => Type::Channel(Box::new(substitute_vars(inner, mapping))),
         _ => ty.clone(),
     }
 }
@@ -337,6 +342,11 @@ pub fn substitute_enum_params(field_ty: &Type, param_names: &[Symbol], type_args
                 .collect();
             Type::Generic(*name, args)
         }
+        Type::Channel(inner) => Type::Channel(Box::new(substitute_enum_params(
+            inner,
+            param_names,
+            type_args,
+        ))),
         _ => field_ty.clone(),
     }
 }

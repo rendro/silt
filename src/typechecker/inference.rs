@@ -1119,6 +1119,7 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
+                let is_value = is_syntactic_value(&value.kind);
                 let val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
@@ -1126,8 +1127,17 @@ impl TypeChecker {
                     self.unify(&val_ty, &declared, value_span);
                 }
 
-                // Generalize for let-polymorphism
-                let scheme = self.generalize(env, &val_ty);
+                // Generalize for let-polymorphism, but apply the value
+                // restriction: only generalize syntactic values (literals,
+                // lambdas, identifiers). Function calls may return types
+                // with mutable state (e.g. channels) that must remain
+                // monomorphic so that the element type is shared across
+                // all uses.
+                let scheme = if is_value {
+                    self.generalize(env, &val_ty)
+                } else {
+                    Scheme::mono(self.apply(&val_ty))
+                };
 
                 // Bind names in the pattern
                 // For let-polymorphism we need to bind with the generalized scheme
@@ -1361,6 +1371,32 @@ impl TypeChecker {
                 }
             }
         }
+    }
+}
+
+/// Returns true if an expression is a syntactic value for the purpose of the
+/// value restriction on let-generalization. Syntactic values (literals,
+/// lambdas, identifiers, constructors of values) are safe to generalize;
+/// function applications are not, because they may produce types with
+/// shared mutable state (e.g. channels) that must remain monomorphic.
+fn is_syntactic_value(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::Lambda { .. } => true,
+        ExprKind::Tuple(elems) => elems.iter().all(|e| is_syntactic_value(&e.kind)),
+        ExprKind::List(elems) => elems.iter().all(|e| match e {
+            ListElem::Single(expr) => is_syntactic_value(&expr.kind),
+            ListElem::Spread(_) => false,
+        }),
+        ExprKind::RecordCreate { fields, .. } => {
+            fields.iter().all(|(_, e)| is_syntactic_value(&e.kind))
+        }
+        _ => false,
     }
 }
 

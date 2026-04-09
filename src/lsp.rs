@@ -722,7 +722,7 @@ fn has_unresolved_vars(ty: &Type) -> bool {
         Type::Fun(params, ret) => {
             params.iter().any(has_unresolved_vars) || has_unresolved_vars(ret)
         }
-        Type::List(inner) | Type::Set(inner) => has_unresolved_vars(inner),
+        Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => has_unresolved_vars(inner),
         Type::Tuple(elems) => elems.iter().any(has_unresolved_vars),
         Type::Record(_, fields) => fields.iter().any(|(_, t)| has_unresolved_vars(t)),
         Type::Variant(_, args) | Type::Generic(_, args) => args.iter().any(has_unresolved_vars),

@@ -96,6 +96,12 @@ impl Compiler {
             }
 
             Pattern::Tuple(pats) => {
+                if pats.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "tuple pattern cannot have more than 255 elements".into(),
+                        span,
+                    });
+                }
                 // Test length
                 self.current_chunk().emit_op(Op::TestTupleLen, span);
                 self.current_chunk().emit_u8(pats.len() as u8, span);
@@ -352,6 +358,12 @@ impl Compiler {
             }
 
             Pattern::Tuple(pats) => {
+                if pats.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "tuple pattern cannot have more than 255 elements".into(),
+                        span,
+                    });
+                }
                 self.compile_compound_bind(
                     pats.iter()
                         .enumerate()
@@ -368,6 +380,12 @@ impl Compiler {
             }
 
             Pattern::List(elements, rest) => {
+                if elements.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "list pattern cannot have more than 255 elements".into(),
+                        span,
+                    });
+                }
                 let mut items: Vec<(BindDestructKind, Pattern)> = elements
                     .iter()
                     .enumerate()

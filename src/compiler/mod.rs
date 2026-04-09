@@ -1352,6 +1352,12 @@ impl Compiler {
             }
 
             ExprKind::Tuple(elems) => {
+                if elems.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "tuple cannot have more than 255 elements".into(),
+                        span,
+                    });
+                }
                 for elem in elems {
                     self.compile_expr(elem)?;
                 }
@@ -1460,6 +1466,12 @@ impl Compiler {
             }
 
             ExprKind::RecordCreate { name, fields } => {
+                if fields.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "record cannot have more than 255 fields".into(),
+                        span,
+                    });
+                }
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 for (_, val) in fields {
@@ -1480,6 +1492,12 @@ impl Compiler {
             }
 
             ExprKind::RecordUpdate { expr, fields } => {
+                if fields.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: "record update cannot have more than 255 fields".into(),
+                        span,
+                    });
+                }
                 self.compile_expr(expr)?;
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 for (_, val) in fields {

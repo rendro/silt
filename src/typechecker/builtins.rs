@@ -2394,43 +2394,44 @@ impl TypeChecker {
     }
 
     fn register_channel_builtins(&mut self, env: &mut TypeEnv) {
-        // channel.new: (Int) -> Channel  (opaque; use fresh var)
+        // channel.new: (Int) -> Channel(a)
         {
-            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.new"),
                 Scheme {
-                    vars: vec![chv],
-                    ty: Type::Fun(vec![Type::Int], Box::new(ch)),
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::Int], Box::new(Type::Channel(Box::new(a)))),
                     constraints: vec![],
                 },
             );
         }
 
-        // channel.send: (Channel, a) -> Unit
+        // channel.send: (Channel(a), a) -> Unit
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.send"),
                 Scheme {
-                    vars: vec![chv, av],
-                    ty: Type::Fun(vec![ch, a], Box::new(Type::Unit)),
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Channel(Box::new(a.clone())), a],
+                        Box::new(Type::Unit),
+                    ),
                     constraints: vec![],
                 },
             );
         }
 
-        // channel.receive: (Channel) -> ChannelResult(a)
+        // channel.receive: (Channel(a)) -> ChannelResult(a)
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.receive"),
                 Scheme {
-                    vars: vec![chv, av],
+                    vars: vec![av],
                     ty: Type::Fun(
-                        vec![ch],
+                        vec![Type::Channel(Box::new(a.clone()))],
                         Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
@@ -2438,43 +2439,44 @@ impl TypeChecker {
             );
         }
 
-        // channel.close: (Channel) -> Unit
+        // channel.close: (Channel(a)) -> Unit
         {
-            let (ch, chv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.close"),
                 Scheme {
-                    vars: vec![chv],
-                    ty: Type::Fun(vec![ch], Box::new(Type::Unit)),
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::Channel(Box::new(a))], Box::new(Type::Unit)),
                     constraints: vec![],
                 },
             );
         }
 
-        // channel.try_send: (Channel, a) -> Bool
+        // channel.try_send: (Channel(a), a) -> Bool
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.try_send"),
                 Scheme {
-                    vars: vec![chv, av],
-                    ty: Type::Fun(vec![ch, a], Box::new(Type::Bool)),
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Channel(Box::new(a.clone())), a],
+                        Box::new(Type::Bool),
+                    ),
                     constraints: vec![],
                 },
             );
         }
 
-        // channel.try_receive: (Channel) -> ChannelResult(a)
+        // channel.try_receive: (Channel(a)) -> ChannelResult(a)
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("channel.try_receive"),
                 Scheme {
-                    vars: vec![chv, av],
+                    vars: vec![av],
                     ty: Type::Fun(
-                        vec![ch],
+                        vec![Type::Channel(Box::new(a.clone()))],
                         Box::new(Type::Generic(intern("ChannelResult"), vec![a])),
                     ),
                     constraints: vec![],
@@ -2482,34 +2484,36 @@ impl TypeChecker {
             );
         }
 
-        // channel.select: (List(Channel)) -> (Channel, a)
+        // channel.select: (List(Channel(a))) -> (Channel(a), a)
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
+            let ch_a = Type::Channel(Box::new(a.clone()));
             env.define(
                 intern("channel.select"),
                 Scheme {
-                    vars: vec![chv, av],
+                    vars: vec![av],
                     ty: Type::Fun(
-                        vec![Type::List(Box::new(ch.clone()))],
-                        Box::new(Type::Tuple(vec![ch, a])),
+                        vec![Type::List(Box::new(ch_a.clone()))],
+                        Box::new(Type::Tuple(vec![ch_a, a])),
                     ),
                     constraints: vec![],
                 },
             );
         }
 
-        // channel.each: (Channel(a), Fn(a) -> b) -> Unit
+        // channel.each: (Channel(a), (a) -> b) -> Unit
         {
-            let (ch, chv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
             env.define(
                 intern("channel.each"),
                 Scheme {
-                    vars: vec![chv, av, bv],
+                    vars: vec![av, bv],
                     ty: Type::Fun(
-                        vec![ch, Type::Fun(vec![a], Box::new(b))],
+                        vec![
+                            Type::Channel(Box::new(a.clone())),
+                            Type::Fun(vec![a], Box::new(b)),
+                        ],
                         Box::new(Type::Unit),
                     ),
                     constraints: vec![],

@@ -220,6 +220,7 @@ impl TypeChecker {
             }
             Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
+            Type::Channel(inner) => Type::Channel(Box::new(self.apply(inner))),
             _ => ty.clone(),
         }
     }
@@ -277,6 +278,10 @@ impl TypeChecker {
             }
 
             (Type::Set(a), Type::Set(b)) => {
+                self.unify(a, b, span);
+            }
+
+            (Type::Channel(a), Type::Channel(b)) => {
                 self.unify(a, b, span);
             }
 
@@ -1265,6 +1270,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Variant(_, args) | Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
+        Type::Channel(inner) => occurs_in(var, inner),
         Type::Int
         | Type::Float
         | Type::ExtFloat
@@ -2571,6 +2577,34 @@ fn main() {
   ch
 }
         "#,
+        );
+    }
+
+    #[test]
+    fn test_channel_send_mixed_types_is_error() {
+        assert_has_error(
+            r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  channel.send(ch, "hello")
+}
+            "#,
+            "type mismatch",
+        );
+    }
+
+    #[test]
+    fn test_channel_receive_constrains_element_type() {
+        assert_no_errors(
+            r#"
+fn main() {
+  let ch = channel.new(10)
+  channel.send(ch, 42)
+  let result = channel.receive(ch)
+  result
+}
+            "#,
         );
     }
 

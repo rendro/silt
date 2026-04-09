@@ -133,7 +133,19 @@ impl IoPool {
         let completion = IoCompletion::new();
         let completion2 = completion.clone();
         let _ = self.sender.lock().send(Box::new(move || {
-            let result = f();
+            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(value) => value,
+                Err(panic) => {
+                    let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "IO task panicked".to_string()
+                    };
+                    Value::Variant("Err".into(), vec![Value::String(msg)])
+                }
+            };
             completion2.complete(result);
         }));
         completion
