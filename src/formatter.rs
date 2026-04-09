@@ -177,8 +177,7 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
         let mut end_line = start;
         let mut found_open = false;
 
-        for line_idx in (start - 1)..source_lines.len() {
-            let line = source_lines[line_idx];
+        for (line_idx, line) in source_lines.iter().enumerate().skip(start - 1) {
             // Skip content inside strings and comments for brace counting
             for ch in line.chars() {
                 if ch == '{' {
