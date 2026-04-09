@@ -322,6 +322,32 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             let f = extract_float(&args[0], "math.exp")?;
             Ok(Value::ExtFloat(f.exp()))
         }
+        "random" => {
+            if !args.is_empty() {
+                return Err(VmError::new("math.random takes 0 arguments".into()));
+            }
+            use std::cell::Cell;
+            use std::time::SystemTime;
+            thread_local! {
+                static RNG_STATE: Cell<u64> = Cell::new({
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(0x12345678_9abcdef0)
+                });
+            }
+            let val = RNG_STATE.with(|state| {
+                let mut s = state.get();
+                // xorshift64
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                state.set(s);
+                // Convert to [0.0, 1.0)
+                (s >> 11) as f64 / ((1u64 << 53) as f64)
+            });
+            Ok(Value::Float(val))
+        }
         _ => Err(VmError::new(format!("unknown math function: {name}"))),
     }
 }

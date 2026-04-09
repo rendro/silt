@@ -8647,3 +8647,125 @@ fn main() { math.asin(1.0) }
         other => panic!("expected ExtFloat, got {other:?}"),
     }
 }
+
+// ── fs: mkdir / remove / rename / copy ───────────────────────────
+
+#[test]
+fn test_fs_mkdir_and_remove() {
+    let result = run(r#"
+import fs
+fn main() {
+    let dir = "/tmp/silt_test_mkdir_42"
+    let r = fs.mkdir(dir)
+    let exists = fs.is_dir(dir)
+    let _ = fs.remove(dir)
+    let gone = fs.is_dir(dir)
+    (exists, gone)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_fs_rename() {
+    let result = run(r#"
+import fs
+import io
+fn main() {
+    let _ = io.write_file("/tmp/silt_test_rename_src.txt", "hello")
+    let r = fs.rename("/tmp/silt_test_rename_src.txt", "/tmp/silt_test_rename_dst.txt")
+    let exists_dst = fs.exists("/tmp/silt_test_rename_dst.txt")
+    let exists_src = fs.exists("/tmp/silt_test_rename_src.txt")
+    let _ = fs.remove("/tmp/silt_test_rename_dst.txt")
+    (exists_dst, exists_src)
+}
+    "#);
+    assert_eq!(result, Value::Tuple(vec![Value::Bool(true), Value::Bool(false)]));
+}
+
+#[test]
+fn test_fs_copy() {
+    let result = run(r#"
+import fs
+import io
+fn main() {
+    let _ = io.write_file("/tmp/silt_test_copy_src.txt", "data")
+    let _ = fs.copy("/tmp/silt_test_copy_src.txt", "/tmp/silt_test_copy_dst.txt")
+    let content = io.read_file("/tmp/silt_test_copy_dst.txt")
+    let _ = fs.remove("/tmp/silt_test_copy_src.txt")
+    let _ = fs.remove("/tmp/silt_test_copy_dst.txt")
+    content
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Ok".into(), vec![Value::String("data".into())])
+    );
+}
+
+#[test]
+fn test_fs_remove_nonexistent_returns_err() {
+    let result = run(r#"
+import fs
+fn main() {
+    fs.remove("/tmp/silt_test_nonexistent_file_that_does_not_exist")
+}
+    "#);
+    match result {
+        Value::Variant(tag, _) => assert_eq!(tag, "Err"),
+        other => panic!("expected Err variant, got {other:?}"),
+    }
+}
+
+// ── env: get / set ───────────────────────────────────────────────
+
+#[test]
+fn test_env_get_missing() {
+    let result = run(r#"
+import env
+fn main() { env.get("SILT_TEST_NONEXISTENT_VAR_12345") }
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), vec![]));
+}
+
+#[test]
+fn test_env_set_and_get() {
+    let result = run(r#"
+import env
+fn main() {
+    env.set("SILT_TEST_VAR_SET", "hello_silt")
+    env.get("SILT_TEST_VAR_SET")
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("hello_silt".into())])
+    );
+}
+
+// ── math.random ──────────────────────────────────────────────────
+
+#[test]
+fn test_math_random_range() {
+    let result = run(r#"
+import math
+fn main() {
+    let r = math.random()
+    r >= 0.0 && r < 1.0
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_math_random_not_constant() {
+    let result = run(r#"
+import math
+fn main() {
+    let a = math.random()
+    let b = math.random()
+    a != b
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}

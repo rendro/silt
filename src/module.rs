@@ -3,7 +3,7 @@
 /// in the global environment rather than loaded from files.
 pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
-    "regex", "json", "set", "math", "time", "http", "fs",
+    "regex", "json", "set", "math", "time", "http", "fs", "env",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -144,7 +144,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "test" => vec!["assert", "assert_eq", "assert_ne"],
         "math" => vec![
             "sqrt", "pow", "log", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-            "exp",
+            "exp", "random",
         ],
         "regex" => vec![
             "is_match",
@@ -216,7 +216,8 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "sleep",
         ],
         "http" => vec!["get", "request", "serve", "segments"],
-        "fs" => vec!["exists", "is_file", "is_dir", "list_dir"],
+        "fs" => vec!["exists", "is_file", "is_dir", "list_dir", "mkdir", "remove", "rename", "copy"],
+        "env" => vec!["get", "set"],
         _ => vec![],
     }
 }

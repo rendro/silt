@@ -2105,4 +2105,348 @@ mod tests {
         let ty = find_type_at_offset(&program, 13); // offset of "42"
         assert_eq!(ty, Some(Type::Int));
     }
+
+    // ── find_type_at_offset: richer expressions ──────────────────
+
+    #[test]
+    fn test_find_type_at_offset_string() {
+        let source = r#"fn main() { "hello" }"#;
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        let ty = find_type_at_offset(&program, 13);
+        assert_eq!(ty, Some(Type::String));
+    }
+
+    #[test]
+    fn test_find_type_at_offset_bool() {
+        let source = "fn main() { true }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        let ty = find_type_at_offset(&program, 13);
+        assert_eq!(ty, Some(Type::Bool));
+    }
+
+    #[test]
+    fn test_find_type_at_offset_binary_expr() {
+        let source = "fn main() { 1 + 2 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        // The whole binary expression should be Int
+        let ty = find_type_at_offset(&program, 13);
+        assert_eq!(ty, Some(Type::Int));
+    }
+
+    #[test]
+    fn test_find_type_at_offset_list() {
+        // The `[` at offset 12 is the list start; offset 13 lands on element `1`
+        // which is the deepest expression and has type Int.
+        // Use the bracket offset to find the list type.
+        let source = "fn main() { [1, 2, 3] }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        let ty = find_type_at_offset(&program, 12);
+        assert_eq!(ty, Some(Type::List(Box::new(Type::Int))));
+    }
+
+    // ── find_ident_at_offset ─────────────────────────────────────
+
+    fn parse_and_check(source: &str) -> Program {
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        program
+    }
+
+    #[test]
+    fn test_find_ident_at_offset_param() {
+        let source = "fn add(x, y) { x + y }";
+        let program = parse_and_check(source);
+
+        // 'x' at offset 15 (inside the body)
+        let name = find_ident_at_offset(&program, 15);
+        assert_eq!(name, Some(intern("x")));
+    }
+
+    #[test]
+    fn test_find_ident_at_offset_second_param() {
+        let source = "fn add(x, y) { x + y }";
+        let program = parse_and_check(source);
+
+        // 'y' at offset 19
+        let name = find_ident_at_offset(&program, 19);
+        assert_eq!(name, Some(intern("y")));
+    }
+
+    #[test]
+    fn test_find_ident_at_offset_none() {
+        let source = "fn main() { 42 }";
+        let program = parse_and_check(source);
+
+        // offset 13 is the literal 42, not an ident
+        let name = find_ident_at_offset(&program, 13);
+        assert_eq!(name, None);
+    }
+
+    // ── locals_at_offset ─────────────────────────────────────────
+
+    #[test]
+    fn test_locals_at_offset_params() {
+        let source = "fn greet(name, age) { name }";
+        let program = parse_and_check(source);
+
+        let locals = locals_at_offset(&program, 22); // inside body
+        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
+        assert!(names.contains(&"name"), "should contain param 'name'");
+        assert!(names.contains(&"age"), "should contain param 'age'");
+    }
+
+    #[test]
+    fn test_locals_at_offset_let_binding() {
+        let source = "fn main() {\n  let x = 10\n  let y = 20\n  x + y\n}";
+        let program = parse_and_check(source);
+
+        // After both let bindings
+        let locals = locals_at_offset(&program, 40);
+        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
+        assert!(names.contains(&"x"), "should contain 'x'");
+        assert!(names.contains(&"y"), "should contain 'y'");
+    }
+
+    #[test]
+    fn test_locals_at_offset_empty_outside_fn() {
+        let source = "let x = 42\nfn main() { 0 }";
+        let program = parse_and_check(source);
+
+        // Outside any function (offset 0)
+        let locals = locals_at_offset(&program, 0);
+        assert!(locals.is_empty(), "no locals outside functions");
+    }
+
+    // ── build_definitions: traits and let bindings ────────────────
+
+    #[test]
+    fn test_build_definitions_trait() {
+        let source = "trait Printable {\n  fn show(self) -> String\n}\nfn main() { 0 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        let defs = build_definitions(&program);
+
+        assert!(
+            defs.contains_key(&intern("Printable")),
+            "should have trait 'Printable'"
+        );
+    }
+
+    #[test]
+    fn test_build_definitions_let_type() {
+        let source = "let x = 42\nfn main() { x }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        let defs = build_definitions(&program);
+
+        let def = defs.get(&intern("x")).expect("should have 'x'");
+        assert_eq!(def.ty, Some(Type::Int));
+    }
+
+    // ── build_signature_from_def ─────────────────────────────────
+
+    #[test]
+    fn test_build_signature_simple() {
+        let def = DefInfo {
+            span: Span {
+                line: 1,
+                col: 1,
+                offset: 0,
+            },
+            ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
+            params: vec!["a".into(), "b".into()],
+        };
+        let (label, params) = build_signature_from_def("add", &def);
+        assert!(label.starts_with("fn add("));
+        assert!(label.contains("-> Int"));
+        assert_eq!(params.len(), 2);
+    }
+
+    #[test]
+    fn test_build_signature_no_type() {
+        let def = DefInfo {
+            span: Span {
+                line: 1,
+                col: 1,
+                offset: 0,
+            },
+            ty: None,
+            params: vec!["x".into(), "y".into()],
+        };
+        let (label, params) = build_signature_from_def("foo", &def);
+        assert_eq!(label, "fn foo(x, y)");
+        assert_eq!(params.len(), 2);
+    }
+
+    // ── document_symbols via build_definitions ────────────────────
+
+    #[test]
+    fn test_build_definitions_enum_variants() {
+        let source = "type Shape {\n  Circle(Float),\n  Rect(Float, Float),\n}\nfn main() { 0 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        let defs = build_definitions(&program);
+
+        assert!(defs.contains_key(&intern("Shape")));
+        assert!(defs.contains_key(&intern("Circle")));
+        assert!(defs.contains_key(&intern("Rect")));
+    }
+
+    #[test]
+    fn test_build_definitions_multiple_functions() {
+        let source = "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { 0 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+        let defs = build_definitions(&program);
+
+        assert!(defs.contains_key(&intern("add")));
+        assert!(defs.contains_key(&intern("sub")));
+        let add = defs.get(&intern("add")).unwrap();
+        assert_eq!(add.params, vec!["a", "b"]);
+        // Type should be (Int, Int) -> Int after inference
+        assert!(add.ty.is_some());
+    }
+
+    // ── get_field_type: nested records ────────────────────────────
+
+    #[test]
+    fn test_get_field_type_missing_field() {
+        let ty = Type::Record(
+            crate::intern::intern("Point"),
+            vec![
+                (crate::intern::intern("x"), Type::Float),
+                (crate::intern::intern("y"), Type::Float),
+            ],
+        );
+        assert_eq!(
+            get_field_type(&ty, crate::intern::intern("x")),
+            Some(Type::Float)
+        );
+        assert_eq!(get_field_type(&ty, crate::intern::intern("z")), None);
+    }
+
+    #[test]
+    fn test_get_field_type_non_record() {
+        assert_eq!(get_field_type(&Type::Int, crate::intern::intern("x")), None);
+        assert_eq!(
+            get_field_type(&Type::String, crate::intern::intern("length")),
+            None
+        );
+    }
+
+    // ── has_unresolved_vars: function types ───────────────────────
+
+    #[test]
+    fn test_has_unresolved_vars_in_return_type() {
+        let ty = Type::Fun(vec![Type::Int], Box::new(Type::Var(5)));
+        assert!(has_unresolved_vars(&ty));
+    }
+
+    #[test]
+    fn test_has_unresolved_vars_tuple() {
+        assert!(!has_unresolved_vars(&Type::Tuple(vec![
+            Type::Int,
+            Type::String
+        ])));
+        assert!(has_unresolved_vars(&Type::Tuple(vec![
+            Type::Int,
+            Type::Var(0)
+        ])));
+    }
+
+    // ── position_to_offset: UTF-16 handling ──────────────────────
+
+    #[test]
+    fn test_position_to_offset_empty_source() {
+        let source = "";
+        let pos = Position::new(0, 0);
+        assert_eq!(position_to_offset(source, &pos), 0);
+    }
+
+    #[test]
+    fn test_position_to_offset_multiline() {
+        let source = "abc\ndef\nghi";
+        // line 2, col 1 → 'h' at offset 8
+        let pos = Position::new(2, 1);
+        assert_eq!(position_to_offset(source, &pos), 9);
+    }
+
+    // ── span_to_range ────────────────────────────────────────────
+
+    #[test]
+    fn test_span_to_range() {
+        let span = Span {
+            line: 3,
+            col: 5,
+            offset: 0,
+        };
+        let range = span_to_range(&span);
+        assert_eq!(range.start.line, 2);
+        assert_eq!(range.start.character, 4);
+        assert_eq!(range.end.line, 2);
+        assert_eq!(range.end.character, 5);
+    }
+
+    // ── find_type_at_offset: let bindings ────────────────────────
+
+    #[test]
+    fn test_find_type_at_offset_in_let() {
+        let source = "fn main() {\n  let x = 42\n  x\n}";
+        let program = parse_and_check(source);
+
+        // 'x' in the last expression (offset 27)
+        let ty = find_type_at_offset(&program, 27);
+        assert_eq!(ty, Some(Type::Int));
+    }
+
+    // ── build_fn_type ────────────────────────────────────────────
+
+    #[test]
+    fn test_build_fn_type_simple() {
+        let source = "fn double(n) { n * 2 }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (mut program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+        let _ = crate::typechecker::check(&mut program);
+
+        if let Decl::Fn(f) = &program.decls[0] {
+            let ty = build_fn_type(f);
+            assert_eq!(
+                ty,
+                Some(Type::Fun(vec![Type::Int], Box::new(Type::Int)))
+            );
+        } else {
+            panic!("expected Fn decl");
+        }
+    }
+
+    #[test]
+    fn test_fn_param_names() {
+        let source = "fn add(x, y) { x + y }";
+        let tokens = crate::lexer::Lexer::new(source).tokenize().unwrap();
+        let (program, _) = crate::parser::Parser::new(tokens).parse_program_recovering();
+
+        if let Decl::Fn(f) = &program.decls[0] {
+            let names = fn_param_names(f);
+            assert_eq!(names, vec!["x", "y"]);
+        } else {
+            panic!("expected Fn decl");
+        }
+    }
 }

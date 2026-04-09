@@ -230,6 +230,109 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Err(e) => Err(VmError::new(format!("fs.list_dir: {e}"))),
             }
         }
+        "mkdir" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.mkdir takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.mkdir requires a string path".into()));
+            };
+            match std::fs::create_dir_all(path) {
+                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(e.to_string())],
+                )),
+            }
+        }
+        "remove" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.remove takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.remove requires a string path".into()));
+            };
+            let p = std::path::Path::new(path);
+            let result = if p.is_dir() {
+                std::fs::remove_dir(p)
+            } else {
+                std::fs::remove_file(p)
+            };
+            match result {
+                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(e.to_string())],
+                )),
+            }
+        }
+        "rename" => {
+            if args.len() != 2 {
+                return Err(VmError::new("fs.rename takes 2 arguments".into()));
+            }
+            let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
+                return Err(VmError::new(
+                    "fs.rename requires string arguments".into(),
+                ));
+            };
+            match std::fs::rename(from, to) {
+                Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(e.to_string())],
+                )),
+            }
+        }
+        "copy" => {
+            if args.len() != 2 {
+                return Err(VmError::new("fs.copy takes 2 arguments".into()));
+            }
+            let (Value::String(from), Value::String(to)) = (&args[0], &args[1]) else {
+                return Err(VmError::new(
+                    "fs.copy requires string arguments".into(),
+                ));
+            };
+            match std::fs::copy(from, to) {
+                Ok(_) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(e.to_string())],
+                )),
+            }
+        }
         _ => Err(VmError::new(format!("unknown fs function: {name}"))),
+    }
+}
+
+/// Dispatch `env.<name>(args)`.
+pub fn call_env(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "get" => {
+            if args.len() != 1 {
+                return Err(VmError::new("env.get takes 1 argument".into()));
+            }
+            let Value::String(key) = &args[0] else {
+                return Err(VmError::new("env.get requires a string key".into()));
+            };
+            match std::env::var(key) {
+                Ok(val) => Ok(Value::Variant("Some".into(), vec![Value::String(val)])),
+                Err(_) => Ok(Value::Variant("None".into(), vec![])),
+            }
+        }
+        "set" => {
+            if args.len() != 2 {
+                return Err(VmError::new("env.set takes 2 arguments".into()));
+            }
+            let (Value::String(key), Value::String(val)) = (&args[0], &args[1]) else {
+                return Err(VmError::new(
+                    "env.set requires string arguments".into(),
+                ));
+            };
+            // SAFETY: Silt is single-threaded at the env-access level; no other
+            // thread inspects the environment concurrently.
+            unsafe { std::env::set_var(key, val) };
+            Ok(Value::Unit)
+        }
+        _ => Err(VmError::new(format!("unknown env function: {name}"))),
     }
 }

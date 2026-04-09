@@ -525,6 +525,7 @@ impl TypeChecker {
         self.register_option_builtins(env);
         self.register_io_builtins(env);
         self.register_fs_builtins(env);
+        self.register_env_builtins(env);
         self.register_test_builtins(env);
         self.register_math_builtins(env);
         self.register_channel_builtins(env);
@@ -2287,10 +2288,58 @@ impl TypeChecker {
     }
 
     fn register_fs_builtins(&mut self, env: &mut TypeEnv) {
-        // fs.exists: (String) -> Bool
+        // fs.exists / fs.is_file / fs.is_dir: (String) -> Bool
+        let string_to_bool =
+            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool)));
+        for name in &["fs.exists", "fs.is_file", "fs.is_dir"] {
+            env.define(intern(name), string_to_bool.clone());
+        }
+
+        // fs.list_dir: (String) -> List(String)
         env.define(
-            intern("fs.exists"),
-            Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::Bool))),
+            intern("fs.list_dir"),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        );
+
+        // fs.mkdir / fs.remove: (String) -> Result(Unit, String)
+        let string_to_result = Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Generic(intern("Result"), vec![Type::Unit, Type::String])),
+        ));
+        for name in &["fs.mkdir", "fs.remove"] {
+            env.define(intern(name), string_to_result.clone());
+        }
+
+        // fs.rename / fs.copy: (String, String) -> Result(Unit, String)
+        let ss_to_result = Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic(intern("Result"), vec![Type::Unit, Type::String])),
+        ));
+        for name in &["fs.rename", "fs.copy"] {
+            env.define(intern(name), ss_to_result.clone());
+        }
+    }
+
+    fn register_env_builtins(&mut self, env: &mut TypeEnv) {
+        // env.get: (String) -> Option(String)
+        env.define(
+            intern("env.get"),
+            Scheme::mono(Type::Fun(
+                vec![Type::String],
+                Box::new(Type::Generic(intern("Option"), vec![Type::String])),
+            )),
+        );
+
+        // env.set: (String, String) -> Unit
+        env.define(
+            intern("env.set"),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Unit),
+            )),
         );
     }
 
@@ -2378,6 +2427,12 @@ impl TypeChecker {
             ));
             env.define(intern("math.atan2"), ff_to_f);
         }
+
+        // math.random: () -> Float
+        env.define(
+            intern("math.random"),
+            Scheme::mono(Type::Fun(vec![], Box::new(Type::Float))),
+        );
 
         // Math constants
         env.define(intern("math.pi"), Scheme::mono(Type::Float));
