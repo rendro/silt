@@ -371,7 +371,7 @@ fn eval_expression(vm: &mut Vm, input: &str) {
             return;
         }
     };
-    let program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
             let adjusted = adjust_error_span_parse(&e, wrapper_prefix.len());
@@ -380,6 +380,21 @@ fn eval_expression(vm: &mut Vm, input: &str) {
             return;
         }
     };
+
+    // Type-check before compiling so that type-incorrect expressions are
+    // rejected immediately instead of producing confusing runtime errors.
+    let type_errors = typechecker::check(&mut program);
+    for te in &type_errors {
+        let adjusted = adjust_error_span_type(te, wrapper_prefix.len());
+        let source_err = SourceError::from_type_error(&adjusted, input, "<repl>");
+        eprintln!("{source_err}");
+    }
+    if type_errors
+        .iter()
+        .any(|e| e.severity == typechecker::Severity::Error)
+    {
+        return;
+    }
 
     // Use compile_program which emits GetGlobal "main"; Call 0; Return
     let mut compiler = Compiler::new();
@@ -442,6 +457,14 @@ fn adjust_error_span_compile(e: &CompileError, prefix_len: usize) -> CompileErro
     CompileError {
         message: e.message.clone(),
         span: adjust_span(e.span, prefix_len),
+    }
+}
+
+fn adjust_error_span_type(e: &typechecker::TypeError, prefix_len: usize) -> typechecker::TypeError {
+    typechecker::TypeError {
+        message: e.message.clone(),
+        span: adjust_span(e.span, prefix_len),
+        severity: e.severity.clone(),
     }
 }
 
