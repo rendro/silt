@@ -506,6 +506,7 @@ mod tests {
         );
     }
 
+    #[allow(dead_code)]
     fn assert_has_error(input: &str, expected: &str) {
         let errors = check_errors(input);
         assert!(

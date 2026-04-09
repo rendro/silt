@@ -225,10 +225,10 @@ fn test_jump_if_false() {
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(one, span());
         let skip_else = chunk.emit_jump(Op::Jump, span());
-        chunk.patch_jump(patch);
+        let _ = chunk.patch_jump(patch);
         chunk.emit_op(Op::Constant, span());
         chunk.emit_u16(two, span());
-        chunk.patch_jump(skip_else);
+        let _ = chunk.patch_jump(skip_else);
         chunk.emit_op(Op::Return, span());
     });
     let mut vm = Vm::new();
