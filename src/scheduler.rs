@@ -14,6 +14,9 @@ use std::time::Duration;
 use crate::value::{TaskHandle, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
+/// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
+const MAX_TASKS: usize = 100_000;
+
 /// Result of running a task's VM for one time slice.
 pub enum SliceResult {
     /// Time slice expired; task is still runnable.
@@ -107,12 +110,22 @@ impl Scheduler {
     }
 
     /// Submit a runnable task to the scheduler.
-    pub fn submit(&self, task: Task) {
+    ///
+    /// Returns an error if the live-task count has reached [`MAX_TASKS`].
+    pub fn submit(&self, task: Task) -> Result<(), String> {
         self.ensure_workers();
+        let current = self.inner.live_tasks.load(Ordering::SeqCst);
+        if current >= MAX_TASKS {
+            return Err(format!(
+                "task limit exceeded: {} tasks running (max {MAX_TASKS})",
+                current
+            ));
+        }
         self.inner.live_tasks.fetch_add(1, Ordering::SeqCst);
         let mut queue = self.inner.run_queue.lock();
         queue.push_back(task);
         self.inner.condvar.notify_one();
+        Ok(())
     }
 }
 
@@ -147,28 +160,38 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     let live = inner.live_tasks.load(Ordering::SeqCst);
                     let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
                     if live > 0 && blocked >= live && queue.is_empty() {
-                        // All live tasks are blocked with no runnable work — deadlock.
-                        if !inner.deadlock_detected.swap(true, Ordering::SeqCst) {
-                            eprintln!(
-                                "deadlock: all {live} live tasks are blocked with nothing runnable"
-                            );
-                            // Complete all blocked task handles with a deadlock error
-                            // so that joiners (including the main thread) unblock.
-                            let handles: Vec<Arc<TaskHandle>> = {
-                                let mut guard = inner.blocked_handles.lock();
-                                std::mem::take(&mut *guard)
-                            };
-                            for handle in handles {
-                                handle.complete(Err(
-                                    "deadlock: all tasks are blocked with no progress possible"
-                                        .to_string(),
-                                ));
+                        // Double-check: release lock, yield, re-acquire, check again
+                        // to avoid TOCTOU false positives.
+                        drop(queue);
+                        std::thread::yield_now();
+                        queue = inner.run_queue.lock();
+                        let live2 = inner.live_tasks.load(Ordering::SeqCst);
+                        let blocked2 = inner.blocked_tasks.load(Ordering::SeqCst);
+                        if live2 > 0 && blocked2 >= live2 && queue.is_empty() {
+                            // Confirmed deadlock — all live tasks are blocked
+                            // with no runnable work.
+                            if !inner.deadlock_detected.swap(true, Ordering::SeqCst) {
+                                eprintln!(
+                                    "deadlock: all {live2} live tasks are blocked with nothing runnable"
+                                );
+                                // Complete all blocked task handles with a deadlock error
+                                // so that joiners (including the main thread) unblock.
+                                let handles: Vec<Arc<TaskHandle>> = {
+                                    let mut guard = inner.blocked_handles.lock();
+                                    std::mem::take(&mut *guard)
+                                };
+                                for handle in handles {
+                                    handle.complete(Err(
+                                        "deadlock: all tasks are blocked with no progress possible"
+                                            .to_string(),
+                                    ));
+                                }
                             }
+                            // Signal shutdown so all workers exit cleanly.
+                            inner.shutdown.store(true, Ordering::SeqCst);
+                            inner.condvar.notify_all();
+                            return;
                         }
-                        // Signal shutdown so all workers exit cleanly.
-                        inner.shutdown.store(true, Ordering::SeqCst);
-                        inner.condvar.notify_all();
-                        return;
                     }
                 }
             }
@@ -212,7 +235,23 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         .expect("task_slot just initialized")
                         .handle
                         .clone();
-                    inner.blocked_handles.lock().push(handle_for_registry);
+                    inner.blocked_handles.lock().push(handle_for_registry.clone());
+
+                    // Register cancel cleanup: if the task is cancelled while
+                    // blocked, take it from the slot (making the waker a no-op),
+                    // decrement blocked_tasks, and remove from blocked_handles.
+                    let cancel_slot = task_slot.clone();
+                    let cancel_inner = inner.clone();
+                    let cancel_task_id = id;
+                    handle_for_registry.set_cancel_cleanup(Box::new(move || {
+                        // Take the task so the waker closure becomes a no-op.
+                        let _ = cancel_slot.lock().take();
+                        cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                        let mut handles = cancel_inner.blocked_handles.lock();
+                        if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
+                            handles.swap_remove(pos);
+                        }
+                    }));
                 }
 
                 match reason {
@@ -356,7 +395,7 @@ mod tests {
     fn test_submit_and_join_single_task() {
         let scheduler = Scheduler::new();
         let (task, handle) = make_task(1, "fn main() { 42 }");
-        scheduler.submit(task);
+        scheduler.submit(task).unwrap();
         let result = handle.join();
         assert_eq!(result, Ok(Value::Int(42)));
     }
@@ -368,7 +407,7 @@ mod tests {
         for i in 0..10 {
             let src = format!("fn main() {{ {} }}", i);
             let (task, handle) = make_task(i, &src);
-            scheduler.submit(task);
+            scheduler.submit(task).unwrap();
             handles.push((i as i64, handle));
         }
         for (expected, handle) in handles {
@@ -380,7 +419,7 @@ mod tests {
     fn test_failed_task_reports_error() {
         let scheduler = Scheduler::new();
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task);
+        scheduler.submit(task).unwrap();
         let result = handle.join();
         assert!(result.is_err(), "expected error from division by zero");
         assert!(
@@ -397,7 +436,7 @@ mod tests {
         let mut handles = Vec::new();
         for i in 0..5 {
             let (task, handle) = make_task(i, "fn main() { 1 }");
-            scheduler.submit(task);
+            scheduler.submit(task).unwrap();
             handles.push(handle);
         }
         for h in &handles {
@@ -416,7 +455,7 @@ mod tests {
     fn test_failed_task_decrements_live_counter() {
         let scheduler = Scheduler::new();
         let (task, handle) = make_task(1, "fn main() { 1 / 0 }");
-        scheduler.submit(task);
+        scheduler.submit(task).unwrap();
         let _ = handle.join();
         std::thread::sleep(Duration::from_millis(50));
         let live = scheduler.inner.live_tasks.load(Ordering::SeqCst);
@@ -432,7 +471,7 @@ mod tests {
     fn test_drop_joins_workers_cleanly() {
         let scheduler = Scheduler::new();
         let (task, handle) = make_task(1, "fn main() { 1 }");
-        scheduler.submit(task);
+        scheduler.submit(task).unwrap();
         let _ = handle.join();
         // Drop the scheduler — should not hang or panic.
         drop(scheduler);
@@ -461,8 +500,8 @@ fn main() {
         "#;
         let (task1, handle1) = make_task(1, src);
         let (task2, handle2) = make_task(2, src);
-        scheduler.submit(task1);
-        scheduler.submit(task2);
+        scheduler.submit(task1).unwrap();
+        scheduler.submit(task2).unwrap();
         // Both should complete (with deadlock error).
         let r1 = handle1.join();
         let r2 = handle2.join();

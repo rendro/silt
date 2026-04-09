@@ -356,11 +356,13 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 child_vm.is_scheduled_task = true;
 
                 let scheduler = vm.get_or_create_scheduler();
-                scheduler.submit(Task {
-                    id: task_id,
-                    vm: child_vm,
-                    handle: handle.clone(),
-                });
+                scheduler
+                    .submit(Task {
+                        id: task_id,
+                        vm: child_vm,
+                        handle: handle.clone(),
+                    })
+                    .map_err(VmError::new)?;
             }
 
             Ok(Value::Handle(handle))

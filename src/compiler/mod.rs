@@ -1094,7 +1094,7 @@ impl Compiler {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op(Op::GetLocal, span);
                     self.current_chunk().emit_u16(slot, span);
-                } else if let Some(idx) = self.resolve_upvalue(*name) {
+                } else if let Some(idx) = self.resolve_upvalue(*name)? {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
@@ -1207,7 +1207,7 @@ impl Compiler {
                 // But only if the identifier is NOT a known local or upvalue.
                 if let ExprKind::Ident(name) = &expr.kind {
                     let is_local = self.resolve_local(*name).is_some()
-                        || self.resolve_upvalue(*name).is_some();
+                        || self.resolve_upvalue(*name)?.is_some();
                     if !is_local {
                         // Gate: require import for builtin modules
                         let name_str = resolve(*name);
@@ -1453,7 +1453,7 @@ impl Compiler {
             ExprKind::Pipe(left, right) => {
                 // val |> f(args) --> f(val, args)
                 // val |> f       --> f(val)
-                self.compile_pipe(left, right, span)?;
+                self.compile_pipe(left, right, span, tail)?;
             }
 
             ExprKind::QuestionMark(inner) => {
@@ -1703,7 +1703,7 @@ impl Compiler {
 
     // ── Pipe compilation ─────────────────────────────────────────
 
-    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<(), CompileError> {
+    fn compile_pipe(&mut self, left: &Expr, right: &Expr, span: Span, tail: bool) -> Result<(), CompileError> {
         // Compile the left value first
         self.compile_expr(left)?;
 
@@ -1741,8 +1741,14 @@ impl Compiler {
                         self.compile_expr(arg)?;
                     }
                     let argc = (args.len() + 1) as u8;
-                    self.current_chunk().emit_op(Op::Call, span);
-                    self.current_chunk().emit_u8(argc, span);
+                    if tail {
+                        self.current_chunk().emit_op(Op::TailCall, span);
+                        self.current_chunk().emit_u8(argc, span);
+                        self.current_chunk().emit_op(Op::Return, span);
+                    } else {
+                        self.current_chunk().emit_op(Op::Call, span);
+                        self.current_chunk().emit_u8(argc, span);
+                    }
                 }
             }
             _ => {
@@ -1755,8 +1761,14 @@ impl Compiler {
                 self.compile_expr(right)?;
                 self.current_chunk().emit_op(Op::GetLocal, span);
                 self.current_chunk().emit_u16(pipe_slot, span);
-                self.current_chunk().emit_op(Op::Call, span);
-                self.current_chunk().emit_u8(1, span);
+                if tail {
+                    self.current_chunk().emit_op(Op::TailCall, span);
+                    self.current_chunk().emit_u8(1, span);
+                    self.current_chunk().emit_op(Op::Return, span);
+                } else {
+                    self.current_chunk().emit_op(Op::Call, span);
+                    self.current_chunk().emit_u8(1, span);
+                }
             }
         }
         Ok(())
@@ -1941,17 +1953,17 @@ impl Compiler {
     /// If the variable is found as a local in an enclosing scope, it is captured
     /// as an upvalue (is_local = true). If the enclosing scope already has it as
     /// an upvalue, it is chained through (is_local = false, transitive capture).
-    fn resolve_upvalue(&mut self, name: Symbol) -> Option<u8> {
+    fn resolve_upvalue(&mut self, name: Symbol) -> Result<Option<u8>, CompileError> {
         let current_idx = self.contexts.len() - 1;
         if current_idx == 0 {
-            return None; // Top-level script has no enclosing scope.
+            return Ok(None); // Top-level script has no enclosing scope.
         }
         self.resolve_upvalue_in(name, current_idx)
     }
 
-    fn resolve_upvalue_in(&mut self, name: Symbol, context_index: usize) -> Option<u8> {
+    fn resolve_upvalue_in(&mut self, name: Symbol, context_index: usize) -> Result<Option<u8>, CompileError> {
         if context_index == 0 {
-            return None; // No more enclosing scopes.
+            return Ok(None); // No more enclosing scopes.
         }
         let enclosing_idx = context_index - 1;
 
@@ -1971,29 +1983,37 @@ impl Compiler {
             if let Some(local) = enclosing.locals.iter_mut().find(|l| l.name == name) {
                 local.captured = true;
             }
+            let index = if slot > u8::MAX as u16 {
+                return Err(CompileError {
+                    message: format!("cannot capture local in slot {slot} as upvalue (max slot 255)"),
+                    span: Span::new(0, 0),
+                });
+            } else {
+                slot as u8
+            };
             // Add an upvalue descriptor to the current context.
-            return Some(self.add_upvalue(
+            return Ok(Some(self.add_upvalue(
                 context_index,
                 UpvalueDesc {
                     is_local: true,
-                    index: slot as u8,
+                    index,
                 },
-            ));
+            )));
         }
 
         // Not a local in the enclosing scope -- try recursively as an upvalue.
-        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx) {
+        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx)? {
             // The enclosing scope has it as an upvalue. Chain it.
-            return Some(self.add_upvalue(
+            return Ok(Some(self.add_upvalue(
                 context_index,
                 UpvalueDesc {
                     is_local: false,
                     index: parent_upvalue_idx,
                 },
-            ));
+            )));
         }
 
-        None
+        Ok(None)
     }
 
     /// Add an upvalue descriptor to a context, deduplicating.
@@ -2627,7 +2647,8 @@ fn f(x) {
     fn test_compile_pipe_to_function() {
         let fns = compile("fn double(x) { x * 2 }\nfn main() { 5 |> double }");
         let main = find_fn(&fns, "main");
-        assert!(has_op(&main.chunk, Op::Call));
+        // Pipe in tail position emits TailCall
+        assert!(has_op(&main.chunk, Op::TailCall));
     }
 
     #[test]

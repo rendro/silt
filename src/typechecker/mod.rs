@@ -606,6 +606,11 @@ impl TypeChecker {
                         // Gated constructors (like Monday, GET) are already
                         // registered under their bare name — no alias needed.
                     }
+                } else {
+                    self.warning(
+                        format!("unknown module '{module_str}'; imported items will not be type-checked"),
+                        Span::new(0, 0),
+                    );
                 }
             } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
                 let module_str = resolve(*module);
@@ -620,6 +625,11 @@ impl TypeChecker {
                             env.define(aliased, scheme);
                         }
                     }
+                } else {
+                    self.warning(
+                        format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
+                        Span::new(0, 0),
+                    );
                 }
             }
         }

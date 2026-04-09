@@ -349,6 +349,8 @@ pub struct TaskHandle {
     condvar: Condvar,
     /// Wakers to call when the task completes (for scheduler-based join).
     join_wakers: Mutex<Vec<Waker>>,
+    /// Cleanup to run when a blocked task is cancelled (removes stale waker state).
+    cancel_cleanup: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TaskHandle {
@@ -358,7 +360,14 @@ impl TaskHandle {
             result: Mutex::new(None),
             condvar: Condvar::new(),
             join_wakers: Mutex::new(Vec::new()),
+            cancel_cleanup: Mutex::new(None),
         }
+    }
+
+    /// Register a cleanup closure to run when the task completes or is cancelled
+    /// while blocked. This removes stale waker registrations from channels.
+    pub fn set_cancel_cleanup(&self, f: Box<dyn FnOnce() + Send>) {
+        *self.cancel_cleanup.lock() = Some(f);
     }
 
     /// Store the task result and notify any joiners.
@@ -366,6 +375,10 @@ impl TaskHandle {
         {
             let mut guard = self.result.lock();
             *guard = Some(result);
+        }
+        // Fire cancel cleanup (removes stale waker state for blocked tasks).
+        if let Some(cleanup) = self.cancel_cleanup.lock().take() {
+            cleanup();
         }
         self.condvar.notify_all();
         // Wake all tasks blocked on join.

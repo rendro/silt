@@ -132,6 +132,12 @@ impl Vm {
                 }
                 Some(Op::StringConcat) => {
                     let count = self.read_u8()? as usize;
+                    if count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "string concat: count {count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - count;
                     // Pre-calculate total capacity to avoid reallocations
                     let mut total_len = 0;
@@ -210,6 +216,12 @@ impl Vm {
                 // ── Function calls ────────────────────────────
                 Some(Op::Call) => {
                     let argc = self.read_u8()? as usize;
+                    if argc + 1 > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "call: argc {argc} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     // The function value sits below the arguments on the stack.
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
@@ -217,6 +229,12 @@ impl Vm {
                 }
                 Some(Op::TailCall) => {
                     let argc = self.read_u8()? as usize;
+                    if argc + 1 > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "tail call: argc {argc} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let func_slot = self.stack.len() - 1 - argc;
                     let func_val = self.stack[func_slot].clone();
                     match func_val {
@@ -264,6 +282,12 @@ impl Vm {
                     let name_index = self.read_u16()? as usize;
                     let argc = self.read_u8()? as usize;
                     let name = self.read_constant_string(name_index)?;
+                    if argc > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "call builtin '{name}': argc {argc} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - argc;
                     let args: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -321,6 +345,12 @@ impl Vm {
                 // ── Data constructors ─────────────────────────
                 Some(Op::MakeTuple) => {
                     let count = self.read_u8()? as usize;
+                    if count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeTuple: count {count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - count;
                     let elements: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -328,6 +358,12 @@ impl Vm {
                 }
                 Some(Op::MakeList) => {
                     let count = self.read_u16()? as usize;
+                    if count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeList: count {count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - count;
                     let elements: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -336,6 +372,12 @@ impl Vm {
                 Some(Op::MakeMap) => {
                     let pair_count = self.read_u16()? as usize;
                     let total = pair_count * 2;
+                    if total > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeMap: need {total} values but stack has {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - total;
                     let mut map = BTreeMap::new();
                     for i in (start..self.stack.len()).step_by(2) {
@@ -348,6 +390,12 @@ impl Vm {
                 }
                 Some(Op::MakeSet) => {
                     let count = self.read_u16()? as usize;
+                    if count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeSet: count {count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - count;
                     let mut set = BTreeSet::new();
                     for i in start..self.stack.len() {
@@ -365,6 +413,12 @@ impl Vm {
                         field_names.push(self.read_constant_string(name_index)?);
                     }
                     let type_name = self.read_constant_string(type_name_index)?;
+                    if field_count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeRecord: field count {field_count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - field_count;
                     let mut fields = BTreeMap::new();
                     for (i, name) in field_names.into_iter().enumerate() {
@@ -377,6 +431,12 @@ impl Vm {
                     let name_index = self.read_u16()? as usize;
                     let field_count = self.read_u8()? as usize;
                     let name = self.read_constant_string(name_index)?;
+                    if field_count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "MakeVariant: field count {field_count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - field_count;
                     let fields: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -390,6 +450,12 @@ impl Vm {
                         field_names.push(self.read_constant_string(name_index)?);
                     }
                     // Stack: [base_record, new_val_1, ..., new_val_N]
+                    if field_count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "RecordUpdate: field count {field_count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - field_count;
                     let new_values: Vec<Value> = self.stack[start..].to_vec();
                     self.stack.truncate(start);
@@ -759,7 +825,20 @@ impl Vm {
                     // Update loop bindings: the new values are on top of stack.
                     // Copy them back into the binding slots starting at first_slot.
                     let base = self.current_frame()?.base_slot;
+                    if arg_count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "recur: arg count {arg_count} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     let start = self.stack.len() - arg_count;
+                    let dest_end = base + first_slot + arg_count;
+                    if dest_end > self.stack.len() || start + arg_count > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "recur: destination slot out of bounds (base {base}, first_slot {first_slot}, arg_count {arg_count}, stack len {})",
+                            self.stack.len()
+                        )));
+                    }
                     for i in 0..arg_count {
                         self.stack[base + first_slot + i] = self.stack[start + i].clone();
                     }
@@ -825,6 +904,12 @@ impl Vm {
                     let method_name_index = self.read_u16()? as usize;
                     let argc = self.read_u8()? as usize;
                     let method_name = self.read_constant_string(method_name_index)?;
+                    if argc > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "call method '{method_name}': argc {argc} exceeds stack size {}",
+                            self.stack.len()
+                        )));
+                    }
                     // The receiver is at stack[len - argc] (first arg)
                     let receiver_slot = self.stack.len() - argc;
                     let receiver = self.stack[receiver_slot].clone();
@@ -1257,7 +1342,12 @@ impl Vm {
             Op::GetLocal => {
                 let slot = self.read_u16()? as usize;
                 let base = self.current_frame()?.base_slot;
-                let value = self.stack[base + slot].clone();
+                let value = self.stack.get(base + slot)
+                    .ok_or_else(|| VmError::new(format!(
+                        "stack index out of bounds (slot {slot}, base {base}, stack len {})",
+                        self.stack.len()
+                    )))?
+                    .clone();
                 self.push(value);
             }
             Op::SetLocal => {
@@ -1288,17 +1378,35 @@ impl Vm {
             }
             Op::GetUpvalue => {
                 let index = self.read_u8()? as usize;
-                let value = self.current_frame()?.closure.upvalues[index].clone();
+                let upvalues = &self.current_frame()?.closure.upvalues;
+                let value = upvalues.get(index)
+                    .ok_or_else(|| VmError::new(format!(
+                        "upvalue index {index} out of bounds (count {})",
+                        upvalues.len()
+                    )))?
+                    .clone();
                 self.push(value);
             }
             Op::Call => {
                 let argc = self.read_u8()? as usize;
+                if argc + 1 > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "call: argc {argc} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 self.call_value(func_val, argc, func_slot)?;
             }
             Op::TailCall => {
                 let argc = self.read_u8()? as usize;
+                if argc + 1 > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "tail call: argc {argc} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 if let Value::VmClosure(closure) = func_val {
@@ -1322,6 +1430,12 @@ impl Vm {
                 let name_index = self.read_u16()? as usize;
                 let argc = self.read_u8()? as usize;
                 let name = self.read_constant_string(name_index)?;
+                if argc > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "call builtin '{name}': argc {argc} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - argc;
                 let args: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
@@ -1338,9 +1452,20 @@ impl Vm {
                     let index = self.read_u8()? as usize;
                     let val = if is_local {
                         let base = self.current_frame()?.base_slot;
-                        self.stack[base + index].clone()
+                        self.stack.get(base + index)
+                            .ok_or_else(|| VmError::new(format!(
+                                "closure capture: stack index out of bounds (index {index}, base {base}, stack len {})",
+                                self.stack.len()
+                            )))?
+                            .clone()
                     } else {
-                        self.current_frame()?.closure.upvalues[index].clone()
+                        let upvalues = &self.current_frame()?.closure.upvalues;
+                        upvalues.get(index)
+                            .ok_or_else(|| VmError::new(format!(
+                                "closure capture: upvalue index {index} out of bounds (count {})",
+                                upvalues.len()
+                            )))?
+                            .clone()
                     };
                     upvalues.push(val);
                 }
@@ -1356,6 +1481,12 @@ impl Vm {
             }
             Op::MakeTuple => {
                 let count = self.read_u8()? as usize;
+                if count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeTuple: count {count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
@@ -1363,6 +1494,12 @@ impl Vm {
             }
             Op::MakeList => {
                 let count = self.read_u16()? as usize;
+                if count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeList: count {count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - count;
                 let elements: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
@@ -1371,6 +1508,12 @@ impl Vm {
             Op::MakeMap => {
                 let pair_count = self.read_u16()? as usize;
                 let total = pair_count * 2;
+                if total > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeMap: need {total} values but stack has {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - total;
                 let mut map = BTreeMap::new();
                 for i in (start..self.stack.len()).step_by(2) {
@@ -1381,6 +1524,12 @@ impl Vm {
             }
             Op::MakeSet => {
                 let count = self.read_u16()? as usize;
+                if count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeSet: count {count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - count;
                 let mut set = BTreeSet::new();
                 for i in start..self.stack.len() {
@@ -1398,6 +1547,12 @@ impl Vm {
                     field_names.push(self.read_constant_string(name_index)?);
                 }
                 let type_name = self.read_constant_string(type_name_index)?;
+                if field_count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeRecord: field count {field_count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - field_count;
                 let mut fields = BTreeMap::new();
                 for (i, name) in field_names.into_iter().enumerate() {
@@ -1410,6 +1565,12 @@ impl Vm {
                 let name_index = self.read_u16()? as usize;
                 let field_count = self.read_u8()? as usize;
                 let name = self.read_constant_string(name_index)?;
+                if field_count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "MakeVariant: field count {field_count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - field_count;
                 let fields: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
@@ -1421,6 +1582,12 @@ impl Vm {
                 for _ in 0..field_count {
                     let ni = self.read_u16()? as usize;
                     field_names.push(self.read_constant_string(ni)?);
+                }
+                if field_count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "RecordUpdate: field count {field_count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
                 }
                 let start = self.stack.len() - field_count;
                 let new_values: Vec<Value> = self.stack[start..].to_vec();
@@ -1747,7 +1914,20 @@ impl Vm {
                 let arg_count = self.read_u8()? as usize;
                 let first_slot = self.read_u16()? as usize;
                 let base = self.current_frame()?.base_slot;
+                if arg_count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "recur: arg count {arg_count} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let start = self.stack.len() - arg_count;
+                let dest_end = base + first_slot + arg_count;
+                if dest_end > self.stack.len() || start + arg_count > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "recur: destination slot out of bounds (base {base}, first_slot {first_slot}, arg_count {arg_count}, stack len {})",
+                        self.stack.len()
+                    )));
+                }
                 for i in 0..arg_count {
                     self.stack[base + first_slot + i] = self.stack[start + i].clone();
                 }
@@ -1795,6 +1975,12 @@ impl Vm {
                 let method_name_index = self.read_u16()? as usize;
                 let argc = self.read_u8()? as usize;
                 let method_name = self.read_constant_string(method_name_index)?;
+                if argc > self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "call method '{method_name}': argc {argc} exceeds stack size {}",
+                        self.stack.len()
+                    )));
+                }
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
                 let type_name = self.value_type_name_for_dispatch(&receiver);

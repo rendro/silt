@@ -1585,6 +1585,20 @@ impl Parser {
     // ── Patterns ─────────────────────────────────────────────────────
 
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            self.depth -= 1;
+            return Err(ParseError {
+                message: "pattern nesting exceeds maximum depth".into(),
+                span: self.span(),
+            });
+        }
+        let result = self.parse_pattern_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern> {
         let first = self.parse_primary_pattern()?;
         // Check for or-pattern: pat1 | pat2 | ...
         if self.at(&Token::Bar) {
