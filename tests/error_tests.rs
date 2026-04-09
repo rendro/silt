@@ -1994,11 +1994,9 @@ fn main() { float.to_string(3.14159, -1) }
 
 #[test]
 fn test_float_to_string_positive_decimals_still_works() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import float
 fn main() { float.to_string(3.14, 2) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::String("3.14".into()));
 }

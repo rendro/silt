@@ -9135,10 +9135,12 @@ fn main() { string.char_code("A") }
 
 #[test]
 fn test_string_char_code_empty() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import string
 fn main() { string.char_code("") }
-    "#);
+    "#,
+    );
     assert!(err.contains("empty string"), "got: {err}");
 }
 
