@@ -193,7 +193,7 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 
     for ch in input.chars() {
         if in_string {
-            if ch == '"' && backslash_count % 2 == 0 {
+            if ch == '"' && backslash_count.is_multiple_of(2) {
                 in_string = false;
             }
             if ch == '\\' {
