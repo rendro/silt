@@ -217,6 +217,6 @@ impl RegexCache {
             self.order.push_back(pattern.to_string());
             self.map.insert(pattern.to_string(), re);
         }
-        Ok(self.map.get(pattern).unwrap())
+        Ok(self.map.get(pattern).expect("pattern was just inserted"))
     }
 }
