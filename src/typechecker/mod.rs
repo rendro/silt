@@ -3489,4 +3489,87 @@ fn main() -> Result {
             "requires Result or Option",
         );
     }
+
+    // ── Unification unit tests ─────────────────────────────────────
+
+    #[test]
+    fn test_unify_occurs_check() {
+        // Unifying Var(0) with List(Var(0)) should produce an infinite type error
+        let mut tc = TypeChecker::new();
+        let var = tc.fresh_var(); // Type::Var(0)
+        let list_of_var = Type::List(Box::new(var.clone()));
+        tc.unify(&var, &list_of_var, Span::new(0, 0));
+        assert!(
+            !tc.errors.is_empty(),
+            "occurs check should produce an error"
+        );
+        assert!(
+            tc.errors[0].message.contains("infinite type"),
+            "expected 'infinite type' error, got: {}",
+            tc.errors[0].message
+        );
+    }
+
+    #[test]
+    fn test_unify_function_arity_mismatch() {
+        // Unifying Function([Int], Int) with Function([Int, Int], Int) should error
+        let mut tc = TypeChecker::new();
+        let fn1 = Type::Fun(vec![Type::Int], Box::new(Type::Int));
+        let fn2 = Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int));
+        tc.unify(&fn1, &fn2, Span::new(0, 0));
+        assert!(
+            !tc.errors.is_empty(),
+            "function arity mismatch should produce an error"
+        );
+        assert!(
+            tc.errors[0].message.contains("arity mismatch"),
+            "expected 'arity mismatch' error, got: {}",
+            tc.errors[0].message
+        );
+    }
+
+    #[test]
+    fn test_unify_basic_var_with_int() {
+        // Unifying Var(0) with Int should map Var(0) -> Int
+        let mut tc = TypeChecker::new();
+        let var = tc.fresh_var(); // Type::Var(0)
+        tc.unify(&var, &Type::Int, Span::new(0, 0));
+        assert!(tc.errors.is_empty(), "basic unification should not error");
+        let resolved = tc.apply(&var);
+        assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
+    }
+
+    #[test]
+    fn test_unify_transitive() {
+        // Unify Var(0) with Var(1), then Var(1) with String.
+        // Resolving Var(0) should yield String.
+        let mut tc = TypeChecker::new();
+        let var0 = tc.fresh_var(); // Type::Var(0)
+        let var1 = tc.fresh_var(); // Type::Var(1)
+        tc.unify(&var0, &var1, Span::new(0, 0));
+        tc.unify(&var1, &Type::String, Span::new(0, 0));
+        assert!(
+            tc.errors.is_empty(),
+            "transitive unification should not error"
+        );
+        let resolved = tc.apply(&var0);
+        assert_eq!(
+            resolved,
+            Type::String,
+            "Var(0) should transitively resolve to String"
+        );
+    }
+
+    #[test]
+    fn test_unify_list() {
+        // Unifying List(Var(0)) with List(Int) should resolve Var(0) to Int
+        let mut tc = TypeChecker::new();
+        let var = tc.fresh_var(); // Type::Var(0)
+        let list_var = Type::List(Box::new(var.clone()));
+        let list_int = Type::List(Box::new(Type::Int));
+        tc.unify(&list_var, &list_int, Span::new(0, 0));
+        assert!(tc.errors.is_empty(), "list unification should not error");
+        let resolved = tc.apply(&var);
+        assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
+    }
 }
