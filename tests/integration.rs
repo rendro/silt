@@ -9122,6 +9122,98 @@ fn main() { string.chars("") }
     );
 }
 
+// ── char_code / from_char_code / byte_length / trim_start / trim_end ──
+
+#[test]
+fn test_string_char_code_ascii() {
+    let result = run(r#"
+import string
+fn main() { string.char_code("A") }
+    "#);
+    assert_eq!(result, Value::Int(65));
+}
+
+#[test]
+fn test_string_char_code_empty() {
+    let err = run_err(r#"
+import string
+fn main() { string.char_code("") }
+    "#);
+    assert!(err.contains("empty string"), "got: {err}");
+}
+
+#[test]
+fn test_string_from_char_code_ascii() {
+    let result = run(r#"
+import string
+fn main() { string.from_char_code(65) }
+    "#);
+    assert_eq!(result, Value::String("A".into()));
+}
+
+#[test]
+fn test_string_from_char_code_emoji() {
+    let result = run(r#"
+import string
+fn main() { string.from_char_code(128522) }
+    "#);
+    assert_eq!(result, Value::String("\u{1F60A}".into()));
+}
+
+#[test]
+fn test_string_byte_length_ascii() {
+    let result = run(r#"
+import string
+fn main() { string.byte_length("hello") }
+    "#);
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn test_string_byte_length_multibyte() {
+    let result = run(r#"
+import string
+fn main() { string.byte_length("héllo") }
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_string_trim_start_with_whitespace() {
+    let result = run(r#"
+import string
+fn main() { string.trim_start("  hello") }
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_string_trim_start_no_whitespace() {
+    let result = run(r#"
+import string
+fn main() { string.trim_start("hello") }
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_string_trim_end_with_whitespace() {
+    let result = run(r#"
+import string
+fn main() { string.trim_end("hello  ") }
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_string_trim_end_no_whitespace() {
+    let result = run(r#"
+import string
+fn main() { string.trim_end("hello") }
+    "#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
 // ── Edge cases: map operations ──────────────────────────────────────
 
 #[test]
