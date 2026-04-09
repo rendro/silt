@@ -533,8 +533,19 @@ impl Vm {
                 let start = self.stack.len() - argc;
                 let args: Vec<Value> = self.stack[start..].to_vec();
                 self.stack.truncate(start);
-                let result = self.dispatch_builtin(&name, &args)?;
-                self.push(result);
+                match self.dispatch_builtin(&name, &args) {
+                    Ok(result) => {
+                        self.push(result);
+                    }
+                    Err(e) if e.is_yield => {
+                        // Re-push args so re-execution after yield finds them on the stack
+                        for arg in args {
+                            self.push(arg);
+                        }
+                        return Err(e);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Op::MakeClosure => {
                 let func_index = self.read_u16()? as usize;
@@ -787,7 +798,10 @@ impl Vm {
             }
             Op::JumpBack => {
                 let offset = self.read_u16()? as usize;
-                self.current_frame_mut()?.ip -= offset;
+                let frame = self.current_frame_mut()?;
+                frame.ip = frame.ip.checked_sub(offset).ok_or_else(|| {
+                    VmError::new("jump back offset exceeds current instruction pointer".to_string())
+                })?;
             }
             Op::JumpIfFalse => {
                 let offset = self.read_u16()? as usize;

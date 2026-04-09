@@ -9775,3 +9775,40 @@ fn main() {
         ]))
     );
 }
+
+#[test]
+fn test_yield_inside_builtin_preserves_stack() {
+    // Regression test for B1: when a scheduled task's CallBuiltin yields (e.g.,
+    // channel.send blocks because the buffer is full), the args must be re-pushed
+    // onto the stack before the yield so that re-execution finds them intact.
+    // Without the fix, the args are consumed (popped) but never restored, causing
+    // a stack underflow or corruption when the opcode re-executes after unblocking.
+    let result = run(r#"
+import channel
+import task
+fn main() {
+  let ch = channel.new(1)
+
+  -- Fill the channel so the next send will block.
+  channel.send(ch, 100)
+
+  -- The spawned task's send will block because the buffer is full.
+  -- On yield, CallBuiltin must re-push [ch, 42] so the retry works.
+  let worker = task.spawn(fn() {
+    channel.send(ch, 42)
+    "done"
+  })
+
+  -- Drain the first value to unblock the worker's send.
+  let Message(first) = channel.receive(ch)
+
+  -- Now the worker can complete its send.
+  task.join(worker)
+
+  -- Read the worker's value.
+  let Message(second) = channel.receive(ch)
+  first + second
+}
+    "#);
+    assert_eq!(result, Value::Int(142));
+}
