@@ -313,11 +313,6 @@ impl Server {
         };
         let ty = ty?;
 
-        // Still filter out completely unresolved types.
-        if has_unresolved_vars(&ty) {
-            return None;
-        }
-
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -1900,12 +1895,23 @@ pub fn run() {
         ..ServerCapabilities::default()
     };
 
-    let init_value = serde_json::to_value(&server_capabilities).unwrap();
-    connection.initialize(init_value).unwrap();
+    let init_value = match serde_json::to_value(&server_capabilities) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("silt-lsp: failed to serialize capabilities: {e}");
+            return;
+        }
+    };
+    if let Err(e) = connection.initialize(init_value) {
+        eprintln!("silt-lsp: initialization failed: {e}");
+        return;
+    }
 
     let mut server = Server::new(connection);
     server.run();
-    io_threads.join().unwrap();
+    if let Err(e) = io_threads.join() {
+        eprintln!("silt-lsp: I/O thread error: {e}");
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

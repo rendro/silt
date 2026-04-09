@@ -29,7 +29,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     // Initial run
     eprint!("\x1B[2J\x1B[H");
     let _ = std::process::Command::new(&exe).args(args).status();
-    eprintln!("\n[watching for changes... press ctrl-c to stop]");
+    eprintln!("\n[watch] Watching for changes...");
 
     let mut last_run = Instant::now();
 
@@ -49,7 +49,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
                     last_run = Instant::now();
                     eprint!("\x1B[2J\x1B[H");
                     let _ = std::process::Command::new(&exe).args(args).status();
-                    eprintln!("\n[watching for changes... press ctrl-c to stop]");
+                    eprintln!("\n[watch] Watching for changes...");
                 }
             }
             Ok(Err(e)) => {

@@ -10,10 +10,10 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-use crate::compiler::Compiler;
+use crate::compiler::{CompileError, Compiler};
 use crate::errors::SourceError;
-use crate::lexer::Lexer;
-use crate::parser::Parser;
+use crate::lexer::{LexError, Lexer, Span};
+use crate::parser::{ParseError, Parser};
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -236,14 +236,16 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
     let tokens = match Lexer::new(input).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("lex error: {e}");
+            let source_err = SourceError::from_lex_error(&e, input, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };
     let program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("parse error: {e}");
+            let source_err = SourceError::from_parse_error(&e, input, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };
@@ -268,18 +270,23 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
 
 fn eval_expression(vm: &mut Vm, input: &str) {
     // Wrap the expression in a fn main() so the compiler can handle it.
-    let wrapped = format!("fn main() {{\n{input}\n}}");
+    let wrapper_prefix = "fn main() {\n";
+    let wrapped = format!("{wrapper_prefix}{input}\n}}");
     let tokens = match Lexer::new(&wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("lex error: {e}");
+            let adjusted = adjust_error_span_lex(&e, wrapper_prefix.len());
+            let source_err = SourceError::from_lex_error(&adjusted, input, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };
     let program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("parse error: {e}");
+            let adjusted = adjust_error_span_parse(&e, wrapper_prefix.len());
+            let source_err = SourceError::from_parse_error(&adjusted, input, "<repl>");
+            eprintln!("{source_err}");
             return;
         }
     };
@@ -290,7 +297,8 @@ fn eval_expression(vm: &mut Vm, input: &str) {
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, &wrapped, "<repl>");
+            let adjusted = adjust_error_span_compile(&e, wrapper_prefix.len());
+            let source_err = SourceError::from_compile_error(&adjusted, input, "<repl>");
             eprintln!("{source_err}");
             return;
         }
@@ -306,6 +314,38 @@ fn eval_expression(vm: &mut Vm, input: &str) {
         Err(e) => {
             eprintln!("{e}");
         }
+    }
+}
+
+/// Adjust a span from `wrapped` coordinates to `input` coordinates.
+/// The wrapper adds one line (`fn main() {\n`) before the user input,
+/// so line numbers are off by 1 and byte offsets are off by `prefix_len`.
+fn adjust_span(span: Span, prefix_len: usize) -> Span {
+    Span::with_offset(
+        span.line.saturating_sub(1),
+        span.col,
+        span.offset.saturating_sub(prefix_len),
+    )
+}
+
+fn adjust_error_span_lex(e: &LexError, prefix_len: usize) -> LexError {
+    LexError {
+        message: e.message.clone(),
+        span: adjust_span(e.span, prefix_len),
+    }
+}
+
+fn adjust_error_span_parse(e: &ParseError, prefix_len: usize) -> ParseError {
+    ParseError {
+        message: e.message.clone(),
+        span: adjust_span(e.span, prefix_len),
+    }
+}
+
+fn adjust_error_span_compile(e: &CompileError, prefix_len: usize) -> CompileError {
+    CompileError {
+        message: e.message.clone(),
+        span: adjust_span(e.span, prefix_len),
     }
 }
 

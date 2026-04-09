@@ -120,7 +120,15 @@ impl TypeChecker {
                     }
                     return;
                 }
-                // Fallback: bind sub-patterns with fresh vars
+                // Fallback: report error and bind sub-patterns with fresh vars
+                self.error(
+                    format!("undefined constructor '{name}' in pattern"),
+                    Span {
+                        line: 0,
+                        col: 0,
+                        offset: 0,
+                    },
+                );
                 for sp in sub_pats {
                     let tv = self.fresh_var();
                     self.bind_pattern(sp, &tv, env);
@@ -1267,6 +1275,16 @@ impl TypeChecker {
                     match &ctor_ty {
                         Type::Fun(params, ret) => {
                             self.unify(expected, ret, span);
+                            if sub_pats.len() != params.len() {
+                                self.error(
+                                    format!(
+                                        "constructor expects {} field(s), but pattern has {}",
+                                        params.len(),
+                                        sub_pats.len()
+                                    ),
+                                    span,
+                                );
+                            }
                             for (i, sp) in sub_pats.iter().enumerate() {
                                 if i < params.len() {
                                     self.check_pattern(sp, &params[i], env, span);
@@ -1281,7 +1299,8 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    // Unknown constructor — bind sub-patterns with fresh vars
+                    // Unknown constructor — report error and bind sub-patterns with fresh vars
+                    self.error(format!("undefined constructor '{name}' in pattern"), span);
                     for sp in sub_pats {
                         let tv = self.fresh_var();
                         self.check_pattern(sp, &tv, env, span);

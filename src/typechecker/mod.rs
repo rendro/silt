@@ -315,6 +315,12 @@ impl TypeChecker {
                             self.unify(t1, t2, span);
                         }
                     }
+                    // Check that f2 doesn't have extra fields missing from f1
+                    for (name, _t2) in f2 {
+                        if !f1.iter().any(|(n, _)| n == name) {
+                            self.error(format!("record is missing field '{name}'"), span);
+                        }
+                    }
                 }
             }
 

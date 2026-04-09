@@ -143,6 +143,11 @@ impl Drop for Scheduler {
 
 /// The worker loop: dequeue tasks, run them for a time slice, handle results.
 fn worker_loop(inner: Arc<SchedulerInner>) {
+    let time_slice: usize = std::env::var("SILT_TIME_SLICE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+
     loop {
         // Dequeue a task.
         let task = {
@@ -198,7 +203,6 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
         };
 
         let Task { id, mut vm, handle } = task;
-        let time_slice = 2000;
 
         let result = vm.execute_slice(time_slice);
 

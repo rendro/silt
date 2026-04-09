@@ -119,16 +119,41 @@ fn main() {
 
 # fs
 
-Filesystem path queries.
+Filesystem operations: queries, directory management, and file manipulation.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `copy` | `(String, String) -> Result((), String)` | Copy a file |
 | `exists` | `(String) -> Bool` | Check if path exists |
-| `is_file` | `(String) -> Bool` | Check if path is a file |
 | `is_dir` | `(String) -> Bool` | Check if path is a directory |
+| `is_file` | `(String) -> Bool` | Check if path is a file |
 | `list_dir` | `(String) -> Result(List(String), String)` | List entries in a directory |
+| `mkdir` | `(String) -> Result((), String)` | Create a directory (and parents) |
+| `remove` | `(String) -> Result((), String)` | Remove a file or empty directory |
+| `rename` | `(String, String) -> Result((), String)` | Rename / move a file or directory |
+
+
+## `fs.copy`
+
+```
+fs.copy(from: String, to: String) -> Result((), String)
+```
+
+Copies a file from `from` to `to`. Returns `Ok(())` on success or
+`Err(message)` on failure.
+
+```silt
+import fs
+
+fn main() {
+    match fs.copy("original.txt", "backup.txt") {
+        Ok(_) -> println("copied")
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
 
 
 ## `fs.exists`
@@ -182,17 +207,82 @@ fn main() {
 ## `fs.list_dir`
 
 ```
-fs.list_dir(path: String) -> List(String)
+fs.list_dir(path: String) -> Result(List(String), String)
 ```
 
-Returns a list of entry names in the given directory. Returns an error
-if the path does not exist or is not a directory.
+Returns `Ok(entries)` with a list of entry names in the given directory,
+or `Err(message)` if the path does not exist or is not a directory.
 
 ```silt
 import fs
 
 fn main() {
-    let entries = fs.list_dir(".")
-    list.each(entries, fn(name) { println(name) })
+    match fs.list_dir(".") {
+        Ok(entries) -> list.each(entries) { name -> println(name) }
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+
+## `fs.mkdir`
+
+```
+fs.mkdir(path: String) -> Result((), String)
+```
+
+Creates a directory at `path`, including any missing parent directories.
+Returns `Ok(())` on success or `Err(message)` on failure.
+
+```silt
+import fs
+
+fn main() {
+    match fs.mkdir("output/reports") {
+        Ok(_) -> println("directory created")
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+
+## `fs.remove`
+
+```
+fs.remove(path: String) -> Result((), String)
+```
+
+Removes a file or an empty directory. Returns `Ok(())` on success or
+`Err(message)` on failure.
+
+```silt
+import fs
+
+fn main() {
+    match fs.remove("temp.txt") {
+        Ok(_) -> println("removed")
+        Err(e) -> println("Error: {e}")
+    }
+}
+```
+
+
+## `fs.rename`
+
+```
+fs.rename(from: String, to: String) -> Result((), String)
+```
+
+Renames (moves) a file or directory from `from` to `to`. Returns `Ok(())`
+on success or `Err(message)` on failure.
+
+```silt
+import fs
+
+fn main() {
+    match fs.rename("old_name.txt", "new_name.txt") {
+        Ok(_) -> println("renamed")
+        Err(e) -> println("Error: {e}")
+    }
 }
 ```

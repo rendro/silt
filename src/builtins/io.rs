@@ -219,15 +219,22 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                                 ));
                             }
                             Err(e) => {
-                                return Err(VmError::new(format!(
-                                    "fs.list_dir: error reading entry: {e}"
-                                )));
+                                return Ok(Value::Variant(
+                                    "Err".into(),
+                                    vec![Value::String(format!("error reading entry: {e}"))],
+                                ));
                             }
                         }
                     }
-                    Ok(Value::List(Arc::new(items)))
+                    Ok(Value::Variant(
+                        "Ok".into(),
+                        vec![Value::List(Arc::new(items))],
+                    ))
                 }
-                Err(e) => Err(VmError::new(format!("fs.list_dir: {e}"))),
+                Err(e) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(e.to_string())],
+                )),
             }
         }
         "mkdir" => {

@@ -45,6 +45,7 @@ files needed):
 | `channel` | `new`, `send`, `receive`, `close`, `select`, `each`         |
 | `task`    | `spawn`, `join`, `cancel`                                    |
 | `time`    | `now`, `today`, `date`, `format`, `parse`, `add_days`, `weekday`, `sleep` |
+| `fs`      | `exists`, `is_file`, `is_dir`, `list_dir`, `mkdir`, `remove`, `copy`, `rename` |
 | `http`    | `get`, `request`, `serve`, `segments`                        |
 
 ## Notable Standard Library Details
