@@ -371,11 +371,11 @@ impl Server {
         }
 
         // Builtins (globals + stdlib)
-        for (name, kind) in BUILTINS {
-            let detail = self.builtin_sigs.get(*name).cloned();
+        for (name, kind) in builtins() {
+            let detail = self.builtin_sigs.get(&name).cloned();
             items.push(CompletionItem {
-                label: name.to_string(),
-                kind: Some(*kind),
+                label: name,
+                kind: Some(kind),
                 detail,
                 ..CompletionItem::default()
             });
@@ -1653,217 +1653,45 @@ const KEYWORDS: &[&str] = &[
     "when", "where",
 ];
 
-const BUILTINS: &[(&str, CompletionItemKind)] = &[
-    // Globals
-    ("print", CompletionItemKind::FUNCTION),
-    ("println", CompletionItemKind::FUNCTION),
-    ("panic", CompletionItemKind::FUNCTION),
-    ("Ok", CompletionItemKind::CONSTRUCTOR),
-    ("Err", CompletionItemKind::CONSTRUCTOR),
-    ("Some", CompletionItemKind::CONSTRUCTOR),
-    ("None", CompletionItemKind::CONSTRUCTOR),
-    ("true", CompletionItemKind::CONSTANT),
-    ("false", CompletionItemKind::CONSTANT),
-    // list
-    ("list.map", CompletionItemKind::FUNCTION),
-    ("list.filter", CompletionItemKind::FUNCTION),
-    ("list.fold", CompletionItemKind::FUNCTION),
-    ("list.each", CompletionItemKind::FUNCTION),
-    ("list.find", CompletionItemKind::FUNCTION),
-    ("list.sort", CompletionItemKind::FUNCTION),
-    ("list.sort_by", CompletionItemKind::FUNCTION),
-    ("list.reverse", CompletionItemKind::FUNCTION),
-    ("list.head", CompletionItemKind::FUNCTION),
-    ("list.tail", CompletionItemKind::FUNCTION),
-    ("list.last", CompletionItemKind::FUNCTION),
-    ("list.length", CompletionItemKind::FUNCTION),
-    ("list.contains", CompletionItemKind::FUNCTION),
-    ("list.append", CompletionItemKind::FUNCTION),
-    ("list.concat", CompletionItemKind::FUNCTION),
-    ("list.zip", CompletionItemKind::FUNCTION),
-    ("list.flatten", CompletionItemKind::FUNCTION),
-    ("list.flat_map", CompletionItemKind::FUNCTION),
-    ("list.filter_map", CompletionItemKind::FUNCTION),
-    ("list.any", CompletionItemKind::FUNCTION),
-    ("list.all", CompletionItemKind::FUNCTION),
-    ("list.get", CompletionItemKind::FUNCTION),
-    ("list.take", CompletionItemKind::FUNCTION),
-    ("list.drop", CompletionItemKind::FUNCTION),
-    ("list.enumerate", CompletionItemKind::FUNCTION),
-    ("list.group_by", CompletionItemKind::FUNCTION),
-    ("list.fold_until", CompletionItemKind::FUNCTION),
-    ("list.unfold", CompletionItemKind::FUNCTION),
-    // string
-    ("string.from", CompletionItemKind::FUNCTION),
-    ("string.split", CompletionItemKind::FUNCTION),
-    ("string.trim", CompletionItemKind::FUNCTION),
-    ("string.join", CompletionItemKind::FUNCTION),
-    ("string.length", CompletionItemKind::FUNCTION),
-    ("string.byte_length", CompletionItemKind::FUNCTION),
-    ("string.contains", CompletionItemKind::FUNCTION),
-    ("string.replace", CompletionItemKind::FUNCTION),
-    ("string.to_upper", CompletionItemKind::FUNCTION),
-    ("string.to_lower", CompletionItemKind::FUNCTION),
-    ("string.starts_with", CompletionItemKind::FUNCTION),
-    ("string.ends_with", CompletionItemKind::FUNCTION),
-    ("string.chars", CompletionItemKind::FUNCTION),
-    ("string.repeat", CompletionItemKind::FUNCTION),
-    ("string.index_of", CompletionItemKind::FUNCTION),
-    ("string.slice", CompletionItemKind::FUNCTION),
-    ("string.pad_left", CompletionItemKind::FUNCTION),
-    ("string.pad_right", CompletionItemKind::FUNCTION),
-    ("string.is_empty", CompletionItemKind::FUNCTION),
-    ("string.is_alpha", CompletionItemKind::FUNCTION),
-    ("string.is_digit", CompletionItemKind::FUNCTION),
-    ("string.is_upper", CompletionItemKind::FUNCTION),
-    ("string.is_lower", CompletionItemKind::FUNCTION),
-    ("string.is_alnum", CompletionItemKind::FUNCTION),
-    ("string.is_whitespace", CompletionItemKind::FUNCTION),
-    // int
-    ("int.parse", CompletionItemKind::FUNCTION),
-    ("int.abs", CompletionItemKind::FUNCTION),
-    ("int.min", CompletionItemKind::FUNCTION),
-    ("int.max", CompletionItemKind::FUNCTION),
-    ("int.to_float", CompletionItemKind::FUNCTION),
-    ("int.to_string", CompletionItemKind::FUNCTION),
-    // float
-    ("float.parse", CompletionItemKind::FUNCTION),
-    ("float.round", CompletionItemKind::FUNCTION),
-    ("float.ceil", CompletionItemKind::FUNCTION),
-    ("float.floor", CompletionItemKind::FUNCTION),
-    ("float.abs", CompletionItemKind::FUNCTION),
-    ("float.to_string", CompletionItemKind::FUNCTION),
-    ("float.to_int", CompletionItemKind::FUNCTION),
-    ("float.min", CompletionItemKind::FUNCTION),
-    ("float.max", CompletionItemKind::FUNCTION),
-    ("float.min_value", CompletionItemKind::CONSTANT),
-    ("float.max_value", CompletionItemKind::CONSTANT),
-    // map
-    ("map.get", CompletionItemKind::FUNCTION),
-    ("map.set", CompletionItemKind::FUNCTION),
-    ("map.delete", CompletionItemKind::FUNCTION),
-    ("map.keys", CompletionItemKind::FUNCTION),
-    ("map.values", CompletionItemKind::FUNCTION),
-    ("map.length", CompletionItemKind::FUNCTION),
-    ("map.merge", CompletionItemKind::FUNCTION),
-    ("map.filter", CompletionItemKind::FUNCTION),
-    ("map.map", CompletionItemKind::FUNCTION),
-    ("map.entries", CompletionItemKind::FUNCTION),
-    ("map.from_entries", CompletionItemKind::FUNCTION),
-    ("map.each", CompletionItemKind::FUNCTION),
-    ("map.update", CompletionItemKind::FUNCTION),
-    // set
-    ("set.new", CompletionItemKind::FUNCTION),
-    ("set.add", CompletionItemKind::FUNCTION),
-    ("set.remove", CompletionItemKind::FUNCTION),
-    ("set.contains", CompletionItemKind::FUNCTION),
-    ("set.union", CompletionItemKind::FUNCTION),
-    ("set.intersection", CompletionItemKind::FUNCTION),
-    ("set.difference", CompletionItemKind::FUNCTION),
-    ("set.size", CompletionItemKind::FUNCTION),
-    ("set.to_list", CompletionItemKind::FUNCTION),
-    ("set.from_list", CompletionItemKind::FUNCTION),
-    ("set.filter", CompletionItemKind::FUNCTION),
-    ("set.map", CompletionItemKind::FUNCTION),
-    ("set.fold", CompletionItemKind::FUNCTION),
-    ("set.each", CompletionItemKind::FUNCTION),
-    ("set.is_subset", CompletionItemKind::FUNCTION),
-    // result
-    ("result.unwrap_or", CompletionItemKind::FUNCTION),
-    ("result.map_ok", CompletionItemKind::FUNCTION),
-    ("result.map_err", CompletionItemKind::FUNCTION),
-    ("result.flatten", CompletionItemKind::FUNCTION),
-    ("result.flat_map", CompletionItemKind::FUNCTION),
-    ("result.is_ok", CompletionItemKind::FUNCTION),
-    ("result.is_err", CompletionItemKind::FUNCTION),
-    // option
-    ("option.map", CompletionItemKind::FUNCTION),
-    ("option.unwrap_or", CompletionItemKind::FUNCTION),
-    ("option.to_result", CompletionItemKind::FUNCTION),
-    ("option.is_some", CompletionItemKind::FUNCTION),
-    ("option.is_none", CompletionItemKind::FUNCTION),
-    // io
-    ("io.read_file", CompletionItemKind::FUNCTION),
-    ("io.write_file", CompletionItemKind::FUNCTION),
-    ("io.read_line", CompletionItemKind::FUNCTION),
-    ("io.inspect", CompletionItemKind::FUNCTION),
-    ("io.args", CompletionItemKind::FUNCTION),
-    // math
-    ("math.sqrt", CompletionItemKind::FUNCTION),
-    ("math.pow", CompletionItemKind::FUNCTION),
-    ("math.log", CompletionItemKind::FUNCTION),
-    ("math.log10", CompletionItemKind::FUNCTION),
-    ("math.sin", CompletionItemKind::FUNCTION),
-    ("math.cos", CompletionItemKind::FUNCTION),
-    ("math.tan", CompletionItemKind::FUNCTION),
-    ("math.asin", CompletionItemKind::FUNCTION),
-    ("math.acos", CompletionItemKind::FUNCTION),
-    ("math.atan", CompletionItemKind::FUNCTION),
-    ("math.atan2", CompletionItemKind::FUNCTION),
-    ("math.pi", CompletionItemKind::CONSTANT),
-    ("math.e", CompletionItemKind::CONSTANT),
-    // channel
-    ("channel.new", CompletionItemKind::FUNCTION),
-    ("channel.send", CompletionItemKind::FUNCTION),
-    ("channel.receive", CompletionItemKind::FUNCTION),
-    ("channel.close", CompletionItemKind::FUNCTION),
-    ("channel.try_send", CompletionItemKind::FUNCTION),
-    ("channel.try_receive", CompletionItemKind::FUNCTION),
-    ("channel.select", CompletionItemKind::FUNCTION),
-    // task
-    ("task.spawn", CompletionItemKind::FUNCTION),
-    ("task.join", CompletionItemKind::FUNCTION),
-    ("task.cancel", CompletionItemKind::FUNCTION),
-    // regex
-    ("regex.is_match", CompletionItemKind::FUNCTION),
-    ("regex.find", CompletionItemKind::FUNCTION),
-    ("regex.find_all", CompletionItemKind::FUNCTION),
-    ("regex.split", CompletionItemKind::FUNCTION),
-    ("regex.replace", CompletionItemKind::FUNCTION),
-    ("regex.replace_all", CompletionItemKind::FUNCTION),
-    ("regex.replace_all_with", CompletionItemKind::FUNCTION),
-    ("regex.captures", CompletionItemKind::FUNCTION),
-    // json
-    ("json.parse", CompletionItemKind::FUNCTION),
-    ("json.stringify", CompletionItemKind::FUNCTION),
-    ("json.pretty", CompletionItemKind::FUNCTION),
-    // test
-    ("test.assert", CompletionItemKind::FUNCTION),
-    ("test.assert_eq", CompletionItemKind::FUNCTION),
-    ("test.assert_ne", CompletionItemKind::FUNCTION),
-    // time
-    ("time.now", CompletionItemKind::FUNCTION),
-    ("time.today", CompletionItemKind::FUNCTION),
-    ("time.date", CompletionItemKind::FUNCTION),
-    ("time.time", CompletionItemKind::FUNCTION),
-    ("time.datetime", CompletionItemKind::FUNCTION),
-    ("time.to_datetime", CompletionItemKind::FUNCTION),
-    ("time.to_instant", CompletionItemKind::FUNCTION),
-    ("time.to_utc", CompletionItemKind::FUNCTION),
-    ("time.from_utc", CompletionItemKind::FUNCTION),
-    ("time.format", CompletionItemKind::FUNCTION),
-    ("time.format_date", CompletionItemKind::FUNCTION),
-    ("time.parse", CompletionItemKind::FUNCTION),
-    ("time.parse_date", CompletionItemKind::FUNCTION),
-    ("time.add_days", CompletionItemKind::FUNCTION),
-    ("time.add_months", CompletionItemKind::FUNCTION),
-    ("time.add", CompletionItemKind::FUNCTION),
-    ("time.since", CompletionItemKind::FUNCTION),
-    ("time.hours", CompletionItemKind::FUNCTION),
-    ("time.minutes", CompletionItemKind::FUNCTION),
-    ("time.seconds", CompletionItemKind::FUNCTION),
-    ("time.ms", CompletionItemKind::FUNCTION),
-    ("time.weekday", CompletionItemKind::FUNCTION),
-    ("time.days_between", CompletionItemKind::FUNCTION),
-    ("time.days_in_month", CompletionItemKind::FUNCTION),
-    ("time.is_leap_year", CompletionItemKind::FUNCTION),
-    ("time.sleep", CompletionItemKind::FUNCTION),
-    // http
-    ("http.get", CompletionItemKind::FUNCTION),
-    ("http.request", CompletionItemKind::FUNCTION),
-    ("http.serve", CompletionItemKind::FUNCTION),
-    ("http.segments", CompletionItemKind::FUNCTION),
-];
+/// Build the builtins completion list dynamically from the module registry
+/// so it never falls out of sync with `module.rs`.
+fn builtins() -> Vec<(String, CompletionItemKind)> {
+    let mut items = vec![
+        // Globals (not part of any module)
+        ("print".to_string(), CompletionItemKind::FUNCTION),
+        ("println".to_string(), CompletionItemKind::FUNCTION),
+        ("panic".to_string(), CompletionItemKind::FUNCTION),
+        ("Ok".to_string(), CompletionItemKind::CONSTRUCTOR),
+        ("Err".to_string(), CompletionItemKind::CONSTRUCTOR),
+        ("Some".to_string(), CompletionItemKind::CONSTRUCTOR),
+        ("None".to_string(), CompletionItemKind::CONSTRUCTOR),
+        ("true".to_string(), CompletionItemKind::CONSTANT),
+        ("false".to_string(), CompletionItemKind::CONSTANT),
+    ];
+
+    let constants: std::collections::HashSet<String> = module::BUILTIN_MODULES
+        .iter()
+        .flat_map(|m| {
+            module::builtin_module_constants(m)
+                .into_iter()
+                .map(move |c| format!("{m}.{c}"))
+        })
+        .collect();
+
+    for &m in module::BUILTIN_MODULES {
+        for func in module::builtin_module_functions(m) {
+            let qualified = format!("{m}.{func}");
+            let kind = if constants.contains(&qualified) {
+                CompletionItemKind::CONSTANT
+            } else {
+                CompletionItemKind::FUNCTION
+            };
+            items.push((qualified, kind));
+        }
+    }
+
+    items
+}
 
 // ── Helpers ────────────────────────────────────────────────────────
 
