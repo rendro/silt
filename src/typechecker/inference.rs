@@ -531,30 +531,48 @@ impl TypeChecker {
                     Type::Var(v) => {
                         // Check if this type variable has trait constraints
                         if let Some(trait_names) = self.active_constraints.get(v).cloned() {
-                            // Look for the method in constrained traits
+                            // Collect all traits that provide this method
+                            let mut matches: Vec<(Symbol, Type)> = Vec::new();
                             for trait_name in &trait_names {
                                 if let Some(trait_info) = self.traits.get(trait_name).cloned()
                                     && let Some((_, method_ty)) =
                                         trait_info.methods.iter().find(|(n, _)| *n == field)
                                 {
-                                    let resolved = self.apply(method_ty);
-                                    expr.ty = Some(resolved.clone());
-                                    return resolved;
+                                    matches.push((*trait_name, method_ty.clone()));
                                 }
                             }
-                            // Method not found on any constrained trait — error
-                            let traits_str = trait_names
-                                .iter()
-                                .map(|s| format!("{s}"))
-                                .collect::<Vec<_>>()
-                                .join(" + ");
-                            self.error(
-                                format!(
-                                    "no method '{field}' found in trait constraints ({traits_str})"
-                                ),
-                                span,
-                            );
-                            Type::Error
+                            if matches.len() > 1 {
+                                let trait_list = matches
+                                    .iter()
+                                    .map(|(name, _)| format!("{name}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                self.error(
+                                    format!(
+                                        "ambiguous method '{field}': provided by multiple traits ({trait_list})"
+                                    ),
+                                    span,
+                                );
+                                Type::Error
+                            } else if let Some((_, method_ty)) = matches.first() {
+                                let resolved = self.apply(method_ty);
+                                expr.ty = Some(resolved.clone());
+                                return resolved;
+                            } else {
+                                // Method not found on any constrained trait — error
+                                let traits_str = trait_names
+                                    .iter()
+                                    .map(|s| format!("{s}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" + ");
+                                self.error(
+                                    format!(
+                                        "no method '{field}' found in trait constraints ({traits_str})"
+                                    ),
+                                    span,
+                                );
+                                Type::Error
+                            }
                         } else {
                             // Unconstrained type variable — stay lenient (may resolve later)
                             self.fresh_var()
