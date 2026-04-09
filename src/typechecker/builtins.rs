@@ -115,6 +115,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("Option"),
                 params: vec![intern("a")],
+                param_var_ids: vec![0],
                 variants: vec![
                     VariantInfo {
                         name: intern("Some"),
@@ -137,6 +138,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("Result"),
                 params: vec![intern("a"), intern("e")],
+                param_var_ids: vec![0, 1],
                 variants: vec![
                     VariantInfo {
                         name: intern("Ok"),
@@ -158,6 +160,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("Step"),
                 params: vec![intern("a")],
+                param_var_ids: vec![0],
                 variants: vec![
                     VariantInfo {
                         name: intern("Stop"),
@@ -208,6 +211,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("ChannelResult"),
                 params: vec![intern("a")],
+                param_var_ids: vec![0],
                 variants: vec![
                     VariantInfo {
                         name: intern("Message"),
@@ -2674,6 +2678,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("Weekday"),
                 params: vec![],
+                param_var_ids: vec![],
                 variants: vec![
                     VariantInfo {
                         name: intern("Monday"),
@@ -2949,6 +2954,7 @@ impl TypeChecker {
             EnumInfo {
                 _name: intern("Method"),
                 params: vec![],
+                param_var_ids: vec![],
                 variants: vec![
                     VariantInfo {
                         name: intern("GET"),

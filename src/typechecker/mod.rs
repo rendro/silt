@@ -91,6 +91,8 @@ impl TypeEnv {
 pub(super) struct EnumInfo {
     pub(super) _name: Symbol,
     pub(super) params: Vec<Symbol>,
+    /// The actual TyVar ids assigned to each type parameter (same order as `params`).
+    pub(super) param_var_ids: Vec<TyVar>,
     pub(super) variants: Vec<VariantInfo>,
 }
 
@@ -807,6 +809,17 @@ impl TypeChecker {
             TypeBody::Enum(variants) => {
                 let mut variant_infos = Vec::new();
 
+                // Compute the TyVar ids for each type parameter once,
+                // before the variant loop (they are the same for every variant).
+                let var_ids: Vec<TyVar> = td
+                    .params
+                    .iter()
+                    .map(|p| match &param_vars[p] {
+                        Type::Var(v) => *v,
+                        _ => unreachable!(),
+                    })
+                    .collect();
+
                 for variant in variants {
                     let field_types: Vec<Type> = variant
                         .fields
@@ -829,21 +842,12 @@ impl TypeChecker {
                         Type::Generic(td.name, type_params)
                     };
 
-                    let var_ids: Vec<TyVar> = td
-                        .params
-                        .iter()
-                        .map(|p| match &param_vars[p] {
-                            Type::Var(v) => *v,
-                            _ => unreachable!(),
-                        })
-                        .collect();
-
                     if field_types.is_empty() {
                         // No-arg constructor is just a value
                         env.define(
                             variant.name,
                             Scheme {
-                                vars: var_ids,
+                                vars: var_ids.clone(),
                                 ty: result_type,
                                 constraints: vec![],
                             },
@@ -853,7 +857,7 @@ impl TypeChecker {
                         env.define(
                             variant.name,
                             Scheme {
-                                vars: var_ids,
+                                vars: var_ids.clone(),
                                 ty: Type::Fun(field_types, Box::new(result_type)),
                                 constraints: vec![],
                             },
@@ -868,6 +872,7 @@ impl TypeChecker {
                     EnumInfo {
                         _name: td.name,
                         params: td.params.clone(),
+                        param_var_ids: var_ids,
                         variants: variant_infos,
                     },
                 );

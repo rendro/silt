@@ -6141,6 +6141,500 @@ fn main() {{
     }
 }
 
+// ── http.serve functional tests ─────────────────────────────────
+
+/// Find a free ephemeral port by binding to port 0, recording the
+/// assigned port, then dropping the listener so `http.serve` can bind it.
+fn find_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
+/// Spin-wait for a TCP port to become connectable, with a timeout.
+/// Returns `true` if the port is ready, `false` if timed out.
+fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    false
+}
+
+#[test]
+fn test_http_serve_basic_get_response() {
+    // Start a server that echoes a fixed body, make a GET request, verify
+    // the response body matches.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: "hello from silt", headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/"))
+        .call()
+        .expect("GET request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.body_mut().read_to_string().unwrap();
+    assert_eq!(body, "hello from silt");
+}
+
+#[test]
+fn test_http_serve_returns_custom_status_code() {
+    // Handler returns a 404 status — verify the client sees it.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 404, body: "not found", headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/missing"))
+        .call()
+        .expect("GET request failed");
+
+    assert_eq!(resp.status(), 404);
+    let body = resp.body_mut().read_to_string().unwrap();
+    assert_eq!(body, "not found");
+}
+
+#[test]
+fn test_http_serve_echoes_request_path() {
+    // Handler echoes back the request path in the body.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: req.path, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    // Test various paths
+    for path in &["/", "/api/v1/users", "/hello/world"] {
+        let mut resp = agent
+            .get(&format!("http://127.0.0.1:{port}{path}"))
+            .call()
+            .expect("GET request failed");
+
+        assert_eq!(resp.status(), 200);
+        let body = resp.body_mut().read_to_string().unwrap();
+        assert_eq!(body, *path, "path mismatch for {path}");
+    }
+}
+
+#[test]
+fn test_http_serve_echoes_query_string() {
+    // Handler echoes back the query string from the request.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: req.query, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/search?q=silt&page=1"))
+        .call()
+        .expect("GET request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.body_mut().read_to_string().unwrap();
+    assert_eq!(body, "q=silt&page=1");
+}
+
+#[test]
+fn test_http_serve_reads_request_body() {
+    // POST a body to the server and verify the handler receives it.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: req.body, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut resp = agent
+        .post(&format!("http://127.0.0.1:{port}/echo"))
+        .send("request body content")
+        .expect("POST request failed");
+
+    assert_eq!(resp.status(), 200);
+    let body = resp.body_mut().read_to_string().unwrap();
+    assert_eq!(body, "request body content");
+}
+
+#[test]
+fn test_http_serve_reads_request_method() {
+    // Handler pattern-matches on the request method and returns its name.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    let method_name = match req.method {{
+      GET -> "got-get"
+      POST -> "got-post"
+      PUT -> "got-put"
+      DELETE -> "got-delete"
+      _ -> "got-other"
+    }}
+    Response {{ status: 200, body: method_name, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    // Test GET
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/"))
+        .call()
+        .expect("GET failed");
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "got-get");
+
+    // Test POST
+    let mut resp = agent
+        .post(&format!("http://127.0.0.1:{port}/"))
+        .send_empty()
+        .expect("POST failed");
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "got-post");
+
+    // Test PUT
+    let mut resp = agent
+        .put(&format!("http://127.0.0.1:{port}/"))
+        .send_empty()
+        .expect("PUT failed");
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "got-put");
+
+    // Test DELETE
+    let mut resp = agent
+        .delete(&format!("http://127.0.0.1:{port}/"))
+        .call()
+        .expect("DELETE failed");
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "got-delete");
+}
+
+#[test]
+fn test_http_serve_sets_response_headers() {
+    // Handler sets custom response headers — verify the client sees them.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{
+      status: 200,
+      body: "ok",
+      headers: #{{ "X-Custom": "silt-value", "X-Another": "42" }}
+    }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let resp = agent
+        .get(&format!("http://127.0.0.1:{port}/"))
+        .call()
+        .expect("GET request failed");
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("X-Custom").and_then(|v| v.to_str().ok()),
+        Some("silt-value"),
+        "missing or wrong X-Custom header"
+    );
+    assert_eq!(
+        resp.headers().get("X-Another").and_then(|v| v.to_str().ok()),
+        Some("42"),
+        "missing or wrong X-Another header"
+    );
+}
+
+#[test]
+fn test_http_serve_routing_by_path() {
+    // Handler routes requests based on path, returning different responses.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    match req.path {{
+      "/health" -> Response {{ status: 200, body: "ok", headers: #{{}} }}
+      "/greet" -> Response {{ status: 200, body: "hello!", headers: #{{}} }}
+      _ -> Response {{ status: 404, body: "not found", headers: #{{}} }}
+    }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    // /health -> 200 "ok"
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/health"))
+        .call()
+        .expect("GET /health failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "ok");
+
+    // /greet -> 200 "hello!"
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/greet"))
+        .call()
+        .expect("GET /greet failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "hello!");
+
+    // /unknown -> 404 "not found"
+    let mut resp = agent
+        .get(&format!("http://127.0.0.1:{port}/unknown"))
+        .call()
+        .expect("GET /unknown failed");
+    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.body_mut().read_to_string().unwrap(), "not found");
+}
+
+#[test]
+fn test_http_serve_concurrent_requests_stress() {
+    // Stress test: 20 concurrent requests, each with a unique path.
+    // Verifies the server handles high concurrency correctly.
+    use std::thread;
+
+    let port = find_free_port();
+
+    thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+
+fn main() {{
+  http.serve({port}, fn(req) {{
+    Response {{ status: 200, body: req.path, headers: #{{}} }}
+  }})
+}}
+"#
+        );
+        run(&input);
+    });
+
+    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+
+    let count = 20;
+    let mut handles = Vec::new();
+    for i in 0..count {
+        handles.push(thread::spawn(move || {
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build()
+                .into();
+            let url = format!("http://127.0.0.1:{port}/stress/{i}");
+            let mut resp = agent.get(&url).call().expect("request failed");
+            let body = resp.body_mut().read_to_string().unwrap();
+            (i, resp.status(), body)
+        }));
+    }
+
+    for h in handles {
+        let (i, status, body) = h.join().unwrap();
+        assert_eq!(status, 200, "request {i} got status {status}");
+        assert_eq!(body, format!("/stress/{i}"), "request {i} got wrong body");
+    }
+}
+
+#[test]
+fn test_http_serve_from_task_with_silt_client() {
+    // Start the server in a spawned task, then use http.get() from another
+    // task to make a request to it — fully within Silt's runtime.
+    // The client retries in a functional loop until the server is ready.
+    use std::thread;
+
+    let port = find_free_port();
+
+    // Run the entire program in a background Rust thread to prevent
+    // hanging the test runner if something goes wrong.
+    let handle = thread::spawn(move || {
+        let input = format!(
+            r#"
+import http
+import task
+import channel
+
+fn main() {{
+  let result_ch = channel.new(1)
+
+  -- Start the server in a task
+  let server = task.spawn(fn() {{
+    http.serve({port}, fn(req) {{
+      Response {{ status: 200, body: "silt-response", headers: #{{}} }}
+    }})
+  }})
+
+  -- Make a request from another task, retrying until the server is up
+  let client = task.spawn(fn() {{
+    let body = loop attempts = 0 {{
+      match attempts > 100 {{
+        true -> "gave up"
+        _ -> match http.get("http://127.0.0.1:{port}/test") {{
+          Ok(resp) -> resp.body
+          Err(_) -> loop(attempts + 1)
+        }}
+      }}
+    }}
+    channel.send(result_ch, body)
+  }})
+
+  let Message(body) = channel.receive(result_ch)
+  body
+}}
+"#
+        );
+        run(&input)
+    });
+
+    let result = handle
+        .join()
+        .expect("silt program panicked");
+    assert_eq!(result, Value::String("silt-response".into()));
+}
+
 // ── Deadlock detection ──────────────────────────────────────────
 
 #[test]
@@ -8798,4 +9292,389 @@ fn main() {
 }
     "#);
     assert_eq!(result, Value::Bool(true));
+}
+
+// ── Upvalue capture and closure edge cases ─────────────────────────
+
+#[test]
+fn test_grandparent_scope_capture() {
+    // A closure captures a variable defined two scopes up (grandparent).
+    let result = run(r#"
+fn outer(x) {
+  let middle = fn(y) {
+    let inner = fn(z) { x + y + z }
+    inner(3)
+  }
+  middle(2)
+}
+
+fn main() {
+  outer(1)
+}
+    "#);
+    assert_eq!(result, Value::Int(6));
+}
+
+#[test]
+fn test_four_level_nested_capture() {
+    // Four levels of nesting: each closure captures from every ancestor.
+    let result = run(r#"
+fn level0(a) {
+  let level1 = fn(b) {
+    let level2 = fn(c) {
+      let level3 = fn(d) { a + b + c + d }
+      level3(4)
+    }
+    level2(3)
+  }
+  level1(2)
+}
+
+fn main() {
+  level0(1)
+}
+    "#);
+    assert_eq!(result, Value::Int(10));
+}
+
+#[test]
+fn test_multiple_closures_capture_same_variable() {
+    // Two sibling closures both capture the same variable from their parent.
+    let result = run(r#"
+fn main() {
+  let shared = 10
+  let add_shared = fn(x) { x + shared }
+  let mul_shared = fn(x) { x * shared }
+  add_shared(5) + mul_shared(3)
+}
+    "#);
+    // add_shared(5) = 15, mul_shared(3) = 30, total = 45
+    assert_eq!(result, Value::Int(45));
+}
+
+#[test]
+fn test_multiple_closures_same_var_from_function() {
+    // Two closures returned via a tuple-like structure both capture
+    // the same parameter from their enclosing function.
+    let result = run(r#"
+fn make_pair(n) {
+  let inc = fn() { n + 1 }
+  let dec = fn() { n - 1 }
+  (inc, dec)
+}
+
+fn main() {
+  let (inc, dec) = make_pair(10)
+  inc() + dec()
+}
+    "#);
+    // inc() = 11, dec() = 9, total = 20
+    assert_eq!(result, Value::Int(20));
+}
+
+#[test]
+fn test_closure_captures_shadowed_variable() {
+    // A closure captures a variable, then an inner scope shadows it;
+    // the closure should still see the original (outer) value.
+    let result = run(r#"
+fn main() {
+  let x = 100
+  let f = fn() { x }
+  let x = 999
+  f()
+}
+    "#);
+    // f captures x=100 at the time MakeClosure runs; the later let x = 999
+    // creates a new local that does not affect the captured value.
+    assert_eq!(result, Value::Int(100));
+}
+
+#[test]
+fn test_closure_defined_after_shadow_captures_inner() {
+    // The closure is defined after the shadow, so it captures the inner value.
+    let result = run(r#"
+fn main() {
+  let x = 1
+  let result = {
+    let x = 2
+    let f = fn() { x }
+    f()
+  }
+  result
+}
+    "#);
+    assert_eq!(result, Value::Int(2));
+}
+
+#[test]
+fn test_recursive_function_captures_upvalue() {
+    // A top-level recursive function is called via a closure that
+    // captures a variable from the enclosing scope.
+    let result = run(r#"
+fn sum_with_base(base, n) {
+  match n {
+    0 -> base
+    _ -> n + sum_with_base(base, n - 1)
+  }
+}
+
+fn make_summer(base) {
+  fn(n) { sum_with_base(base, n) }
+}
+
+fn main() {
+  let f = make_summer(100)
+  f(5)
+}
+    "#);
+    // sum_with_base(100, 5) = 5 + 4 + 3 + 2 + 1 + 100 = 115
+    assert_eq!(result, Value::Int(115));
+}
+
+#[test]
+fn test_escaping_closure_preserves_value() {
+    // A closure escapes its defining function and is called later.
+    // The captured value must survive after the enclosing function returns.
+    let result = run(r#"
+fn make_greeter(name) {
+  fn(greeting) { "{greeting}, {name}!" }
+}
+
+fn main() {
+  let greet = make_greeter("Alice")
+  greet("Hello")
+}
+    "#);
+    assert_eq!(result, Value::String("Hello, Alice!".into()));
+}
+
+#[test]
+fn test_escaping_closure_chain() {
+    // A closure returned from a function returns another closure,
+    // creating a chain of escaping closures with layered captures.
+    let result = run(r#"
+fn outer(a) {
+  fn(b) {
+    fn(c) { a + b + c }
+  }
+}
+
+fn main() {
+  let f = outer(10)
+  let g = f(20)
+  g(30)
+}
+    "#);
+    assert_eq!(result, Value::Int(60));
+}
+
+#[test]
+fn test_closure_as_argument_captures_enclosing() {
+    // A closure is passed as an argument to another function while
+    // capturing a variable from the call site's enclosing scope.
+    let result = run(r#"
+fn apply(f, x) {
+  f(x)
+}
+
+fn main() {
+  let multiplier = 7
+  let result = apply(fn(x) { x * multiplier }, 6)
+  result
+}
+    "#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_closure_as_callback_in_list_map() {
+    // Closure capturing an outer variable used as a callback in list.map.
+    let result = run(r#"
+import list
+fn main() {
+  let scale = 10
+  let bias = 3
+  [1, 2, 3] |> list.map(fn(x) { x * scale + bias })
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(13),
+            Value::Int(23),
+            Value::Int(33),
+        ]))
+    );
+}
+
+#[test]
+fn test_closure_in_fold_captures_outer() {
+    // Closure capturing an outer variable used in list.fold.
+    let result = run(r#"
+import list
+fn main() {
+  let bonus = 100
+  let result = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
+  result + bonus
+}
+    "#);
+    assert_eq!(result, Value::Int(106));
+}
+
+#[test]
+fn test_closure_inside_loop_captures_outer() {
+    // A closure created inside a loop body captures a variable from
+    // outside the loop.
+    let result = run(r#"
+import list
+fn main() {
+  let factor = 5
+  loop i = 1, acc = [] {
+    match i > 4 {
+      true -> acc
+      _ -> {
+        let f = fn() { i * factor }
+        loop(i + 1, list.append(acc, f()))
+      }
+    }
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(5),
+            Value::Int(10),
+            Value::Int(15),
+            Value::Int(20),
+        ]))
+    );
+}
+
+#[test]
+fn test_closures_built_in_loop_capture_iteration_value() {
+    // Build a list of closures inside a loop; each closure captures
+    // the iteration variable at the time it was created.
+    let result = run(r#"
+import list
+fn main() {
+  let closures = loop i = 0, acc = [] {
+    match i >= 4 {
+      true -> acc
+      _ -> loop(i + 1, list.append(acc, fn() { i }))
+    }
+  }
+  -- Call each closure and collect results
+  closures |> list.map(fn(f) { f() })
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+        ]))
+    );
+}
+
+#[test]
+fn test_deeply_nested_capture_with_intermediate_locals() {
+    // Multiple levels with locals at each level; the innermost closure
+    // captures from several ancestors while intermediate scopes have
+    // their own locals that should not interfere.
+    let result = run(r#"
+fn main() {
+  let a = 1
+  let f = fn() {
+    let b = 10
+    let g = fn() {
+      let c = 100
+      let h = fn() { a + b + c }
+      h()
+    }
+    g()
+  }
+  f()
+}
+    "#);
+    assert_eq!(result, Value::Int(111));
+}
+
+#[test]
+fn test_closure_captures_function_param_and_local() {
+    // A closure captures both a function parameter and a local variable.
+    let result = run(r#"
+fn make(param) {
+  let local = param * 2
+  fn(x) { param + local + x }
+}
+
+fn main() {
+  let f = make(5)
+  f(3)
+}
+    "#);
+    // param=5, local=10, x=3 => 18
+    assert_eq!(result, Value::Int(18));
+}
+
+#[test]
+fn test_multiple_escaping_closures_independent() {
+    // Two closures escape the same function but capture different params.
+    let result = run(r#"
+fn make_ops(a, b) {
+  let adder = fn(x) { x + a }
+  let muler = fn(x) { x * b }
+  (adder, muler)
+}
+
+fn main() {
+  let (add3, mul4) = make_ops(3, 4)
+  add3(10) + mul4(10)
+}
+    "#);
+    // add3(10) = 13, mul4(10) = 40 => 53
+    assert_eq!(result, Value::Int(53));
+}
+
+#[test]
+fn test_closure_captures_another_closure() {
+    // A closure captures another closure (which itself captured a value).
+    let result = run(r#"
+fn main() {
+  let base = 10
+  let add_base = fn(x) { x + base }
+  let apply_twice = fn(x) { add_base(add_base(x)) }
+  apply_twice(5)
+}
+    "#);
+    // add_base(5) = 15, add_base(15) = 25
+    assert_eq!(result, Value::Int(25));
+}
+
+#[test]
+fn test_returned_closure_used_in_map() {
+    // A closure returned from a factory function is used as a callback.
+    let result = run(r#"
+import list
+
+fn make_adder(n) {
+  fn(x) { x + n }
+}
+
+fn main() {
+  let add10 = make_adder(10)
+  [1, 2, 3] |> list.map(add10)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(11),
+            Value::Int(12),
+            Value::Int(13),
+        ]))
+    );
 }

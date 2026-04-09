@@ -14,6 +14,7 @@ use crate::compiler::{CompileError, Compiler};
 use crate::errors::SourceError;
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
+use crate::typechecker;
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -241,7 +242,7 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
             return;
         }
     };
-    let program = match Parser::new(tokens).parse_program() {
+    let mut program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
             let source_err = SourceError::from_parse_error(&e, input, "<repl>");
@@ -249,6 +250,20 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
             return;
         }
     };
+
+    // Type-check before compiling so that type-incorrect declarations are
+    // rejected immediately instead of producing confusing runtime errors.
+    let type_errors = typechecker::check(&mut program);
+    for te in &type_errors {
+        let source_err = SourceError::from_type_error(te, input, "<repl>");
+        eprintln!("{source_err}");
+    }
+    if type_errors
+        .iter()
+        .any(|e| e.severity == typechecker::Severity::Error)
+    {
+        return;
+    }
 
     // Compile declarations only (no main call)
     let mut compiler = Compiler::new();

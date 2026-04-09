@@ -109,7 +109,7 @@ impl TypeChecker {
                         if i < var_info.field_types.len() {
                             let field_ty = substitute_enum_params(
                                 &var_info.field_types[i],
-                                &enum_info.params,
+                                &enum_info.param_var_ids,
                                 &type_args,
                             );
                             self.bind_pattern(sp, &field_ty, env);
@@ -1208,7 +1208,7 @@ impl TypeChecker {
                             if i < var_info.field_types.len() {
                                 let field_ty = substitute_enum_params(
                                     &var_info.field_types[i],
-                                    &enum_info.params,
+                                    &enum_info.param_var_ids,
                                     &type_args,
                                 );
                                 self.bind_pattern(sp, &field_ty, env);

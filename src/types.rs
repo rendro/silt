@@ -306,12 +306,20 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
 /// Substitute enum type parameters with concrete type arguments.
 /// This is used when we know e.g. Result(Int, String) and want to
 /// resolve the type of a variant's field.
-pub fn substitute_enum_params(field_ty: &Type, param_names: &[Symbol], type_args: &[Type]) -> Type {
+pub fn substitute_enum_params(
+    field_ty: &Type,
+    param_var_ids: &[TyVar],
+    type_args: &[Type],
+) -> Type {
     match field_ty {
         Type::Var(v) => {
-            // If this Var index corresponds to a param position, substitute
-            if (*v) < param_names.len() && (*v) < type_args.len() {
-                type_args[*v].clone()
+            // Find which parameter position this TyVar corresponds to
+            if let Some(pos) = param_var_ids.iter().position(|id| id == v) {
+                if pos < type_args.len() {
+                    type_args[pos].clone()
+                } else {
+                    field_ty.clone()
+                }
             } else {
                 field_ty.clone()
             }
@@ -319,32 +327,32 @@ pub fn substitute_enum_params(field_ty: &Type, param_names: &[Symbol], type_args
         Type::Fun(params, ret) => {
             let params = params
                 .iter()
-                .map(|p| substitute_enum_params(p, param_names, type_args))
+                .map(|p| substitute_enum_params(p, param_var_ids, type_args))
                 .collect();
-            let ret = Box::new(substitute_enum_params(ret, param_names, type_args));
+            let ret = Box::new(substitute_enum_params(ret, param_var_ids, type_args));
             Type::Fun(params, ret)
         }
         Type::List(inner) => Type::List(Box::new(substitute_enum_params(
             inner,
-            param_names,
+            param_var_ids,
             type_args,
         ))),
         Type::Tuple(elems) => Type::Tuple(
             elems
                 .iter()
-                .map(|e| substitute_enum_params(e, param_names, type_args))
+                .map(|e| substitute_enum_params(e, param_var_ids, type_args))
                 .collect(),
         ),
         Type::Generic(name, args) => {
             let args = args
                 .iter()
-                .map(|a| substitute_enum_params(a, param_names, type_args))
+                .map(|a| substitute_enum_params(a, param_var_ids, type_args))
                 .collect();
             Type::Generic(*name, args)
         }
         Type::Channel(inner) => Type::Channel(Box::new(substitute_enum_params(
             inner,
-            param_names,
+            param_var_ids,
             type_args,
         ))),
         _ => field_ty.clone(),

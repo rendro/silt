@@ -420,7 +420,7 @@ impl TypeChecker {
                 if let Type::Generic(_, type_args) = parent_ty {
                     return substitute_enum_params(
                         &variant.field_types[0],
-                        &enum_info.params,
+                        &enum_info.param_var_ids,
                         type_args,
                     );
                 }
@@ -430,7 +430,7 @@ impl TypeChecker {
                     variant
                         .field_types
                         .iter()
-                        .map(|ft| substitute_enum_params(ft, &enum_info.params, type_args))
+                        .map(|ft| substitute_enum_params(ft, &enum_info.param_var_ids, type_args))
                         .collect()
                 } else {
                     variant.field_types.clone()

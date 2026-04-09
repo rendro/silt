@@ -37,8 +37,8 @@ files needed):
 | `string`  | `split`, `join`, `trim`, `contains`, `replace`, `length`    |
 | `int`     | `parse`, `abs`, `min`, `max`, `to_float`, `to_string`       |
 | `float`   | `parse`, `round`, `ceil`, `floor`, `abs`, `to_int`, `to_string` |
-| `result`  | `map_ok`, `map_err`, `unwrap_or`, `flatten`, `flat_map`     |
-| `option`  | `map`, `unwrap_or`, `to_result`, `flat_map`                 |
+| `result`  | `is_ok`, `is_err`, `map_ok`, `map_err`, `unwrap_or`, `flatten`, `flat_map` |
+| `option`  | `is_some`, `is_none`, `map`, `unwrap_or`, `to_result`, `flat_map` |
 | `regex`   | `is_match`, `find`, `find_all`, `replace`, `replace_all_with` |
 | `json`    | `parse`, `stringify`, `pretty`                               |
 | `test`    | `assert`, `assert_eq`, `assert_ne`                           |
