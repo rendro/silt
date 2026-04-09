@@ -32,14 +32,15 @@ impl TypeChecker {
             );
         }
 
-        // ── panic: String -> a ─────────────────────────────────────────
+        // ── panic: a -> b (accepts any value, never returns) ───────────
         {
             let (a, av) = self.fresh_tv();
+            let (b, bv) = self.fresh_tv();
             env.define(
                 intern("panic"),
                 Scheme {
-                    vars: vec![av],
-                    ty: Type::Fun(vec![Type::String], Box::new(a)),
+                    vars: vec![av, bv],
+                    ty: Type::Fun(vec![a], Box::new(b)),
                     constraints: vec![],
                 },
             );

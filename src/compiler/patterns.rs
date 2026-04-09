@@ -6,7 +6,7 @@
 
 use crate::ast::Pattern;
 use crate::bytecode::Op;
-use crate::intern::{intern, resolve};
+use crate::intern::{intern, resolve, Symbol};
 use crate::lexer::Span;
 use crate::module;
 use crate::value::Value;
@@ -447,8 +447,19 @@ impl Compiler {
             }
 
             Pattern::Or(alternatives) => {
-                // All alternatives bind the same variables. Bind using first alt's structure.
+                // All alternatives must bind the same variables.
                 if let Some(first) = alternatives.first() {
+                    let expected = Self::pattern_binding_names(first);
+                    for alt in &alternatives[1..] {
+                        let actual = Self::pattern_binding_names(alt);
+                        if actual != expected {
+                            return Err(CompileError {
+                                message: "or-pattern alternatives must bind the same variables"
+                                    .into(),
+                                span,
+                            });
+                        }
+                    }
                     self.compile_pattern_bind(first, span)?;
                 }
             }
@@ -582,6 +593,68 @@ impl Compiler {
             }),
             Pattern::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
             Pattern::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
+        }
+    }
+
+    /// Collect the set of variable names bound by a pattern.
+    fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
+        let mut names = std::collections::BTreeSet::new();
+        Self::collect_binding_names(pattern, &mut names);
+        names
+    }
+
+    fn collect_binding_names(pattern: &Pattern, names: &mut std::collections::BTreeSet<Symbol>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                names.insert(*name);
+            }
+            Pattern::Constructor(_, fields) => {
+                for p in fields {
+                    Self::collect_binding_names(p, names);
+                }
+            }
+            Pattern::Tuple(pats) => {
+                for p in pats {
+                    Self::collect_binding_names(p, names);
+                }
+            }
+            Pattern::List(elems, rest) => {
+                for p in elems {
+                    Self::collect_binding_names(p, names);
+                }
+                if let Some(r) = rest {
+                    Self::collect_binding_names(r, names);
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(pat) => Self::collect_binding_names(pat, names),
+                        None => {
+                            names.insert(*field_name);
+                        }
+                    }
+                }
+            }
+            Pattern::Or(alts) => {
+                // Collect from first alternative (all should be the same).
+                if let Some(first) = alts.first() {
+                    Self::collect_binding_names(first, names);
+                }
+            }
+            Pattern::Map(entries) => {
+                for (_, p) in entries {
+                    Self::collect_binding_names(p, names);
+                }
+            }
+            Pattern::Wildcard
+            | Pattern::Int(_)
+            | Pattern::Float(_)
+            | Pattern::Bool(_)
+            | Pattern::StringLit(_)
+            | Pattern::Range(..)
+            | Pattern::FloatRange(..)
+            | Pattern::Pin(_) => {}
         }
     }
 }
