@@ -66,7 +66,7 @@ Returns the current UTC time as nanoseconds since the Unix epoch (1970-01-01T00:
 ```silt
 fn main() {
     let t = time.now()
-    println(t.epoch_ns)  // 1775501213453369259
+    println(t.epoch_ns)  -- 1775501213453369259
 }
 ```
 
@@ -81,7 +81,7 @@ Returns the current date in the system's local timezone.
 
 ```silt
 fn main() {
-    println(time.today())  // 2026-04-06
+    println(time.today())  -- 2026-04-06
 }
 ```
 
@@ -96,9 +96,9 @@ Creates a validated `Date`. Returns `Err` for invalid dates.
 
 ```silt
 fn main() {
-    println(time.date(2024, 3, 15))   // Ok(2024-03-15)
-    println(time.date(2024, 2, 29))   // Ok(2024-02-29) — leap year
-    println(time.date(2024, 13, 1))   // Err(invalid date: 2024-13-1)
+    println(time.date(2024, 3, 15))   -- Ok(2024-03-15)
+    println(time.date(2024, 2, 29))   -- Ok(2024-02-29) — leap year
+    println(time.date(2024, 13, 1))   -- Err(invalid date: 2024-13-1)
 }
 ```
 
@@ -113,8 +113,8 @@ Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
 
 ```silt
 fn main() {
-    println(time.time(14, 30, 0))  // Ok(14:30:00)
-    println(time.time(25, 0, 0))   // Err(invalid time: 25:0:0)
+    println(time.time(14, 30, 0))  -- Ok(14:30:00)
+    println(time.time(25, 0, 0))   -- Err(invalid time: 25:0:0)
 }
 ```
 
@@ -131,7 +131,7 @@ Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are
 fn main() {
     let d = time.date(2024, 6, 15)?
     let t = time.time(9, 30, 0)?
-    println(time.datetime(d, t))  // 2024-06-15T09:30:00
+    println(time.datetime(d, t))  -- 2024-06-15T09:30:00
 }
 ```
 
@@ -147,8 +147,8 @@ Converts an `Instant` to a `DateTime` by applying a UTC offset in minutes.
 ```silt
 fn main() {
     let now = time.now()
-    let tokyo = now |> time.to_datetime(540)    // UTC+9:00
-    let india = now |> time.to_datetime(330)    // UTC+5:30
+    let tokyo = now |> time.to_datetime(540)    -- UTC+9:00
+    let india = now |> time.to_datetime(330)    -- UTC+5:30
     println(tokyo)
     println(india)
 }
@@ -182,7 +182,7 @@ Shorthand for `time.to_datetime(instant, 0)`.
 
 ```silt
 fn main() {
-    println(time.now() |> time.to_utc)  // 2026-04-06T18:46:09.005723612
+    println(time.now() |> time.to_utc)  -- 2026-04-06T18:46:09.005723612
 }
 ```
 
@@ -216,7 +216,7 @@ Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %
 fn main() {
     let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
     println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
-    // Wednesday, December 25, 2024 at 18:00
+    -- Wednesday, December 25, 2024 at 18:00
 }
 ```
 
@@ -232,7 +232,7 @@ Formats a `Date` using strftime patterns.
 ```silt
 fn main() {
     let d = time.date(2024, 6, 15)?
-    println(d |> time.format_date("%d/%m/%Y"))  // 15/06/2024
+    println(d |> time.format_date("%d/%m/%Y"))  -- 15/06/2024
 }
 ```
 
@@ -248,7 +248,7 @@ Parses a string into a `DateTime` using a strftime pattern.
 ```silt
 fn main() {
     let dt = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
-    println(dt)  // Ok(2024-07-04T12:00:00)
+    println(dt)  -- Ok(2024-07-04T12:00:00)
 }
 ```
 
@@ -264,7 +264,7 @@ Parses a string into a `Date` using a strftime pattern.
 ```silt
 fn main() {
     let d = time.parse_date("2024-07-04", "%Y-%m-%d")
-    println(d)  // Ok(2024-07-04)
+    println(d)  -- Ok(2024-07-04)
 }
 ```
 
@@ -280,8 +280,8 @@ Adds (or subtracts, if negative) days from a date.
 ```silt
 fn main() {
     let d = time.date(2024, 1, 1)?
-    println(d |> time.add_days(90))   // 2024-03-31
-    println(d |> time.add_days(-1))   // 2023-12-31
+    println(d |> time.add_days(90))   -- 2024-03-31
+    println(d |> time.add_days(-1))   -- 2023-12-31
 }
 ```
 
@@ -297,8 +297,8 @@ Adds (or subtracts) months from a date. Clamps to the last valid day of the targ
 ```silt
 fn main() {
     let d = time.date(2024, 1, 31)?
-    println(d |> time.add_months(1))   // 2024-02-29 (leap year, clamped)
-    println(d |> time.add_months(2))   // 2024-03-31
+    println(d |> time.add_months(1))   -- 2024-02-29 (leap year, clamped)
+    println(d |> time.add_months(2))   -- 2024-03-31
 }
 ```
 
@@ -315,7 +315,7 @@ Adds a duration to an instant.
 fn main() {
     let t = time.now()
     let later = t |> time.add(time.hours(2))
-    println(time.since(t, later))  // 2h
+    println(time.since(t, later))  -- 2h
 }
 ```
 
@@ -333,7 +333,7 @@ fn main() {
     let start = time.now()
     time.sleep(time.ms(100))
     let elapsed = time.since(start, time.now())
-    println(elapsed)  // 100ms
+    println(elapsed)  -- 100ms
 }
 ```
 
@@ -351,10 +351,10 @@ Duration constructor functions.
 
 ```silt
 fn main() {
-    println(time.hours(1))     // 1h
-    println(time.minutes(30))  // 30m
-    println(time.seconds(5))   // 5s
-    println(time.ms(500))      // 500ms
+    println(time.hours(1))     -- 1h
+    println(time.minutes(30))  -- 30m
+    println(time.seconds(5))   -- 5s
+    println(time.ms(500))      -- 500ms
 }
 ```
 
@@ -392,7 +392,7 @@ Returns the signed number of days between two dates.
 fn main() {
     let a = time.date(2024, 1, 1)?
     let b = time.date(2024, 12, 31)?
-    println(time.days_between(a, b))  // 365
+    println(time.days_between(a, b))  -- 365
 }
 ```
 
@@ -407,8 +407,8 @@ Returns the number of days in the given month.
 
 ```silt
 fn main() {
-    println(time.days_in_month(2024, 2))  // 29 (leap year)
-    println(time.days_in_month(2023, 2))  // 28
+    println(time.days_in_month(2024, 2))  -- 29 (leap year)
+    println(time.days_in_month(2023, 2))  -- 28
 }
 ```
 
@@ -423,9 +423,9 @@ Returns true if the year is a leap year.
 
 ```silt
 fn main() {
-    println(time.is_leap_year(2024))  // true
-    println(time.is_leap_year(1900))  // false (divisible by 100)
-    println(time.is_leap_year(2000))  // true (divisible by 400)
+    println(time.is_leap_year(2024))  -- true
+    println(time.is_leap_year(1900))  -- false (divisible by 100)
+    println(time.is_leap_year(2000))  -- true (divisible by 400)
 }
 ```
 
@@ -443,6 +443,6 @@ fn main() {
     let before = time.now()
     time.sleep(time.ms(100))
     let elapsed = time.since(before, time.now())
-    println(elapsed)  // ~100ms
+    println(elapsed)  -- ~100ms
 }
 ```

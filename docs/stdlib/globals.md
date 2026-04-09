@@ -51,7 +51,7 @@ call are separated by spaces.
 fn main() {
     print("hello ")
     print("world")
-    // output: hello world
+    -- output: hello world
 }
 ```
 
@@ -67,7 +67,7 @@ Prints a value to stdout followed by a newline.
 ```silt
 fn main() {
     println("hello, world")
-    // output: hello, world\n
+    -- output: hello, world\n
 }
 ```
 
@@ -85,7 +85,7 @@ can appear anywhere a value is expected.
 ```silt
 fn main() {
     panic("something went wrong")
-    panic(42)  // also valid
+    panic(42)  -- also valid
 }
 ```
 
@@ -101,7 +101,7 @@ Constructs a success variant of `Result`.
 ```silt
 fn main() {
     let r = Ok(42)
-    // r is Result(Int, e)
+    -- r is Result(Int, e)
 }
 ```
 
@@ -117,7 +117,7 @@ Constructs an error variant of `Result`.
 ```silt
 fn main() {
     let r = Err("not found")
-    // r is Result(a, String)
+    -- r is Result(a, String)
 }
 ```
 
@@ -152,7 +152,7 @@ The absent variant of `Option`. This is a value, not a function.
 ```silt
 fn main() {
     let x = None
-    println(option.is_none(x))  // true
+    println(option.is_none(x))  -- true
 }
 ```
 
@@ -169,10 +169,12 @@ accumulator result.
 ```silt
 fn main() {
     let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
-        when acc + x > 6 -> Stop(acc)
-        else -> Continue(acc + x)
+        match {
+            acc + x > 6 -> Stop(acc)
+            _ -> Continue(acc + x)
+        }
     }
-    println(result)  // 6
+    println(result)  -- 6
 }
 ```
 
@@ -201,7 +203,7 @@ fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
     let Message(v) = channel.receive(ch)
-    println(v)  // 42
+    println(v)  -- 42
 }
 ```
 

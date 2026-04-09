@@ -46,9 +46,9 @@ Division and functions that can produce NaN or Infinity return `ExtFloat`. The `
 keyword narrows back to `Float` with an inline fallback:
 
 ```silt
-let x: Float = 1.0 / 3.0 else 0.0       // finite result → 0.333...
-let y: Float = 1.0 / 0.0 else 0.0       // infinity → fallback 0.0
-let z: Float = math.sqrt(-1.0) else 0.0  // NaN → fallback 0.0
+let x: Float = 1.0 / 3.0 else 0.0       -- finite result -> 0.333...
+let y: Float = 1.0 / 0.0 else 0.0       -- infinity -> fallback 0.0
+let z: Float = math.sqrt(-1.0) else 0.0  -- NaN -> fallback 0.0
 ```
 
 Non-division arithmetic (`+`, `-`, `*`) on `Float` values still returns `Float` and

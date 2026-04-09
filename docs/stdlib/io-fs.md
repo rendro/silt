@@ -48,7 +48,7 @@ Returns a debug-style string representation of any value, using silt syntax
 ```silt
 fn main() {
     let s = io.inspect([1, "hello", true])
-    println(s)  // [1, "hello", true]
+    println(s)  -- [1, "hello", true]
 }
 ```
 
@@ -117,6 +117,59 @@ fn main() {
 
 ---
 
+# env
+
+Environment variable access. Requires `import env`.
+
+## Summary
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `get` | `(String) -> Option(String)` | Read an environment variable |
+| `set` | `(String, String) -> ()` | Set an environment variable |
+
+
+## `env.get`
+
+```
+env.get(key: String) -> Option(String)
+```
+
+Returns `Some(value)` if the environment variable `key` is set, or `None`
+if it is not.
+
+```silt
+import env
+
+fn main() {
+    match env.get("HOME") {
+        Some(home) -> println("Home directory: {home}")
+        None -> println("HOME not set")
+    }
+}
+```
+
+
+## `env.set`
+
+```
+env.set(key: String, value: String) -> ()
+```
+
+Sets the environment variable `key` to `value` for the current process.
+
+```silt
+import env
+
+fn main() {
+    env.set("MY_VAR", "hello")
+    println(env.get("MY_VAR"))  -- Some("hello")
+}
+```
+
+
+---
+
 # fs
 
 Filesystem operations: queries, directory management, and file manipulation.
@@ -166,8 +219,10 @@ Returns `true` if the file or directory at `path` exists.
 
 ```silt
 fn main() {
-    when fs.exists("config.toml") -> println("found config")
-    else -> println("no config")
+    match {
+        fs.exists("config.toml") -> println("found config")
+        _ -> println("no config")
+    }
 }
 ```
 
@@ -182,8 +237,10 @@ Returns `true` if the path exists and is a regular file.
 
 ```silt
 fn main() {
-    when fs.is_file("data.csv") -> println("it's a file")
-    else -> println("not a file")
+    match {
+        fs.is_file("data.csv") -> println("it's a file")
+        _ -> println("not a file")
+    }
 }
 ```
 
@@ -198,8 +255,10 @@ Returns `true` if the path exists and is a directory.
 
 ```silt
 fn main() {
-    when fs.is_dir("src") -> println("it's a directory")
-    else -> println("not a directory")
+    match {
+        fs.is_dir("src") -> println("it's a directory")
+        _ -> println("not a directory")
+    }
 }
 ```
 

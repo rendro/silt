@@ -355,6 +355,15 @@ pub fn substitute_enum_params(
             param_var_ids,
             type_args,
         ))),
+        Type::Map(k, v) => Type::Map(
+            Box::new(substitute_enum_params(k, param_var_ids, type_args)),
+            Box::new(substitute_enum_params(v, param_var_ids, type_args)),
+        ),
+        Type::Set(t) => Type::Set(Box::new(substitute_enum_params(
+            t,
+            param_var_ids,
+            type_args,
+        ))),
         _ => field_ty.clone(),
     }
 }

@@ -40,8 +40,8 @@ Returns `true` if the map has an entry for `key`.
 ```silt
 fn main() {
     let m = #{"a": 1, "b": 2}
-    println(map.contains(m, "a"))  // true
-    println(map.contains(m, "z"))  // false
+    println(map.contains(m, "a"))  -- true
+    println(map.contains(m, "z"))  -- false
 }
 ```
 
@@ -58,7 +58,7 @@ Returns a new map with `key` removed. No-op if key does not exist.
 fn main() {
     let m = #{"a": 1, "b": 2}
     let m2 = map.delete(m, "a")
-    println(map.length(m2))  // 1
+    println(map.length(m2))  -- 1
 }
 ```
 
@@ -91,7 +91,7 @@ Returns all key-value pairs as a list of tuples.
 fn main() {
     let m = #{"a": 1, "b": 2}
     let pairs = map.entries(m)
-    // [("a", 1), ("b", 2)]
+    -- [("a", 1), ("b", 2)]
 }
 ```
 
@@ -108,7 +108,7 @@ Returns a new map containing only entries where `f` returns `true`.
 fn main() {
     let m = #{"a": 1, "b": 2, "c": 3}
     let big = map.filter(m) { k, v -> v > 1 }
-    // #{"b": 2, "c": 3}
+    -- #{"b": 2, "c": 3}
 }
 ```
 
@@ -125,7 +125,7 @@ earlier ones with the same key.
 ```silt
 fn main() {
     let m = map.from_entries([("a", 1), ("b", 2)])
-    println(m)  // #{"a": 1, "b": 2}
+    println(m)  -- #{"a": 1, "b": 2}
 }
 ```
 
@@ -160,7 +160,7 @@ Returns all keys as a list, in sorted order.
 ```silt
 fn main() {
     let ks = map.keys(#{"b": 2, "a": 1})
-    println(ks)  // ["a", "b"]
+    println(ks)  -- ["a", "b"]
 }
 ```
 
@@ -175,7 +175,7 @@ Returns the number of entries in the map.
 
 ```silt
 fn main() {
-    println(map.length(#{"a": 1, "b": 2}))  // 2
+    println(map.length(#{"a": 1, "b": 2}))  -- 2
 }
 ```
 
@@ -192,7 +192,7 @@ Transforms each entry. The callback must return a `(key, value)` tuple.
 fn main() {
     let m = #{"a": 1, "b": 2}
     let doubled = map.map(m) { k, v -> (k, v * 2) }
-    // #{"a": 2, "b": 4}
+    -- #{"a": 2, "b": 4}
 }
 ```
 
@@ -210,7 +210,7 @@ fn main() {
     let a = #{"x": 1, "y": 2}
     let b = #{"y": 99, "z": 3}
     let merged = map.merge(a, b)
-    // #{"x": 1, "y": 99, "z": 3}
+    -- #{"x": 1, "y": 99, "z": 3}
 }
 ```
 
@@ -228,7 +228,7 @@ existing.
 fn main() {
     let m = #{"a": 1}
     let m2 = map.set(m, "b", 2)
-    println(m2)  // #{"a": 1, "b": 2}
+    println(m2)  -- #{"a": 1, "b": 2}
 }
 ```
 
@@ -247,8 +247,8 @@ fn main() {
     let m = #{"a": 1}
     let m2 = map.update(m, "a", 0) { v -> v + 10 }
     let m3 = map.update(m2, "b", 0) { v -> v + 10 }
-    // m2 == #{"a": 11}
-    // m3 == #{"a": 11, "b": 10}
+    -- m2 == #{"a": 11}
+    -- m3 == #{"a": 11, "b": 10}
 }
 ```
 
@@ -264,6 +264,6 @@ Returns all values as a list, in key-sorted order.
 ```silt
 fn main() {
     let vs = map.values(#{"a": 1, "b": 2})
-    println(vs)  // [1, 2]
+    println(vs)  -- [1, 2]
 }
 ```

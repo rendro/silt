@@ -216,6 +216,7 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 fn is_declaration(input: &str) -> bool {
     let trimmed = input.trim();
     trimmed.starts_with("fn ")
+        || trimmed.starts_with("let ")
         || trimmed.starts_with("type ")
         || trimmed.starts_with("trait ")
         || trimmed.starts_with("import ")
@@ -279,7 +280,12 @@ fn eval_declaration(vm: &mut Vm, input: &str) {
 
     let script = Arc::new(functions.into_iter().next().unwrap());
     if let Err(e) = vm.run(script) {
-        eprintln!("{e}");
+        if let Some(span) = e.span {
+            let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
+            eprintln!("{source_err}");
+        } else {
+            eprintln!("{e}");
+        }
     }
 }
 
@@ -327,7 +333,13 @@ fn eval_expression(vm: &mut Vm, input: &str) {
             }
         }
         Err(e) => {
-            eprintln!("{e}");
+            if let Some(span) = e.span {
+                let adjusted = adjust_span(span, wrapper_prefix.len());
+                let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
+                eprintln!("{source_err}");
+            } else {
+                eprintln!("{e}");
+            }
         }
     }
 }

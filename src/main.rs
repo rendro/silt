@@ -606,7 +606,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
         };
 
-        let program = match Parser::new(tokens).parse_program() {
+        let mut program = match Parser::new(tokens).parse_program() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{path}:{e}");
@@ -614,6 +614,21 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 continue;
             }
         };
+
+        // Type-check before compiling so type errors fail the test.
+        let type_errors = typechecker::check(&mut program);
+        let mut has_type_error = false;
+        for te in &type_errors {
+            let source_err = SourceError::from_type_error(te, &source, path);
+            eprintln!("{source_err}");
+            if te.severity == typechecker::Severity::Error {
+                has_type_error = true;
+            }
+        }
+        if has_type_error {
+            failed += 1;
+            continue;
+        }
 
         // Compile all declarations (without calling main)
         let test_root = Path::new(path.as_str())

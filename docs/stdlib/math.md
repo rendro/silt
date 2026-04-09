@@ -25,6 +25,7 @@ finite inputs return `Float`. Functions that may produce NaN or Infinity return 
 | `log10` | `(Float) -> ExtFloat` | Base-10 logarithm |
 | `pi` | `Float` | Pi (3.14159...) |
 | `pow` | `(Float, Float) -> ExtFloat` | Exponentiation |
+| `random` | `() -> Float` | Random float in [0.0, 1.0) |
 | `sin` | `(Float) -> Float` | Sine |
 | `sqrt` | `(Float) -> ExtFloat` | Square root |
 | `tan` | `(Float) -> Float` | Tangent |
@@ -207,6 +208,22 @@ Infinity for large results. Use `else` to narrow:
 fn main() {
     let result = math.pow(2.0, 10.0) else 0.0
     println(result)  // 1024.0
+}
+```
+
+
+## `math.random`
+
+```
+math.random() -> Float
+```
+
+Returns a random `Float` in the range [0.0, 1.0). The result is always finite.
+
+```silt
+fn main() {
+    let r = math.random()
+    println(r)  -- e.g. 0.7291035...
 }
 ```
 

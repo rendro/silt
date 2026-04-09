@@ -36,8 +36,8 @@ match is at index 0, followed by numbered groups.
 fn main() {
     match regex.captures("(\\w+)@(\\w+)", "user@host") {
         Some(groups) -> {
-            println(list.get(groups, 1))  // Some("user")
-            println(list.get(groups, 2))  // Some("host")
+            println(list.get(groups, 1))  -- Some("user")
+            println(list.get(groups, 2))  -- Some("host")
         }
         None -> println("no match")
     }
@@ -57,7 +57,7 @@ index 0 followed by numbered groups.
 ```silt
 fn main() {
     let results = regex.captures_all("(\\d+)-(\\d+)", "1-2 and 3-4")
-    // [["1-2", "1", "2"], ["3-4", "3", "4"]]
+    -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
 }
 ```
 
@@ -73,7 +73,7 @@ Returns `Some(matched_text)` for the first match, or `None`.
 ```silt
 fn main() {
     let result = regex.find("\\d+", "abc 123 def")
-    println(result)  // Some("123")
+    println(result)  -- Some("123")
 }
 ```
 
@@ -89,7 +89,7 @@ Returns all non-overlapping matches as a list of strings.
 ```silt
 fn main() {
     let nums = regex.find_all("\\d+", "a1 b22 c333")
-    println(nums)  // ["1", "22", "333"]
+    println(nums)  -- ["1", "22", "333"]
 }
 ```
 
@@ -104,8 +104,8 @@ Returns `true` if the pattern matches anywhere in the text.
 
 ```silt
 fn main() {
-    println(regex.is_match("^\\d+$", "123"))    // true
-    println(regex.is_match("^\\d+$", "abc"))    // false
+    println(regex.is_match("^\\d+$", "123"))    -- true
+    println(regex.is_match("^\\d+$", "abc"))    -- false
 }
 ```
 
@@ -121,7 +121,7 @@ Replaces the first match with the replacement string.
 ```silt
 fn main() {
     let result = regex.replace("\\d+", "abc 123 def 456", "NUM")
-    println(result)  // "abc NUM def 456"
+    println(result)  -- "abc NUM def 456"
 }
 ```
 
@@ -137,7 +137,7 @@ Replaces all matches with the replacement string.
 ```silt
 fn main() {
     let result = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
-    println(result)  // "abc NUM def NUM"
+    println(result)  -- "abc NUM def NUM"
 }
 ```
 
@@ -156,7 +156,7 @@ fn main() {
     let result = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
         int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })
     }
-    // "a2 b44 c666"
+    -- "a2 b44 c666"
 }
 ```
 
@@ -172,6 +172,6 @@ Splits the text on every occurrence of the pattern.
 ```silt
 fn main() {
     let parts = regex.split("\\s+", "hello   world   silt")
-    println(parts)  // ["hello", "world", "silt"]
+    println(parts)  -- ["hello", "world", "silt"]
 }
 ```

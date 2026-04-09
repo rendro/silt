@@ -17,6 +17,7 @@ with `{expr}` interpolation.
 | `chars` | `(String) -> List(String)` | Split string into single-character strings |
 | `contains` | `(String, String) -> Bool` | Check if substring exists |
 | `ends_with` | `(String, String) -> Bool` | Check suffix |
+| `from` | `(a) -> String` | Convert any value to its display string |
 | `from_char_code` | `(Int) -> String` | Character from Unicode code point |
 | `index_of` | `(String, String) -> Option(Int)` | Byte position of first occurrence |
 | `byte_length` | `(String) -> Int` | Length in bytes |
@@ -53,7 +54,7 @@ Returns the Unicode code point of the first character. Panics on empty strings.
 
 ```silt
 fn main() {
-    println(string.char_code("A"))  // 65
+    println(string.char_code("A"))  -- 65
 }
 ```
 
@@ -68,7 +69,7 @@ Splits the string into a list of single-character strings.
 
 ```silt
 fn main() {
-    println(string.chars("hi"))  // ["h", "i"]
+    println(string.chars("hi"))  -- ["h", "i"]
 }
 ```
 
@@ -83,7 +84,7 @@ Returns `true` if `sub` appears anywhere in `s`.
 
 ```silt
 fn main() {
-    println(string.contains("hello world", "world"))  // true
+    println(string.contains("hello world", "world"))  -- true
 }
 ```
 
@@ -98,7 +99,25 @@ Returns `true` if `s` ends with `suffix`.
 
 ```silt
 fn main() {
-    println(string.ends_with("hello.silt", ".silt"))  // true
+    println(string.ends_with("hello.silt", ".silt"))  -- true
+}
+```
+
+
+## `string.from`
+
+```
+string.from(value: a) -> String
+```
+
+Converts any value to its display string representation. This is the
+programmatic equivalent of string interpolation `"{value}"`.
+
+```silt
+fn main() {
+    println(string.from(42))        -- "42"
+    println(string.from(true))      -- "true"
+    println(string.from([1, 2, 3])) -- "[1, 2, 3]"
 }
 ```
 
@@ -114,7 +133,7 @@ code points.
 
 ```silt
 fn main() {
-    println(string.from_char_code(65))  // "A"
+    println(string.from_char_code(65))  -- "A"
 }
 ```
 
@@ -130,8 +149,8 @@ Returns `Some(byte_index)` of the first occurrence of `needle` in `s`, or
 
 ```silt
 fn main() {
-    println(string.index_of("hello", "ll"))  // Some(2)
-    println(string.index_of("hello", "z"))   // None
+    println(string.index_of("hello", "ll"))  -- Some(2)
+    println(string.index_of("hello", "z"))   -- None
 }
 ```
 
@@ -147,9 +166,9 @@ strings.
 
 ```silt
 fn main() {
-    println(string.is_alnum("abc123"))  // true
-    println(string.is_alnum("abc!"))    // false
-    println(string.is_alnum(""))        // false
+    println(string.is_alnum("abc123"))  -- true
+    println(string.is_alnum("abc!"))    -- false
+    println(string.is_alnum(""))        -- false
 }
 ```
 
@@ -165,9 +184,9 @@ strings.
 
 ```silt
 fn main() {
-    println(string.is_alpha("hello"))   // true
-    println(string.is_alpha("abc123"))  // false
-    println(string.is_alpha(""))        // false
+    println(string.is_alpha("hello"))   -- true
+    println(string.is_alpha("abc123"))  -- false
+    println(string.is_alpha(""))        -- false
 }
 ```
 
@@ -183,9 +202,9 @@ for empty strings.
 
 ```silt
 fn main() {
-    println(string.is_digit("123"))   // true
-    println(string.is_digit("12a"))   // false
-    println(string.is_digit(""))      // false
+    println(string.is_digit("123"))   -- true
+    println(string.is_digit("12a"))   -- false
+    println(string.is_digit(""))      -- false
 }
 ```
 
@@ -200,8 +219,8 @@ Returns `true` if the string has zero length.
 
 ```silt
 fn main() {
-    println(string.is_empty(""))     // true
-    println(string.is_empty("hi"))   // false
+    println(string.is_empty(""))     -- true
+    println(string.is_empty("hi"))   -- false
 }
 ```
 
@@ -217,9 +236,9 @@ strings.
 
 ```silt
 fn main() {
-    println(string.is_lower("hello"))  // true
-    println(string.is_lower("Hello"))  // false
-    println(string.is_lower(""))       // false
+    println(string.is_lower("hello"))  -- true
+    println(string.is_lower("Hello"))  -- false
+    println(string.is_lower(""))       -- false
 }
 ```
 
@@ -235,9 +254,9 @@ strings.
 
 ```silt
 fn main() {
-    println(string.is_upper("HELLO"))  // true
-    println(string.is_upper("Hello"))  // false
-    println(string.is_upper(""))       // false
+    println(string.is_upper("HELLO"))  -- true
+    println(string.is_upper("Hello"))  -- false
+    println(string.is_upper(""))       -- false
 }
 ```
 
@@ -253,9 +272,9 @@ strings.
 
 ```silt
 fn main() {
-    println(string.is_whitespace("  \t"))  // true
-    println(string.is_whitespace(" a "))   // false
-    println(string.is_whitespace(""))      // false
+    println(string.is_whitespace("  \t"))  -- true
+    println(string.is_whitespace(" a "))   -- false
+    println(string.is_whitespace(""))      -- false
 }
 ```
 
@@ -271,7 +290,7 @@ Joins a list of strings with a separator between each pair.
 ```silt
 fn main() {
     let result = string.join(["a", "b", "c"], ", ")
-    println(result)  // "a, b, c"
+    println(result)  -- "a, b, c"
 }
 ```
 
@@ -287,8 +306,8 @@ Returns the length of the string in bytes (UTF-8 encoding). See also
 
 ```silt
 fn main() {
-    println(string.byte_length("hello"))  // 5
-    println(string.byte_length("cafe\u0301"))   // 5 (e\u0301 is 2 bytes)
+    println(string.byte_length("hello"))  -- 5
+    println(string.byte_length("cafe\u0301"))   -- 5 (e\u0301 is 2 bytes)
 }
 ```
 
@@ -304,8 +323,8 @@ you need the size in bytes.
 
 ```silt
 fn main() {
-    println(string.length("hello"))  // 5
-    println(string.length("cafe\u0301"))   // 4
+    println(string.length("hello"))  -- 5
+    println(string.length("cafe\u0301"))   -- 4
 }
 ```
 
@@ -321,7 +340,7 @@ Pads `s` on the left with the first character of `pad` until it reaches
 
 ```silt
 fn main() {
-    println(string.pad_left("42", 5, "0"))  // "00042"
+    println(string.pad_left("42", 5, "0"))  -- "00042"
 }
 ```
 
@@ -337,7 +356,7 @@ Pads `s` on the right with the first character of `pad` until it reaches
 
 ```silt
 fn main() {
-    println(string.pad_right("hi", 5, "."))  // "hi..."
+    println(string.pad_right("hi", 5, "."))  -- "hi..."
 }
 ```
 
@@ -352,7 +371,7 @@ Returns the string repeated `n` times. `n` must be non-negative.
 
 ```silt
 fn main() {
-    println(string.repeat("ab", 3))  // "ababab"
+    println(string.repeat("ab", 3))  -- "ababab"
 }
 ```
 
@@ -368,7 +387,7 @@ Replaces all occurrences of `from` with `to`.
 ```silt
 fn main() {
     println(string.replace("hello world", "world", "silt"))
-    // "hello silt"
+    -- "hello silt"
 }
 ```
 
@@ -385,7 +404,7 @@ if `start > end`. Negative indices are a runtime error.
 
 ```silt
 fn main() {
-    println(string.slice("hello", 1, 4))  // "ell"
+    println(string.slice("hello", 1, 4))  -- "ell"
 }
 ```
 
@@ -401,7 +420,7 @@ Splits the string on every occurrence of `separator`.
 ```silt
 fn main() {
     let parts = string.split("a,b,c", ",")
-    println(parts)  // ["a", "b", "c"]
+    println(parts)  -- ["a", "b", "c"]
 }
 ```
 
@@ -416,7 +435,7 @@ Returns `true` if `s` starts with `prefix`.
 
 ```silt
 fn main() {
-    println(string.starts_with("hello", "hel"))  // true
+    println(string.starts_with("hello", "hel"))  -- true
 }
 ```
 
@@ -431,7 +450,7 @@ Converts all characters to lowercase.
 
 ```silt
 fn main() {
-    println(string.to_lower("HELLO"))  // "hello"
+    println(string.to_lower("HELLO"))  -- "hello"
 }
 ```
 
@@ -446,7 +465,7 @@ Converts all characters to uppercase.
 
 ```silt
 fn main() {
-    println(string.to_upper("hello"))  // "HELLO"
+    println(string.to_upper("hello"))  -- "HELLO"
 }
 ```
 
@@ -461,7 +480,7 @@ Removes leading and trailing whitespace.
 
 ```silt
 fn main() {
-    println(string.trim("  hello  "))  // "hello"
+    println(string.trim("  hello  "))  -- "hello"
 }
 ```
 
@@ -476,7 +495,7 @@ Removes trailing whitespace only.
 
 ```silt
 fn main() {
-    println(string.trim_end("hello   "))  // "hello"
+    println(string.trim_end("hello   "))  -- "hello"
 }
 ```
 
@@ -491,6 +510,6 @@ Removes leading whitespace only.
 
 ```silt
 fn main() {
-    println(string.trim_start("   hello"))  // "hello"
+    println(string.trim_start("   hello"))  -- "hello"
 }
 ```

@@ -177,14 +177,43 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
         let mut end_line = start;
         let mut found_open = false;
 
+        let mut in_string = false;
+        let mut interp_depths: Vec<i32> = vec![];
         for (line_idx, line) in source_lines.iter().enumerate().skip(start - 1) {
-            // Skip content inside strings and comments for brace counting
-            for ch in line.chars() {
-                if ch == '{' {
-                    depth += 1;
-                    found_open = true;
+            let mut chars = line.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if in_string {
+                    if ch == '\\' {
+                        chars.next(); // skip escaped character
+                    } else if ch == '"' {
+                        in_string = false;
+                    } else if ch == '{' {
+                        // Start of string interpolation
+                        interp_depths.push(0);
+                        in_string = false;
+                    }
+                } else if ch == '"' {
+                    in_string = true;
+                } else if ch == '-' && chars.peek() == Some(&'-') {
+                    break; // line comment, skip rest of line
+                } else if ch == '{' {
+                    if let Some(d) = interp_depths.last_mut() {
+                        *d += 1; // nested brace inside interpolation
+                    } else {
+                        depth += 1;
+                        found_open = true;
+                    }
                 } else if ch == '}' {
-                    depth -= 1;
+                    if let Some(d) = interp_depths.last_mut() {
+                        if *d == 0 {
+                            interp_depths.pop();
+                            in_string = true; // back to string after interpolation
+                        } else {
+                            *d -= 1;
+                        }
+                    } else {
+                        depth -= 1;
+                    }
                 }
             }
             if found_open && depth == 0 {

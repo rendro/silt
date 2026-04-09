@@ -15,6 +15,7 @@ pub(crate) use runtime::{BlockReason, CallFrame, SelectOpKind};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::builtins::data::FieldType;
 use crate::bytecode::{Chunk, Function, VmClosure};
@@ -33,8 +34,8 @@ pub struct Vm {
     pub(crate) record_types: HashMap<String, Vec<(String, FieldType)>>,
 
     // ── Concurrency state ────────────────────────────────────────
-    next_channel_id: usize,
-    next_task_id: usize,
+    next_channel_id: Arc<AtomicU64>,
+    next_task_id: Arc<AtomicU64>,
 
     // ── M:N scheduler state ─────────────────────────────────────
     /// Set by channel/task ops when they need to park this task.
@@ -83,8 +84,8 @@ impl Vm {
             stack: Vec::new(),
             globals: HashMap::new(),
             record_types: HashMap::new(),
-            next_channel_id: 0,
-            next_task_id: 0,
+            next_channel_id: Arc::new(AtomicU64::new(0)),
+            next_task_id: Arc::new(AtomicU64::new(0)),
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
@@ -226,8 +227,8 @@ impl Vm {
             stack: Vec::new(),
             globals: self.globals.clone(),
             record_types: self.record_types.clone(),
-            next_channel_id: self.next_channel_id,
-            next_task_id: self.next_task_id,
+            next_channel_id: self.next_channel_id.clone(),
+            next_task_id: self.next_task_id.clone(),
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
@@ -254,16 +255,12 @@ impl Vm {
 
     /// Allocate a new unique channel ID.
     pub(crate) fn next_channel_id(&mut self) -> usize {
-        let id = self.next_channel_id;
-        self.next_channel_id += 1;
-        id
+        self.next_channel_id.fetch_add(1, Ordering::Relaxed) as usize
     }
 
     /// Allocate a new unique task ID.
     pub(crate) fn next_task_id(&mut self) -> usize {
-        let id = self.next_task_id;
-        self.next_task_id += 1;
-        id
+        self.next_task_id.fetch_add(1, Ordering::Relaxed) as usize
     }
 
     /// Load a compiled top-level function and execute it.

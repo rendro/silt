@@ -679,13 +679,18 @@ impl TypeChecker {
                 ..
             } = program.decls[i]
             {
+                let is_value = inference::is_syntactic_value(&value.kind);
                 let val_ty = self.infer_expr(value, &mut env);
                 if let Some(te) = ty {
                     let declared =
                         self.resolve_type_expr(te, &mut std::collections::HashMap::new());
                     self.unify(&val_ty, &declared, span);
                 }
-                let scheme = self.generalize(&env, &val_ty);
+                let scheme = if is_value {
+                    self.generalize(&env, &val_ty)
+                } else {
+                    Scheme::mono(self.apply(&val_ty))
+                };
                 if let Pattern::Ident(name) = pattern {
                     env.define(*name, scheme);
                 } else {
@@ -989,6 +994,10 @@ impl TypeChecker {
                         // Set without explicit type param => Set(fresh_var)
                         Type::Set(Box::new(self.fresh_var()))
                     }
+                    "Channel" => {
+                        // Channel without explicit type param => Channel(fresh_var)
+                        Type::Channel(Box::new(self.fresh_var()))
+                    }
                     _ => {
                         // Lowercase names in type annotations are type variables
                         // (e.g., `a` in `List(a)` or `fn foo(x: a) -> a`)
@@ -1028,6 +1037,12 @@ impl TypeChecker {
                     "Set" if resolved_args.is_empty() => Type::Set(Box::new(self.fresh_var())),
                     "Set" if resolved_args.len() == 1 => {
                         Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Channel" if resolved_args.is_empty() => {
+                        Type::Channel(Box::new(self.fresh_var()))
+                    }
+                    "Channel" if resolved_args.len() == 1 => {
+                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
                     _ => Type::Generic(*name, resolved_args),
                 }

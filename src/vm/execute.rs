@@ -339,8 +339,9 @@ impl Vm {
                             self.push(Value::VmClosure(closure));
                         }
                         _ => {
-                            // Fallback: push Unit (shouldn't happen in Phase 2)
-                            self.push(Value::Unit);
+                            return Err(VmError::new(
+                                "internal: MakeClosure constant is not a VmClosure".to_string(),
+                            ));
                         }
                     }
                 }
@@ -728,7 +729,9 @@ impl Vm {
                             self.push(elem.clone());
                         }
                         Value::Range(lo, hi) => {
-                            let i = lo + index as i64;
+                            let i = lo
+                                .checked_add(index as i64)
+                                .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
                             if i > hi {
                                 return Err(VmError::new("range index out of bounds".to_string()));
                             }
@@ -753,7 +756,9 @@ impl Vm {
                             self.push(Value::List(Arc::new(rest)));
                         }
                         Value::Range(lo, hi) => {
-                            let new_lo = lo + start as i64;
+                            let new_lo = lo
+                                .checked_add(start as i64)
+                                .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
                             if new_lo > hi + 1 {
                                 self.push(Value::List(Arc::new(Vec::new())));
                             } else {
@@ -1420,6 +1425,12 @@ impl Vm {
                 let func_slot = self.stack.len() - 1 - argc;
                 let func_val = self.stack[func_slot].clone();
                 if let Value::VmClosure(closure) = func_val {
+                    if argc != closure.function.arity as usize {
+                        return Err(VmError::new(format!(
+                            "function '{}' expects {} arguments, got {}",
+                            closure.function.name, closure.function.arity, argc
+                        )));
+                    }
                     let base = self.current_frame()?.base_slot;
                     for i in 0..argc {
                         self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
@@ -1486,7 +1497,9 @@ impl Vm {
                     });
                     self.push(Value::VmClosure(closure));
                 } else {
-                    self.push(Value::Unit);
+                    return Err(VmError::new(
+                        "internal: MakeClosure constant is not a VmClosure".to_string(),
+                    ));
                 }
             }
             Op::MakeTuple => {
@@ -1838,7 +1851,9 @@ impl Vm {
                         self.push(elem.clone());
                     }
                     Value::Range(lo, hi) => {
-                        let i = lo + index as i64;
+                        let i = lo
+                            .checked_add(index as i64)
+                            .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
                         if i > hi {
                             return Err(VmError::new("range index out of bounds".into()));
                         }
@@ -1862,7 +1877,9 @@ impl Vm {
                         self.push(Value::List(Arc::new(xs[start..].to_vec())));
                     }
                     Value::Range(lo, hi) => {
-                        let new_lo = lo + start as i64;
+                        let new_lo = lo
+                            .checked_add(start as i64)
+                            .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
                         if new_lo > hi + 1 {
                             self.push(Value::List(Arc::new(Vec::new())));
                         } else {
@@ -1964,7 +1981,12 @@ impl Vm {
                                 self.push(result);
                                 return Ok(());
                             }
-                            self.stack.truncate(finished_base);
+                            let func_slot = if finished_base > 0 {
+                                finished_base - 1
+                            } else {
+                                0
+                            };
+                            self.stack.truncate(func_slot);
                             self.push(result);
                         }
                         _ => return Err(VmError::new(format!("? on non-Result/Option: {tag}"))),

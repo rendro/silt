@@ -60,7 +60,7 @@ fn main() {
         channel.close(ch)
     })
     channel.each(ch) { msg -> println(msg) }
-    // prints 1, then 2
+    -- prints 1, then 2
 }
 ```
 
@@ -125,7 +125,7 @@ fn main() {
     let ch2 = channel.new(1)
     task.spawn(fn() { channel.send(ch2, "hello") })
     match channel.select([ch1, ch2]) {
-        (^ch2, Message(val)) -> println(val)  // "hello"
+        (^ch2, Message(val)) -> println(val)  -- "hello"
         (_, Closed) -> println("closed")
     }
 }
@@ -221,7 +221,7 @@ Non-blocking send. Returns `true` if the value was successfully buffered,
 fn main() {
     let ch = channel.new(1)
     let ok = channel.try_send(ch, 42)
-    println(ok)  // true
+    println(ok)  -- true
 }
 ```
 
@@ -254,7 +254,7 @@ already completed.
 ```silt
 fn main() {
     let h = task.spawn(fn() {
-        // long-running work
+        -- long-running work
     })
     task.cancel(h)
 }
@@ -274,7 +274,7 @@ while waiting, allowing other tasks to run.
 fn main() {
     let h = task.spawn(fn() { 1 + 2 })
     let result = task.join(h)
-    println(result)  // 3
+    println(result)  -- 3
 }
 ```
 
@@ -296,6 +296,6 @@ fn main() {
         42
     })
     let result = task.join(h)
-    println(result)  // 42
+    println(result)  -- 42
 }
 ```

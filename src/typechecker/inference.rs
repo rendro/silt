@@ -1433,7 +1433,7 @@ impl TypeChecker {
 /// lambdas, identifiers, constructors of values) are safe to generalize;
 /// function applications are not, because they may produce types with
 /// shared mutable state (e.g. channels) that must remain monomorphic.
-fn is_syntactic_value(kind: &ExprKind) -> bool {
+pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
     match kind {
         ExprKind::Int(_)
         | ExprKind::Float(_)

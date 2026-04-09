@@ -68,7 +68,7 @@ type Event {
 
 fn main() {
     let e = json.parse(Event, "{\"name\": \"launch\", \"date\": \"2024-03-15\"}")?
-    println(e.date |> time.weekday)  // Friday
+    println(e.date |> time.weekday)  -- Friday
 }
 ```
 
@@ -110,7 +110,7 @@ descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
 fn main() {
     let json = "{\"x\": 10, \"y\": 20}"
     match json.parse_map(Int, json) {
-        Ok(m) -> println(map.get(m, "x"))  // Some(10)
+        Ok(m) -> println(map.get(m, "x"))  -- Some(10)
         Err(e) -> println("Error: {e}")
     }
 }
@@ -146,6 +146,6 @@ Serializes any value to a compact JSON string.
 fn main() {
     let data = #{"key": [1, 2, 3]}
     println(json.stringify(data))
-    // {"key":[1,2,3]}
+    -- {"key":[1,2,3]}
 }
 ```
