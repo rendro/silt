@@ -247,23 +247,29 @@ fn main() {
         return;
     }
 
+    #[cfg(not(feature = "watch"))]
+    if args.iter().any(|a| a == "--watch" || a == "-w") {
+        eprintln!("The 'watch' feature is not enabled. Rebuild with: cargo build --features watch");
+        process::exit(1);
+    }
+
     match args[1].as_str() {
         "--version" | "-V" => {
             println!("silt {}", env!("CARGO_PKG_VERSION"));
             process::exit(0);
         }
         "--help" | "-h" | "help" => {
-            eprintln!("silt — a statically-typed, expression-based language");
-            eprintln!();
-            eprintln!("Usage:");
-            eprintln!("  silt run [--watch] <file.silt>    Run a program");
-            eprintln!("  silt check [--watch] <file.silt>  Type-check without running");
-            eprintln!("  silt test [--watch] [path]        Run test functions");
-            eprintln!("  silt fmt <file.silt>              Format source code");
-            eprintln!("  silt repl                         Interactive REPL");
-            eprintln!("  silt init                         Create a new main.silt");
-            eprintln!("  silt lsp                          Start the language server");
-            eprintln!("  silt disasm <file.silt>           Show bytecode disassembly");
+            println!("silt — a statically-typed, expression-based language");
+            println!();
+            println!("Usage:");
+            println!("  silt run [--watch] <file.silt>    Run a program");
+            println!("  silt check [--watch] <file.silt>  Type-check without running");
+            println!("  silt test [--watch] [path]        Run test functions");
+            println!("  silt fmt <file.silt>              Format source code");
+            println!("  silt repl                         Interactive REPL");
+            println!("  silt init                         Create a new main.silt");
+            println!("  silt lsp                          Start the language server");
+            println!("  silt disasm <file.silt>           Show bytecode disassembly");
             process::exit(0);
         }
         "run" => {
@@ -354,9 +360,21 @@ fn main() {
         "lsp" => {
             silt::lsp::run();
         }
+        #[cfg(not(feature = "lsp"))]
+        "lsp" => {
+            eprintln!("The 'lsp' feature is not enabled. Rebuild with: cargo build --features lsp");
+            process::exit(1);
+        }
         #[cfg(feature = "repl")]
         "repl" => {
             silt::repl::run_repl();
+        }
+        #[cfg(not(feature = "repl"))]
+        "repl" => {
+            eprintln!(
+                "The 'repl' feature is not enabled. Rebuild with: cargo build --features repl"
+            );
+            process::exit(1);
         }
         "fmt" => {
             let mut check_mode = false;
@@ -572,6 +590,7 @@ fn print_json_errors(errors: &[&SourceError]) {
                 "col": e.span.col,
                 "message": e.message,
                 "severity": if e.is_warning { "warning" } else { "error" },
+                "kind": e.kind.to_string(),
             })
         })
         .collect();
@@ -678,20 +697,22 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let tokens = match Lexer::new(&source).tokenize() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("{path}:{e}");
+                let source_err = SourceError::from_lex_error(&e, &source, path.as_str());
+                eprintln!("{source_err}");
                 failed += 1;
                 continue;
             }
         };
 
-        let mut program = match Parser::new(tokens).parse_program() {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("{path}:{e}");
-                failed += 1;
-                continue;
+        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+        if !parse_errors.is_empty() {
+            for e in &parse_errors {
+                let source_err = SourceError::from_parse_error(e, &source, path.as_str());
+                eprintln!("{source_err}");
             }
-        };
+            failed += 1;
+            continue;
+        }
 
         // Type-check before compiling so type errors fail the test.
         let type_errors = typechecker::check(&mut program);

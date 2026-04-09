@@ -20,6 +20,7 @@ use crate::intern::{Symbol, intern, resolve};
 use crate::lexer::{Lexer, Span};
 use crate::module;
 use crate::parser::Parser;
+use crate::typechecker;
 use crate::value::Value;
 
 mod patterns;
@@ -673,12 +674,25 @@ impl Compiler {
             span: Span::new(0, 0),
         })?;
 
-        let program = Parser::new(tokens)
+        let mut program = Parser::new(tokens)
             .parse_program()
             .map_err(|e| CompileError {
                 message: format!("module '{module_name}': parse error: {e}"),
                 span: Span::new(0, 0),
             })?;
+
+        // Type-check the imported module before compiling.
+        let type_errors = typechecker::check(&mut program);
+        let hard_errors: Vec<_> = type_errors
+            .iter()
+            .filter(|e| e.severity == typechecker::Severity::Error)
+            .collect();
+        if let Some(first) = hard_errors.first() {
+            return Err(CompileError {
+                message: format!("module '{module_name}': type error: {}", first.message),
+                span: first.span,
+            });
+        }
 
         // Collect public names so we know which to export.
         let mut public_fns = HashSet::new();
