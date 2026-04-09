@@ -17,6 +17,7 @@ use crate::intern;
 use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
 use crate::typechecker;
+use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -83,6 +84,7 @@ pub fn run_repl() {
     let _ = rl.load_history(HISTORY_FILE);
 
     let mut vm = Vm::new();
+    let mut type_ctx = ReplTypeContext::new();
 
     println!("Silt REPL (type :quit to exit, :help for commands)");
 
@@ -131,7 +133,7 @@ pub fn run_repl() {
 
                 let _ = rl.add_history_entry(&input);
 
-                eval_input(&mut vm, &input, &names);
+                eval_input(&mut vm, &mut type_ctx, &input, &names);
             }
             Err(ReadlineError::Interrupted) => {
                 buffer.clear();
@@ -235,15 +237,25 @@ fn is_declaration(input: &str) -> bool {
 /// Evaluate a single REPL input.  Declarations are compiled and loaded into
 /// the persistent VM.  Expressions are wrapped in a throwaway function,
 /// compiled, and run; the result is printed if it is not Unit.
-fn eval_input(vm: &mut Vm, input: &str, names: &Rc<RefCell<Vec<String>>>) {
+fn eval_input(
+    vm: &mut Vm,
+    type_ctx: &mut ReplTypeContext,
+    input: &str,
+    names: &Rc<RefCell<Vec<String>>>,
+) {
     if is_declaration(input) {
-        eval_declaration(vm, input, names);
+        eval_declaration(vm, type_ctx, input, names);
     } else {
-        eval_expression(vm, input);
+        eval_expression(vm, type_ctx, input);
     }
 }
 
-fn eval_declaration(vm: &mut Vm, input: &str, names: &Rc<RefCell<Vec<String>>>) {
+fn eval_declaration(
+    vm: &mut Vm,
+    type_ctx: &mut ReplTypeContext,
+    input: &str,
+    names: &Rc<RefCell<Vec<String>>>,
+) {
     let tokens = match Lexer::new(input).tokenize() {
         Ok(t) => t,
         Err(e) => {
@@ -261,9 +273,9 @@ fn eval_declaration(vm: &mut Vm, input: &str, names: &Rc<RefCell<Vec<String>>>) 
         }
     };
 
-    // Type-check before compiling so that type-incorrect declarations are
-    // rejected immediately instead of producing confusing runtime errors.
-    let type_errors = typechecker::check(&mut program);
+    // Type-check using the persistent REPL context so that previously
+    // defined names are visible to this input.
+    let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
         let source_err = SourceError::from_type_error(te, input, "<repl>");
         eprintln!("{source_err}");
@@ -365,7 +377,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
     }
 }
 
-fn eval_expression(vm: &mut Vm, input: &str) {
+fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // Wrap the expression in a fn main() so the compiler can handle it.
     let wrapper_prefix = "fn main() {\n";
     let wrapped = format!("{wrapper_prefix}{input}\n}}");
@@ -388,9 +400,9 @@ fn eval_expression(vm: &mut Vm, input: &str) {
         }
     };
 
-    // Type-check before compiling so that type-incorrect expressions are
-    // rejected immediately instead of producing confusing runtime errors.
-    let type_errors = typechecker::check(&mut program);
+    // Type-check using the persistent REPL context so that previously
+    // defined names are visible to this input.
+    let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
         let adjusted = adjust_error_span_type(te, wrapper_prefix.len());
         let source_err = SourceError::from_type_error(&adjusted, input, "<repl>");

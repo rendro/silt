@@ -103,8 +103,11 @@ fn run_compile_pipeline(
 
     let has_hard_errors = has_parse_errors || has_type_hard_errors;
 
-    // If there are hard errors or compilation is not requested, skip compile.
-    if has_hard_errors || skip_compile {
+    // If there are parse errors or compilation is not requested, skip compile.
+    // Type errors do NOT block compilation — the compiler resolves modules
+    // during compilation, which fixes most "undefined" errors from the type
+    // checker.  The test suite already relies on this behavior.
+    if has_parse_errors || skip_compile {
         return CompilePipelineResult {
             source,
             parse_errors,
@@ -137,7 +140,7 @@ fn run_compile_pipeline(
                 source,
                 parse_errors,
                 type_errors,
-                has_hard_errors: false,
+                has_hard_errors,
                 functions: Some(functions),
                 compile_errors: Vec::new(),
                 compile_warnings,

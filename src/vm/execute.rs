@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::bytecode::{Op, VmClosure};
 use crate::scheduler::SliceResult;
-use crate::value::{Value, checked_range_len};
+use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
 use super::runtime::CallFrame;
 use super::{Vm, VmError};
@@ -745,6 +745,12 @@ impl Vm {
                             "ListConcat: right operand is not a list or range".into(),
                         ));
                     }
+                }
+                if result.len() > MAX_RANGE_MATERIALIZE {
+                    return Err(VmError::new(format!(
+                        "concatenated list exceeds maximum size of {} elements",
+                        MAX_RANGE_MATERIALIZE
+                    )));
                 }
                 self.push(Value::List(Arc::new(result)));
             }

@@ -5,12 +5,11 @@ fn fizzbuzz(n) {
     (0, 0) -> "FizzBuzz"
     (0, _) -> "Fizz"
     (_, 0) -> "Buzz"
-    _      -> "{n}"
+    _ -> "{n}"
   }
 }
 
 fn main() {
-  1..101
-  |> list.map { n -> fizzbuzz(n) }
-  |> list.each { s -> println(s) }
+  1..21
+  |> list.each { n -> println(fizzbuzz(n)) }
 }

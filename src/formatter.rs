@@ -358,7 +358,8 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     }
 
     // Separate imports from other declarations, sort imports alphabetically.
-    let mut import_strs: Vec<String> = Vec::new();
+    // Each import is paired with its preceding comments so they move together.
+    let mut import_pairs: Vec<(String, String)> = Vec::new(); // (comments, import)
     let mut has_imports = false;
 
     let formatted_decls: Vec<String> = program
@@ -372,12 +373,24 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     let mut is_import = vec![false; program.decls.len()];
     for (i, decl) in program.decls.iter().enumerate() {
         if matches!(decl, Decl::Import(_)) {
-            import_strs.push(formatted_decls[i].clone());
+            // Gather preceding comments for this import (bucket[i], skip bucket[0]
+            // which is emitted separately as pre-first-decl comments).
+            let comment_block = if i > 0 && !buckets[i].is_empty() {
+                let mut cb = String::new();
+                for c in &buckets[i] {
+                    cb.push_str(&c.text);
+                    cb.push('\n');
+                }
+                cb
+            } else {
+                String::new()
+            };
+            import_pairs.push((comment_block, formatted_decls[i].clone()));
             is_import[i] = true;
             has_imports = true;
         }
     }
-    import_strs.sort();
+    import_pairs.sort_by(|a, b| a.1.cmp(&b.1));
 
     let mut result = String::new();
 
@@ -390,10 +403,14 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         result.push('\n');
     }
 
-    // Emit sorted imports grouped together (single newline between them)
-    for (i, imp) in import_strs.iter().enumerate() {
+    // Emit sorted imports grouped together (single newline between them).
+    // Each import may have preceding comments that travel with it.
+    for (i, (comment_block, imp)) in import_pairs.iter().enumerate() {
         if i > 0 {
             result.push('\n');
+        }
+        if !comment_block.is_empty() {
+            result.push_str(comment_block);
         }
         result.push_str(imp);
     }
@@ -2266,6 +2283,61 @@ fn bar() = 2
         assert!(
             result.contains("-- trailing body comment"),
             "trailing body comment should be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_comments_move_with_imports_during_sort() {
+        let source = r#"import b
+-- This explains why we need a
+import a
+"#;
+        let result = format(source).unwrap();
+        // After sorting, `import a` should come first and its comment should precede it
+        assert!(
+            result.contains("-- This explains why we need a\nimport a"),
+            "comment should move with its associated import, got: {result}"
+        );
+        let a_pos = result.find("import a").unwrap();
+        let b_pos = result.find("import b").unwrap();
+        assert!(
+            a_pos < b_pos,
+            "import a should come before import b after sorting, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_comments_between_imports_idempotent() {
+        let source = r#"-- This explains why we need a
+import a
+-- This explains why we need b
+import b
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(
+            first, second,
+            "formatting imports with comments should be idempotent, got: {first}"
+        );
+    }
+
+    #[test]
+    fn test_multiple_comments_move_with_import() {
+        let source = r#"import z
+-- first comment for a
+-- second comment for a
+import a
+"#;
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("-- first comment for a\n-- second comment for a\nimport a"),
+            "multiple comments should move with their import, got: {result}"
+        );
+        let a_pos = result.find("import a").unwrap();
+        let z_pos = result.find("import z").unwrap();
+        assert!(
+            a_pos < z_pos,
+            "import a should come before import z after sorting, got: {result}"
         );
     }
 }

@@ -1375,6 +1375,294 @@ pub fn check(program: &mut Program) -> Vec<TypeError> {
     checker.errors
 }
 
+// ── Persistent REPL type context ───────────────────────────────────
+
+/// Persistent type-checking context for the REPL.
+///
+/// Holds a `TypeChecker` and its `TypeEnv` across REPL inputs so that
+/// previously defined names (variables, functions, types) remain visible
+/// to subsequent type-checking passes.
+pub struct ReplTypeContext {
+    checker: TypeChecker,
+    env: TypeEnv,
+}
+
+impl Default for ReplTypeContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReplTypeContext {
+    /// Create a new REPL type context with builtins and built-in traits
+    /// already registered.
+    pub fn new() -> Self {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnv::new();
+
+        // Register builtins in the type environment
+        checker.register_builtins(&mut env);
+
+        // Register built-in traits (mirrors check_program init)
+        {
+            let display_self = checker.fresh_var();
+            checker.traits.insert(
+                intern("Display"),
+                TraitInfo {
+                    _name: intern("Display"),
+                    methods: vec![(
+                        intern("display"),
+                        Type::Fun(vec![display_self], Box::new(Type::String)),
+                    )],
+                },
+            );
+        }
+        {
+            let compare_a = checker.fresh_var();
+            let compare_b = checker.fresh_var();
+            checker.traits.insert(
+                intern("Compare"),
+                TraitInfo {
+                    _name: intern("Compare"),
+                    methods: vec![(
+                        intern("compare"),
+                        Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
+                    )],
+                },
+            );
+        }
+        {
+            let equal_a = checker.fresh_var();
+            let equal_b = checker.fresh_var();
+            checker.traits.insert(
+                intern("Equal"),
+                TraitInfo {
+                    _name: intern("Equal"),
+                    methods: vec![(
+                        intern("equal"),
+                        Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
+                    )],
+                },
+            );
+        }
+        {
+            let hash_self = checker.fresh_var();
+            checker.traits.insert(
+                intern("Hash"),
+                TraitInfo {
+                    _name: intern("Hash"),
+                    methods: vec![(
+                        intern("hash"),
+                        Type::Fun(vec![hash_self], Box::new(Type::Int)),
+                    )],
+                },
+            );
+        }
+
+        // Register builtin trait implementations for primitive types
+        {
+            let dummy_span = Span {
+                line: 0,
+                col: 0,
+                offset: 0,
+            };
+            let primitive_types = ["Int", "Float", "Bool", "String", "()"];
+            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let trait_methods: &[(&str, Type)] = &[
+                (
+                    "display",
+                    Type::Fun(vec![checker.fresh_var()], Box::new(Type::String)),
+                ),
+                (
+                    "equal",
+                    Type::Fun(
+                        vec![checker.fresh_var(), checker.fresh_var()],
+                        Box::new(Type::Bool),
+                    ),
+                ),
+                (
+                    "compare",
+                    Type::Fun(
+                        vec![checker.fresh_var(), checker.fresh_var()],
+                        Box::new(Type::Int),
+                    ),
+                ),
+                (
+                    "hash",
+                    Type::Fun(vec![checker.fresh_var()], Box::new(Type::Int)),
+                ),
+            ];
+            for type_name in &primitive_types {
+                for trait_name in &all_traits {
+                    checker
+                        .trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    checker.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+            for type_name in &["List", "Tuple", "Map", "Set"] {
+                for trait_name in &all_traits {
+                    checker
+                        .trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                for (method_name, method_type) in trait_methods {
+                    checker.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+        }
+
+        Self { checker, env }
+    }
+
+    /// Type-check a REPL input (one or more declarations/expressions) against
+    /// the accumulated environment.  New bindings are persisted for future inputs.
+    /// Returns any type errors from this input.
+    pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
+        // Clear errors from the previous input
+        self.checker.errors.clear();
+
+        // Process imports
+        for decl in &program.decls {
+            if let Decl::Import(ImportTarget::Items(module, items)) = decl {
+                let module_str = resolve(*module);
+                if crate::module::is_builtin_module(&module_str) {
+                    for item in items {
+                        let qualified = intern(&format!("{module}.{item}"));
+                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
+                            self.env.define(*item, scheme);
+                        }
+                    }
+                } else {
+                    self.checker.warning(
+                        format!(
+                            "unknown module '{module_str}'; imported items will not be type-checked"
+                        ),
+                        Span::new(0, 0),
+                    );
+                }
+            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
+                let module_str = resolve(*module);
+                if crate::module::is_builtin_module(&module_str) {
+                    let names = crate::module::builtin_module_functions(&module_str)
+                        .into_iter()
+                        .chain(crate::module::builtin_module_constants(&module_str));
+                    for func in names {
+                        let qualified = intern(&format!("{module}.{func}"));
+                        let aliased = intern(&format!("{alias}.{func}"));
+                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
+                            self.env.define(aliased, scheme);
+                        }
+                    }
+                } else {
+                    self.checker.warning(
+                        format!(
+                            "unknown module '{module_str}'; aliased imports will not be type-checked"
+                        ),
+                        Span::new(0, 0),
+                    );
+                }
+            }
+        }
+
+        // Register type declarations
+        for decl in &program.decls {
+            if let Decl::Type(td) = decl {
+                self.checker.register_type_decl(td, &mut self.env);
+            }
+        }
+
+        // Register function signatures, trait impls, and top-level lets
+        for decl in &program.decls {
+            match decl {
+                Decl::Fn(f) => {
+                    self.checker.register_fn_decl(f, &mut self.env);
+                }
+                Decl::Trait(t) => {
+                    self.checker.register_trait_decl(t);
+                }
+                Decl::TraitImpl(ti) => {
+                    self.checker.register_trait_impl(ti, &mut self.env);
+                }
+                _ => {}
+            }
+        }
+
+        // Process top-level let bindings
+        for i in 0..program.decls.len() {
+            if let Decl::Let {
+                ref mut value,
+                ref pattern,
+                ref ty,
+                span,
+                ..
+            } = program.decls[i]
+            {
+                let is_value = inference::is_syntactic_value(&value.kind);
+                let val_ty = self.checker.infer_expr(value, &mut self.env);
+                if let Some(te) = ty {
+                    let declared = self
+                        .checker
+                        .resolve_type_expr(te, &mut std::collections::HashMap::new());
+                    self.checker.unify(&val_ty, &declared, span);
+                }
+                let scheme = if is_value {
+                    self.checker.generalize(&self.env, &val_ty)
+                } else {
+                    Scheme::mono(self.checker.apply(&val_ty))
+                };
+                if let Pattern::Ident(name) = pattern {
+                    self.env.define(*name, scheme);
+                } else {
+                    self.checker
+                        .bind_pattern(pattern, &val_ty, &mut self.env, span);
+                }
+            }
+        }
+
+        // Validate trait implementations
+        self.checker.validate_trait_impls();
+
+        // Check function bodies
+        for i in 0..program.decls.len() {
+            if let Decl::Fn(ref mut f) = program.decls[i] {
+                self.checker.check_fn_body(f, &self.env);
+            }
+        }
+
+        // Check trait impl method bodies
+        for i in 0..program.decls.len() {
+            if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                for j in 0..ti.methods.len() {
+                    self.checker.check_fn_body(&mut ti.methods[j], &self.env);
+                }
+            }
+        }
+
+        // Detect unresolved type variables and resolve remaining types
+        self.checker.check_unresolved_let_types(program);
+        self.checker.resolve_all_types(program);
+
+        self.checker.errors.clone()
+    }
+}
+
 /// Return a map of builtin qualified names to their type signature strings.
 /// Used by the LSP to show type info in completions.
 pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
@@ -3571,5 +3859,20 @@ fn main() -> Result {
         assert!(tc.errors.is_empty(), "list unification should not error");
         let resolved = tc.apply(&var);
         assert_eq!(resolved, Type::Int, "Var(0) should resolve to Int");
+    }
+
+    #[test]
+    fn test_comparison_float_extfloat() {
+        // Comparing Float with ExtFloat (e.g. result of division) should succeed
+        // and produce Bool, not a unification error.
+        assert_no_errors(
+            r#"
+fn main() {
+  let x = 10.0 / 3.0
+  let result = x == 1.0
+  result
+}
+            "#,
+        );
     }
 }

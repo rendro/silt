@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::value::{Value, checked_range_len};
+use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
@@ -423,6 +423,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let mut result = Vec::with_capacity(a.len() + b.len());
             result.extend(a);
             result.extend(b);
+            if result.len() > MAX_RANGE_MATERIALIZE {
+                return Err(VmError::new(format!(
+                    "concatenated list exceeds maximum size of {} elements",
+                    MAX_RANGE_MATERIALIZE
+                )));
+            }
             Ok(Value::List(Arc::new(result)))
         }
         "get" => {

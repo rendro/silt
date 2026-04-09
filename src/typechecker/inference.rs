@@ -631,7 +631,16 @@ impl TypeChecker {
                         }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
-                        self.unify(&lt, &rt, span);
+                        let resolved_l = self.apply(&lt);
+                        let resolved_r = self.apply(&rt);
+                        match (&resolved_l, &resolved_r) {
+                            (Type::Float, Type::ExtFloat) | (Type::ExtFloat, Type::Float) => {
+                                // Accept mixed Float/ExtFloat without unification
+                            }
+                            _ => {
+                                self.unify(&lt, &rt, span);
+                            }
+                        }
                         Type::Bool
                     }
                     BinOp::And | BinOp::Or => {

@@ -1214,3 +1214,22 @@ fn main() {
         "expected cancellation error, got: {err}"
     );
 }
+
+// ── Resource-limit: ListConcat combined size ───────────────────────
+
+#[test]
+fn test_list_concat_combined_exceeds_materialize_limit() {
+    // Two ranges each under the 10M individual limit, but combined > 10M.
+    let err = run_err(
+        r#"
+import list
+fn main() {
+  list.concat((1..5_000_001), (1..5_000_001))
+}
+    "#,
+    );
+    assert!(
+        err.contains("concatenated list exceeds maximum size"),
+        "expected combined-size error, got: {err}"
+    );
+}
