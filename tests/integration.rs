@@ -6186,7 +6186,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6224,7 +6227,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6262,7 +6268,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6304,7 +6313,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6343,7 +6355,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6388,7 +6403,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6450,7 +6468,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6468,7 +6489,9 @@ fn main() {{
         "missing or wrong X-Custom header"
     );
     assert_eq!(
-        resp.headers().get("X-Another").and_then(|v| v.to_str().ok()),
+        resp.headers()
+            .get("X-Another")
+            .and_then(|v| v.to_str().ok()),
         Some("42"),
         "missing or wrong X-Another header"
     );
@@ -6500,7 +6523,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -6555,7 +6581,10 @@ fn main() {{
         run(&input);
     });
 
-    assert!(wait_for_port(port, std::time::Duration::from_secs(3)), "server did not start");
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     let count = 20;
     let mut handles = Vec::new();
@@ -6629,9 +6658,7 @@ fn main() {{
         run(&input)
     });
 
-    let result = handle
-        .join()
-        .expect("silt program panicked");
+    let result = handle.join().expect("silt program panicked");
     assert_eq!(result, Value::String("silt-response".into()));
 }
 
