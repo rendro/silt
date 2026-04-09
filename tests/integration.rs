@@ -57,10 +57,7 @@ fn run_typed(input: &str) -> Value {
     assert!(
         hard_errors.is_empty(),
         "expected no type errors, got: {:?}",
-        hard_errors
-            .iter()
-            .map(|e| &e.message)
-            .collect::<Vec<_>>()
+        hard_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
@@ -82,10 +79,7 @@ fn run_typed_ok(input: &str) {
     assert!(
         hard_errors.is_empty(),
         "expected no type errors, got: {:?}",
-        hard_errors
-            .iter()
-            .map(|e| &e.message)
-            .collect::<Vec<_>>()
+        hard_errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
     let mut compiler = Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
@@ -111,7 +105,8 @@ fn main() {
 
 #[test]
 fn test_fizzbuzz_logic() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn fizzbuzz(n) {
   match (n % 3, n % 5) {
     (0, 0) -> "FizzBuzz"
@@ -130,7 +125,8 @@ fn main() {
   ]
   results
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -169,7 +165,8 @@ fn main() {
 
 #[test]
 fn test_question_mark_operator() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn process(x) {
   let val = Ok(x)?
   Ok(val * 2)
@@ -181,13 +178,15 @@ fn main() {
     Err(_) -> 0
   }
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(42));
 }
 
 #[test]
 fn test_question_mark_propagates_error() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn process(x) {
   let val = Err("oops")?
   Ok(val)
@@ -199,13 +198,15 @@ fn main() {
     Err(e) -> e
   }
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::String("oops".into()));
 }
 
 #[test]
 fn test_when_else() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn safe_div(a, b) {
   when Ok(divisor) = if_nonzero(b) else {
     return Err("division by zero")
@@ -226,7 +227,8 @@ fn main() {
     Err(e) -> e
   }
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::String("division by zero".into()));
 }
 
@@ -273,7 +275,8 @@ fn main() {
 
 #[test]
 fn test_record_update() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 type User {
   name: String,
   age: Int,
@@ -289,7 +292,8 @@ fn main() {
   let u2 = birthday(u)
   u2.age
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(31));
 }
 
@@ -392,7 +396,8 @@ fn main() {
 
 #[test]
 fn test_match_guards() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn classify(n) {
   match n {
     0 -> "zero"
@@ -404,7 +409,8 @@ fn classify(n) {
 fn main() {
   [classify(-5), classify(0), classify(42)]
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -419,7 +425,8 @@ fn main() {
 
 #[test]
 fn test_fold() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 import list
 fn main() {
   [1, 2, 3, 4, 5]
@@ -427,13 +434,15 @@ fn main() {
   |> list.map { x -> x * 10 }
   |> list.fold(0) { acc, x -> acc + x }
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(120));
 }
 
 #[test]
 fn test_nested_closures() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn make_adder(n) {
   fn(x) { x + n }
 }
@@ -442,7 +451,8 @@ fn main() {
   let add5 = make_adder(5)
   add5(10)
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(15));
 }
 
@@ -450,13 +460,15 @@ fn main() {
 
 #[test]
 fn test_string_interpolation_complex() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn main() {
   let name = "world"
   let n = 42
   "hello {name}, the answer is {n}"
 }
-    "#);
+    "#,
+    );
     assert_eq!(
         result,
         Value::String("hello world, the answer is 42".into())
@@ -481,14 +493,16 @@ fn main() {
 
 #[test]
 fn test_single_expr_fn() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn square(x) = x * x
 fn add(a, b) = a + b
 
 fn main() {
   add(square(3), square(4))
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(25));
 }
 
@@ -496,14 +510,16 @@ fn main() {
 
 #[test]
 fn test_shadowing() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn main() {
   let x = 1
   let x = x + 1
   let x = x * 3
   x
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(6));
 }
 
@@ -1110,14 +1126,16 @@ fn main() {
 
 #[test]
 fn test_list_pattern_exact() {
-    let result = run_typed(r#"
+    let result = run_typed(
+        r#"
 fn main() {
   match [1, 2, 3] {
     [a, b, c] -> a + b + c
     _ -> 0
   }
 }
-    "#);
+    "#,
+    );
     assert_eq!(result, Value::Int(6));
 }
 

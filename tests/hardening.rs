@@ -1000,8 +1000,7 @@ fn main() {
 #[test]
 fn test_invoke_callable_question_mark_err_in_map() {
     assert_eq!(
-        run(
-            r#"
+        run(r#"
 import list
 fn try_map() {
   Ok(list.map([Ok(1), Err("fail"), Ok(3)], fn(x) { x? }))
@@ -1012,8 +1011,7 @@ fn main() {
     Err(e) -> e
   }
 }
-        "#,
-        ),
+        "#,),
         Value::List(Arc::new(vec![
             Value::Int(1),
             Value::Variant("Err".into(), vec![Value::String("fail".into())]),
@@ -1030,8 +1028,7 @@ fn main() {
 #[test]
 fn test_invoke_callable_question_mark_none_in_map() {
     assert_eq!(
-        run(
-            r#"
+        run(r#"
 import list
 fn try_extract() {
   Some(list.map([Some(1), None, Some(3)], fn(x) { x? }))
@@ -1042,8 +1039,7 @@ fn main() {
     None -> "none"
   }
 }
-        "#,
-        ),
+        "#,),
         Value::List(Arc::new(vec![
             Value::Int(1),
             Value::Variant("None".into(), vec![]),
@@ -1186,6 +1182,10 @@ fn main() {
     };
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![make_config(1), make_config(2), make_config(3)]))
+        Value::List(Arc::new(vec![
+            make_config(1),
+            make_config(2),
+            make_config(3)
+        ]))
     );
 }
