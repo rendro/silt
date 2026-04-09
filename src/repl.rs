@@ -189,27 +189,34 @@ fn has_unclosed_delimiters(input: &str) -> bool {
     let mut depth_paren = 0i32;
     let mut depth_bracket = 0i32;
     let mut in_string = false;
-    let mut prev = '\0';
+    let mut backslash_count = 0u32;
 
     for ch in input.chars() {
         if in_string {
-            if ch == '"' && prev != '\\' {
+            if ch == '"' && backslash_count % 2 == 0 {
                 in_string = false;
             }
-            prev = ch;
+            if ch == '\\' {
+                backslash_count += 1;
+            } else {
+                backslash_count = 0;
+            }
             continue;
         }
-        match ch {
-            '"' if prev != '\\' => in_string = true,
-            '{' => depth_brace += 1,
-            '}' => depth_brace -= 1,
-            '(' => depth_paren += 1,
-            ')' => depth_paren -= 1,
-            '[' => depth_bracket += 1,
-            ']' => depth_bracket -= 1,
-            _ => {}
+        if ch == '"' {
+            in_string = true;
+            backslash_count = 0;
+        } else {
+            match ch {
+                '{' => depth_brace += 1,
+                '}' => depth_brace -= 1,
+                '(' => depth_paren += 1,
+                ')' => depth_paren -= 1,
+                '[' => depth_bracket += 1,
+                ']' => depth_bracket -= 1,
+                _ => {}
+            }
         }
-        prev = ch;
     }
 
     depth_brace > 0 || depth_paren > 0 || depth_bracket > 0 || in_string
@@ -579,5 +586,40 @@ mod tests {
     #[test]
     fn nested_balanced() {
         assert!(!has_unclosed_delimiters("{ ( [] ) }"));
+    }
+
+    #[test]
+    fn string_with_two_trailing_backslashes_is_closed() {
+        // "path\\\\" in Rust source is the string: "path\\" (two backslashes).
+        // The final " is unescaped, so the string is closed.
+        assert!(!has_unclosed_delimiters(r#""path\\""#));
+    }
+
+    #[test]
+    fn string_with_one_trailing_backslash_is_open() {
+        // "path\\" in Rust source is the string: "path\" — the quote is escaped,
+        // so the string is still open.
+        assert!(has_unclosed_delimiters(r#""path\"#));
+    }
+
+    #[test]
+    fn escaped_quote_inside_string_keeps_it_open() {
+        // "hello\"" in Rust source is the string: hello" — the inner quote is
+        // escaped, and there is no closing quote, so the string is open.
+        assert!(has_unclosed_delimiters(r#""hello\""#));
+    }
+
+    #[test]
+    fn three_trailing_backslashes_string_is_open() {
+        // "hello\\\" in Rust source is the string: hello\\\ — three backslashes
+        // before the final quote means the quote IS escaped (odd count), so open.
+        assert!(has_unclosed_delimiters(r#""hello\\\"#));
+    }
+
+    #[test]
+    fn four_trailing_backslashes_string_is_closed() {
+        // "hello\\\\" in Rust source is the string: hello\\\\ (four backslashes).
+        // Even count before the final " means the quote is unescaped — closed.
+        assert!(!has_unclosed_delimiters(r#""hello\\\\""#));
     }
 }
