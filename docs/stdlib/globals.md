@@ -14,7 +14,7 @@ Always available. No import or qualification needed.
 |------|-----------|-------------|
 | `print` | `(a) -> ()` | Print a value without trailing newline |
 | `println` | `(a) -> ()` | Print a value with trailing newline |
-| `panic` | `(String) -> a` | Crash with an error message |
+| `panic` | `(a) -> b where a: Display` | Crash with an error message |
 | `Ok` | `(a) -> Result(a, e)` | Construct a success Result |
 | `Err` | `(e) -> Result(a, e)` | Construct an error Result |
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
@@ -75,15 +75,17 @@ fn main() {
 ## `panic`
 
 ```
-panic(message: String) -> a
+panic(value: a) -> b where a: Display
 ```
 
-Terminates execution with an error message. The return type is polymorphic
-because `panic` never returns -- it can appear anywhere a value is expected.
+Terminates execution with an error message. Accepts any value that implements
+`Display`. The return type is polymorphic because `panic` never returns -- it
+can appear anywhere a value is expected.
 
 ```silt
 fn main() {
     panic("something went wrong")
+    panic(42)  // also valid
 }
 ```
 

@@ -32,7 +32,7 @@ impl TypeChecker {
             );
         }
 
-        // ── panic: a -> b (accepts any value, never returns) ───────────
+        // ── panic: a -> b where a: Display (never returns) ─────────────
         {
             let (a, av) = self.fresh_tv();
             let (b, bv) = self.fresh_tv();
@@ -41,7 +41,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av, bv],
                     ty: Type::Fun(vec![a], Box::new(b)),
-                    constraints: vec![],
+                    constraints: vec![(av, intern("Display"))],
                 },
             );
         }
