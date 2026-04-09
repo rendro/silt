@@ -222,7 +222,15 @@ impl Channel {
     pub fn close(&self) {
         self.closed.store(true, AtomicOrdering::Release);
         // Clear any pending handoff value.
+        // This also synchronises with the rendezvous receive_blocking path
+        // (which holds the handoff lock while checking `closed`).
         *self.handoff.lock() = None;
+        // Acquire + release the buffer lock so that any thread in the
+        // buffered receive_blocking path that already checked `closed`
+        // (saw false) but hasn't entered condvar.wait yet will finish
+        // entering the wait before we signal. Without this, notify_all
+        // can fire between the check and the wait — a classic lost-wakeup.
+        drop(self.buffer.lock());
         self.condvar.notify_all();
         // Wake ALL tasks blocked on receive or send — channel is done.
         self.wake_all_recv();
