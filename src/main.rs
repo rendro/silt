@@ -583,9 +583,7 @@ fn vm_run_file(path: &str) {
                 }
             }
         } else if e.message == "undefined global: main" {
-            eprintln!(
-                "{path}: program has no main() function — add one as the entry point"
-            );
+            eprintln!("{path}: program has no main() function — add one as the entry point");
         } else {
             eprintln!("{path}: {e}");
         }
