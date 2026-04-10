@@ -597,38 +597,45 @@ fn vm_run_file(path: &str) {
         if let Some(span) = e.span {
             let source_err = SourceError::runtime_at(&e.message, span, &source, path);
             eprintln!("{source_err}");
-            // Print call stack if there are meaningful frames beyond the error site.
-            // Filter out synthetic frames like <script> and <call:...>.
+            // Print call stack if there are user frames beyond the error site.
+            // Drop synthetic entry-point frames (<script>, <call:...>) by name
+            // rather than by span — a zero-spanned frame inside an otherwise
+            // good stack shouldn't cause the whole stack to be discarded.
             let meaningful: Vec<_> = e
                 .call_stack
                 .iter()
-                .filter(|(name, span)| span.line > 0 && !name.starts_with('<'))
+                .filter(|(name, _)| !name.starts_with('<'))
                 .collect();
-            if meaningful.len() > 1 {
+            // Only show the stack if it adds information beyond the error
+            // site the user already sees above. A single-frame "stack"
+            // would just restate that location, which is noisy.
+            let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
+            if meaningful.len() >= 2 && any_real_span {
                 eprintln!("\ncall stack:");
                 let head = 10;
                 let tail = 5;
-                if meaningful.len() <= head + tail {
-                    for (name, frame_span) in &meaningful {
+                let print_frame = |name: &str, frame_span: &silt::lexer::Span| {
+                    if frame_span.line > 0 {
                         eprintln!(
                             "  -> {}  at {}:{}:{}",
                             name, path, frame_span.line, frame_span.col
                         );
+                    } else {
+                        eprintln!("  -> {name}  at {path}:<unknown location>");
+                    }
+                };
+                if meaningful.len() <= head + tail {
+                    for (name, frame_span) in &meaningful {
+                        print_frame(name, frame_span);
                     }
                 } else {
                     for (name, frame_span) in &meaningful[..head] {
-                        eprintln!(
-                            "  -> {}  at {}:{}:{}",
-                            name, path, frame_span.line, frame_span.col
-                        );
+                        print_frame(name, frame_span);
                     }
                     let omitted = meaningful.len() - head - tail;
                     eprintln!("  ... ({omitted} more frames)");
                     for (name, frame_span) in &meaningful[meaningful.len() - tail..] {
-                        eprintln!(
-                            "  -> {}  at {}:{}:{}",
-                            name, path, frame_span.line, frame_span.col
-                        );
+                        print_frame(name, frame_span);
                     }
                 }
             }

@@ -131,6 +131,17 @@ impl TypeChecker {
                     && let Some(enum_info) = self.enums.get(&enum_name).cloned()
                     && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
                 {
+                    if sub_pats.len() != var_info.field_types.len() {
+                        self.error(
+                            format!(
+                                "constructor '{}' expects {} field(s), but pattern has {}",
+                                name,
+                                var_info.field_types.len(),
+                                sub_pats.len()
+                            ),
+                            span,
+                        );
+                    }
                     // For parameterized types we need to figure out type args
                     // from the outer type and substitute them in
                     let type_args = match &resolved {
@@ -2087,6 +2098,45 @@ fn main() {
   str_box.value + " world"
 }
         "#,
+        );
+    }
+
+    // ── Constructor arity in let bindings ──────────────────────────
+
+    #[test]
+    fn test_let_constructor_wrong_arity_is_type_error() {
+        assert_has_error(
+            r#"
+type Maybe(T) {
+  None
+  Some(T)
+}
+fn main() {
+  let Some(x, y) = Some(42)
+  0
+}
+        "#,
+            "constructor 'Some' expects 1 field(s), but pattern has 2",
+        );
+    }
+
+    #[test]
+    fn test_let_nested_constructor_wrong_arity_is_type_error() {
+        assert_has_error(
+            r#"
+type Maybe(T) {
+  None
+  Some(T)
+}
+type Pair(A, B) {
+  P(A, B)
+}
+fn main() {
+  let P(Some(x, y), b) = P(Some(42), 1)
+  0
+}
+        "#,
+            "constructor 'Some' expects 1 field(s), but pattern has 2",
         );
     }
 }
