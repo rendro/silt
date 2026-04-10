@@ -10634,3 +10634,163 @@ fn main() { string.from_char_code(1114112) }
     );
     assert!(err.contains("invalid code point"), "got: {err}");
 }
+
+// ── string.to_upper / to_lower / starts_with / ends_with ────────────
+
+#[test]
+fn test_string_to_upper() {
+    let result = run(r#"import string
+fn main() { string.to_upper("hello") }"#);
+    assert_eq!(result, Value::String("HELLO".into()));
+}
+
+#[test]
+fn test_string_to_upper_empty() {
+    let result = run(r#"import string
+fn main() { string.to_upper("") }"#);
+    assert_eq!(result, Value::String("".into()));
+}
+
+#[test]
+fn test_string_to_lower() {
+    let result = run(r#"import string
+fn main() { string.to_lower("HELLO") }"#);
+    assert_eq!(result, Value::String("hello".into()));
+}
+
+#[test]
+fn test_string_to_lower_mixed_case() {
+    let result = run(r#"import string
+fn main() { string.to_lower("HeLLo WoRLd") }"#);
+    assert_eq!(result, Value::String("hello world".into()));
+}
+
+#[test]
+fn test_string_starts_with_true() {
+    let result = run(r#"import string
+fn main() { string.starts_with("hello world", "hello") }"#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_string_starts_with_false() {
+    let result = run(r#"import string
+fn main() { string.starts_with("hello world", "world") }"#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_string_starts_with_empty_prefix() {
+    let result = run(r#"import string
+fn main() { string.starts_with("hello", "") }"#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_string_ends_with_true() {
+    let result = run(r#"import string
+fn main() { string.ends_with("hello world", "world") }"#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_string_ends_with_false() {
+    let result = run(r#"import string
+fn main() { string.ends_with("hello world", "hello") }"#);
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_string_ends_with_empty_suffix() {
+    let result = run(r#"import string
+fn main() { string.ends_with("hello", "") }"#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+// ── list.prepend / list.tail ────────────────────────────────────────
+
+#[test]
+fn test_list_prepend() {
+    let result = run(r#"import list
+fn main() { list.prepend([2, 3], 1) }"#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)]))
+    );
+}
+
+#[test]
+fn test_list_prepend_to_empty() {
+    let result = run(r#"import list
+fn main() { list.prepend([], 42) }"#);
+    assert_eq!(result, Value::List(Arc::new(vec![Value::Int(42)])));
+}
+
+#[test]
+fn test_list_tail_multi() {
+    let result = run(r#"import list
+fn main() { list.tail([1, 2, 3]) }"#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(3)]))
+    );
+}
+
+#[test]
+fn test_list_tail_single_element() {
+    let result = run(r#"import list
+fn main() { list.tail([42]) }"#);
+    assert_eq!(result, Value::List(Arc::new(Vec::new())));
+}
+
+#[test]
+fn test_list_tail_empty() {
+    // Verified in src/builtins/collections.rs: list.tail([]) returns an empty list
+    let result = run(r#"import list
+fn main() { list.tail([]) }"#);
+    assert_eq!(result, Value::List(Arc::new(Vec::new())));
+}
+
+// ── float.ceil / float.floor ────────────────────────────────────────
+
+#[test]
+fn test_float_ceil_positive() {
+    let result = run(r#"import float
+fn main() { float.ceil(1.2) }"#);
+    assert_eq!(result, Value::Float(2.0));
+}
+
+#[test]
+fn test_float_ceil_negative() {
+    let result = run(r#"import float
+fn main() { float.ceil(-1.2) }"#);
+    assert_eq!(result, Value::Float(-1.0));
+}
+
+#[test]
+fn test_float_ceil_whole() {
+    let result = run(r#"import float
+fn main() { float.ceil(3.0) }"#);
+    assert_eq!(result, Value::Float(3.0));
+}
+
+#[test]
+fn test_float_floor_positive() {
+    let result = run(r#"import float
+fn main() { float.floor(1.7) }"#);
+    assert_eq!(result, Value::Float(1.0));
+}
+
+#[test]
+fn test_float_floor_negative() {
+    let result = run(r#"import float
+fn main() { float.floor(-1.2) }"#);
+    assert_eq!(result, Value::Float(-2.0));
+}
+
+#[test]
+fn test_float_floor_whole() {
+    let result = run(r#"import float
+fn main() { float.floor(3.0) }"#);
+    assert_eq!(result, Value::Float(3.0));
+}

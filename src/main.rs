@@ -783,7 +783,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                             .chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '_')
                             .collect();
-                        if name.starts_with("test_") && name.contains(filter.as_str()) {
+                        if (name.starts_with("test_") || name.starts_with("skip_test_"))
+                            && name.contains(filter.as_str())
+                        {
                             return true;
                         }
                     }
@@ -887,6 +889,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             if let silt::ast::Decl::Fn(f) = decl {
                 let name = silt::intern::resolve(f.name);
                 if name.starts_with("skip_test_") {
+                    if let Some(ref filter) = filter
+                        && !name.contains(filter.as_str())
+                    {
+                        continue;
+                    }
                     total += 1;
                     eprintln!("  SKIP {path}::{name}");
                     skipped += 1;
