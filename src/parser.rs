@@ -21,7 +21,7 @@ type Result<T> = std::result::Result<T, ParseError>;
 
 // ── Parser ───────────────────────────────────────────────────────────
 
-const MAX_DEPTH: usize = 256;
+const MAX_DEPTH: usize = 128;
 
 pub struct Parser {
     tokens: Vec<SpannedToken>,

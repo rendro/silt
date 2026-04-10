@@ -3035,6 +3035,61 @@ fn main() {
     );
 }
 
+#[test]
+fn test_toplevel_let_polymorphism_used_downstream() {
+    // Top-level let bindings whose inferred type still contains a type variable
+    // should NOT be rejected when a later decl (e.g., main) actually consumes
+    // them, since the downstream use fixes the type.
+    let input = r#"
+fn id(x) { x }
+
+let a = id(5)
+let b = id("hello")
+
+fn main() {
+  print(a)
+  print(b)
+}
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
+    let errors = silt::typechecker::check(&mut program);
+    let hard: Vec<_> = errors
+        .iter()
+        .filter(|e| e.severity == silt::types::Severity::Error)
+        .collect();
+    assert!(
+        hard.is_empty(),
+        "expected no type errors, got: {:?}",
+        hard.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_toplevel_let_polymorphism_unused_still_errors() {
+    // A top-level let whose type cannot be determined and which is never
+    // referenced anywhere should still be reported as an error.
+    let input = r#"
+fn id(x) { x }
+
+let a = id(5)
+    "#;
+    let tokens = silt::lexer::Lexer::new(input).tokenize().expect("lex");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse");
+    let errors = silt::typechecker::check(&mut program);
+    assert!(
+        errors.iter().any(|e| e.severity
+            == silt::types::Severity::Error
+            && e.message.contains("could not fully determine the type")),
+        "expected 'could not fully determine the type' error, got: {:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
 // ── Mixed int/float arithmetic ──────────────────────────────────────
 
 #[test]
@@ -9659,6 +9714,195 @@ fn main() {{
     );
     let result = run(&input);
     assert_eq!(result, Value::Int(0));
+}
+
+// ── io module (direct main-thread path) ─────────────────────────────
+
+#[test]
+fn test_io_write_file_and_read_file_roundtrip() {
+    // Write a string to a unique temp path, read it back, assert contents match.
+    let path = std::env::temp_dir().join("silt_test_io_roundtrip_001.txt");
+    let path_str = path.to_str().unwrap().replace('\\', "/");
+    // Pre-clean in case a previous run left it behind.
+    let _ = std::fs::remove_file(&path);
+    let input = format!(
+        r#"
+import io
+fn main() {{
+    let w = io.write_file("{path_str}", "hello silt io")
+    let r = io.read_file("{path_str}")
+    (w, r)
+}}
+    "#
+    );
+    let result = run(&input);
+    // Clean up.
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Variant("Ok".into(), vec![Value::Unit]),
+            Value::Variant("Ok".into(), vec![Value::String("hello silt io".into())]),
+        ])
+    );
+}
+
+#[test]
+fn test_io_read_file_missing_returns_err() {
+    // Reading a path that does not exist should yield Err(message).
+    let path = std::env::temp_dir().join("silt_test_io_missing_file_002.txt");
+    let path_str = path.to_str().unwrap().replace('\\', "/");
+    // Make sure it really doesn't exist.
+    let _ = std::fs::remove_file(&path);
+    let input = format!(
+        r#"
+import io
+fn main() {{
+    io.read_file("{path_str}")
+}}
+    "#
+    );
+    let result = run(&input);
+    match result {
+        Value::Variant(tag, args) => {
+            assert_eq!(tag, "Err", "expected Err variant");
+            assert!(
+                matches!(args.first(), Some(Value::String(_))),
+                "expected Err payload to be a string, got {:?}",
+                args
+            );
+        }
+        other => panic!("expected Err variant, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_io_write_file_to_directory_returns_err() {
+    // Writing to a path that is an existing directory should fail.
+    let dir = std::env::temp_dir().join("silt_test_io_write_to_dir_003");
+    let dir_str = dir.to_str().unwrap().replace('\\', "/");
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = format!(
+        r#"
+import io
+fn main() {{
+    io.write_file("{dir_str}", "oops")
+}}
+    "#
+    );
+    let result = run(&input);
+    // Clean up.
+    let _ = std::fs::remove_dir_all(&dir);
+    match result {
+        Value::Variant(tag, _) => assert_eq!(tag, "Err", "expected Err variant"),
+        other => panic!("expected Err variant, got {other:?}"),
+    }
+}
+
+// ── fs.exists / fs.is_file / fs.is_dir ──────────────────────────────
+
+#[test]
+fn test_fs_exists_true_and_false() {
+    // True for a file that exists, false for one that doesn't.
+    let present = std::env::temp_dir().join("silt_test_exists_present_004.txt");
+    let absent = std::env::temp_dir().join("silt_test_exists_absent_004.txt");
+    let present_str = present.to_str().unwrap().replace('\\', "/");
+    let absent_str = absent.to_str().unwrap().replace('\\', "/");
+    std::fs::write(&present, "hi").unwrap();
+    let _ = std::fs::remove_file(&absent);
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    (fs.exists("{present_str}"), fs.exists("{absent_str}"))
+}}
+    "#
+    );
+    let result = run(&input);
+    // Clean up.
+    let _ = std::fs::remove_file(&present);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::Bool(true), Value::Bool(false)])
+    );
+}
+
+#[test]
+fn test_fs_is_file_true_and_false() {
+    // True for a regular file, false for a directory and for missing paths.
+    let file = std::env::temp_dir().join("silt_test_is_file_005.txt");
+    let dir = std::env::temp_dir().join("silt_test_is_file_dir_005");
+    let missing = std::env::temp_dir().join("silt_test_is_file_missing_005");
+    let file_str = file.to_str().unwrap().replace('\\', "/");
+    let dir_str = dir.to_str().unwrap().replace('\\', "/");
+    let missing_str = missing.to_str().unwrap().replace('\\', "/");
+    std::fs::write(&file, "x").unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    let _ = std::fs::remove_file(&missing);
+    let _ = std::fs::remove_dir_all(&missing);
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    (
+        fs.is_file("{file_str}"),
+        fs.is_file("{dir_str}"),
+        fs.is_file("{missing_str}"),
+    )
+}}
+    "#
+    );
+    let result = run(&input);
+    // Clean up.
+    let _ = std::fs::remove_file(&file);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(false),
+        ])
+    );
+}
+
+#[test]
+fn test_fs_is_dir_true_and_false() {
+    // True for a directory, false for a regular file and for missing paths.
+    let dir = std::env::temp_dir().join("silt_test_is_dir_006");
+    let file = std::env::temp_dir().join("silt_test_is_dir_file_006.txt");
+    let missing = std::env::temp_dir().join("silt_test_is_dir_missing_006");
+    let dir_str = dir.to_str().unwrap().replace('\\', "/");
+    let file_str = file.to_str().unwrap().replace('\\', "/");
+    let missing_str = missing.to_str().unwrap().replace('\\', "/");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&file, "x").unwrap();
+    let _ = std::fs::remove_file(&missing);
+    let _ = std::fs::remove_dir_all(&missing);
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    (
+        fs.is_dir("{dir_str}"),
+        fs.is_dir("{file_str}"),
+        fs.is_dir("{missing_str}"),
+    )
+}}
+    "#
+    );
+    let result = run(&input);
+    // Clean up.
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Bool(false),
+        ])
+    );
 }
 
 // ── env: get / set ───────────────────────────────────────────────

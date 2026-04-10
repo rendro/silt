@@ -285,13 +285,15 @@ fn main() {
         }
         "run" => {
             if args[2..].iter().any(|a| a == "--help" || a == "-h") {
-                println!("Usage: silt run [--disassemble] <file.silt>");
+                println!("Usage: silt run [--watch] [--disassemble] <file.silt>");
                 println!();
                 println!("Options:");
+                println!("  --watch, -w     Re-run on file changes");
                 println!("  --disassemble   Show bytecode disassembly instead of running");
                 println!();
                 println!("Examples:");
                 println!("  silt run main.silt");
+                println!("  silt run --watch main.silt");
                 println!("  silt run --disassemble main.silt");
                 process::exit(0);
             }
