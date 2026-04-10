@@ -75,7 +75,16 @@ fn position_to_offset(source: &str, pos: &Position) -> usize {
             }
             return offset + line.len();
         }
-        offset += line.len() + 1; // +1 for '\n'
+        // Account for actual line ending: \r\n (2 bytes) or \n (1 byte).
+        let line_end = offset + line.len();
+        let newline_len = if source.as_bytes().get(line_end) == Some(&b'\r')
+            && source.as_bytes().get(line_end + 1) == Some(&b'\n')
+        {
+            2
+        } else {
+            1
+        };
+        offset += line.len() + newline_len;
     }
     offset
 }

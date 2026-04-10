@@ -390,7 +390,7 @@ impl TypeChecker {
 
             (Type::Variant(n1, a1), Type::Variant(n2, a2)) => {
                 if n1 != n2 {
-                    self.error(format!("variant mismatch: expected {n1}, got {n2}"), span);
+                    self.error(format!("variant mismatch: expected {n2}, got {n1}"), span);
                 } else if a1.len() != a2.len() {
                     self.error(
                         format!(

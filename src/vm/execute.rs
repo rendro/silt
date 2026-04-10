@@ -1066,7 +1066,11 @@ impl Vm {
                         let new_lo = lo
                             .checked_add(start as i64)
                             .ok_or_else(|| VmError::new("range index overflow".to_string()))?;
-                        if new_lo > hi + 1 {
+                        let exceeds = match hi.checked_add(1) {
+                            Some(hi_plus_1) => new_lo > hi_plus_1,
+                            None => false, // hi == i64::MAX; new_lo can never exceed hi+1
+                        };
+                        if exceeds {
                             self.push(Value::List(Arc::new(Vec::new())));
                         } else {
                             self.push(Value::Range(new_lo, hi));

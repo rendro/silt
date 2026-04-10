@@ -192,6 +192,27 @@ impl TypeChecker {
                 }
             }
             Pattern::Or(alts) => {
+                // Validate that all alternatives bind the same set of variables.
+                if alts.len() >= 2 {
+                    let first_vars: BTreeSet<Symbol> =
+                        collect_pattern_vars(&alts[0]).into_iter().collect();
+                    for (i, alt) in alts.iter().enumerate().skip(1) {
+                        let alt_vars: BTreeSet<Symbol> =
+                            collect_pattern_vars(alt).into_iter().collect();
+                        if first_vars != alt_vars {
+                            self.error(
+                                format!(
+                                    "or-pattern alternatives must bind the same variables; \
+                                     first alternative binds {:?}, alternative {} binds {:?}",
+                                    first_vars,
+                                    i + 1,
+                                    alt_vars
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
                 for alt in alts {
                     self.bind_pattern(alt, ty, env, span);
                 }
