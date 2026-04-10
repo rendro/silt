@@ -67,7 +67,7 @@ type Event {
 }
 
 fn main() {
-    let e = json.parse(Event, "{\"name\": \"launch\", \"date\": \"2024-03-15\"}")?
+    let e = json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""")?
     println(e.date |> time.weekday)  -- Friday
 }
 ```
@@ -88,7 +88,7 @@ type Point {
 }
 
 fn main() {
-    let input = "[{\"x\": 1, \"y\": 2}, {\"x\": 3, \"y\": 4}]"
+    let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
     match json.parse_list(Point, input) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
         Err(e) -> println("Error: {e}")
@@ -108,7 +108,7 @@ descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 fn main() {
-    let input = "{\"x\": 10, \"y\": 20}"
+    let input = """{"x": 10, "y": 20}"""
     match json.parse_map(Int, input) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
         Err(e) -> println("Error: {e}")

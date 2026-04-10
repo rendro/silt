@@ -452,7 +452,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 }
                 Value::Range(lo, hi) => {
                     let count = n_val;
-                    let new_hi = (*lo + count - 1).min(*hi);
+                    let new_hi = match lo.checked_add(count).and_then(|v| v.checked_sub(1)) {
+                        Some(v) => v.min(*hi),
+                        None => *hi,
+                    };
                     if new_hi < *lo {
                         Ok(Value::List(Arc::new(Vec::new())))
                     } else {
@@ -479,7 +482,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     Ok(Value::List(Arc::new(xs[n..].to_vec())))
                 }
                 Value::Range(lo, hi) => {
-                    let new_lo = lo + n_val;
+                    let new_lo = match lo.checked_add(n_val) {
+                        Some(v) => v,
+                        None => return Ok(Value::List(Arc::new(Vec::new()))),
+                    };
                     if new_lo > *hi {
                         Ok(Value::List(Arc::new(Vec::new())))
                     } else {

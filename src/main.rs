@@ -429,10 +429,11 @@ fn main() {
                         process::exit(1);
                     }
                 } else if args[i] == "--help" || args[i] == "-h" {
-                    eprintln!("Usage: silt test [--filter <pattern>] [file]");
+                    eprintln!("Usage: silt test [--filter <pattern>] [--watch] [file]");
                     eprintln!();
                     eprintln!("Options:");
                     eprintln!("  --filter <pat>   Only run tests whose name contains <pat>");
+                    eprintln!("  --watch, -w      Re-run on file changes");
                     process::exit(0);
                 } else if args[i].starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.
@@ -465,10 +466,11 @@ fn main() {
                         process::exit(1);
                     }
                 } else if args[i] == "--help" || args[i] == "-h" {
-                    eprintln!("Usage: silt check [--format json] <file.silt>");
+                    eprintln!("Usage: silt check [--format json] [--watch] <file.silt>");
                     eprintln!();
                     eprintln!("Options:");
                     eprintln!("  --format json   Emit diagnostics as JSON");
+                    eprintln!("  --watch, -w     Re-run on file changes");
                     process::exit(0);
                 } else if args[i].starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.

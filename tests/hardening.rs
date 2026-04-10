@@ -617,6 +617,104 @@ fn main() { math.sqrt(0.0) }
     );
 }
 
+// ── Latent numeric regression guards ────────────────────────────────
+// These tests lock in currently-correct behavior for numeric edge
+// cases so a future refactor of the arithmetic/builtin layer cannot
+// silently regress them. Do NOT change expected values to match new
+// behavior — if one of these fails, the underlying change is wrong.
+
+/// `int.abs(i64::MIN)` must error: `-i64::MIN` overflows i64.
+/// `-9223372036854775808` can't be written literally (the lexer parses
+/// `-` as unary on an unsigned literal that's out of range), so build
+/// it via `-9223372036854775807 - 1`.
+#[test]
+fn test_int_abs_i64_min_overflows() {
+    let err = run_err(
+        r#"
+import int
+fn main() {
+  let x = -9223372036854775807 - 1
+  int.abs(x)
+}
+    "#,
+    );
+    assert!(
+        err.contains("integer overflow") && err.contains("abs("),
+        "expected integer overflow error from int.abs(i64::MIN), got: {err}"
+    );
+}
+
+#[test]
+fn test_int_abs_negative() {
+    assert_eq!(
+        run(r#"
+import int
+fn main() { int.abs(-42) }
+        "#),
+        Value::Int(42)
+    );
+}
+
+/// `float.round` uses ties-away-from-zero: 0.5 -> 1.0.
+#[test]
+fn test_float_round_half_positive() {
+    assert_eq!(
+        run(r#"
+import float
+fn main() { float.round(0.5) }
+        "#),
+        Value::Float(1.0)
+    );
+}
+
+/// `float.round` uses ties-away-from-zero: -0.5 -> -1.0.
+#[test]
+fn test_float_round_half_negative() {
+    assert_eq!(
+        run(r#"
+import float
+fn main() { float.round(-0.5) }
+        "#),
+        Value::Float(-1.0)
+    );
+}
+
+#[test]
+fn test_math_sqrt_four() {
+    assert_eq!(
+        run(r#"
+import math
+fn main() { math.sqrt(4.0) }
+        "#),
+        Value::ExtFloat(2.0)
+    );
+}
+
+#[test]
+fn test_int_to_float_zero() {
+    assert_eq!(
+        run(r#"
+import int
+fn main() { int.to_float(0) }
+        "#),
+        Value::Float(0.0)
+    );
+}
+
+/// `int.to_float(i64::MAX)` rounds to the nearest f64, which is 2^63.
+/// This pins the conversion so a refactor (e.g. switching to a checked
+/// or lossless-only path) can't silently change the result.
+#[test]
+fn test_int_to_float_i64_max() {
+    assert_eq!(
+        run(r#"
+import int
+fn main() { int.to_float(9223372036854775807) }
+        "#),
+        Value::Float(i64::MAX as f64)
+    );
+}
+
 // ── Builtin edge cases: map ─────────────────────────────────────────
 
 #[test]
