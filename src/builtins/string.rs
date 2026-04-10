@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::value::{Value, checked_range_len};
+use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use crate::vm::{Vm, VmError};
 
 /// Dispatch `string.<name>(args)`.
@@ -170,7 +170,14 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let n_val = *n;
             if n_val < 0 {
                 return Err(VmError::new(format!(
-                    "string.repeat: negative index {n_val}"
+                    "string.repeat: negative count {n_val}"
+                )));
+            }
+            let result_len = (n_val as u128) * (s.len() as u128);
+            if result_len > MAX_RANGE_MATERIALIZE as u128 {
+                return Err(VmError::new(format!(
+                    "string.repeat: result would exceed maximum string size ({} bytes > {} limit)",
+                    result_len, MAX_RANGE_MATERIALIZE
                 )));
             }
             Ok(Value::String(s.repeat(n_val as usize)))

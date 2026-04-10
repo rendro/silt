@@ -85,7 +85,7 @@ impl TypeChecker {
             Pattern::Int(_) => {}
             Pattern::Float(_) => {}
             Pattern::Bool(_) => {}
-            Pattern::StringLit(_) => {}
+            Pattern::StringLit(..) => {}
             Pattern::Tuple(pats) => {
                 let resolved = self.apply(ty);
                 match &resolved {
@@ -231,7 +231,7 @@ impl TypeChecker {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
             ExprKind::Bool(_) => Type::Bool,
-            ExprKind::StringLit(_) => Type::String,
+            ExprKind::StringLit(..) => Type::String,
             ExprKind::Unit => Type::Unit,
 
             ExprKind::StringInterp(parts) => {
@@ -384,12 +384,25 @@ impl TypeChecker {
                             Type::Error
                         }
                     }
-                    Type::Generic(type_name, _) => {
-                        // Check record field definitions
+                    Type::Generic(type_name, type_args) => {
+                        // Check record field definitions, substituting type parameters
                         if let Some(rec_info) = self.records.get(type_name).cloned()
                             && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
                         {
-                            let resolved = self.apply(ft);
+                            // Substitute the record's type parameters with concrete type args
+                            let resolved = if let Some(param_var_ids) =
+                                self.record_param_var_ids.get(type_name).cloned()
+                            {
+                                let mapping: HashMap<TyVar, Type> = param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect();
+                                let substituted = substitute_vars(ft, &mapping);
+                                self.apply(&substituted)
+                            } else {
+                                self.apply(ft)
+                            };
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -1323,7 +1336,7 @@ impl TypeChecker {
             Pattern::Bool(_) => {
                 self.unify(expected, &Type::Bool, span);
             }
-            Pattern::StringLit(_) => {
+            Pattern::StringLit(..) => {
                 self.unify(expected, &Type::String, span);
             }
             Pattern::Tuple(pats) => {
@@ -1392,12 +1405,30 @@ impl TypeChecker {
             Pattern::Record { name, fields, .. } => {
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
-                        let rec_ty = Type::Record(*rec_name, rec_info.fields.clone());
+                        // Instantiate fresh type variables for parameterized records
+                        // to avoid polluting template TyVars across different uses.
+                        let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                            self.record_param_var_ids.get(rec_name).cloned()
+                        {
+                            let mapping: HashMap<TyVar, Type> = param_var_ids
+                                .iter()
+                                .map(|&v| (v, self.fresh_var()))
+                                .collect();
+                            rec_info
+                                .fields
+                                .iter()
+                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                                .collect()
+                        } else {
+                            rec_info.fields.clone()
+                        };
+
+                        let rec_ty = Type::Record(*rec_name, instantiated_fields.clone());
                         self.unify(expected, &rec_ty, span);
 
                         for (field_name, sub_pat) in fields {
                             if let Some((_, ft)) =
-                                rec_info.fields.iter().find(|(n, _)| n == field_name)
+                                instantiated_fields.iter().find(|(n, _)| n == field_name)
                             {
                                 if let Some(sp) = sub_pat {
                                     self.check_pattern(sp, ft, env, span);
@@ -1490,7 +1521,7 @@ pub(super) fn is_syntactic_value(kind: &ExprKind) -> bool {
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
-        | ExprKind::StringLit(_)
+        | ExprKind::StringLit(..)
         | ExprKind::Unit
         | ExprKind::Ident(_)
         | ExprKind::Lambda { .. } => true,

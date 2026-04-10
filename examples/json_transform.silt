@@ -39,14 +39,16 @@ let employee_json = """
   """
 
 -- Compute average salary for a list of employees
+
 fn avg_salary(employees) {
   let total = employees
-    |> list.fold(0) { acc, e -> acc + e.salary }
+  |> list.fold(0) { acc, e -> acc + e.salary }
   let count = list.length(employees)
   int.to_float(total) / int.to_float(count)
 }
 
 -- Find top N earners from a list of employees
+
 fn top_earners(employees, n) {
   employees
   |> list.sort_by { e -> -e.salary }
@@ -54,12 +56,14 @@ fn top_earners(employees, n) {
 }
 
 -- Filter employees who have a given skill
+
 fn with_skill(employees, skill) {
   employees
   |> list.filter { e -> list.contains(e.skills, skill) }
 }
 
 -- Flatten all skills from all employees into a unique list
+
 fn all_unique_skills(employees) {
   employees
   |> list.flat_map { e -> e.skills }
@@ -73,74 +77,59 @@ fn main() {
     Ok(emps) -> emps
     Err(e) -> panic("Failed to parse employees: {e}")
   }
-
   println("=== JSON Data Pipeline ===\n")
-
   -- 1. Group by department
-  let by_dept = employees |> list.group_by { e -> e.department }
-
+  let by_dept = employees
+  |> list.group_by { e -> e.department }
   println("--- Employees by Department ---")
   map.each(by_dept) { dept, emps ->
-    let names = emps |> list.map { e -> e.name } |> string.join(", ")
+    let names = emps
+    |> list.map { e -> e.name }
+    |> string.join(", ")
     println("  {dept}: {names}")
   }
-
   -- 2. Average salary per department
   println("\n--- Average Salary per Department ---")
   let dept_avg = by_dept
-    |> map.entries
-    |> list.map { (dept, emps) ->
-      let avg = avg_salary(emps)
-      (dept, float.to_string(avg, 2))
-    }
-    |> map.from_entries
-
+  |> map.entries
+  |> list.map { (dept, emps) ->
+    let avg = avg_salary(emps)
+    (dept, float.to_string(avg, 2))
+  }
+  |> map.from_entries
   dept_avg
-    |> map.entries
-    |> list.each { (dept, avg) ->
-      println("  {dept}: ${avg}")
-    }
-
+  |> map.entries
+  |> list.each { (dept, avg) -> println("  {dept}: ${avg}") }
   -- 3. Top 3 earners
   println("\n--- Top 3 Earners ---")
   let top3 = top_earners(employees, 3)
-  top3 |> list.each { e ->
-    println("  {e.name} ({e.department}): ${e.salary}")
-  }
-
+  top3
+  |> list.each { e -> println("  {e.name} ({e.department}): ${e.salary}") }
   -- 4. Filter by skill: find all employees with "python"
   println("\n--- Employees with 'python' ---")
   let python_devs = with_skill(employees, "python")
-  python_devs |> list.each { e ->
-    println("  {e.name}: {e.skills}")
-  }
-
+  python_devs
+  |> list.each { e -> println("  {e.name}: {e.skills}") }
   -- 5. All unique skills
   println("\n--- All Unique Skills ---")
   let skills = all_unique_skills(employees)
   println("  {string.join(skills, ", ")}")
-
   -- 6. Build a summary map and output as pretty JSON
   println("\n--- Summary as JSON ---")
   let dept_summary = by_dept
-    |> map.entries
-    |> list.map { (dept, emps) ->
-      let avg = avg_salary(emps)
-      let count = list.length(emps)
-      let top = emps
-        |> list.sort_by { e -> -e.salary }
-        |> list.head
-      let top_name = match top {
-        Some(e) -> e.name
-        None -> "N/A"
-      }
-      (dept, DeptSummary {
-        employee_count: count,
-        avg_salary: float.round(avg),
-        top_earner: top_name,
-      })
+  |> map.entries
+  |> list.map { (dept, emps) ->
+    let avg = avg_salary(emps)
+    let count = list.length(emps)
+    let top = emps
+    |> list.sort_by { e -> -e.salary }
+    |> list.head
+    let top_name = match top {
+      Some(e) -> e.name
+      None -> "N/A"
     }
-    |> map.from_entries
-
+    (dept, DeptSummary { employee_count: count, avg_salary: float.round(avg), top_earner: top_name })
+  }
+  |> map.from_entries
   println(json.pretty(dept_summary))
 }

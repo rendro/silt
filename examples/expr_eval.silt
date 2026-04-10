@@ -13,7 +13,7 @@ type Expr {
   Num(Int),
   Add(Expr, Expr),
   Mul(Expr, Expr),
-  Neg(Expr),
+  Neg(Expr)
 }
 
 trait Display for Expr {
@@ -28,6 +28,7 @@ trait Display for Expr {
 }
 
 -- Evaluate an expression to its integer result
+
 fn eval(expr) {
   match expr {
     Num(n) -> n
@@ -38,68 +39,67 @@ fn eval(expr) {
 }
 
 -- Algebraic simplification
+
 fn simplify(expr) {
   match expr {
     Num(n) -> Num(n)
-
-    -- Addition simplifications
     Add(l, r) -> {
       let sl = simplify(l)
       let sr = simplify(r)
       match (sl, sr) {
-        -- Constant folding
         (Num(a), Num(b)) -> Num(a + b)
-        -- x + 0 = x
         (_, Num(0)) -> sl
-        -- 0 + x = x
         (Num(0), _) -> sr
-        -- x + (-x) patterns using negative literal: e.g. x + Num(-x)
-        -- Double negation in add: (-a) + (-b) = -(a + b)
         (Neg(a), Neg(b)) -> simplify(Neg(Add(a, b)))
         _ -> Add(sl, sr)
       }
     }
-
-    -- Multiplication simplifications
     Mul(l, r) -> {
       let sl = simplify(l)
       let sr = simplify(r)
       match (sl, sr) {
-        -- Constant folding
         (Num(a), Num(b)) -> Num(a * b)
-        -- x * 0 = 0 (or-pattern for both sides)
         (Num(0), _) | (_, Num(0)) -> Num(0)
-        -- x * 1 = x
         (_, Num(1)) -> sl
-        -- 1 * x = x
         (Num(1), _) -> sr
-        -- x * -1 = -x (negative pattern!)
         (x, Num(-1)) -> simplify(Neg(x))
-        -- -1 * x = -x (negative pattern!)
         (Num(-1), x) -> simplify(Neg(x))
-        -- (-a) * (-b) = a * b
         (Neg(a), Neg(b)) -> simplify(Mul(a, b))
         _ -> Mul(sl, sr)
       }
     }
-
-    -- Negation simplifications
     Neg(e) -> {
       let se = simplify(e)
       match se {
-        -- -(-x) = x
         Neg(inner) -> inner
-        -- -0 = 0
         Num(0) -> Num(0)
-        -- Fold negation of constant (including negative literals)
         Num(n) -> Num(-n)
         _ -> Neg(se)
       }
     }
   }
+  -- Addition simplifications
+  -- Constant folding
+  -- x + 0 = x
+  -- 0 + x = x
+  -- x + (-x) patterns using negative literal: e.g. x + Num(-x)
+  -- Double negation in add: (-a) + (-b) = -(a + b)
+  -- Multiplication simplifications
+  -- Constant folding
+  -- x * 0 = 0 (or-pattern for both sides)
+  -- x * 1 = x
+  -- 1 * x = x
+  -- x * -1 = -x (negative pattern!)
+  -- -1 * x = -x (negative pattern!)
+  -- (-a) * (-b) = a * b
+  -- Negation simplifications
+  -- -(-x) = x
+  -- -0 = 0
+  -- Fold negation of constant (including negative literals)
 }
 
 -- Convert expression to Reverse Polish Notation (list of string tokens)
+
 fn to_rpn(expr) {
   match expr {
     Num(n) -> ["{n}"]
@@ -111,38 +111,46 @@ fn to_rpn(expr) {
 
 -- Parse an RPN token list back into an Expr
 -- Uses front-of-list as stack: head = top, prepend = push, tail = pop
+
 fn from_rpn(tokens) {
-  let stack = tokens |> list.fold([]) { stack, token ->
-    match token {
-      "+" -> {
-        let r = list.head(stack) |> option.unwrap_or(Num(0))
-        let s1 = list.tail(stack)
-        let l = list.head(s1) |> option.unwrap_or(Num(0))
-        let s2 = list.tail(s1)
-        list.prepend(s2, Add(l, r))
-      }
-      "*" -> {
-        let r = list.head(stack) |> option.unwrap_or(Num(0))
-        let s1 = list.tail(stack)
-        let l = list.head(s1) |> option.unwrap_or(Num(0))
-        let s2 = list.tail(s1)
-        list.prepend(s2, Mul(l, r))
-      }
-      "neg" -> {
-        let top = list.head(stack) |> option.unwrap_or(Num(0))
-        let rest = list.tail(stack)
-        list.prepend(rest, Neg(top))
-      }
-      numstr -> {
-        let n = int.parse(numstr) |> result.unwrap_or(0)
-        list.prepend(stack, Num(n))
-      }
+  let stack = tokens
+  |> list.fold([]) { stack, token -> match token {
+    "+" -> {
+      let r = list.head(stack)
+      |> option.unwrap_or(Num(0))
+      let s1 = list.tail(stack)
+      let l = list.head(s1)
+      |> option.unwrap_or(Num(0))
+      let s2 = list.tail(s1)
+      list.prepend(s2, Add(l, r))
     }
-  }
-  list.head(stack) |> option.unwrap_or(Num(0))
+    "*" -> {
+      let r = list.head(stack)
+      |> option.unwrap_or(Num(0))
+      let s1 = list.tail(stack)
+      let l = list.head(s1)
+      |> option.unwrap_or(Num(0))
+      let s2 = list.tail(s1)
+      list.prepend(s2, Mul(l, r))
+    }
+    "neg" -> {
+      let top = list.head(stack)
+      |> option.unwrap_or(Num(0))
+      let rest = list.tail(stack)
+      list.prepend(rest, Neg(top))
+    }
+    numstr -> {
+      let n = int.parse(numstr)
+      |> result.unwrap_or(0)
+      list.prepend(stack, Num(n))
+    }
+  } }
+  list.head(stack)
+  |> option.unwrap_or(Num(0))
 }
 
 -- Compute expression depth
+
 fn depth(expr) {
   match expr {
     Num(_) -> 0
@@ -153,6 +161,7 @@ fn depth(expr) {
 }
 
 -- Count total nodes in expression tree
+
 fn node_count(expr) {
   match expr {
     Num(_) -> 1
@@ -163,6 +172,7 @@ fn node_count(expr) {
 }
 
 -- Classify expression complexity using math.pow for exponential weighting
+
 fn complexity(expr) {
   let d = depth(expr)
   let n = node_count(expr)
@@ -178,7 +188,6 @@ fn complexity(expr) {
 
 fn main() {
   println("=== Expression Evaluator ===\n")
-
   -- Build some expressions
   -- (3 + 5) * 2
   let e1 = Mul(Add(Num(3), Num(5)), Num(2))
@@ -192,43 +201,29 @@ fn main() {
   let e5 = Mul(Neg(Num(3)), Neg(Num(4)))
   -- Multiply by -1: x * -1 = -x (new: exercises negative patterns)
   let e6 = Mul(Add(Num(2), Num(3)), Num(-1))
-
-  let examples = [
-    ("(3+5)*2", e1),
-    ("-(4+-(2*3))", e2),
-    ("(1+0)*(5+(0*99))", e3),
-    ("-(-7)", e4),
-    ("(-3)*(-4)", e5),
-    ("(2+3)*-1", e6),
-  ]
-
-  examples |> list.each { (label, expr) ->
+  let examples = [("(3+5)*2", e1), ("-(4+-(2*3))", e2), ("(1+0)*(5+(0*99))", e3), ("-(-7)", e4), ("(-3)*(-4)", e5), ("(2+3)*-1", e6)]
+  examples
+  |> list.each { (label, expr) ->
     println("--- {label} ---")
     println("  Pretty:     {expr.display()}")
     println("  Eval:       {eval(expr)}")
-
     let s = simplify(expr)
     println("  Simplified: {s.display()}")
     println("  Eval(simp): {eval(s)}")
-
     let rpn = to_rpn(expr)
     let rpn_str = string.join(rpn, " ")
     println("  RPN:        {rpn_str}")
-
-    -- Round-trip: from_rpn(to_rpn(expr)) should equal original
     let roundtrip = from_rpn(rpn)
     println("  Roundtrip:  {roundtrip.display()}")
     println("  RT eval:    {eval(roundtrip)}")
-
     println("  Complexity: {complexity(expr)}")
     println("  Depth:      {depth(expr)}")
     println("  Nodes:      {node_count(expr)}")
     println("")
   }
-
+  -- Round-trip: from_rpn(to_rpn(expr)) should equal original
   -- Demonstrate deep pattern matching
   println("=== Deep Pattern Matching ===\n")
-
   let nested = Add(Mul(Num(1), Add(Num(2), Num(3))), Neg(Num(4)))
   println("Expression: {nested.display()}")
   -- Deep match: recognize specific shapes
@@ -238,24 +233,14 @@ fn main() {
     _ -> "other"
   }
   println("Deep match result: {description}")
-
   -- Demonstrate or-patterns in classification
   println("\n=== Or-Pattern Classification ===\n")
-
-  let test_exprs = [
-    Num(42),
-    Add(Num(1), Num(2)),
-    Mul(Num(3), Num(4)),
-    Neg(Num(5)),
-    Add(Mul(Num(1), Num(2)), Add(Num(3), Num(4))),
-    Mul(Add(Mul(Num(1), Num(2)), Num(3)), Add(Num(4), Mul(Num(5), Num(6)))),
-  ]
-
-  test_exprs |> list.each { expr ->
+  let test_exprs = [Num(42), Add(Num(1), Num(2)), Mul(Num(3), Num(4)), Neg(Num(5)), Add(Mul(Num(1), Num(2)), Add(Num(3), Num(4))), Mul(Add(Mul(Num(1), Num(2)), Num(3)), Add(Num(4), Mul(Num(5), Num(6))))]
+  test_exprs
+  |> list.each { expr ->
     let cls = complexity(expr)
     println("  {expr.display()} -> {cls}")
   }
-
   -- Build from RPN
   println("\n=== From RPN ===\n")
   let rpn_input = ["3", "4", "+", "2", "*"]
@@ -264,18 +249,13 @@ fn main() {
   println("  RPN input:  {rpn_str}")
   println("  Parsed:     {parsed.display()}")
   println("  Eval:       {eval(parsed)}")
-
   -- Demonstrate negative pattern simplification
   println("\n=== Negative Pattern Simplification ===\n")
-  let neg_examples = [
-    ("5 * -1", Mul(Num(5), Num(-1))),
-    ("-1 * 5", Mul(Num(-1), Num(5))),
-    ("Neg(Num(-3))", Neg(Num(-3))),
-  ]
-  neg_examples |> list.each { (label, expr) ->
+  let neg_examples = [("5 * -1", Mul(Num(5), Num(-1))), ("-1 * 5", Mul(Num(-1), Num(5))), ("Neg(Num(-3))", Neg(Num(-3)))]
+  neg_examples
+  |> list.each { (label, expr) ->
     let s = simplify(expr)
     println("  {label} -> simplified: {s.display()} = {eval(s)}")
   }
-
   println("\nDone!")
 }

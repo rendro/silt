@@ -54,7 +54,7 @@ impl Compiler {
                 Ok(vec![jump])
             }
 
-            Pattern::StringLit(s) => {
+            Pattern::StringLit(s, _) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
                 self.current_chunk().emit_op(Op::TestEqual, span);
                 self.current_chunk().emit_u16(idx, span);
@@ -460,7 +460,7 @@ impl Compiler {
             | Pattern::Int(_)
             | Pattern::Float(_)
             | Pattern::Bool(_)
-            | Pattern::StringLit(_)
+            | Pattern::StringLit(..)
             | Pattern::Range(..)
             | Pattern::FloatRange(..)
             | Pattern::Pin(_) => {
@@ -562,7 +562,7 @@ impl Compiler {
             | Pattern::Int(_)
             | Pattern::Float(_)
             | Pattern::Bool(_)
-            | Pattern::StringLit(_)
+            | Pattern::StringLit(..)
             | Pattern::Range(..)
             | Pattern::FloatRange(..)
             | Pattern::Pin(_) => false,
@@ -638,7 +638,7 @@ impl Compiler {
             | Pattern::Int(_)
             | Pattern::Float(_)
             | Pattern::Bool(_)
-            | Pattern::StringLit(_)
+            | Pattern::StringLit(..)
             | Pattern::Range(..)
             | Pattern::FloatRange(..)
             | Pattern::Pin(_) => {}

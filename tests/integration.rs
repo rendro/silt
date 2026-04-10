@@ -3927,6 +3927,91 @@ fn main() {
     assert_eq!(result, Value::Int(9));
 }
 
+// ── json.parse_map ─────────────────────────────────────────────────
+
+#[test]
+fn test_json_parse_map_string_values() {
+    let result = run(r#"
+import json
+import map
+fn main() {
+  match json.parse_map(String, "\{\"name\": \"Alice\", \"city\": \"NYC\"\}") {
+    Ok(m) -> map.get(m, "name")
+    Err(_) -> None
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::String("Alice".into())])
+    );
+}
+
+#[test]
+fn test_json_parse_map_int_values() {
+    let result = run(r#"
+import json
+import map
+fn main() {
+  match json.parse_map(Int, "\{\"x\": 10, \"y\": 20\}") {
+    Ok(m) -> map.get(m, "y")
+    Err(_) -> None
+  }
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(20)]));
+}
+
+#[test]
+fn test_json_parse_map_invalid_json() {
+    let result = run(r#"
+import json
+fn main() {
+  match json.parse_map(String, "not json at all") {
+    Ok(_) -> false
+    Err(_) -> true
+  }
+}
+    "#);
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_json_parse_map_non_object_input() {
+    let result = run(r#"
+import json
+fn main() {
+  match json.parse_map(String, "[1, 2, 3]") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::String("json.parse_map: expected JSON object, got array".into())
+    );
+}
+
+#[test]
+fn test_json_parse_map_value_type_mismatch() {
+    let result = run(r#"
+import json
+fn main() {
+  match json.parse_map(Int, "\{\"a\": \"hello\", \"b\": \"world\"\}") {
+    Ok(_) -> "unexpected"
+    Err(e) -> e
+  }
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::String(
+            "json.parse_map: key 'a': json.parse(Map): field 'a': expected Int, got string".into()
+        )
+    );
+}
+
 // ── regex.captures ──────────────────────────────────────────────────
 
 #[test]
@@ -3984,6 +4069,52 @@ fn main() {
             ])),
         ]))
     );
+}
+
+// ── regex.replace_all_with ──────────────────────────────────────────
+
+#[test]
+fn test_regex_replace_all_with_basic() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.replace_all_with("\\d+", "abc 12 def 34", fn(m) { "X" })
+}
+    "#);
+    assert_eq!(result, Value::String("abc X def X".into()));
+}
+
+#[test]
+fn test_regex_replace_all_with_transform() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.replace_all_with("[a-z]+", "hello world", fn(m) { "[" + m + "]" })
+}
+    "#);
+    assert_eq!(result, Value::String("[hello] [world]".into()));
+}
+
+#[test]
+fn test_regex_replace_all_with_no_matches() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.replace_all_with("\\d+", "no numbers here", fn(m) { "X" })
+}
+    "#);
+    assert_eq!(result, Value::String("no numbers here".into()));
+}
+
+#[test]
+fn test_regex_replace_all_with_multiple_matches() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.replace_all_with("\\d+", "a1b2c3d4", fn(m) { "(" + m + ")" })
+}
+    "#);
+    assert_eq!(result, Value::String("a(1)b(2)c(3)d(4)".into()));
 }
 
 // ── Assertion messages ──────────────────────────────────────────────
@@ -9430,6 +9561,94 @@ fn main() {{
         Value::Variant(tag, _) => assert_eq!(tag, "Err"),
         other => panic!("expected Err variant, got {other:?}"),
     }
+}
+
+// ── fs.list_dir ─────────────────────────────────────────────────────
+
+#[test]
+fn test_fs_list_dir() {
+    let dir = std::env::temp_dir().join("silt_test_list_dir_43");
+    let dir_str = dir.to_str().unwrap().replace('\\', "/");
+    // Create the directory and some files
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(dir.join("alpha.txt"), "a").unwrap();
+    std::fs::write(dir.join("beta.txt"), "b").unwrap();
+    let input = format!(
+        r#"
+import fs
+import list
+fn main() {{
+    match fs.list_dir("{dir_str}") {{
+        Ok(entries) -> {{
+            let _ = fs.remove("{dir_str}/alpha.txt")
+            let _ = fs.remove("{dir_str}/beta.txt")
+            let _ = fs.remove("{dir_str}")
+            list.sort(entries)
+        }}
+        Err(e) -> {{
+            let _ = fs.remove("{dir_str}")
+            []
+        }}
+    }}
+}}
+    "#
+    );
+    let result = run(&input);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::String("alpha.txt".into()),
+            Value::String("beta.txt".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_fs_list_dir_nonexistent() {
+    let path = std::env::temp_dir().join("silt_test_list_dir_nonexistent_xyz");
+    let path_str = path.to_str().unwrap().replace('\\', "/");
+    // Ensure it doesn't exist
+    let _ = std::fs::remove_dir_all(&path);
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    match fs.list_dir("{path_str}") {{
+        Ok(_) -> "unexpected"
+        Err(_) -> "error"
+    }}
+}}
+    "#
+    );
+    let result = run(&input);
+    assert_eq!(result, Value::String("error".into()));
+}
+
+#[test]
+fn test_fs_list_dir_empty() {
+    let dir = std::env::temp_dir().join("silt_test_list_dir_empty_44");
+    let dir_str = dir.to_str().unwrap().replace('\\', "/");
+    let _ = std::fs::create_dir_all(&dir);
+    let input = format!(
+        r#"
+import fs
+import list
+fn main() {{
+    match fs.list_dir("{dir_str}") {{
+        Ok(entries) -> {{
+            let _ = fs.remove("{dir_str}")
+            list.length(entries)
+        }}
+        Err(_) -> {{
+            let _ = fs.remove("{dir_str}")
+            -1
+        }}
+    }}
+}}
+    "#
+    );
+    let result = run(&input);
+    assert_eq!(result, Value::Int(0));
 }
 
 // ── env: get / set ───────────────────────────────────────────────

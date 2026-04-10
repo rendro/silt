@@ -45,6 +45,8 @@ pub struct Vm {
     pub(crate) is_scheduled_task: bool,
     /// Pending I/O completion handle (persists across yield/re-execute).
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
+    /// Saved state from an `invoke_callable` that was interrupted by a yield.
+    pub(crate) suspended_invoke: Option<runtime::SuspendedInvoke>,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, LRU-like eviction).
@@ -89,6 +91,7 @@ impl Vm {
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
+            suspended_invoke: None,
             regex_cache: RegexCache::new(),
         };
         vm.register_builtins();
@@ -232,6 +235,7 @@ impl Vm {
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
+            suspended_invoke: None,
             regex_cache: RegexCache::new(),
         }
     }
@@ -372,7 +376,7 @@ impl Vm {
 
     /// Enrich a VmError with the current instruction's source span and the
     /// call stack derived from the VM's frame list.
-    fn enrich_error(&self, mut err: VmError) -> VmError {
+    pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
         if err.is_yield || err.span.is_some() {
             return err;
         }

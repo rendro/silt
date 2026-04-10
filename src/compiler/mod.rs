@@ -1012,7 +1012,7 @@ impl Compiler {
                 }
             }
 
-            ExprKind::StringLit(s) => {
+            ExprKind::StringLit(s, _) => {
                 let idx = self.add_constant(Value::String(s.clone()), span)?;
                 self.current_chunk().emit_op(Op::Constant, span);
                 self.current_chunk().emit_u16(idx, span);

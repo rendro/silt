@@ -857,7 +857,13 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if s.contains('.') { s } else { format!("{s}.0") }
         }
         ExprKind::Bool(b) => b.to_string(),
-        ExprKind::StringLit(s) => format!("\"{}\"", escape_string(s)),
+        ExprKind::StringLit(s, triple) => {
+            if *triple {
+                format_triple_string(s, depth)
+            } else {
+                format!("\"{}\"", escape_string(s))
+            }
+        }
         ExprKind::StringInterp(parts) => {
             let mut result = String::from('"');
             for part in parts {
@@ -1145,7 +1151,13 @@ fn format_pattern(pattern: &Pattern) -> String {
             if s.contains('.') { s } else { format!("{s}.0") }
         }
         Pattern::Bool(b) => b.to_string(),
-        Pattern::StringLit(s) => format!("\"{}\"", escape_string(s)),
+        Pattern::StringLit(s, triple) => {
+            if *triple {
+                format_triple_string(s, 0)
+            } else {
+                format!("\"{}\"", escape_string(s))
+            }
+        }
         Pattern::Tuple(pats) => {
             let items: Vec<String> = pats.iter().map(format_pattern).collect();
             format!("({})", items.join(", "))
@@ -1220,6 +1232,39 @@ fn format_type_expr(ty: &TypeExpr) -> String {
         }
         TypeExpr::SelfType => "Self".to_string(),
     }
+}
+
+/// Format a triple-quoted string (`"""..."""`).
+///
+/// For single-line content (no newlines), emits `"""content"""`.
+/// For multi-line content, emits:
+///   """
+///   <indent>line1
+///   <indent>line2
+///   <indent>"""
+/// where `<indent>` is `(depth + 1)` levels of indentation so the lexer's
+/// indentation-stripping algorithm recovers the original content.
+fn format_triple_string(s: &str, depth: usize) -> String {
+    if !s.contains('\n') {
+        // Single-line triple-quoted string
+        return format!("\"\"\"{}\"\"\"", s);
+    }
+
+    // Multi-line: add indentation so the lexer strips it back
+    let inner_indent = INDENT.repeat(depth + 1);
+    let mut result = String::from("\"\"\"\n");
+    for line in s.split('\n') {
+        if line.is_empty() {
+            result.push('\n');
+        } else {
+            result.push_str(&inner_indent);
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.push_str(&inner_indent);
+    result.push_str("\"\"\"");
+    result
 }
 
 fn escape_string(s: &str) -> String {

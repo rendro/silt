@@ -17,7 +17,9 @@ type Todo {
 fn next_id(todos) {
   todos
   |> list.fold(0) { acc, t -> int.max(acc, t.id) }
-  |> fn(n) { n + 1 }
+  |> fn(n) {
+    n + 1
+  }
 }
 
 fn add_todo(todos, text) {
@@ -27,23 +29,24 @@ fn add_todo(todos, text) {
 }
 
 fn mark_done(todos, id) {
-  todos |> list.map { t ->
-    match t.id == id {
-      true -> t.{ done: true }
-      _ -> t
-    }
-  }
+  todos
+  |> list.map { t -> match t.id == id {
+    true -> t.{ done: true }
+    _ -> t
+  } }
 }
 
 fn remove_todo(todos, id) {
-  todos |> list.filter { t -> t.id != id }
+  todos
+  |> list.filter { t -> t.id != id }
 }
 
 fn show_todos(todos) {
   match list.length(todos) {
     0 -> println("  (no todos)")
     _ -> {
-      todos |> list.each { t ->
+      todos
+      |> list.each { t ->
         let check = match t.done {
           true -> "x"
           _ -> " "
@@ -90,8 +93,11 @@ fn load_todos(path) {
 fn parse_command(input) {
   let trimmed = string.trim(input)
   let parts = string.split(trimmed, " ")
-  let cmd = list.get(parts, 0) |> option.unwrap_or("")
-  let rest = parts |> list.drop(1) |> string.join(" ")
+  let cmd = list.get(parts, 0)
+  |> option.unwrap_or("")
+  let rest = parts
+  |> list.drop(1)
+  |> string.join(" ")
   (cmd, rest)
 }
 
@@ -113,7 +119,6 @@ fn main() {
   println("=== Todo List Manager ===")
   print_help()
   println("")
-
   loop todos = [] {
     print("todo> ")
     match io.read_line() {

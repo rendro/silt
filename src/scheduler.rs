@@ -218,7 +218,28 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
             }
             SliceResult::Failed(err) => {
-                handle.complete(Err(err.message));
+                let enriched = vm.enrich_error(err);
+                let mut msg = enriched.message;
+                if let Some(span) = enriched.span {
+                    msg = format!("{} at line {}:{}", msg, span.line, span.col);
+                }
+                if !enriched.call_stack.is_empty() {
+                    let meaningful: Vec<_> = enriched
+                        .call_stack
+                        .iter()
+                        .filter(|(name, span)| span.line > 0 && !name.starts_with('<'))
+                        .collect();
+                    if meaningful.len() > 1 {
+                        msg.push_str("\ncall stack:");
+                        for (name, frame_span) in &meaningful {
+                            msg.push_str(&format!(
+                                "\n  -> {}  at line {}:{}",
+                                name, frame_span.line, frame_span.col
+                            ));
+                        }
+                    }
+                }
+                handle.complete(Err(msg));
                 inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
             }
             SliceResult::Blocked => {

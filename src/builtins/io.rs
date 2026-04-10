@@ -308,7 +308,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Dispatch `env.<name>(args)`.
-pub fn call_env(name: &str, args: &[Value]) -> Result<Value, VmError> {
+pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "get" => {
             if args.len() != 1 {
@@ -326,11 +326,15 @@ pub fn call_env(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 2 {
                 return Err(VmError::new("env.set takes 2 arguments".into()));
             }
+            if vm.is_scheduled_task {
+                return Err(VmError::new(
+                    "env.set cannot be called from a spawned task".into(),
+                ));
+            }
             let (Value::String(key), Value::String(val)) = (&args[0], &args[1]) else {
                 return Err(VmError::new("env.set requires string arguments".into()));
             };
-            // SAFETY: Silt is single-threaded at the env-access level; no other
-            // thread inspects the environment concurrently.
+            // SAFETY: Only reachable from the main thread (guarded above).
             unsafe { std::env::set_var(key, val) };
             Ok(Value::Unit)
         }

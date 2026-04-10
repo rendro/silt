@@ -7,7 +7,7 @@ use crate::bytecode::{Op, VmClosure};
 use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
-use super::runtime::CallFrame;
+use super::runtime::{CallFrame, SuspendedInvoke};
 use super::{Vm, VmError};
 
 /// Result of dispatching a single opcode.
@@ -229,6 +229,7 @@ impl Vm {
                 });
                 // Run the execution loop until we return to the previous frame count
                 loop {
+                    let saved_ip = self.current_frame()?.ip;
                     let op_byte = self.read_byte()?;
                     let op = Op::from_byte(op_byte).ok_or_else(|| {
                         self.frames.truncate(saved_frame_count);
@@ -269,6 +270,25 @@ impl Vm {
                             self.stack.truncate(inner_func_slot);
                             self.push(value);
                         }
+                        Err(e) if e.is_yield => {
+                            // A builtin inside the callback yielded (e.g. IO).
+                            // Rewind the current frame's IP so the yielding
+                            // opcode will be re-executed on resume.
+                            if let Ok(f) = self.current_frame_mut() {
+                                f.ip = saved_ip;
+                            }
+                            // Save the extra frames and stack so the caller
+                            // (e.g. channel.each) can resume instead of
+                            // re-running the callback from scratch.
+                            let extra_frames = self.frames.split_off(saved_frame_count);
+                            let extra_stack = self.stack.split_off(func_slot);
+                            self.suspended_invoke = Some(SuspendedInvoke {
+                                frames: extra_frames,
+                                stack: extra_stack,
+                                func_slot,
+                            });
+                            return Err(e);
+                        }
                         Err(e) => {
                             self.frames.truncate(saved_frame_count);
                             self.stack.truncate(func_slot);
@@ -290,6 +310,82 @@ impl Vm {
             _ => Err(VmError::new(
                 "cannot call value in invoke_callable".to_string(),
             )),
+        }
+    }
+
+    /// Resume a previously suspended `invoke_callable`.
+    ///
+    /// When a builtin inside a callback yielded (e.g. IO inside
+    /// `channel.each`), the callback's frames and stack were saved in
+    /// `self.suspended_invoke`.  This method restores them and continues
+    /// the execution loop until the callback returns a result.
+    pub(crate) fn resume_suspended_invoke(&mut self) -> Result<Value, VmError> {
+        let suspended = self.suspended_invoke.take().ok_or_else(|| {
+            VmError::new("internal: resume_suspended_invoke called with no suspended state".into())
+        })?;
+        let saved_frame_count = self.frames.len();
+        let func_slot = suspended.func_slot;
+        // Restore the saved frames and stack.
+        self.frames.extend(suspended.frames);
+        self.stack.extend(suspended.stack);
+        // Continue the execution loop (same as invoke_callable's inner loop).
+        loop {
+            let saved_ip = self.current_frame()?.ip;
+            let op_byte = self.read_byte()?;
+            let op = Op::from_byte(op_byte).ok_or_else(|| {
+                self.frames.truncate(saved_frame_count);
+                self.stack.truncate(func_slot);
+                VmError::new(format!("unknown opcode: {op_byte}"))
+            })?;
+            match self.dispatch_one(op) {
+                Ok(DispatchResult::Continue) => {}
+                Ok(DispatchResult::Return(result)) => {
+                    let finished_base = self.current_frame()?.base_slot;
+                    self.frames.pop();
+                    if self.frames.len() < saved_frame_count {
+                        return Err(VmError::new(
+                            "frame underflow in resume_suspended_invoke".into(),
+                        ));
+                    }
+                    if self.frames.len() == saved_frame_count {
+                        self.stack.truncate(func_slot);
+                        return Ok(result);
+                    }
+                    let inner_func_slot = finished_base.saturating_sub(1);
+                    self.stack.truncate(inner_func_slot);
+                    self.push(result);
+                }
+                Ok(DispatchResult::EarlyReturn {
+                    value,
+                    finished_base,
+                }) => {
+                    if self.frames.len() <= saved_frame_count {
+                        self.stack.truncate(func_slot);
+                        return Ok(value);
+                    }
+                    let inner_func_slot = finished_base.saturating_sub(1);
+                    self.stack.truncate(inner_func_slot);
+                    self.push(value);
+                }
+                Err(e) if e.is_yield => {
+                    if let Ok(f) = self.current_frame_mut() {
+                        f.ip = saved_ip;
+                    }
+                    let extra_frames = self.frames.split_off(saved_frame_count);
+                    let extra_stack = self.stack.split_off(func_slot);
+                    self.suspended_invoke = Some(SuspendedInvoke {
+                        frames: extra_frames,
+                        stack: extra_stack,
+                        func_slot,
+                    });
+                    return Err(e);
+                }
+                Err(e) => {
+                    self.frames.truncate(saved_frame_count);
+                    self.stack.truncate(func_slot);
+                    return Err(e);
+                }
+            }
         }
     }
 
@@ -538,10 +634,7 @@ impl Vm {
                         self.push(result);
                     }
                     Err(e) if e.is_yield => {
-                        // Re-push args so re-execution after yield finds them on the stack
-                        for arg in args {
-                            self.push(arg);
-                        }
+                        // Args already re-pushed by the builtin before yielding
                         return Err(e);
                     }
                     Err(e) => return Err(e),

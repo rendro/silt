@@ -12,37 +12,39 @@ type Pos {
 }
 
 -- Hard-coded 10x10 maze with a solvable path
+
 fn make_maze() {
-  [
-    "##########",
-    "#S.#.....#",
-    "#.##.###.#",
-    "#....#.#.#",
-    "####.#.#.#",
-    "#....#...#",
-    "#.####.#.#",
-    "#.#....#.#",
-    "#...####E#",
-    "##########"
-  ]
+  ["##########", "#S.#.....#", "#.##.###.#", "#....#.#.#", "####.#.#.#", "#....#...#", "#.####.#.#", "#.#....#.#", "#...####E#", "##########"]
 }
 
 -- Get the character at a given position in the maze
+
 fn get_cell(maze, pos) {
-  let row_str = maze |> list.get(pos.row) |> option.unwrap_or("")
+  let row_str = maze
+  |> list.get(pos.row)
+  |> option.unwrap_or("")
   let chars = string.chars(row_str)
-  chars |> list.get(pos.col) |> option.unwrap_or("#")
+  chars
+  |> list.get(pos.col)
+  |> option.unwrap_or("#")
 }
 
 -- Find the position of a specific character in the maze
+
 fn find_char(maze, target) {
   let rows = list.length(maze)
-  let positions = 0..rows |> list.flat_map { r ->
-    let row_str = maze |> list.get(r) |> option.unwrap_or("")
+  let positions = 0..rows
+  |> list.flat_map { r ->
+    let row_str = maze
+    |> list.get(r)
+    |> option.unwrap_or("")
     let chars = string.chars(row_str)
     let cols = list.length(chars)
-    0..cols |> list.filter_map { c ->
-      let ch = chars |> list.get(c) |> option.unwrap_or("")
+    0..cols
+    |> list.filter_map { c ->
+      let ch = chars
+      |> list.get(c)
+      |> option.unwrap_or("")
       match ch == target {
         true -> Some(Pos { row: r, col: c })
         _ -> None
@@ -53,23 +55,23 @@ fn find_char(maze, target) {
 }
 
 -- Get valid neighboring positions (up, down, left, right)
+
 fn get_neighbors(maze, pos) {
-  let candidates = [
-    Pos { row: pos.row - 1, col: pos.col },
-    Pos { row: pos.row + 1, col: pos.col },
-    Pos { row: pos.row, col: pos.col - 1 },
-    Pos { row: pos.row, col: pos.col + 1 }
-  ]
-  candidates |> list.filter { p ->
+  let candidates = [Pos { row: pos.row - 1, col: pos.col }, Pos { row: pos.row + 1, col: pos.col }, Pos { row: pos.row, col: pos.col - 1 }, Pos { row: pos.row, col: pos.col + 1 }]
+  candidates
+  |> list.filter { p ->
     let cell = get_cell(maze, p)
     cell != "#"
   }
 }
 
 -- Reconstruct path by following parent indices from goal back to start
+
 fn reconstruct_path(visited, goal_idx) {
   loop idx = goal_idx, path = [] {
-    let entry = visited |> list.get(idx) |> option.unwrap_or((Pos { row: 0, col: 0 }, -1))
+    let entry = visited
+    |> list.get(idx)
+    |> option.unwrap_or((Pos { row: 0, col: 0 }, -1))
     let (pos, parent_idx) = entry
     let new_path = list.prepend(path, pos)
     match parent_idx == -1 {
@@ -80,6 +82,7 @@ fn reconstruct_path(visited, goal_idx) {
 }
 
 -- BFS using loop: bind queue and visited, iterate until found or exhausted
+
 fn bfs(maze, start, goal) {
   loop queue = [(start, -1)], visited = [(start, -1)] {
     match queue {
@@ -87,9 +90,10 @@ fn bfs(maze, start, goal) {
       [(node, _parent_idx), ..rest] -> {
         match node == goal {
           true -> {
-            -- Found the goal! Find its index in visited and reconstruct path
-            let indexed = visited |> list.enumerate
-            let found = indexed |> list.find { entry ->
+            let indexed = visited
+            |> list.enumerate
+            let found = indexed
+            |> list.find { entry ->
               let (idx, (v, _)) = entry
               v == node
             }
@@ -101,9 +105,10 @@ fn bfs(maze, start, goal) {
           }
           _ -> {
             let neighbors = get_neighbors(maze, node)
-            -- Find index of current node in visited list
-            let indexed = visited |> list.enumerate
-            let found = indexed |> list.find { entry ->
+            let indexed = visited
+            |> list.enumerate
+            let found = indexed
+            |> list.find { entry ->
               let (idx, (v, _)) = entry
               v == node
             }
@@ -111,19 +116,18 @@ fn bfs(maze, start, goal) {
               Some((idx, _)) -> idx
               None -> -1
             }
-            -- Filter to unvisited neighbors
-            let visited_positions = visited |> list.map { entry ->
+            let visited_positions = visited
+            |> list.map { entry ->
               let (v, _) = entry
               v
             }
-            let new_neighbors = neighbors |> list.filter { n ->
-              !list.contains(visited_positions, n)
-            }
-            -- Add new neighbors to visited with parent index
-            let new_visited_entries = new_neighbors |> list.map { n -> (n, node_idx) }
+            let new_neighbors = neighbors
+            |> list.filter { n -> !list.contains(visited_positions, n) }
+            let new_visited_entries = new_neighbors
+            |> list.map { n -> (n, node_idx) }
             let updated_visited = list.concat(visited, new_visited_entries)
-            -- Add new neighbors to queue
-            let new_queue_entries = new_neighbors |> list.map { n -> (n, node_idx) }
+            let new_queue_entries = new_neighbors
+            |> list.map { n -> (n, node_idx) }
             let updated_queue = list.concat(rest, new_queue_entries)
             loop(updated_queue, updated_visited)
           }
@@ -131,17 +135,29 @@ fn bfs(maze, start, goal) {
       }
     }
   }
+  -- Found the goal! Find its index in visited and reconstruct path
+  -- Find index of current node in visited list
+  -- Filter to unvisited neighbors
+  -- Add new neighbors to visited with parent index
+  -- Add new neighbors to queue
 }
 
 -- Print the maze with solution path marked as '*'
+
 fn print_maze_with_path(maze, path) {
   let rows = list.length(maze)
-  0..rows |> list.each { r ->
-    let row_str = maze |> list.get(r) |> option.unwrap_or("")
+  0..rows
+  |> list.each { r ->
+    let row_str = maze
+    |> list.get(r)
+    |> option.unwrap_or("")
     let chars = string.chars(row_str)
     let cols = list.length(chars)
-    let new_row = 0..cols |> list.map { c ->
-      let ch = chars |> list.get(c) |> option.unwrap_or("#")
+    let new_row = 0..cols
+    |> list.map { c ->
+      let ch = chars
+      |> list.get(c)
+      |> option.unwrap_or("#")
       let pos = Pos { row: r, col: c }
       let on_path = list.contains(path, pos)
       match {
@@ -157,16 +173,15 @@ fn print_maze_with_path(maze, path) {
 
 fn main() {
   let maze = make_maze()
-
   println("=== Maze ===")
-  maze |> list.each { row -> println(row) }
-
-  let start = find_char(maze, "S") |> option.unwrap_or(Pos { row: 0, col: 0 })
-  let goal = find_char(maze, "E") |> option.unwrap_or(Pos { row: 0, col: 0 })
-
+  maze
+  |> list.each { row -> println(row) }
+  let start = find_char(maze, "S")
+  |> option.unwrap_or(Pos { row: 0, col: 0 })
+  let goal = find_char(maze, "E")
+  |> option.unwrap_or(Pos { row: 0, col: 0 })
   println("\nStart: ({start.row}, {start.col})")
   println("End: ({goal.row}, {goal.col})")
-
   println("\n=== Solving with BFS ===")
   match bfs(maze, start, goal) {
     Some(path) -> {

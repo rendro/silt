@@ -110,83 +110,85 @@ impl TypeChecker {
 
         // ── Builtin enum info for Option and Result ────────────────────
 
-        // ── Builtin enum param_var_ids: sentinel values ──────────────
-        //
-        // The `param_var_ids` below (0, 1, …) are hardcoded sentinel values
-        // used exclusively for these builtin enum registrations. They serve
-        // as placeholder type-variable IDs that are later remapped to fresh
-        // variables during instantiation (see `instantiate_enum`).
-        //
-        // Note: these sentinels DO overlap with real TyVar IDs from
-        // `fresh_var()` (which starts at 0). This is safe because
-        // `substitute_enum_params` operates purely structurally via pattern
-        // matching on `Type::Var(id)` against the `param_var_ids` list and
-        // never calls `self.apply()` or consults the unification table, so
-        // the sentinels cannot collide with real inference variables.
-        // ──────────────────────────────────────────────────────────────────
-        self.enums.insert(
-            intern("Option"),
-            EnumInfo {
-                _name: intern("Option"),
-                params: vec![intern("a")],
-                param_var_ids: vec![0], // sentinel — see comment above
-                variants: vec![
-                    VariantInfo {
-                        name: intern("Some"),
-                        field_types: vec![Type::Var(0)], // placeholder
-                    },
-                    VariantInfo {
-                        name: intern("None"),
-                        field_types: vec![],
-                    },
-                ],
-            },
-        );
+        // Use fresh type variables (allocated via fresh_tv) for builtin enum
+        // param_var_ids, just like register_type_decl does for user-defined enums.
+        // This avoids overlap with real TyVar IDs from fresh_var().
+
+        // Option(a): Some(a) | None
+        {
+            let (opt_a, opt_av) = self.fresh_tv();
+            self.enums.insert(
+                intern("Option"),
+                EnumInfo {
+                    _name: intern("Option"),
+                    params: vec![intern("a")],
+                    param_var_ids: vec![opt_av],
+                    variants: vec![
+                        VariantInfo {
+                            name: intern("Some"),
+                            field_types: vec![opt_a],
+                        },
+                        VariantInfo {
+                            name: intern("None"),
+                            field_types: vec![],
+                        },
+                    ],
+                },
+            );
+        }
         self.variant_to_enum
             .insert(intern("Some"), intern("Option"));
         self.variant_to_enum
             .insert(intern("None"), intern("Option"));
 
-        self.enums.insert(
-            intern("Result"),
-            EnumInfo {
-                _name: intern("Result"),
-                params: vec![intern("a"), intern("e")],
-                param_var_ids: vec![0, 1], // sentinels — see comment above Option
-                variants: vec![
-                    VariantInfo {
-                        name: intern("Ok"),
-                        field_types: vec![Type::Var(0)], // placeholder
-                    },
-                    VariantInfo {
-                        name: intern("Err"),
-                        field_types: vec![Type::Var(1)], // placeholder
-                    },
-                ],
-            },
-        );
+        // Result(a, e): Ok(a) | Err(e)
+        {
+            let (res_a, res_av) = self.fresh_tv();
+            let (res_e, res_ev) = self.fresh_tv();
+            self.enums.insert(
+                intern("Result"),
+                EnumInfo {
+                    _name: intern("Result"),
+                    params: vec![intern("a"), intern("e")],
+                    param_var_ids: vec![res_av, res_ev],
+                    variants: vec![
+                        VariantInfo {
+                            name: intern("Ok"),
+                            field_types: vec![res_a],
+                        },
+                        VariantInfo {
+                            name: intern("Err"),
+                            field_types: vec![res_e],
+                        },
+                    ],
+                },
+            );
+        }
         self.variant_to_enum.insert(intern("Ok"), intern("Result"));
         self.variant_to_enum.insert(intern("Err"), intern("Result"));
 
         // Step enum: Stop(a) / Continue(a) — for list.fold_until
-        self.enums.insert(
-            intern("Step"),
-            EnumInfo {
-                _name: intern("Step"),
-                params: vec![intern("a")],
-                param_var_ids: vec![0], // sentinel — see comment above Option
-                variants: vec![
-                    VariantInfo {
-                        name: intern("Stop"),
-                        field_types: vec![Type::Var(0)],
-                    },
-                    VariantInfo {
-                        name: intern("Continue"),
-                        field_types: vec![Type::Var(0)],
-                    },
-                ],
-            },
-        );
+        {
+            let (step_a, step_av) = self.fresh_tv();
+            self.enums.insert(
+                intern("Step"),
+                EnumInfo {
+                    _name: intern("Step"),
+                    params: vec![intern("a")],
+                    param_var_ids: vec![step_av],
+                    variants: vec![
+                        VariantInfo {
+                            name: intern("Stop"),
+                            field_types: vec![step_a.clone()],
+                        },
+                        VariantInfo {
+                            name: intern("Continue"),
+                            field_types: vec![step_a],
+                        },
+                    ],
+                },
+            );
+        }
         self.variant_to_enum.insert(intern("Stop"), intern("Step"));
         self.variant_to_enum
             .insert(intern("Continue"), intern("Step"));

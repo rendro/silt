@@ -180,7 +180,7 @@ impl Vm {
                 "option" => builtins::core::call_option(self, func, args),
                 "io" => builtins::io::call(self, func, args),
                 "fs" => builtins::io::call_fs(self, func, args),
-                "env" => builtins::io::call_env(func, args),
+                "env" => builtins::io::call_env(self, func, args),
                 "test" => builtins::core::call_test(self, func, args),
                 "math" => builtins::numeric::call_math(func, args),
                 "regex" => builtins::data::call_regex(self, func, args),

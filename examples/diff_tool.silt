@@ -6,36 +6,45 @@ import string
 
 -- Line-by-line diff tool using LCS (longest common subsequence) dynamic programming.
 -- Compares two text files and outputs unified-style diff with statistics.
-
 -- Build a 2D table (list of lists) for LCS lengths using bottom-up DP.
 -- table[i][j] = length of LCS of old[i..] and new[j..]
 -- We build from bottom-right to top-left.
+
 fn build_lcs_table(old_lines, new_lines) {
   let old_len = list.length(old_lines)
   let new_len = list.length(new_lines)
-
   -- Start with a table of (old_len+1) rows, each with (new_len+1) zeros
-  let empty_row = 0..new_len + 1 |> list.map { _ -> 0 }
-  let initial_table = 0..old_len + 1 |> list.map { _ -> empty_row }
-
+  let empty_row = 0..new_len + 1
+  |> list.map { _ -> 0 }
+  let initial_table = 0..old_len + 1
+  |> list.map { _ -> empty_row }
   -- Fill from bottom-right to top-left
   -- We iterate i from old_len-1 down to 0, j from new_len-1 down to 0
   let rows_rev = list.reverse(0..old_len)
-  rows_rev |> list.fold(initial_table) { table, i ->
+  rows_rev
+  |> list.fold(initial_table) { table, i ->
     let cols_rev = list.reverse(0..new_len)
-    cols_rev |> list.fold(table) { tbl, j ->
-      let old_line = list.get(old_lines, i) |> option.unwrap_or("")
-      let new_line = list.get(new_lines, j) |> option.unwrap_or("")
-      let next_row = list.get(tbl, i + 1) |> option.unwrap_or([])
-      let curr_row = list.get(tbl, i) |> option.unwrap_or([])
+    cols_rev
+    |> list.fold(table) { tbl, j ->
+      let old_line = list.get(old_lines, i)
+      |> option.unwrap_or("")
+      let new_line = list.get(new_lines, j)
+      |> option.unwrap_or("")
+      let next_row = list.get(tbl, i + 1)
+      |> option.unwrap_or([])
+      let curr_row = list.get(tbl, i)
+      |> option.unwrap_or([])
       let val = match old_line == new_line {
         true -> {
-          let below_right = list.get(next_row, j + 1) |> option.unwrap_or(0)
+          let below_right = list.get(next_row, j + 1)
+          |> option.unwrap_or(0)
           below_right + 1
         }
         _ -> {
-          let below = list.get(next_row, j) |> option.unwrap_or(0)
-          let right = list.get(curr_row, j + 1) |> option.unwrap_or(0)
+          let below = list.get(next_row, j)
+          |> option.unwrap_or(0)
+          let right = list.get(curr_row, j + 1)
+          |> option.unwrap_or(0)
           int.max(below, right)
         }
       }
@@ -48,31 +57,40 @@ fn build_lcs_table(old_lines, new_lines) {
 -- Trace back through LCS table to produce diff operations.
 -- Returns a list of (String, String) tuples: (marker, line)
 -- where marker is " " (context), "-" (removed), "+" (added)
+
 fn trace_diff(table, old_lines, new_lines, i, j) {
   let old_len = list.length(old_lines)
   let new_len = list.length(new_lines)
   match {
     i >= old_len && j >= new_len -> []
     i >= old_len -> {
-      let line = list.get(new_lines, j) |> option.unwrap_or("")
+      let line = list.get(new_lines, j)
+      |> option.unwrap_or("")
       list.prepend(trace_diff(table, old_lines, new_lines, i, j + 1), ("+", line))
     }
     j >= new_len -> {
-      let line = list.get(old_lines, i) |> option.unwrap_or("")
+      let line = list.get(old_lines, i)
+      |> option.unwrap_or("")
       list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j), ("-", line))
     }
     _ -> {
-      let old_line = list.get(old_lines, i) |> option.unwrap_or("")
-      let new_line = list.get(new_lines, j) |> option.unwrap_or("")
+      let old_line = list.get(old_lines, i)
+      |> option.unwrap_or("")
+      let new_line = list.get(new_lines, j)
+      |> option.unwrap_or("")
       match old_line == new_line {
         true -> {
           list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j + 1), (" ", old_line))
         }
         _ -> {
-          let row_i = list.get(table, i + 1) |> option.unwrap_or([])
-          let below = list.get(row_i, j) |> option.unwrap_or(0)
-          let row_curr = list.get(table, i) |> option.unwrap_or([])
-          let right = list.get(row_curr, j + 1) |> option.unwrap_or(0)
+          let row_i = list.get(table, i + 1)
+          |> option.unwrap_or([])
+          let below = list.get(row_i, j)
+          |> option.unwrap_or(0)
+          let row_curr = list.get(table, i)
+          |> option.unwrap_or([])
+          let right = list.get(row_curr, j + 1)
+          |> option.unwrap_or(0)
           match below >= right {
             true -> {
               list.prepend(trace_diff(table, old_lines, new_lines, i + 1, j), ("-", old_line))
@@ -90,7 +108,6 @@ fn trace_diff(table, old_lines, new_lines, i, j) {
 fn main() {
   println("=== Line-by-Line Diff Tool ===")
   println("")
-
   -- Read both files using match with panic in Err arm (Never type unifies with Ok's value)
   let old_content = match io.read_file("examples/data/original.txt") {
     Ok(content) -> content
@@ -100,62 +117,60 @@ fn main() {
     Ok(content) -> content
     Err(e) -> panic("Error reading modified.txt: {e}")
   }
-
   -- Split into lines, filter out trailing empty line from final newline
-  let old_lines = old_content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
-  let new_lines = new_content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
-
+  let old_lines = old_content
+  |> string.split("\n")
+  |> list.filter { l -> !string.is_empty(l) }
+  let new_lines = new_content
+  |> string.split("\n")
+  |> list.filter { l -> !string.is_empty(l) }
   println("--- examples/data/original.txt ({list.length(old_lines)} lines)")
   println("+++ examples/data/modified.txt ({list.length(new_lines)} lines)")
   println("")
-
   -- Build LCS table
   let table = build_lcs_table(old_lines, new_lines)
-
   -- Trace back to produce diff
   let diff_ops = trace_diff(table, old_lines, new_lines, 0, 0)
-
   -- Display diff with prefixes
-  diff_ops |> list.each { op ->
+  diff_ops
+  |> list.each { op ->
     let (marker, line) = op
     println("{marker} {line}")
   }
-
   -- Compute statistics
-  let stats = diff_ops |> list.fold((0, 0, 0)) { acc, op ->
+  let stats = diff_ops
+  |> list.fold((0, 0, 0)) { acc, op ->
     let (added, removed, unchanged) = acc
     let (marker, _) = op
     match marker {
       "+" -> (added + 1, removed, unchanged)
       "-" -> (added, removed + 1, unchanged)
-      _   -> (added, removed, unchanged + 1)
+      _ -> (added, removed, unchanged + 1)
     }
   }
   let (added, removed, unchanged) = stats
-
   println("")
   println("=== Statistics ===")
   println("Lines added:     {added}")
   println("Lines removed:   {removed}")
   println("Lines unchanged: {unchanged}")
-
   -- Additional analysis using list.zip, list.enumerate, list.filter
   println("")
   println("=== Side-by-Side Line Comparison ===")
-
   -- Zip old and new lines for direct comparison
   let paired = list.zip(old_lines, new_lines)
-  let numbered_pairs = paired |> list.enumerate
-
+  let numbered_pairs = paired
+  |> list.enumerate
   -- Find lines that differ at the same position
-  let differing = numbered_pairs |> list.filter { pair ->
+  let differing = numbered_pairs
+  |> list.filter { pair ->
     let (_, lines) = pair
     let (old_l, new_l) = lines
     old_l != new_l
   }
-
   println("Lines differing at same position:")
-  differing |> list.each { pair ->
+  differing
+  |> list.each { pair ->
     let (idx, lines) = pair
     let (old_l, new_l) = lines
     let line_num = idx + 1

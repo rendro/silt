@@ -39,11 +39,13 @@ fn next_birthday(dob: Date) -> Date {
 }
 
 fn main() {
-  let people = match json.parse_list(Person, """[
-    {"name": "Alice",  "dob": "1990-07-20"},
-    {"name": "Bob",    "dob": "1984-02-29"},
-    {"name": "Carol",  "dob": "2000-12-25"}
-  ]""") {
+  let people = match json.parse_list(Person, """
+    [
+        {"name": "Alice",  "dob": "1990-07-20"},
+        {"name": "Bob",    "dob": "1984-02-29"},
+        {"name": "Carol",  "dob": "2000-12-25"}
+      ]
+    """) {
     Ok(p) -> p
     Err(e) -> panic("Failed to parse people: {e}")
   }

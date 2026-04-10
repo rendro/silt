@@ -414,7 +414,7 @@ impl TaskHandle {
     pub fn join(&self) -> Result<Value, String> {
         let mut guard = self.result.lock();
         loop {
-            if let Some(result) = guard.take() {
+            if let Some(result) = guard.clone() {
                 return result;
             }
             self.condvar.wait(&mut guard);

@@ -204,7 +204,12 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let a = extract_float(&args[0], "float.min")?;
             let b = extract_float(&args[1], "float.min")?;
-            Ok(Value::Float(a.min(b)))
+            let result = a.min(b);
+            if result.is_finite() {
+                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            } else {
+                Ok(Value::ExtFloat(result))
+            }
         }
         "max" => {
             if args.len() != 2 {
@@ -212,7 +217,12 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
             let a = extract_float(&args[0], "float.max")?;
             let b = extract_float(&args[1], "float.max")?;
-            Ok(Value::Float(a.max(b)))
+            let result = a.max(b);
+            if result.is_finite() {
+                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            } else {
+                Ok(Value::ExtFloat(result))
+            }
         }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }

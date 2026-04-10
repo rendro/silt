@@ -22,6 +22,22 @@ pub(crate) struct CallFrame {
     pub(crate) base_slot: usize,
 }
 
+// ── Suspended invocation (for yield inside invoke_callable) ─────
+
+/// Captures the frames and stack portion from an `invoke_callable` that was
+/// interrupted by a yield (e.g. an IO builtin yielding inside a callback
+/// passed to `channel.each`).  Stored on the VM so the caller can resume
+/// the callback instead of re-running it from scratch.
+pub(crate) struct SuspendedInvoke {
+    /// The extra call frames that were pushed by invoke_callable.
+    pub(crate) frames: Vec<CallFrame>,
+    /// The stack values above `func_slot` (includes locals, temporaries, and
+    /// any args re-pushed by the yielding builtin).
+    pub(crate) stack: Vec<Value>,
+    /// The stack index where the callback's "function slot" dummy lives.
+    pub(crate) func_slot: usize,
+}
+
 // ── Block reason (for M:N scheduler) ────────────────────────────
 
 /// Describes whether a select operation is a receive or send.

@@ -1338,7 +1338,7 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
         | Pattern::Int(_)
         | Pattern::Float(_)
         | Pattern::Bool(_)
-        | Pattern::StringLit(_)
+        | Pattern::StringLit(..)
         | Pattern::Range(_, _)
         | Pattern::FloatRange(_, _)
         | Pattern::Pin(_) => vec![],

@@ -261,10 +261,45 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             };
             let ch = ch.clone();
             let callback = args[1].clone();
+            // If we have a suspended callback from a previous yield (e.g. IO
+            // inside the callback), resume it before processing new messages.
+            if vm.suspended_invoke.is_some() {
+                match vm.resume_suspended_invoke() {
+                    Ok(_) => {
+                        // Callback completed; fall through to continue the loop.
+                        // Yield for round-robin if scheduled.
+                        if vm.is_scheduled_task {
+                            for arg in args {
+                                vm.push(arg.clone());
+                            }
+                            return Err(VmError::yield_signal());
+                        }
+                    }
+                    Err(e) if e.is_yield => {
+                        // Still yielding — re-push our args and propagate.
+                        for arg in args {
+                            vm.push(arg.clone());
+                        }
+                        return Err(e);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
             loop {
                 match ch.try_receive() {
                     TryReceiveResult::Value(val) => {
-                        vm.invoke_callable(&callback, &[val])?;
+                        match vm.invoke_callable(&callback, &[val]) {
+                            Ok(_) => {}
+                            Err(e) if e.is_yield => {
+                                // The callback yielded (e.g. IO inside the callback).
+                                // Re-push channel.each args so CallBuiltin re-executes us.
+                                for arg in args {
+                                    vm.push(arg.clone());
+                                }
+                                return Err(e);
+                            }
+                            Err(e) => return Err(e),
+                        }
                         // After each message, yield to scheduler for round-robin.
                         if vm.is_scheduled_task {
                             // Re-push args so the CallBuiltin re-executes channel.each.
@@ -290,7 +325,16 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                         // Main thread: block on condvar until data or close.
                         match ch.receive_blocking() {
                             TryReceiveResult::Value(val) => {
-                                vm.invoke_callable(&callback, &[val])?;
+                                match vm.invoke_callable(&callback, &[val]) {
+                                    Ok(_) => {}
+                                    Err(e) if e.is_yield => {
+                                        for arg in args {
+                                            vm.push(arg.clone());
+                                        }
+                                        return Err(e);
+                                    }
+                                    Err(e) => return Err(e),
+                                }
                             }
                             TryReceiveResult::Closed => {
                                 return Ok(Value::Unit);

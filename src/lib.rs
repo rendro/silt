@@ -1,3 +1,19 @@
+//! # Silt Compiler and Runtime
+//!
+//! Silt source code flows through a five-stage pipeline:
+//!
+//! 1. **Lexer** (`lexer`) -- tokenizes source text into a stream of tokens.
+//! 2. **Parser** (`parser`) -- builds an AST (`ast`) from the token stream.
+//! 3. **Type checker** (`typechecker`) -- infers and validates types (`types`)
+//!    across the AST, reporting diagnostics via `errors`.
+//! 4. **Compiler** (`compiler`) -- lowers the typed AST to bytecode (`bytecode`).
+//! 5. **VM** (`vm`) -- executes bytecode, using the `scheduler` for
+//!    concurrent tasks and `builtins` for the standard library.
+//!
+//! Supporting modules: `formatter` (source formatting), `module` (module
+//! resolution), `intern` (string interning), `disassemble` (bytecode
+//! inspection). Optional features: `lsp`, `repl`, `watch`.
+
 #![allow(clippy::mutable_key_type)]
 
 pub mod ast;

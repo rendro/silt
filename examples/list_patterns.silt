@@ -17,8 +17,8 @@ fn sum(xs) {
 
 fn last(xs) {
   match xs {
-    []          -> None
-    [x]         -> Some(x)
+    [] -> None
+    [x] -> Some(x)
     [_, ..tail] -> last(tail)
   }
 }
@@ -34,34 +34,31 @@ fn describe(xs) {
 
 fn main() {
   println("sum([1,2,3,4,5]) = {sum([1, 2, 3, 4, 5])}")
-
   match last([10, 20, 30]) {
     Some(n) -> println("last element: {n}")
     None -> println("empty list")
   }
-
   -- Use list.head for the first element
   match list.head([10, 20, 30]) {
     Some(n) -> println("first element: {n}")
     None -> println("empty list")
   }
-
   [[], [1], [1, 2], [1, 2, 3, 4, 5]]
   |> list.each { xs -> println(describe(xs)) }
-
   -- Pin operator: ^var matches against an existing variable's value
   let target = 20
   match [10, 20, 30] {
     [_, ^target, rest] -> println("found {target} in the middle, followed by {rest}")
     _ -> println("no match")
   }
-
   -- Pin in a search function
   let needle = "world"
   let words = ["hello", "world", "goodbye"]
-  let found = words |> list.find { w ->
-    match w { ^needle -> true, _ -> false }
-  }
+  let found = words
+  |> list.find { w -> match w {
+    ^needle -> true
+    _ -> false
+  } }
   match found {
     Some(w) -> println("found: {w}")
     None -> println("not found")

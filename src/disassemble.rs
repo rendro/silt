@@ -458,12 +458,24 @@ pub fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
 }
 
 /// Disassemble a compiled `Function`, returning the formatted output.
+///
+/// Recursively disassembles nested functions found as `VmClosure` constants.
 pub fn disassemble_function(func: &Function) -> String {
     let header = format!(
         "{} (arity={}, upvalues={})",
         func.name, func.arity, func.upvalue_count
     );
-    disassemble_chunk(&func.chunk, &header)
+    let mut output = disassemble_chunk(&func.chunk, &header);
+
+    // Recurse into nested functions stored as VmClosure constants.
+    for constant in &func.chunk.constants {
+        if let crate::value::Value::VmClosure(closure) = constant {
+            output.push('\n');
+            output.push_str(&disassemble_function(&closure.function));
+        }
+    }
+
+    output
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

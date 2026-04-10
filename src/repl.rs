@@ -191,9 +191,28 @@ fn has_unclosed_delimiters(input: &str) -> bool {
     let mut depth_paren = 0i32;
     let mut depth_bracket = 0i32;
     let mut in_string = false;
+    let mut in_triple_string = false;
     let mut backslash_count = 0u32;
 
-    for ch in input.chars() {
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        let ch = chars[i];
+
+        // Inside a triple-quoted string: look for closing """
+        if in_triple_string {
+            if ch == '"' && i + 2 < len && chars[i + 1] == '"' && chars[i + 2] == '"' {
+                in_triple_string = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Inside a regular string: track escapes and look for closing "
         if in_string {
             if ch == '"' && backslash_count.is_multiple_of(2) {
                 in_string = false;
@@ -203,25 +222,47 @@ fn has_unclosed_delimiters(input: &str) -> bool {
             } else {
                 backslash_count = 0;
             }
+            i += 1;
             continue;
         }
+
+        // Skip line comments: -- to end of line
+        if ch == '-' && i + 1 < len && chars[i + 1] == '-' {
+            // Skip to end of line
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Check for triple-quoted string opening """
+        if ch == '"' && i + 2 < len && chars[i + 1] == '"' && chars[i + 2] == '"' {
+            in_triple_string = true;
+            i += 3;
+            continue;
+        }
+
+        // Regular string opening
         if ch == '"' {
             in_string = true;
             backslash_count = 0;
-        } else {
-            match ch {
-                '{' => depth_brace += 1,
-                '}' => depth_brace -= 1,
-                '(' => depth_paren += 1,
-                ')' => depth_paren -= 1,
-                '[' => depth_bracket += 1,
-                ']' => depth_bracket -= 1,
-                _ => {}
-            }
+            i += 1;
+            continue;
         }
+
+        match ch {
+            '{' => depth_brace += 1,
+            '}' => depth_brace -= 1,
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '[' => depth_bracket += 1,
+            ']' => depth_bracket -= 1,
+            _ => {}
+        }
+        i += 1;
     }
 
-    depth_brace > 0 || depth_paren > 0 || depth_bracket > 0 || in_string
+    depth_brace > 0 || depth_paren > 0 || depth_bracket > 0 || in_string || in_triple_string
 }
 
 fn is_declaration(input: &str) -> bool {

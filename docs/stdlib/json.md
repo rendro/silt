@@ -128,7 +128,7 @@ newlines).
 
 ```silt
 fn main() {
-    let data = #{"name": "silt", "version": 1}
+    let data = #{"name": "silt", "version": "1.0"}
     println(json.pretty(data))
 }
 ```

@@ -5,8 +5,8 @@ import string
 
 -- URL router/dispatcher that matches HTTP requests against route patterns,
 -- extracts path parameters, and dispatches to handler closures.
-
 -- A route definition with handler closure stored directly in the record
+
 type Route {
   method: String,
   pattern: String,
@@ -14,12 +14,14 @@ type Route {
 }
 
 -- Compiled pattern info: regex string and list of param names
+
 type CompiledPattern {
   regex_str: String,
   params: List(String),
 }
 
 -- A request to test
+
 type Request {
   method: String,
   path: String,
@@ -27,65 +29,65 @@ type Request {
 
 -- Convert a route pattern like "/users/:id/posts/:post_id" into a regex
 -- and extract param names.
+
 fn pattern_to_regex(pattern) {
-  let segments = pattern |> string.split("/")
-  let result = segments |> list.fold(CompiledPattern { regex_str: "^", params: [] }) { acc, seg ->
-    match {
-      string.is_empty(seg) -> acc
-      string.starts_with(seg, ":") -> {
-        let param_name = string.slice(seg, 1, string.length(seg))
-        CompiledPattern { regex_str: "{acc.regex_str}/([^/]+)", params: list.append(acc.params, param_name) }
-      }
-      _ -> CompiledPattern { regex_str: "{acc.regex_str}/{seg}", params: acc.params }
+  let segments = pattern
+  |> string.split("/")
+  let compiled = segments
+  |> list.fold(CompiledPattern { regex_str: "^", params: [] }) { acc, seg -> match {
+    string.is_empty(seg) -> acc
+    string.starts_with(seg, ":") -> {
+      let param_name = string.slice(seg, 1, string.length(seg))
+      CompiledPattern { regex_str: "{acc.regex_str}/([^/]+)", params: list.append(acc.params, param_name) }
     }
-  }
-  CompiledPattern { regex_str: "{result.regex_str}$", params: result.params }
+    _ -> CompiledPattern { regex_str: "{acc.regex_str}/{seg}", params: acc.params }
+  } }
+  CompiledPattern { regex_str: "{compiled.regex_str}$", params: compiled.params }
 }
 
 -- Extract path parameters from a URL path given a route pattern.
 -- Returns Some(map) with extracted params or None if no match.
+
 fn extract_params(pattern, path) {
   let compiled = pattern_to_regex(pattern)
-
   match regex.captures(compiled.regex_str, path) {
     None -> None
     Some(captures) -> {
-      -- captures[0] is the full match, captures[1..] are the groups
-      let groups = captures |> list.drop(1)
+      let groups = captures
+      |> list.drop(1)
       let pairs = list.zip(compiled.params, groups)
-      let params = pairs |> list.fold(#{}) { acc, pair ->
-        match pair {
-          (name, value) -> map.set(acc, name, value)
-        }
-      }
+      let params = pairs
+      |> list.fold(#{}) { acc, pair -> match pair {
+        (name, value) -> map.set(acc, name, value)
+      } }
       Some(params)
     }
   }
+  -- captures[0] is the full match, captures[1..] are the groups
 }
 
 -- Match a request method and path against a list of routes.
+
 fn match_route(method, path, routes) {
-  routes |> list.find { route ->
-    match {
-      route.method != method -> false
-      _ -> {
-        let compiled = pattern_to_regex(route.pattern)
-        regex.is_match(compiled.regex_str, path)
-      }
+  routes
+  |> list.find { route -> match {
+    route.method != method -> false
+    _ -> {
+      let compiled = pattern_to_regex(route.pattern)
+      regex.is_match(compiled.regex_str, path)
     }
-  }
+  } }
 }
 
 -- Handler factory: returns a closure that formats handler output with params
+
 fn make_handler(name) {
   fn(params) {
     let param_str = map.entries(params)
-      |> list.map { entry ->
-        match entry {
-          (k, v) -> "{k}={v}"
-        }
-      }
-      |> string.join(", ")
+    |> list.map { entry -> match entry {
+      (k, v) -> "{k}={v}"
+    } }
+    |> string.join(", ")
     match string.is_empty(param_str) {
       true -> "{name}()"
       _ -> "{name}({param_str})"
@@ -95,81 +97,49 @@ fn make_handler(name) {
 
 fn main() {
   -- Define routes with handler closures stored directly in Route records
-  let routes = [
-    Route { method: "GET",    pattern: "/users",                                handler: make_handler("list_users") },
-    Route { method: "GET",    pattern: "/users/:id",                            handler: make_handler("get_user") },
-    Route { method: "POST",   pattern: "/users",                                handler: make_handler("create_user") },
-    Route { method: "PUT",    pattern: "/users/:id",                            handler: make_handler("update_user") },
-    Route { method: "DELETE", pattern: "/users/:id",                            handler: make_handler("delete_user") },
-    Route { method: "GET",    pattern: "/posts",                                handler: make_handler("list_posts") },
-    Route { method: "GET",    pattern: "/posts/:id",                            handler: make_handler("get_post") },
-    Route { method: "GET",    pattern: "/posts/:id/comments",                   handler: make_handler("list_comments") },
-    Route { method: "POST",   pattern: "/posts/:id/comments",                   handler: make_handler("create_comment") },
-    Route { method: "GET",    pattern: "/posts/:post_id/comments/:comment_id",  handler: make_handler("get_comment") },
-    Route { method: "GET",    pattern: "/categories/:cat_id/items/:item_id",    handler: make_handler("get_cat_item") },
-  ]
-
+  let routes = [Route { method: "GET", pattern: "/users", handler: make_handler("list_users") }, Route { method: "GET", pattern: "/users/:id", handler: make_handler("get_user") }, Route { method: "POST", pattern: "/users", handler: make_handler("create_user") }, Route { method: "PUT", pattern: "/users/:id", handler: make_handler("update_user") }, Route { method: "DELETE", pattern: "/users/:id", handler: make_handler("delete_user") }, Route { method: "GET", pattern: "/posts", handler: make_handler("list_posts") }, Route { method: "GET", pattern: "/posts/:id", handler: make_handler("get_post") }, Route { method: "GET", pattern: "/posts/:id/comments", handler: make_handler("list_comments") }, Route { method: "POST", pattern: "/posts/:id/comments", handler: make_handler("create_comment") }, Route { method: "GET", pattern: "/posts/:post_id/comments/:comment_id", handler: make_handler("get_comment") }, Route { method: "GET", pattern: "/categories/:cat_id/items/:item_id", handler: make_handler("get_cat_item") }]
   -- Test requests
-  let requests = [
-    Request { method: "GET",    path: "/users" },
-    Request { method: "GET",    path: "/users/42" },
-    Request { method: "POST",   path: "/users" },
-    Request { method: "PUT",    path: "/users/7" },
-    Request { method: "DELETE", path: "/users/99" },
-    Request { method: "GET",    path: "/posts" },
-    Request { method: "GET",    path: "/posts/5" },
-    Request { method: "GET",    path: "/posts/5/comments" },
-    Request { method: "POST",   path: "/posts/12/comments" },
-    Request { method: "GET",    path: "/posts/3/comments/77" },
-    Request { method: "GET",    path: "/categories/electronics/items/laptop-1" },
-    Request { method: "GET",    path: "/nonexistent" },
-    Request { method: "PATCH",  path: "/users/1" },
-  ]
-
+  let requests = [Request { method: "GET", path: "/users" }, Request { method: "GET", path: "/users/42" }, Request { method: "POST", path: "/users" }, Request { method: "PUT", path: "/users/7" }, Request { method: "DELETE", path: "/users/99" }, Request { method: "GET", path: "/posts" }, Request { method: "GET", path: "/posts/5" }, Request { method: "GET", path: "/posts/5/comments" }, Request { method: "POST", path: "/posts/12/comments" }, Request { method: "GET", path: "/posts/3/comments/77" }, Request { method: "GET", path: "/categories/electronics/items/laptop-1" }, Request { method: "GET", path: "/nonexistent" }, Request { method: "PATCH", path: "/users/1" }]
   println("=== URL Router Demo ===\n")
-
-  requests |> list.each { req ->
+  requests
+  |> list.each { req ->
     println("Request: {req.method} {req.path}")
-
     match match_route(req.method, req.path, routes) {
       None -> println("  => 404 Not Found\n")
       Some(route) -> {
-        -- Extract parameters
         let params = match extract_params(route.pattern, req.path) {
           Some(p) -> p
           None -> #{}
         }
-
-        -- Display match info
         println("  => Matched: {route.pattern}")
-
-        -- Show extracted params using map.entries
         let entries = map.entries(params)
         match list.length(entries) {
           0 -> println("  => Params: (none)")
           _ -> {
-            let param_parts = entries |> list.map { entry ->
-              match entry {
-                (k, v) -> "{k}={v}"
-              }
-            }
+            let param_parts = entries
+            |> list.map { entry -> match entry {
+              (k, v) -> "{k}={v}"
+            } }
             println("  => Params: {string.join(param_parts, ", ")}")
           }
         }
-
-        -- Invoke handler closure directly from the route record
-        let result = route.handler(params)
-        println("  => Handler result: {result}")
-
+        let output = route.handler(params)
+        println("  => Handler result: {output}")
         println("")
       }
     }
   }
-
+  -- Extract parameters
+  -- Display match info
+  -- Show extracted params using map.entries
+  -- Invoke handler closure directly from the route record
   -- Demonstrate route table display using string.split
   println("=== Route Table ===")
-  routes |> list.each { route ->
-    let segments = route.pattern |> string.split("/") |> list.filter { s -> !string.is_empty(s) }
+  routes
+  |> list.each { route ->
+    let segments = route.pattern
+    |> string.split("/")
+    |> list.filter { s -> !string.is_empty(s) }
     let depth = list.length(segments)
     println("  {string.pad_right(route.method, 7, " ")} {string.pad_right(route.pattern, 45, " ")} (depth: {depth})")
   }

@@ -232,7 +232,7 @@ impl TypeChecker {
             // Literal patterns — useful iff no wildcard covers them.
             Pattern::Int(_)
             | Pattern::Float(_)
-            | Pattern::StringLit(_)
+            | Pattern::StringLit(..)
             | Pattern::Range(..)
             | Pattern::FloatRange(..)
             | Pattern::Pin(_) => !matrix
@@ -356,7 +356,7 @@ impl TypeChecker {
             (Pattern::Bool(a), Pattern::Bool(b)) => a == b,
             (Pattern::Constructor(a, _), Pattern::Constructor(b, _)) => a == b,
             (Pattern::Int(a), Pattern::Int(b)) => a == b,
-            (Pattern::StringLit(a), Pattern::StringLit(b)) => a == b,
+            (Pattern::StringLit(a, _), Pattern::StringLit(b, _)) => a == b,
             _ => false,
         }
     }

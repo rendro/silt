@@ -30,7 +30,8 @@ fn handle_set(store, parts) {
   let value_parts = list.drop(parts, 2)
   match (key, list.length(value_parts) > 0) {
     (Some(k), true) -> {
-      let value = value_parts |> string.join(" ")
+      let value = value_parts
+      |> string.join(" ")
       let new_store = map.set(store, k, value)
       println("OK")
       new_store
@@ -68,7 +69,8 @@ fn handle_keys(store) {
   let keys = map.keys(store)
   match list.length(keys) {
     0 -> println("(empty)")
-    _ -> keys |> list.each { k -> println("  {k}") }
+    _ -> keys
+    |> list.each { k -> println("  {k}") }
   }
   store
 }
@@ -114,7 +116,6 @@ fn main() {
   println("=== Key-Value Store ===")
   println("Commands: GET <key>, SET <key> <value>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT")
   println("")
-
   loop store = #{} {
     print("kvstore> ")
     match io.read_line() {

@@ -496,7 +496,6 @@ writes to the next.
 fn main() {
   let raw = channel.new(10)
   let doubled = channel.new(10)
-  let results = channel.new(10)
 
   -- Stage 1: produce raw values
   let s1 = task.spawn(fn() {
@@ -514,12 +513,9 @@ fn main() {
     channel.close(doubled)
   })
 
-  -- Stage 3: sum the doubled values
+  -- Stage 3: consume the doubled values
   let s3 = task.spawn(fn() {
-    let sum = 0
     channel.each(doubled) { n ->
-      -- note: since silt is immutable, you would accumulate
-      -- via channel.receive in a loop or use a different pattern
       println("stage 3 got: {n}")
     }
   })

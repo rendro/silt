@@ -26,21 +26,18 @@ fn main() {
       return panic("Cannot continue without file")
     }
   }
-
   println("=== Markdown Link Checker ===")
   println("File: {file_path}")
   println("")
-
   -- Extract all [text](url) links using regex capture groups
   let pattern = """\[([^\]]*)\]\(([^)]*)\)"""
   let matches = regex.captures_all(pattern, content)
-
   let total = list.length(matches)
   println("Found {total} links")
   println("")
-
   -- Classify each link and collect counts
-  let result = matches |> list.fold((0, 0)) { acc, capture ->
+  let result = matches
+  |> list.fold((0, 0)) { acc, capture ->
     let (valid_count, invalid_count) = acc
     let text = match list.get(capture, 1) {
       Some(t) -> t
@@ -50,12 +47,9 @@ fn main() {
       Some(u) -> u
       None -> ""
     }
-
     let status = classify_url(url)
-
     match status {
       "valid" -> {
-        -- Determine scheme
         let scheme = match {
           string.starts_with(url, "https://") -> "HTTPS"
           string.starts_with(url, "http://") -> "HTTP"
@@ -76,9 +70,8 @@ fn main() {
       }
     }
   }
-
+  -- Determine scheme
   let (valid, invalid) = result
-
   println("")
   println("=== Summary ===")
   println("  Total:   {total}")

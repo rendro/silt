@@ -1039,9 +1039,9 @@ impl Parser {
                 self.advance();
                 Ok(Expr::new(ExprKind::Bool(b), span))
             }
-            Token::StringLit(s) => {
+            Token::StringLit(s, triple) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::StringLit(s), span))
+                Ok(Expr::new(ExprKind::StringLit(s, triple), span))
             }
             Token::StringStart(s) => {
                 self.advance();
@@ -1758,9 +1758,9 @@ impl Parser {
                 self.advance();
                 Ok(Pattern::Bool(b))
             }
-            Token::StringLit(s) => {
+            Token::StringLit(s, triple) => {
                 self.advance();
-                Ok(Pattern::StringLit(s))
+                Ok(Pattern::StringLit(s, triple))
             }
             Token::LParen => {
                 self.advance();
@@ -1838,7 +1838,7 @@ impl Parser {
                 while !self.at(&Token::RBrace) {
                     self.skip_nl();
                     let key = match self.peek().clone() {
-                        Token::StringLit(s) => {
+                        Token::StringLit(s, _) => {
                             self.advance();
                             s
                         }

@@ -538,11 +538,30 @@ fn vm_run_file(path: &str) {
                 .collect();
             if meaningful.len() > 1 {
                 eprintln!("\ncall stack:");
-                for (name, frame_span) in &meaningful {
-                    eprintln!(
-                        "  -> {}  at {}:{}:{}",
-                        name, path, frame_span.line, frame_span.col
-                    );
+                let head = 10;
+                let tail = 5;
+                if meaningful.len() <= head + tail {
+                    for (name, frame_span) in &meaningful {
+                        eprintln!(
+                            "  -> {}  at {}:{}:{}",
+                            name, path, frame_span.line, frame_span.col
+                        );
+                    }
+                } else {
+                    for (name, frame_span) in &meaningful[..head] {
+                        eprintln!(
+                            "  -> {}  at {}:{}:{}",
+                            name, path, frame_span.line, frame_span.col
+                        );
+                    }
+                    let omitted = meaningful.len() - head - tail;
+                    eprintln!("  ... ({omitted} more frames)");
+                    for (name, frame_span) in &meaningful[meaningful.len() - tail..] {
+                        eprintln!(
+                            "  -> {}  at {}:{}:{}",
+                            name, path, frame_span.line, frame_span.col
+                        );
+                    }
                 }
             }
         } else {

@@ -1,7 +1,7 @@
 import list
 
 type Shape {
-  Circle(Float)
+  Circle(Float),
   Rect(Float, Float)
 }
 
@@ -23,17 +23,14 @@ fn area(shape) {
 
 fn main() {
   let shapes = [Circle(5.0), Rect(3.0, 4.0), Circle(1.0)]
-
   println("-- Shapes --")
-  shapes |> list.each { s ->
-    println("{s.display()} -> area = {area(s)}")
-  }
-
+  shapes
+  |> list.each { s -> println("{s.display()} -> area = {area(s)}") }
   let total = shapes
   |> list.map { s -> area(s) }
   |> list.fold(0.0) { acc, a -> acc + a }
   println("\nTotal area: {total}")
-
-  let big = shapes |> list.filter { s -> area(s) > 10.0 }
+  let big = shapes
+  |> list.filter { s -> area(s) > 10.0 }
   println("Shapes with area > 10: {list.length(big)}")
 }

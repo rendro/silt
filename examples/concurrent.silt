@@ -4,50 +4,38 @@ import task
 
 fn main() {
   let ch = channel.new(10)
-
   -- Producer sends messages then closes the channel
-  let producer = task.spawn(fn() {
+  let producer = task.spawn {  ->
     channel.send(ch, "hello")
     channel.send(ch, "from")
     channel.send(ch, "silt")
     channel.close(ch)
-  })
-
+  }
   -- Consumer receives until the channel is closed
-  let consumer = task.spawn(fn() {
+  let consumer = task.spawn {  ->
     let Message(msg1) = channel.receive(ch)
     let Message(msg2) = channel.receive(ch)
     let Message(msg3) = channel.receive(ch)
     println("{msg1} {msg2} {msg3}")
-  })
-
+  }
   task.join(producer)
   task.join(consumer)
-
   -- Fan-out: spawn multiple workers
   let results = channel.new(10)
-
-  let workers = [1, 2, 3] |> list.map { id ->
-    task.spawn(fn() {
-      channel.send(results, id * 10)
-    })
-  }
-
-  workers |> list.each { w -> task.join(w) }
+  let workers = [1, 2, 3]
+  |> list.map { id -> task.spawn {  -> channel.send(results, id * 10) } }
+  workers
+  |> list.each { w -> task.join(w) }
   channel.close(results)
-
   let Message(r1) = channel.receive(results)
   let Message(r2) = channel.receive(results)
   let Message(r3) = channel.receive(results)
   println("Worker results: {r1}, {r2}, {r3}")
-
   -- Select: wait on multiple channels, match which one fired with ^pin
   let urgent = channel.new(5)
   let normal = channel.new(5)
-
   channel.send(normal, "background task done")
   channel.send(urgent, "alert!")
-
   -- channel.select returns (channel, Message(value) | Closed); ^pin identifies which channel
   match channel.select([urgent, normal]) {
     (^urgent, Message(msg)) -> println("Urgent: {msg}")
