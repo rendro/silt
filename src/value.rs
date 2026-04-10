@@ -209,6 +209,11 @@ impl Channel {
             let mut buf = self.buffer.lock();
             loop {
                 if let Some(val) = buf.pop_front() {
+                    let was_full = buf.len() + 1 >= self.capacity;
+                    drop(buf);
+                    if was_full {
+                        self.wake_send();
+                    }
                     return TryReceiveResult::Value(val);
                 }
                 if self.closed.load(AtomicOrdering::Acquire) {

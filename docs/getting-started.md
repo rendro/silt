@@ -175,7 +175,7 @@ fn main() {
 silt run <file.silt>       -- run a program
 silt run -w <file.silt>    -- run and re-run on file changes
 silt check <file.silt>     -- type-check without running
-silt check --format json   -- type-check with JSON output (for CI/editors)
+silt check --format json <file.silt>   -- type-check with JSON output (for CI/editors)
 silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
