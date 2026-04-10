@@ -237,27 +237,23 @@ impl Vm {
         } else {
             match name {
                 "println" => {
-                    match args.len() {
-                        0 => println!(),
-                        1 => println!("{}", self.display_value(&args[0])),
-                        _ => {
-                            let parts: Vec<String> =
-                                args.iter().map(|v| self.display_value(v)).collect();
-                            println!("{}", parts.join(" "));
-                        }
+                    if args.len() != 1 {
+                        return Err(VmError::new(format!(
+                            "println takes 1 argument, got {}",
+                            args.len()
+                        )));
                     }
+                    println!("{}", self.display_value(&args[0]));
                     Ok(Value::Unit)
                 }
                 "print" => {
-                    match args.len() {
-                        0 => {}
-                        1 => print!("{}", self.display_value(&args[0])),
-                        _ => {
-                            let parts: Vec<String> =
-                                args.iter().map(|v| self.display_value(v)).collect();
-                            print!("{}", parts.join(" "));
-                        }
+                    if args.len() != 1 {
+                        return Err(VmError::new(format!(
+                            "print takes 1 argument, got {}",
+                            args.len()
+                        )));
                     }
+                    print!("{}", self.display_value(&args[0]));
                     Ok(Value::Unit)
                 }
                 "panic" => {

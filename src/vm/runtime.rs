@@ -151,7 +151,10 @@ impl TimerManager {
     /// Schedule a channel to be closed after `delay`.
     pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
         let deadline = Instant::now() + delay;
-        let _ = self.sender.lock().send((deadline, ch));
+        if let Err(e) = self.sender.lock().send((deadline, ch)) {
+            debug_assert!(false, "TimerManager worker thread is gone: {e}");
+            eprintln!("silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire");
+        }
     }
 }
 
@@ -189,7 +192,7 @@ impl IoPool {
     pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
         let completion = IoCompletion::new();
         let completion2 = completion.clone();
-        let _ = self.sender.lock().send(Box::new(move || {
+        let send_result = self.sender.lock().send(Box::new(move || {
             let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
                 Ok(value) => value,
                 Err(panic) => {
@@ -205,6 +208,10 @@ impl IoPool {
             };
             completion2.complete(result);
         }));
+        if let Err(e) = send_result {
+            debug_assert!(false, "IoPool worker threads are gone: {e}");
+            eprintln!("silt: IoPool workers unreachable ({e}); IO task will never complete");
+        }
         completion
     }
 }

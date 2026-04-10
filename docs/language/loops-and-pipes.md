@@ -229,6 +229,7 @@ let x = 42  -- inline comment
 | Arithmetic | `+`, `-`, `*`, `/`, `%`                  |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=`         |
 | Boolean    | `&&`, `||`, `!`                           |
+| Unary prefix | `-x` (numeric negation), `!x` (boolean not) |
 | Pipe       | `|>`                                      |
 | Field      | `.`                                       |
 | Range      | `..`                                      |
