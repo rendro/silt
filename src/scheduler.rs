@@ -199,10 +199,10 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                     std::mem::take(&mut *guard)
                                 };
                                 for handle in handles {
-                                    handle.complete(Err(
+                                    handle.complete(Err(VmError::new(
                                         "deadlock: all tasks are blocked with no progress possible"
                                             .to_string(),
-                                    ));
+                                    )));
                                 }
                             }
                             // Signal shutdown so all workers exit cleanly.
@@ -231,28 +231,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
             }
             SliceResult::Failed(err) => {
-                let enriched = vm.enrich_error(err);
-                let mut msg = enriched.message;
-                if let Some(span) = enriched.span {
-                    msg = format!("{} at line {}:{}", msg, span.line, span.col);
-                }
-                if !enriched.call_stack.is_empty() {
-                    let meaningful: Vec<_> = enriched
-                        .call_stack
-                        .iter()
-                        .filter(|(name, span)| span.line > 0 && !name.starts_with('<'))
-                        .collect();
-                    if meaningful.len() > 1 {
-                        msg.push_str("\ncall stack:");
-                        for (name, frame_span) in &meaningful {
-                            msg.push_str(&format!(
-                                "\n  -> {}  at line {}:{}",
-                                name, frame_span.line, frame_span.col
-                            ));
-                        }
-                    }
-                }
-                handle.complete(Err(msg));
+                handle.complete(Err(vm.enrich_error(err)));
                 inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
             }
             SliceResult::Blocked => {
@@ -451,7 +430,7 @@ mod tests {
         let (task, handle) = make_task(1, "fn main() { 42 }");
         scheduler.submit(task).unwrap();
         let result = handle.join();
-        assert_eq!(result, Ok(Value::Int(42)));
+        assert_eq!(result.ok(), Some(Value::Int(42)));
     }
 
     #[test]
@@ -465,7 +444,7 @@ mod tests {
             handles.push((i as i64, handle));
         }
         for (expected, handle) in handles {
-            assert_eq!(handle.join(), Ok(Value::Int(expected)));
+            assert_eq!(handle.join().ok(), Some(Value::Int(expected)));
         }
     }
 
@@ -477,7 +456,7 @@ mod tests {
         let result = handle.join();
         assert!(result.is_err(), "expected error from division by zero");
         assert!(
-            result.unwrap_err().contains("division"),
+            result.unwrap_err().message.contains("division"),
             "error should mention division"
         );
     }

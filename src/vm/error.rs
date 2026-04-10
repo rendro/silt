@@ -2,7 +2,7 @@
 
 use crate::lexer::Span;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VmError {
     pub message: String,
     /// If true, this error signals a cooperative yield, not a real error.

@@ -1866,7 +1866,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 // Main thread: block until the server shuts down.
                 match handle.join() {
                     Ok(val) => Ok(val),
-                    Err(msg) => Err(VmError::new(format!("http.serve failed: {msg}"))),
+                    Err(mut inner) => {
+                        inner.message = format!("http.serve failed: {}", inner.message);
+                        Err(inner)
+                    }
                 }
             }
             #[cfg(not(feature = "http"))]

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 
 use crate::bytecode;
+use crate::vm::VmError;
 
 /// Maximum number of elements that may be materialized from a range into a
 /// list, JSON array, or similar eager collection.  Prevents accidental OOM
@@ -368,7 +369,7 @@ impl Channel {
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
-    result: Mutex<Option<Result<Value, String>>>,
+    result: Mutex<Option<Result<Value, VmError>>>,
     condvar: Condvar,
     /// Wakers to call when the task completes (for scheduler-based join).
     join_wakers: Mutex<Vec<Waker>>,
@@ -402,7 +403,7 @@ impl TaskHandle {
     /// Store the task result and notify any joiners.
     /// If the task has already completed, this is a no-op (prevents
     /// cancel from overwriting a finished task's result).
-    pub fn complete(&self, result: Result<Value, String>) {
+    pub fn complete(&self, result: Result<Value, VmError>) {
         {
             let mut guard = self.result.lock();
             if guard.is_some() {
@@ -426,7 +427,7 @@ impl TaskHandle {
     }
 
     /// Block until the task produces a result.
-    pub fn join(&self) -> Result<Value, String> {
+    pub fn join(&self) -> Result<Value, VmError> {
         let mut guard = self.result.lock();
         loop {
             if let Some(result) = guard.clone() {
@@ -437,7 +438,7 @@ impl TaskHandle {
     }
 
     /// Non-blocking poll.
-    pub fn try_get(&self) -> Option<Result<Value, String>> {
+    pub fn try_get(&self) -> Option<Result<Value, VmError>> {
         self.result.lock().clone()
     }
 

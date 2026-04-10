@@ -373,7 +373,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 }];
                 match child_vm.execute() {
                     Ok(val) => child_handle.complete(Ok(val)),
-                    Err(e) => child_handle.complete(Err(e.message)),
+                    Err(e) => child_handle.complete(Err(child_vm.enrich_error(e))),
                 }
             }
 
@@ -415,7 +415,10 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if let Some(result) = handle.try_get() {
                 return match result {
                     Ok(val) => Ok(val),
-                    Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
+                    Err(mut inner) => {
+                        inner.message = format!("joined task failed: {}", inner.message);
+                        Err(inner)
+                    }
                 };
             }
 
@@ -432,7 +435,10 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // Main thread: block with condvar (safe since we're not a worker).
             match handle.join() {
                 Ok(val) => Ok(val),
-                Err(msg) => Err(VmError::new(format!("joined task failed: {msg}"))),
+                Err(mut inner) => {
+                    inner.message = format!("joined task failed: {}", inner.message);
+                    Err(inner)
+                }
             }
         }
         "cancel" => {
@@ -444,7 +450,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.cancel requires a handle argument".into(),
                 ));
             };
-            handle.complete(Err("cancelled".to_string()));
+            handle.complete(Err(VmError::new("cancelled".to_string())));
             Ok(Value::Unit)
         }
         _ => Err(VmError::new(format!("unknown task function: {name}"))),
