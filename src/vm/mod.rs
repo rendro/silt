@@ -113,10 +113,12 @@ impl Vm {
     /// Use `FromValue` / `IntoValue` traits for type-safe marshalling.
     ///
     /// # Panics
-    /// The closure must not panic. A panic inside `func` will abort the
-    /// scheduler worker thread that is executing the call, which may leave
-    /// other tasks unable to make progress. Always return `Err(VmError)`
-    /// for error conditions instead of panicking.
+    /// Panics inside `func` are caught by the dispatcher via
+    /// `std::panic::catch_unwind` and converted into a `VmError` whose
+    /// message includes the panic payload when it is a `&str` or `String`.
+    /// The scheduler worker thread survives and other tasks continue to
+    /// run. Returning `Err(VmError)` for error conditions is still
+    /// strongly preferred — panics are only caught as a safety net.
     ///
     /// # Errors
     /// Returns an error if the VM's runtime has already been shared (e.g. via
@@ -246,6 +248,16 @@ impl Vm {
             suspended_builtin: None,
             regex_cache: RegexCache::new(),
         }
+    }
+
+    /// Return a clone of the current scheduler `Arc`, if one exists.
+    ///
+    /// Unlike [`get_or_create_scheduler`], this does NOT create a scheduler
+    /// on demand — it returns `None` when no task has been spawned yet.
+    /// Used by the main-thread channel watchdog to decide whether any
+    /// scheduled task could still make progress.
+    pub(crate) fn current_scheduler(&self) -> Option<Arc<Scheduler>> {
+        self.runtime.scheduler.lock().clone()
     }
 
     /// Get or create the shared scheduler.

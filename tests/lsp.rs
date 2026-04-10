@@ -613,3 +613,139 @@ fn test_completion_returns_keywords() {
 
     client.shutdown();
 }
+
+// ── 7. completion returns local bindings in scope ──────────────────
+
+#[test]
+fn test_completion_returns_local_bindings() {
+    // A completion request inside the body of `main` — after a local
+    // `greeting` has been bound — must include `greeting` as a candidate.
+    // This guards against a regression where only keywords/builtins are
+    // offered and user locals are dropped from the symbol/completion path.
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    // Line indices (0-based):
+    //   0: fn main() {
+    //   1:   let greeting = "hi"
+    //   2:   gree
+    //   3: }
+    let source = "fn main() {\n  let greeting = \"hi\"\n  gree\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Request completions right after `gree` on line 2. Column index 6
+    // is the end of "  gree" (two spaces + four characters).
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "completion request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("completion response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null completion result at a valid position"
+    );
+
+    let items: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        panic!("unexpected completion result shape: {result}");
+    };
+
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
+        .collect();
+
+    assert!(
+        labels.iter().any(|l| *l == "greeting"),
+        "expected local binding `greeting` in completion list, got: {labels:?}"
+    );
+
+    client.shutdown();
+}
+
+// ── 8. dot-completion surfaces stdlib module members ──────────────
+
+#[test]
+fn test_completion_returns_module_members_after_dot() {
+    // After `string.` inside a function body, the completion list should
+    // include at least one well-known function from the `string` stdlib
+    // module such as `length` or `contains`.
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    // Line indices (0-based):
+    //   0: import string
+    //   1: fn main() {
+    //   2:   string.
+    //   3: }
+    let source = "import string\nfn main() {\n  string.\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Cursor right after the `.` on line 2. "  string." is 9 columns.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 9 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "completion request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("completion response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null completion result after `string.`"
+    );
+
+    let items: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else if let Some(arr) = result.pointer("/items").and_then(|v| v.as_array()) {
+        arr
+    } else {
+        panic!("unexpected completion result shape: {result}");
+    };
+
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
+        .collect();
+
+    // At least one well-known `string` module member must appear.
+    let has_known_member = labels
+        .iter()
+        .any(|l| *l == "length" || *l == "contains");
+    assert!(
+        has_known_member,
+        "expected dot-completion after `string.` to include `length` or `contains`, got: {labels:?}"
+    );
+
+    client.shutdown();
+}

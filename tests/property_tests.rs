@@ -221,25 +221,93 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
-    /// Arithmetic expressions with integer literals should compile and
-    /// run without panicking (runtime errors like division by zero are fine).
+    /// Arithmetic expressions with integer literals must compute the same
+    /// value as Rust's reference semantics when the operation does not
+    /// overflow. When Rust's checked arithmetic overflows, the Silt VM is
+    /// allowed (and expected) to produce a runtime error — it must not
+    /// panic and must not silently return a garbage value.
     #[test]
-    fn arithmetic_never_panics(
+    fn arithmetic_matches_reference_semantics(
         a in -1000i64..1000,
         b in -1000i64..1000,
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
         let source = format!("{a} {op} {b}");
-        let tokens = Lexer::new(&source).tokenize();
-        if let Ok(tokens) = tokens {
-            let mut program = Parser::new(tokens).parse_program();
-            if let Ok(ref mut program) = program {
-                let _ = silt::typechecker::check(program);
-                let mut compiler = silt::compiler::Compiler::new();
-                if let Ok(functions) = compiler.compile_program(program)
-                    && let Some(script) = functions.into_iter().next() {
-                        let mut vm = silt::vm::Vm::new();
-                        let _ = vm.run(std::sync::Arc::new(script));
+        let tokens = match Lexer::new(&source).tokenize() {
+            Ok(t) => t,
+            Err(_) => return Ok(()),
+        };
+        let mut program = match Parser::new(tokens).parse_program() {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let _ = silt::typechecker::check(&mut program);
+        let mut compiler = silt::compiler::Compiler::new();
+        let functions = match compiler.compile_program(&mut program) {
+            Ok(f) => f,
+            Err(_) => return Ok(()),
+        };
+        let script = match functions.into_iter().next() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        let mut vm = silt::vm::Vm::new();
+        let vm_result = vm.run(std::sync::Arc::new(script));
+
+        // Reference semantics via Rust's checked arithmetic.
+        let expected = match op {
+            "+" => a.checked_add(b),
+            "-" => a.checked_sub(b),
+            "*" => a.checked_mul(b),
+            _ => unreachable!(),
+        };
+
+        match expected {
+            Some(reference) => {
+                // No overflow: Silt must succeed and return exactly this value.
+                match vm_result {
+                    Ok(silt::value::Value::Int(got)) => {
+                        prop_assert_eq!(
+                            got,
+                            reference,
+                            "silt {} {} {} returned {} but reference is {}",
+                            a,
+                            op,
+                            b,
+                            got,
+                            reference
+                        );
+                    }
+                    Ok(other) => {
+                        return Err(TestCaseError::Fail(
+                            format!(
+                                "silt {a} {op} {b} returned non-int value {other:?}, expected Int({reference})"
+                            )
+                            .into(),
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(TestCaseError::Fail(
+                            format!(
+                                "silt {a} {op} {b} errored ({e:?}) but reference value is {reference}"
+                            )
+                            .into(),
+                        ));
+                    }
+                }
+            }
+            None => {
+                // Overflow: Silt must produce an error, not a garbage value
+                // and not a panic. (`vm.run` returning is sufficient for
+                // "did not panic" — this branch just asserts we did not
+                // silently succeed with a wrong value.)
+                if let Ok(silt::value::Value::Int(got)) = vm_result {
+                    return Err(TestCaseError::Fail(
+                        format!(
+                            "silt {a} {op} {b} silently returned Int({got}) but Rust overflowed"
+                        )
+                        .into(),
+                    ));
                 }
             }
         }

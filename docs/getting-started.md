@@ -34,6 +34,8 @@ silt run main.silt
 
 `silt init` creates a starter `main.silt`. `silt run` executes it. That's the whole loop.
 
+See `examples/` in the repository for 40+ runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
+
 ## 1. Bindings
 
 Everything is immutable. `let` binds a name to a value. You can shadow, but you can't reassign.
@@ -115,6 +117,8 @@ No exceptions. Fallible functions return `Result`. The `?` operator propagates e
 ```silt
 import io
 import json
+
+type Config { name: String }
 
 fn read_config(path) {
   let content = io.read_file(path)?

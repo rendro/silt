@@ -46,7 +46,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
                 TrySendResult::Full => {}
             }
-            // Buffer is full -- park via scheduler or spin.
+            // Buffer is full -- park via scheduler or wait with a watchdog.
             if vm.is_scheduled_task {
                 vm.block_reason = Some(BlockReason::Send(ch));
                 // Re-push args so CallBuiltin can re-execute after wake.
@@ -55,17 +55,11 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
                 return Err(VmError::yield_signal());
             }
-            // Main thread: spin with OS yield until buffer has space.
-            loop {
-                match ch.try_send(val.clone()) {
-                    TrySendResult::Sent => return Ok(Value::Unit),
-                    TrySendResult::Closed => {
-                        return Err(VmError::new(format!("send on closed channel {}", ch.id)));
-                    }
-                    TrySendResult::Full => {}
-                }
-                std::thread::yield_now();
-            }
+            // Main thread: wait on a condvar backed by the channel's
+            // send waker. A watchdog periodically checks whether any
+            // scheduled task could still consume from this channel; if
+            // not, we report a deadlock error rather than hanging forever.
+            main_thread_wait_for_send(&ch, val, vm)
         }
         "receive" => {
             if args.len() != 1 {
@@ -89,7 +83,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
                 TryReceiveResult::Empty => {}
             }
-            // Channel is empty -- park via scheduler or block.
+            // Channel is empty -- park via scheduler or wait with a watchdog.
             if vm.is_scheduled_task {
                 vm.block_reason = Some(BlockReason::Receive(ch));
                 // Re-push args so CallBuiltin can re-execute after wake.
@@ -98,14 +92,11 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 }
                 return Err(VmError::yield_signal());
             }
-            // Main thread: fall back to condvar-based blocking.
-            match ch.receive_blocking() {
-                TryReceiveResult::Value(val) => Ok(Value::Variant("Message".into(), vec![val])),
-                TryReceiveResult::Closed => Ok(Value::Variant("Closed".into(), vec![])),
-                TryReceiveResult::Empty => {
-                    unreachable!("receive_blocking should not return Empty")
-                }
-            }
+            // Main thread: wait with a watchdog. The channel's receive
+            // waker pokes a local condvar when a value arrives or the
+            // channel closes, and the watchdog periodically checks
+            // whether any scheduled task could still send to us.
+            main_thread_wait_for_receive(&ch, vm)
         }
         "close" => {
             if args.len() != 1 {
@@ -574,6 +565,166 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
     }
 
     Ok(None)
+}
+
+// ── Main-thread channel wait with watchdog ───────────────────────
+//
+// When `fn main()` runs on the main thread (`is_scheduled_task = false`)
+// and calls `channel.send` on a full channel or `channel.receive` on an
+// empty one, we cannot park via the scheduler — the main thread is
+// invisible to it. Previously `send` spun with `yield_now()` (100% CPU
+// forever) and `receive` blocked indefinitely via `receive_blocking`,
+// so a program with no other producers/consumers would hang.
+//
+// These helpers now block on the channel's existing waker machinery via
+// a local condvar, and periodically check the scheduler for progress.
+// If no scheduled task can possibly make progress (there is no scheduler,
+// `live_tasks == 0`, or `blocked_tasks >= live_tasks`), we return a
+// deadlock error instead of hanging forever. The first poll happens
+// immediately so the watchdog is responsive; subsequent polls use
+// `wait_for` so we don't burn CPU.
+
+/// How often the watchdog wakes up to re-check scheduler progress.
+const MAIN_THREAD_WATCHDOG_TICK: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Determine whether the scheduler could still make progress on our
+/// behalf. Returns `true` if there is at least one scheduled task that
+/// is not currently blocked (so it could still reach the channel), or
+/// if there is no scheduler at all but the channel has pending wakers
+/// on the opposite side (rare edge case we treat as "still progressing").
+///
+/// Returns `false` when we are certain no scheduled task could unblock
+/// us — the caller should treat this as a deadlock.
+fn scheduler_can_make_progress(vm: &Vm) -> bool {
+    match vm.current_scheduler() {
+        None => false, // No scheduler exists — no task could wake us.
+        Some(sched) => {
+            let (live, blocked) = sched.progress_snapshot();
+            // If any task is live and not currently blocked it might
+            // still run and reach our channel.
+            live > 0 && live > blocked
+        }
+    }
+}
+
+/// Block the main thread until the channel accepts `val`, the channel
+/// is closed, or the scheduler can no longer make progress (deadlock).
+fn main_thread_wait_for_send(
+    ch: &Arc<crate::value::Channel>,
+    val: Value,
+    vm: &Vm,
+) -> Result<Value, VmError> {
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    loop {
+        // Try first so we don't miss a send slot that just opened.
+        match ch.try_send(val.clone()) {
+            TrySendResult::Sent => return Ok(Value::Unit),
+            TrySendResult::Closed => {
+                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+            }
+            TrySendResult::Full => {}
+        }
+        // Register a send waker that pokes our local condvar. The
+        // channel drains wakers on successful receive/close, so we
+        // must re-register each iteration.
+        let pair2 = pair.clone();
+        ch.register_send_waker(Box::new(move || {
+            let (lock, cvar) = &*pair2;
+            *lock.lock() = true;
+            cvar.notify_one();
+        }));
+        // Re-check after registering to avoid a lost wakeup race
+        // between try_send above and register_send_waker.
+        match ch.try_send(val.clone()) {
+            TrySendResult::Sent => return Ok(Value::Unit),
+            TrySendResult::Closed => {
+                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+            }
+            TrySendResult::Full => {}
+        }
+        // Wait for a notify or the watchdog tick.
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            if !*notified {
+                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
+            }
+            *notified = false;
+        }
+        // If the scheduler cannot make progress, declare deadlock.
+        if !scheduler_can_make_progress(vm) {
+            // Give one last try in case a task completed between
+            // the wait and the check.
+            match ch.try_send(val.clone()) {
+                TrySendResult::Sent => return Ok(Value::Unit),
+                TrySendResult::Closed => {
+                    return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+                }
+                TrySendResult::Full => {}
+            }
+            return Err(VmError::new(
+                "deadlock on main thread: channel send with no counterparty".into(),
+            ));
+        }
+    }
+}
+
+/// Block the main thread until the channel yields a value, is closed,
+/// or the scheduler can no longer make progress (deadlock).
+fn main_thread_wait_for_receive(
+    ch: &Arc<crate::value::Channel>,
+    vm: &Vm,
+) -> Result<Value, VmError> {
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    loop {
+        match ch.try_receive() {
+            TryReceiveResult::Value(val) => {
+                return Ok(Value::Variant("Message".into(), vec![val]));
+            }
+            TryReceiveResult::Closed => {
+                return Ok(Value::Variant("Closed".into(), vec![]));
+            }
+            TryReceiveResult::Empty => {}
+        }
+        let pair2 = pair.clone();
+        ch.register_recv_waker(Box::new(move || {
+            let (lock, cvar) = &*pair2;
+            *lock.lock() = true;
+            cvar.notify_one();
+        }));
+        // Re-check after registration to avoid a lost wakeup.
+        match ch.try_receive() {
+            TryReceiveResult::Value(val) => {
+                return Ok(Value::Variant("Message".into(), vec![val]));
+            }
+            TryReceiveResult::Closed => {
+                return Ok(Value::Variant("Closed".into(), vec![]));
+            }
+            TryReceiveResult::Empty => {}
+        }
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            if !*notified {
+                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
+            }
+            *notified = false;
+        }
+        if !scheduler_can_make_progress(vm) {
+            match ch.try_receive() {
+                TryReceiveResult::Value(val) => {
+                    return Ok(Value::Variant("Message".into(), vec![val]));
+                }
+                TryReceiveResult::Closed => {
+                    return Ok(Value::Variant("Closed".into(), vec![]));
+                }
+                TryReceiveResult::Empty => {}
+            }
+            return Err(VmError::new(
+                "deadlock on main thread: channel receive with no counterparty".into(),
+            ));
+        }
+    }
 }
 
 #[cfg(test)]

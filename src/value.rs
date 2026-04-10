@@ -940,6 +940,18 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
+            // SURPRISE: `ExtFloat` uses bitwise equality here so that
+            // `NaN == NaN`. This is deliberate and REQUIRED for
+            // `Ord`/`Eq` consistency, because `Value` is used as a key
+            // in `BTreeMap`, `BTreeSet`, and deduplication paths
+            // (`Map`, `Set`, `list.dedup`, `==` on `Map`/`Set`). Those
+            // containers rely on reflexivity: a NaN key must always
+            // compare equal to itself. The language-level `==`
+            // operator does NOT use this path — see `language_eq` in
+            // `src/vm/execute.rs`, which overrides `ExtFloat` to follow
+            // IEEE-754 semantics (`NaN != NaN`). Do not "fix" the
+            // bitwise check here without also fixing every
+            // container/dedup path that depends on it.
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits() == b.to_bits(),
             // Mixed Float/ExtFloat: the typechecker permits this pair for
             // `==`/`!=`, so the VM must honor it rather than returning

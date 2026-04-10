@@ -30,7 +30,8 @@ Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 
 ## Maps
 
-Unordered key-value collections with `#{ }`. Keys can be any hashable type:
+Key-ordered key-value collections with `#{ }`. Iteration visits entries in
+sorted key order. Keys can be any comparable type:
 
 ```silt
 let config = #{ "host": "localhost", "port": "8080" }
@@ -60,7 +61,8 @@ Key functions: `map.get`, `map.set`, `map.delete`, `map.contains`,
 
 ## Sets
 
-Unordered unique-value collections with `#[ ]`:
+Sorted unique-value collections with `#[ ]`. Iteration visits elements in
+sorted order:
 
 ```silt
 let tags = #[1, 2, 3]

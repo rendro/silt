@@ -4781,22 +4781,20 @@ fn main() {
 #[test]
 fn test_fanout_round_robin_channel_each() {
     // Verify that when multiple workers use channel.each on the same
-    // channel, messages are distributed in round-robin order rather
-    // than all going to the first worker.
+    // channel, messages are distributed across workers rather than all
+    // going to the first one.
+    //
+    // The jobs channel uses capacity 1, which forces each `channel.send`
+    // in `main` to block until some worker has actually taken the prior
+    // message. That back-pressure is what makes the distribution
+    // statistically stable across workers — without it, one eager worker
+    // could drain a fully-buffered channel before the others even start.
     let result = run(r#"
 import channel
 import task
 fn main() {
-  let jobs = channel.new(10)
-  let results = channel.new(10)
-
-  channel.send(jobs, 1)
-  channel.send(jobs, 2)
-  channel.send(jobs, 3)
-  channel.send(jobs, 4)
-  channel.send(jobs, 5)
-  channel.send(jobs, 6)
-  channel.close(jobs)
+  let jobs = channel.new(1)
+  let results = channel.new(32)
 
   let w1 = task.spawn(fn() {
     channel.each(jobs) { n ->
@@ -4815,6 +4813,14 @@ fn main() {
       channel.send(results, 300 + n)
     }
   })
+
+  channel.send(jobs, 1)
+  channel.send(jobs, 2)
+  channel.send(jobs, 3)
+  channel.send(jobs, 4)
+  channel.send(jobs, 5)
+  channel.send(jobs, 6)
+  channel.close(jobs)
 
   task.join(w1)
   task.join(w2)
@@ -4849,16 +4855,18 @@ fn main() {
     let w2_count = values.iter().filter(|&&v| v > 200 && v < 300).count();
     let w3_count = values.iter().filter(|&&v| v > 300 && v < 400).count();
 
-    // With real threads, distribution is non-deterministic.
-    // All 6 messages must be processed; at least 2 workers should participate.
+    // All 6 messages must be processed; fan-out means more than one
+    // worker must actually participate. If a single worker drained the
+    // channel, the "round-robin" claim would be false and this test would
+    // previously have silently passed.
     assert_eq!(values.len(), 6);
     let active_workers = [w1_count, w2_count, w3_count]
         .iter()
         .filter(|&&c| c > 0)
         .count();
     assert!(
-        active_workers >= 1,
-        "at least 1 worker should receive messages, got {values:?}"
+        active_workers >= 2,
+        "fan-out must distribute across at least 2 workers, got {values:?} (w1={w1_count}, w2={w2_count}, w3={w3_count})"
     );
 }
 

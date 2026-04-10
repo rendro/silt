@@ -75,6 +75,8 @@ Every function that can fail returns a Result. The `?` operator propagates error
 import io
 import json
 
+type Config { name: String }
+
 fn read_config(path) {
   let content = io.read_file(path)?
   let config = json.parse(Config, content)?
@@ -162,6 +164,8 @@ Then:
 silt init
 silt run main.silt
 ```
+
+See `examples/` for 40+ runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
 ## Tooling
 

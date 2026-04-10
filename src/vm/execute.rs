@@ -10,6 +10,25 @@ use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{Vm, VmError};
 
+/// Language-level equality for the `==` / `!=` operators.
+///
+/// For almost all value kinds this delegates to `PartialEq for Value`, but
+/// `ExtFloat` is handled specially: `PartialEq` on `ExtFloat` uses
+/// `to_bits()` equality so that NaN is self-equal (needed for
+/// `Ord`/`Eq` consistency on keys used in sets, maps, and
+/// deduplication — see the comment at `src/value.rs`). The user-facing
+/// `==` operator instead follows IEEE-754: `NaN == NaN` is `false`.
+/// Mixed `Float` / `ExtFloat` comparisons also go through the IEEE-754
+/// path, matching the `Float` / `Float` fallback already used by
+/// `PartialEq`.
+fn language_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::ExtFloat(x), Value::ExtFloat(y)) => x == y,
+        (Value::Float(x), Value::ExtFloat(y)) | (Value::ExtFloat(y), Value::Float(x)) => x == y,
+        _ => a == b,
+    }
+}
+
 /// Kind of higher-order builtin iteration, used by `iterate_builtin` to
 /// determine how to interpret the accumulator and what to do with each
 /// callback result.
@@ -938,13 +957,19 @@ impl Vm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
-                self.push(Value::Bool(a == b));
+                // The language-level `==` operator follows IEEE-754 for
+                // `ExtFloat` (so NaN != NaN). `PartialEq for Value` on
+                // `ExtFloat` uses `to_bits()` equality so that NaN is
+                // self-equal — that is required for `Ord`/`Eq`
+                // consistency on keys used in sets, maps, and
+                // deduplication. See `src/value.rs`.
+                self.push(Value::Bool(language_eq(&a, &b)));
             }
             Op::Neq => {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.check_same_type(&a, &b)?;
-                self.push(Value::Bool(a != b));
+                self.push(Value::Bool(!language_eq(&a, &b)));
             }
             Op::Lt => self.compare(|ord| ord.is_lt())?,
             Op::Gt => self.compare(|ord| ord.is_gt())?,

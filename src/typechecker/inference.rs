@@ -9,19 +9,21 @@ impl TypeChecker {
     // ── Check function body ─────────────────────────────────────────
 
     pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
-        self.check_fn_body_with_name(f, env, f.name);
+        let _ = self.check_fn_body_with_name(f, env, f.name);
     }
 
     /// Like `check_fn_body`, but looks up the registered scheme under an
     /// explicit name. Used for trait impl methods, which are registered in
     /// the environment under `TargetType.method_name` rather than the bare
-    /// `method_name`.
+    /// `method_name`. Returns the body-constrained function type (with all
+    /// substitutions applied) so callers can write it back into derived
+    /// tables like `method_table`.
     pub(super) fn check_fn_body_with_name(
         &mut self,
         f: &mut FnDecl,
         env: &TypeEnv,
         lookup_name: Symbol,
-    ) {
+    ) -> Option<Type> {
         let mut local_env = env.child();
 
         // Validate where clauses
@@ -40,14 +42,14 @@ impl TypeChecker {
         // Look up the function's registered type and instantiate it
         let fn_scheme = match env.lookup(lookup_name) {
             Some(s) => s.clone(),
-            None => return, // already reported
+            None => return None, // already reported
         };
         let (fn_type, constraints) = self.instantiate_with_constraints(&fn_scheme);
         let fn_type = self.apply(&fn_type);
 
         let (param_types, ret_type) = match &fn_type {
             Type::Fun(params, ret) => (params.clone(), *ret.clone()),
-            _ => return,
+            _ => return None,
         };
 
         // Populate active constraints so method resolution on type variables
@@ -78,14 +80,14 @@ impl TypeChecker {
         // Record the body-constrained function type for scheme narrowing
         let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
         let constrained_ret = self.apply(&ret_type);
-        self.fn_body_types.insert(
-            f.name,
-            Type::Fun(constrained_params, Box::new(constrained_ret)),
-        );
+        let constrained_fn = Type::Fun(constrained_params, Box::new(constrained_ret));
+        self.fn_body_types.insert(f.name, constrained_fn.clone());
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;
+
+        Some(constrained_fn)
     }
 
     // ── Pattern type binding ────────────────────────────────────────
@@ -237,8 +239,58 @@ impl TypeChecker {
                         }
                     }
                 }
+                // Bind each alternative into a scratch sub-environment so we
+                // can collect the per-alternative type for every variable the
+                // or-pattern binds, then unify those types pairwise. This
+                // enforces that the alternatives agree on each binding's
+                // type (e.g. `Left(x) | Right(x)` where `x: Int` on one side
+                // and `x: String` on the other must be rejected).
+                let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
                 for alt in alts {
-                    self.bind_pattern(alt, ty, env, span);
+                    let mut alt_env = env.child();
+                    self.bind_pattern(alt, ty, &mut alt_env, span);
+                    let mut names: HashMap<Symbol, Type> = HashMap::new();
+                    for name in collect_pattern_vars(alt) {
+                        if let Some(scheme) = alt_env.bindings.get(&name) {
+                            names.insert(name, scheme.ty.clone());
+                        }
+                    }
+                    per_alt_types.push(names);
+                }
+                // Pairwise-unify the first alt's types with each other alt.
+                if per_alt_types.len() >= 2 {
+                    let (first, rest) = per_alt_types.split_first().unwrap();
+                    for other in rest {
+                        for (name, first_ty) in first {
+                            if let Some(other_ty) = other.get(name) {
+                                let a = self.apply(first_ty);
+                                let b = self.apply(other_ty);
+                                if a != b {
+                                    // Try to unify — if they're still
+                                    // incompatible, report a targeted error.
+                                    let err_count = self.errors.len();
+                                    self.unify(&a, &b, span);
+                                    if self.errors.len() > err_count {
+                                        // Replace the generic unify error with
+                                        // a clearer or-pattern-specific one.
+                                        self.errors.truncate(err_count);
+                                        self.error(
+                                            format!(
+                                                "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
+                                                name, a, b
+                                            ),
+                                            span,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Finally, bind the first alternative's variables into the
+                // real environment so downstream code sees them.
+                if let Some(first_alt) = alts.first() {
+                    self.bind_pattern(first_alt, ty, env, span);
                 }
             }
             Pattern::Range(_, _) => {
@@ -318,20 +370,78 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::List(Box::new(tv))
                 } else {
-                    let elem_type = self.fresh_var();
+                    // Infer each element first (without unifying), so we can
+                    // produce a single targeted "list elements must have the
+                    // same type" error pointing at the first mismatching
+                    // element instead of the old "expected X, got Y" which
+                    // read as if the user had declared the first type.
+                    let mut elem_infos: Vec<(Type, Span, bool)> = Vec::with_capacity(elems.len());
                     for elem in elems.iter_mut() {
                         match elem {
                             ListElem::Single(e) => {
                                 let t = self.infer_expr(e, env);
-                                self.unify(&elem_type, &t, e.span);
+                                elem_infos.push((t, e.span, false));
                             }
                             ListElem::Spread(e) => {
                                 let t = self.infer_expr(e, env);
-                                let expected = Type::List(Box::new(elem_type.clone()));
-                                self.unify(&expected, &t, e.span);
+                                elem_infos.push((t, e.span, true));
                             }
                         }
                     }
+
+                    // Establish the "first element type" once, up front.
+                    let first_ty = {
+                        let (t, _, is_spread) = &elem_infos[0];
+                        if *is_spread {
+                            // Spread contributes a List(inner); extract inner
+                            // for the "first element" description.
+                            let applied = self.apply(t);
+                            match applied {
+                                Type::List(inner) => *inner,
+                                _ => t.clone(),
+                            }
+                        } else {
+                            t.clone()
+                        }
+                    };
+
+                    let elem_type = self.fresh_var();
+                    self.unify(&elem_type, &first_ty, elem_infos[0].1);
+
+                    for (idx, (t, espan, is_spread)) in elem_infos.iter().enumerate() {
+                        let err_count = self.errors.len();
+                        if *is_spread {
+                            let expected = Type::List(Box::new(elem_type.clone()));
+                            self.unify(&expected, t, *espan);
+                        } else {
+                            self.unify(&elem_type, t, *espan);
+                        }
+                        if self.errors.len() > err_count {
+                            // Replace the raw unify diagnostic with a
+                            // clearer list-level message.
+                            self.errors.truncate(err_count);
+                            let elem_ty = if *is_spread {
+                                let applied = self.apply(t);
+                                match applied {
+                                    Type::List(inner) => *inner,
+                                    other => other,
+                                }
+                            } else {
+                                self.apply(t)
+                            };
+                            let first_resolved = self.apply(&first_ty);
+                            self.error(
+                                format!(
+                                    "list elements must have the same type: first element is {}, but element {} is {}",
+                                    first_resolved,
+                                    idx + 1,
+                                    elem_ty
+                                ),
+                                *espan,
+                            );
+                        }
+                    }
+
                     Type::List(Box::new(elem_type))
                 }
             }
@@ -786,6 +896,19 @@ impl TypeChecker {
 
                         let result_ty = match &callee_ty {
                             Type::Fun(params, ret) => {
+                                // Arity check — piped-through arg counts as
+                                // the first positional arg. Mirrors the
+                                // non-pipe Call branch below.
+                                if params.len() != all_arg_types.len() {
+                                    self.error(
+                                        format!(
+                                            "function expects {} argument(s), got {}",
+                                            params.len(),
+                                            all_arg_types.len()
+                                        ),
+                                        span,
+                                    );
+                                }
                                 let min_len = params.len().min(all_arg_types.len());
                                 for i in 0..min_len {
                                     let s = if i == 0 { lhs_span } else { arg_spans[i - 1] };
@@ -1548,8 +1671,48 @@ impl TypeChecker {
                         }
                     }
                 }
+                // Check each alternative into a scratch sub-environment so
+                // we can collect the per-alternative type for every variable
+                // the or-pattern binds, then unify those types pairwise.
+                let mut per_alt_types: Vec<HashMap<Symbol, Type>> = Vec::with_capacity(alts.len());
                 for alt in alts {
-                    self.check_pattern(alt, expected, env, span);
+                    let mut alt_env = env.child();
+                    self.check_pattern(alt, expected, &mut alt_env, span);
+                    let mut names: HashMap<Symbol, Type> = HashMap::new();
+                    for name in collect_pattern_vars(alt) {
+                        if let Some(scheme) = alt_env.bindings.get(&name) {
+                            names.insert(name, scheme.ty.clone());
+                        }
+                    }
+                    per_alt_types.push(names);
+                }
+                if per_alt_types.len() >= 2 {
+                    let (first, rest) = per_alt_types.split_first().unwrap();
+                    for other in rest {
+                        for (name, first_ty) in first {
+                            if let Some(other_ty) = other.get(name) {
+                                let a = self.apply(first_ty);
+                                let b = self.apply(other_ty);
+                                if a != b {
+                                    let err_count = self.errors.len();
+                                    self.unify(&a, &b, span);
+                                    if self.errors.len() > err_count {
+                                        self.errors.truncate(err_count);
+                                        self.error(
+                                            format!(
+                                                "or-pattern alternatives bind '{}' to conflicting types: {} vs {}",
+                                                name, a, b
+                                            ),
+                                            span,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(first_alt) = alts.first() {
+                    self.check_pattern(first_alt, expected, env, span);
                 }
             }
             Pattern::Range(_, _) => {

@@ -375,14 +375,16 @@ match channel.select([ch1, ch2]) {
 
 ### How select works internally
 
-`channel.select` checks the channels in list order and returns the first one
-that has data available or is closed.
+`channel.select` picks a ready branch at random: it sweeps the list starting
+from a pseudo-random index, so if multiple channels are ready, any one of them
+may win. Readers must not assume that earlier entries in the list have
+priority -- the choice is fair, not ordered.
 
 If no channel is ready, the task is parked until one of the channels becomes
-ready (via waker-based notification). When it encounters a closed channel
-during its sweep, it returns `(channel, Closed)` for the first closed channel
-found. If no tasks can make progress and no channels have data, it detects a
-deadlock and reports an error.
+ready (via waker-based notification). If a closed channel is selected during
+the sweep, it returns `(channel, Closed)` for that channel. If no tasks can
+make progress and no channels have data, it detects a deadlock and reports an
+error.
 
 
 ## 5. Patterns
@@ -529,30 +531,33 @@ the middle means inserting a new channel and a new task -- nothing else changes.
 
 ### Multiplexing with select
 
-Use `channel.select` to merge multiple input streams.
+Use `channel.select` to merge multiple input streams. When more than one
+channel is ready, `select` picks a branch fairly at random -- every ready
+branch has an equal chance of being chosen, so you cannot encode priority by
+ordering the list.
 
 ```silt
 fn main() {
-  let urgent = channel.new(5)
-  let normal = channel.new(5)
+  let alerts = channel.new(5)
+  let logs = channel.new(5)
 
   task.spawn(fn() {
-    channel.send(normal, "background task done")
-    channel.send(normal, "log rotation complete")
-    channel.close(normal)
+    channel.send(logs, "background task done")
+    channel.send(logs, "log rotation complete")
+    channel.close(logs)
   })
 
   task.spawn(fn() {
-    channel.send(urgent, "disk full!")
-    channel.close(urgent)
+    channel.send(alerts, "disk full!")
+    channel.close(alerts)
   })
 
-  -- Process messages from both channels, prioritizing urgent
-  -- (select polls in list order, so urgent is checked first)
+  -- Merge both streams into a single handler. Over many runs, messages from
+  -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
   loop {
-    match channel.select([urgent, normal]) {
-      (^urgent, Message(msg)) -> println("URGENT: {msg}")
-      (^normal, Message(msg)) -> println("normal: {msg}")
+    match channel.select([alerts, logs]) {
+      (^alerts, Message(msg)) -> println("alert: {msg}")
+      (^logs,   Message(msg)) -> println("log: {msg}")
       (_, Closed) -> {
         println("a channel closed")
         return ()
@@ -563,9 +568,10 @@ fn main() {
 }
 ```
 
-Since `channel.select` polls channels in list order, putting `urgent` first
-gives it priority -- if both channels have data, `urgent` is always checked
-first.
+If you genuinely need priority semantics (for example, "always drain `alerts`
+before touching `logs`"), check the high-priority channel first with
+`channel.try_receive` and fall back to `channel.select` only when it is
+empty. `select` itself gives you fairness, not ordering.
 
 ### Graceful shutdown via channel.close
 
@@ -692,6 +698,30 @@ parked -- the OS thread picks up another ready task instead of waiting. When the
 blocking condition is satisfied (e.g., a value arrives on the channel), the
 parked task is woken and rescheduled.
 
+### Scheduler and time slicing
+
+Silt uses a **cooperative** scheduler -- there is no wall-clock preemption.
+A task holds its worker thread until one of two things happens:
+
+1. It blocks on an I/O operation, channel send/receive/select, `task.join`,
+   or `time.sleep`. The task is parked and the worker moves on to the next
+   ready task.
+2. It exhausts its **opcode time slice**. The scheduler runs each task for a
+   fixed budget of bytecode instructions (default **2000 opcodes**); when the
+   budget runs out, the task is re-queued at the back of the run queue and
+   the worker picks up whoever is next. This keeps CPU-heavy tasks from
+   starving each other.
+
+The slice budget is tunable via the `SILT_TIME_SLICE` environment variable
+(for example, `SILT_TIME_SLICE=500 silt run main.silt` for more frequent
+rotation, or a larger value to reduce scheduling overhead).
+
+One consequence: a task running a tight CPU loop with no blocking calls will
+still yield every ~2000 opcodes, but between those yield points it owns its
+worker. If you spawn fewer long CPU-bound tasks than you have workers, the
+remaining workers simply stay idle; the scheduler does not migrate a running
+task off a busy worker.
+
 ### Blocking operations
 
 | Operation | Parks when |
@@ -700,6 +730,7 @@ parked task is woken and rescheduled.
 | `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
 | `task.join(handle)` | Task not yet complete -- resumes when the task finishes |
 | `channel.select([...])` | No channel has data -- resumes when any channel becomes ready |
+| `time.sleep(duration)` | Always -- parks the task for the given duration, then resumes |
 | `io.read_file(path)` | Always (file I/O) |
 | `io.write_file(path, content)` | Always (file I/O) |
 | `io.read_line()` | Always (stdin) |

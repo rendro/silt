@@ -136,6 +136,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 let completion = vm.runtime.io_pool.submit(move || {
                     let mut line = String::new();
                     match std::io::stdin().read_line(&mut line) {
+                        // Ok(0) means EOF — surface as Err so match-against-Err
+                        // loops terminate cleanly instead of spinning on "".
+                        Ok(0) => Value::Variant("Err".into(), vec![Value::String("eof".into())]),
                         Ok(_) => Value::Variant(
                             "Ok".into(),
                             vec![Value::String(line.trim_end().to_string())],
@@ -153,6 +156,12 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             // Main thread: synchronous fallback
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
+                // Ok(0) means EOF — surface as Err so calling programs can
+                // break out of input loops with `match io.read_line() { Err(_) -> break; ... }`.
+                Ok(0) => Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String("eof".into())],
+                )),
                 Ok(_) => Ok(Value::Variant(
                     "Ok".into(),
                     vec![Value::String(line.trim_end().to_string())],

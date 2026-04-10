@@ -780,7 +780,16 @@ impl TypeChecker {
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
-                    self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                    let constrained =
+                        self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                    // Write the body-inferred type back into method_table so
+                    // that downstream call sites see the concrete return
+                    // type instead of the still-polymorphic template.
+                    if let Some(ty) = constrained
+                        && let Some(entry) = self.method_table.get_mut(&(target, method_name))
+                    {
+                        entry.method_type = ty;
+                    }
                 }
             }
         }
@@ -825,7 +834,14 @@ impl TypeChecker {
                         for j in 0..ti.methods.len() {
                             let method_name = ti.methods[j].name;
                             let key = intern(&format!("{target}.{method_name}"));
-                            self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                            let constrained = self
+                                .check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                            if let Some(ty) = constrained
+                                && let Some(entry) =
+                                    self.method_table.get_mut(&(target, method_name))
+                            {
+                                entry.method_type = ty;
+                            }
                         }
                     }
                 }
@@ -1772,8 +1788,15 @@ impl ReplTypeContext {
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
-                    self.checker
+                    let constrained = self
+                        .checker
                         .check_fn_body_with_name(&mut ti.methods[j], &self.env, key);
+                    if let Some(ty) = constrained
+                        && let Some(entry) =
+                            self.checker.method_table.get_mut(&(target, method_name))
+                    {
+                        entry.method_type = ty;
+                    }
                 }
             }
         }

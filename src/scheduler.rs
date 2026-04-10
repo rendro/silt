@@ -109,6 +109,19 @@ impl Scheduler {
         self.inner.deadlock_detected.load(Ordering::SeqCst)
     }
 
+    /// Snapshot `(live_tasks, blocked_tasks)` used by the main-thread
+    /// channel watchdog to decide whether any scheduled task could still
+    /// make progress. When `live > blocked`, at least one task is either
+    /// queued or running and may unblock a channel the main thread is
+    /// waiting on. When `live == 0` or `live <= blocked`, there is no
+    /// scheduled counterparty.
+    pub fn progress_snapshot(&self) -> (usize, usize) {
+        (
+            self.inner.live_tasks.load(Ordering::SeqCst),
+            self.inner.blocked_tasks.load(Ordering::SeqCst),
+        )
+    }
+
     /// Submit a runnable task to the scheduler.
     ///
     /// Returns an error if the live-task count has reached [`MAX_TASKS`].
@@ -273,8 +286,18 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     let cancel_task_id = id;
                     handle_for_registry.set_cancel_cleanup(Box::new(move || {
                         // Take the task so the waker closure becomes a no-op.
-                        let _ = cancel_slot.lock().take();
+                        // If the slot is empty, the waker already fired and the
+                        // task is either running or already accounted for — do
+                        // not double-decrement the counters in that case.
+                        if cancel_slot.lock().take().is_none() {
+                            return;
+                        }
+                        // This blocked task is being dropped: decrement
+                        // blocked_tasks AND live_tasks (the Completed/Failed
+                        // path is unreachable once we drop the task, so
+                        // live_tasks would otherwise leak).
                         cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                        cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                         let mut handles = cancel_inner.blocked_handles.lock();
                         if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
                             handles.swap_remove(pos);

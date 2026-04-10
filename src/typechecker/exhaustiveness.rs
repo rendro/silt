@@ -115,14 +115,12 @@ impl TypeChecker {
                 let tuple_q = Pattern::Tuple(sub_pats);
                 self.is_useful(matrix, &tuple_q, ty, depth + 1)
             }
-            // Record types have a single constructor — a wildcard is NOT useful
-            // if any row already matches (record pattern, wildcard, or ident).
-            Type::Record(..) => !matrix.iter().any(|p| {
-                matches!(
-                    p,
-                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
-                )
-            }),
+            // Record types have a single constructor — decompose into field
+            // columns and recurse, so we properly check sub-pattern coverage
+            // (not just "some row has a record pattern").
+            Type::Record(name, fields) => {
+                self.is_record_useful(matrix, *name, fields, depth)
+            }
             // Lists: enumerate constructors by length — `[]`, `[_]`,
             // `[_,_]`, ..., up to one past the longest fixed-length pattern
             // seen in the matrix. The final "open" constructor
@@ -226,16 +224,14 @@ impl TypeChecker {
             //   `[p1, ..., pk]` (no rest) matches lists of length exactly k.
             //   `[p1, ..., pk, ..rest]` (with rest) matches lists of
             //                                       length ≥ k.
+            //
             // A query pattern is useful iff some value it matches is not
-            // covered by any row in the matrix. For the constructor check,
-            // we restrict attention to the query's length set and require
-            // that at least one row in the matrix "shape-covers" it. If no
-            // row does, the query is trivially useful. Otherwise we could
-            // additionally check sub-pattern usefulness — but for
-            // wildcard-queried sub-patterns (the common case during the
-            // wildcard expansion in `is_wildcard_useful`) every row that
-            // shape-covers also value-covers, so the shape check is
-            // sufficient.
+            // covered by any row in the matrix. We first filter the matrix
+            // to rows that *could* cover the query's length set. If no row
+            // does, the query is trivially useful. Otherwise we decompose
+            // column-by-column (Maranget specialization) and recursively
+            // check whether the query's sub-patterns expose an uncovered
+            // value inside the filtered matrix.
             Pattern::List(elems, rest) => {
                 let q_len = elems.len();
                 let q_has_rest = rest.is_some();
@@ -258,9 +254,117 @@ impl TypeChecker {
                     }
                 }
 
-                !matrix
+                let shape_covers = matrix
                     .iter()
-                    .any(|p| row_covers_query_length(p, q_len, q_has_rest))
+                    .any(|p| row_covers_query_length(p, q_len, q_has_rest));
+                if !shape_covers {
+                    return true;
+                }
+
+                // Decompose: specialize the matrix to the query's length set
+                // by pulling out columns 0..q_len. For a fixed-length query
+                // we check element columns as a tuple; for a rest query we
+                // only check the fixed prefix (the rest is typically a
+                // wildcard binding, so element-level checks there aren't
+                // informative for the common case).
+                let elem_ty = match ty {
+                    Type::List(e) => (**e).clone(),
+                    _ => Type::Error,
+                };
+
+                // Build specialized matrix: one entry per relevant row,
+                // each entry is a Vec<Pattern> of length q_len (the first
+                // q_len element patterns; rows with a shorter rest-pattern
+                // get wildcards in the missing slots).
+                let mut spec_rows: Vec<Vec<Pattern>> = Vec::new();
+                for row in matrix {
+                    match row {
+                        Pattern::Wildcard | Pattern::Ident(_) => {
+                            spec_rows.push(vec![Pattern::Wildcard; q_len]);
+                        }
+                        Pattern::List(r_elems, r_rest) => {
+                            let r_len = r_elems.len();
+                            let r_has_rest = r_rest.is_some();
+                            // Filter rows by whether they could cover the
+                            // query's length set.
+                            let keeps = match (q_has_rest, r_has_rest) {
+                                (false, false) => q_len == r_len,
+                                (false, true) => q_len >= r_len,
+                                (true, false) => r_len >= q_len,
+                                (true, true) => true,
+                            };
+                            if !keeps {
+                                continue;
+                            }
+                            let mut cols = Vec::with_capacity(q_len);
+                            for i in 0..q_len {
+                                if i < r_len {
+                                    cols.push(r_elems[i].clone());
+                                } else if r_has_rest {
+                                    // Row was `[p1,..pR, ..rest]` with
+                                    // r_len < q_len; positions beyond r_len
+                                    // are "whatever the rest absorbs" which
+                                    // is a wildcard match column-wise.
+                                    cols.push(Pattern::Wildcard);
+                                } else {
+                                    // Impossible given `keeps`, but be safe.
+                                    cols.push(Pattern::Wildcard);
+                                }
+                            }
+                            spec_rows.push(cols);
+                        }
+                        _ => {}
+                    }
+                }
+
+                if q_len == 0 {
+                    return spec_rows.is_empty();
+                }
+
+                // Wrap in tuples and delegate to the tuple usefulness path
+                // to reuse its proper column-by-column Maranget algorithm.
+                let tuple_matrix: Vec<Pattern> = spec_rows
+                    .iter()
+                    .map(|r| Pattern::Tuple(r.clone()))
+                    .collect();
+                let tuple_refs: Vec<&Pattern> = tuple_matrix.iter().collect();
+                let tuple_ty = Type::Tuple(vec![elem_ty; q_len]);
+                let query_tuple_sub = elems.clone();
+                self.is_tuple_useful_recursive(
+                    &tuple_refs,
+                    &query_tuple_sub,
+                    &tuple_ty,
+                    depth + 1,
+                )
+            }
+            // Record patterns: decompose into field columns and recurse.
+            Pattern::Record { fields: q_fields, .. } => {
+                let resolved = self.apply(ty);
+                if let Type::Record(_name, rec_fields) = &resolved {
+                    // Build query columns from q_fields (fill omitted
+                    // fields with wildcards).
+                    let query_cols: Vec<Pattern> = rec_fields
+                        .iter()
+                        .map(|(fname, _)| {
+                            q_fields
+                                .iter()
+                                .find(|(n, _)| n == fname)
+                                .and_then(|(_, sp)| sp.clone())
+                                .unwrap_or(Pattern::Wildcard)
+                        })
+                        .collect();
+                    self.is_record_useful_with_query(matrix, rec_fields, &query_cols, depth)
+                } else {
+                    // Fall back to the old "not useful if any row matches"
+                    // heuristic when the type isn't resolved.
+                    let _ = q_fields;
+                    !matrix.iter().any(|p| {
+                        matches!(
+                            p,
+                            Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
+                        )
+                    })
+                }
             }
             // Literal patterns — useful iff no wildcard covers them.
             Pattern::Int(_)
@@ -274,6 +378,74 @@ impl TypeChecker {
                 .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
             _ => false,
         }
+    }
+
+    /// Wildcard-query record usefulness: equivalent to checking whether a
+    /// fully-wildcard record pattern exposes any uncovered value.
+    fn is_record_useful(
+        &self,
+        matrix: &[&Pattern],
+        _rec_name: Symbol,
+        rec_fields: &[(Symbol, Type)],
+        depth: usize,
+    ) -> bool {
+        let query_cols: Vec<Pattern> =
+            rec_fields.iter().map(|_| Pattern::Wildcard).collect();
+        self.is_record_useful_with_query(matrix, rec_fields, &query_cols, depth)
+    }
+
+    /// Check whether a record query is useful by decomposing into field
+    /// columns (Maranget-style) and delegating to the tuple recursive
+    /// algorithm. The record's fields are treated as an ordered tuple in
+    /// the declared field order (from `rec_fields`); `query_cols` must be
+    /// pre-aligned to that order.
+    fn is_record_useful_with_query(
+        &self,
+        matrix: &[&Pattern],
+        rec_fields: &[(Symbol, Type)],
+        query_cols: &[Pattern],
+        depth: usize,
+    ) -> bool {
+        if rec_fields.is_empty() {
+            // Unit-like record — exhaustive iff the matrix already has a row.
+            return !matrix.iter().any(|p| {
+                matches!(
+                    p,
+                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
+                )
+            });
+        }
+
+        // Build the equivalent tuple-shaped matrix: every row gets mapped
+        // into a tuple whose columns follow `rec_fields` order. Record rows
+        // that omit a field are filled with a wildcard in that column.
+        let mut tuple_rows: Vec<Pattern> = Vec::new();
+        for row in matrix {
+            match row {
+                Pattern::Wildcard | Pattern::Ident(_) => {
+                    let wilds: Vec<Pattern> =
+                        rec_fields.iter().map(|_| Pattern::Wildcard).collect();
+                    tuple_rows.push(Pattern::Tuple(wilds));
+                }
+                Pattern::Record { fields: r_fields, .. } => {
+                    let mut cols: Vec<Pattern> = Vec::with_capacity(rec_fields.len());
+                    for (fname, _) in rec_fields {
+                        let pat = r_fields
+                            .iter()
+                            .find(|(n, _)| n == fname)
+                            .and_then(|(_, sp)| sp.clone())
+                            .unwrap_or(Pattern::Wildcard);
+                        cols.push(pat);
+                    }
+                    tuple_rows.push(Pattern::Tuple(cols));
+                }
+                _ => {}
+            }
+        }
+
+        let tuple_ty = Type::Tuple(rec_fields.iter().map(|(_, t)| t.clone()).collect());
+        let tuple_refs: Vec<&Pattern> = tuple_rows.iter().collect();
+        self.is_tuple_useful_recursive(&tuple_refs, query_cols, &tuple_ty, depth + 1)
     }
 
     /// Check multi-element tuple usefulness by specializing on the first column.

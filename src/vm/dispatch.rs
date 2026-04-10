@@ -1,9 +1,39 @@
 //! Builtin registration and dispatch.
 
+use std::panic::AssertUnwindSafe;
+
 use super::{Vm, VmError};
 use crate::builtins;
 use crate::module;
 use crate::value::Value;
+
+/// Invoke a registered foreign function while catching panics that escape it.
+///
+/// A panicking foreign function would otherwise tear down the scheduler worker
+/// thread (or the main thread), leaving other tasks unable to progress. We
+/// instead convert a caught panic into a [`VmError`] whose message preserves
+/// the panic payload when it is a `&str` or `String`.
+fn invoke_foreign_fn(
+    name: &str,
+    f: &super::runtime::ForeignFn,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| f(args))) {
+        Ok(result) => result,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            };
+            Err(VmError::new(format!(
+                "foreign function '{name}' panicked: {msg}"
+            )))
+        }
+    }
+}
 
 impl Vm {
     /// Register all builtin functions and variant constructors in globals.
@@ -173,7 +203,7 @@ impl Vm {
     ) -> Result<Value, VmError> {
         // Foreign functions take priority -- lets embedders override builtins.
         if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-            return f(args);
+            return invoke_foreign_fn(name, &f, args);
         }
         if let Some((module, func)) = name.split_once('.') {
             match module {
@@ -198,7 +228,7 @@ impl Vm {
                 "http" => builtins::data::call_http(self, func, args),
                 _ => {
                     if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        f(args)
+                        invoke_foreign_fn(name, &f, args)
                     } else {
                         Err(VmError::new(format!("unknown module: {module}")))
                     }
@@ -236,7 +266,7 @@ impl Vm {
                 }
                 _ => {
                     if let Some(f) = self.runtime.foreign_fns.get(name).cloned() {
-                        f(args)
+                        invoke_foreign_fn(name, &f, args)
                     } else {
                         Err(VmError::new(format!("unknown builtin: {name}")))
                     }
@@ -249,7 +279,7 @@ impl Vm {
     /// if registered (WASM), otherwise falls back to `SystemTime`.
     pub(crate) fn epoch_ms(&self) -> Result<i64, VmError> {
         if let Some(f) = self.runtime.foreign_fns.get("__wasm_epoch_ms") {
-            match f(&[])? {
+            match invoke_foreign_fn("__wasm_epoch_ms", f, &[])? {
                 Value::Int(ms) => Ok(ms),
                 _ => Err(VmError::new("__wasm_epoch_ms returned non-Int".into())),
             }

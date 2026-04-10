@@ -674,6 +674,87 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
         self.skip_nl();
+
+        // Emit targeted hints for keywords silt doesn't have (`if`, `while`,
+        // `for`, `break`, `continue`) and for mutable reassignment (`x = ...`).
+        // Only fires at statement-start positions to avoid hijacking legitimate
+        // identifiers later in an expression. We also guard with a "looks like
+        // the mistake we expect" lookahead so that e.g. `if(x)` as a function
+        // call still works.
+        if let Token::Ident(name) = self.peek().clone() {
+            let text = intern::resolve(name).to_string();
+            let next = self
+                .tokens
+                .get(self.pos + 1)
+                .map(|t| t.0.clone())
+                .unwrap_or(Token::Eof);
+            let span = self.span();
+
+            // G1: if / while / for / break / continue
+            let hint = match text.as_str() {
+                "if" => Some(
+                    "silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'",
+                ),
+                "while" | "for" => Some(
+                    "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
+                ),
+                "break" | "continue" => Some(
+                    "silt has no 'break'/'continue' — return early or restructure the recursion",
+                ),
+                _ => None,
+            };
+            if let Some(msg) = hint {
+                // Fire only when the next token could plausibly start the
+                // erroneous construct: an expression-start token (paren,
+                // ident, literal, unary, brace) for `if`/`while`/`for`,
+                // or end-of-stmt (newline, `}`, eof) for `break`/`continue`.
+                // Skip when the next token is `=`, `.`, or `(` starting a
+                // call — those look like legitimate ident usages.
+                let looks_like_mistake = match text.as_str() {
+                    "if" | "while" | "for" => matches!(
+                        next,
+                        Token::Ident(_)
+                            | Token::Int(_)
+                            | Token::Float(_)
+                            | Token::Bool(_)
+                            | Token::StringLit(..)
+                            | Token::StringStart(_)
+                            | Token::Minus
+                            | Token::Not
+                            | Token::LBrace
+                            | Token::LBracket
+                    ),
+                    "break" | "continue" => matches!(
+                        next,
+                        Token::Newline | Token::RBrace | Token::Eof
+                    ),
+                    _ => false,
+                };
+                if looks_like_mistake {
+                    return Err(ParseError {
+                        message: msg.into(),
+                        span,
+                    });
+                }
+            }
+
+            // G2: reassignment (`x = ...`) where `x` was previously `let`-bound.
+            // We can't see the binding from here, but the pattern `ident = ...`
+            // at a statement-start position is almost always a user expecting
+            // mutation. Matching on `Ident` followed by `Eq` is precise enough
+            // that it doesn't collide with any legitimate construct: a bare
+            // `x = y` expression is already a parse error today ("expected
+            // expression, found ="), so we're strictly improving the message.
+            if matches!(next, Token::Eq) {
+                return Err(ParseError {
+                    message: format!(
+                        "'let' bindings in silt are immutable — rebind with 'let {text} = ...' in a new scope"
+                    ),
+                    span,
+                });
+            }
+        }
+
         match self.peek().clone() {
             Token::Let => self.parse_let_stmt(),
             Token::When => self.parse_when_stmt(),

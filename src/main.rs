@@ -172,24 +172,36 @@ fn all_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
         .collect()
 }
 
-/// INVARIANT: type errors reported alongside an "unknown module" warning are
-/// artifacts, NOT real errors.
+/// Return the type-checker diagnostics that should still be reported for `result`
+/// after dropping noise that the compiler will resolve.
 ///
 /// Why: the type checker runs before module resolution (which happens during
-/// compilation). When a program imports from an unknown module, every reference
-/// to an imported name surfaces as an "undefined" type error even though the
-/// compiler will later resolve them correctly. Returning `true` here means
-/// "the type errors in this result are probably noise — don't treat them as
-/// fatal, and skip printing them so the user isn't drowned in false positives."
+/// compilation). When a program imports from an unknown module, the checker
+/// emits an "unknown module" *warning* for that import. We want to drop that
+/// warning (and ONLY that warning) from the `compile_file` path so the user
+/// isn't told about an import they actually wrote correctly. All other
+/// diagnostics — real type errors, other warnings — must flow through
+/// untouched so they continue to abort the run.
 ///
-/// This helper is the ONE place that decides whether to trust type errors in
-/// the `compile_file` path. Both the print loop and the exit gate must consult
-/// it, so the two can't drift apart during future refactors.
-fn type_errors_are_suppressed(result: &CompilePipelineResult) -> bool {
+/// Previously this helper did substring matching on every entry and
+/// suppressed ALL type diagnostics whenever any of them mentioned "unknown
+/// module", which silently masked real type errors in any file that also
+/// happened to import a user module. Filtering per-entry fixes that while
+/// keeping the clean UX for importers.
+fn reportable_type_errors<'a>(result: &'a CompilePipelineResult) -> Vec<&'a SourceError> {
     result
         .type_errors
         .iter()
-        .any(|e| e.message.contains("unknown module"))
+        .filter(|e| !is_unknown_module_warning(e))
+        .collect()
+}
+
+/// Returns true iff `err` is the "unknown module" warning that the type
+/// checker emits for imports the compiler will later resolve. We gate on
+/// both the warning severity and the message prefix so a future real type
+/// error that happens to mention those words isn't swallowed.
+fn is_unknown_module_warning(err: &SourceError) -> bool {
+    err.is_warning && err.kind == silt::errors::ErrorKind::Type && err.message.contains("unknown module")
 }
 
 /// Print all diagnostics to stderr and exit(1) if there are hard errors.
@@ -197,18 +209,21 @@ fn type_errors_are_suppressed(result: &CompilePipelineResult) -> bool {
 fn compile_file(path: &str) -> (Vec<Function>, String) {
     let result = run_compile_pipeline(path, false, false);
 
-    // When type errors are suppressed (see `type_errors_are_suppressed`), skip
-    // printing them entirely — otherwise we'd dump a wall of "undefined" errors
-    // that the compiler is about to resolve anyway. Parse, compile, and warning
-    // diagnostics are always printed.
-    let suppress_type_errors = type_errors_are_suppressed(&result);
+    // Filter per-entry: drop the "unknown module" warnings the compiler will
+    // resolve, but keep every other type diagnostic so real errors still
+    // surface. See `reportable_type_errors` for the rationale.
+    let reportable = reportable_type_errors(&result);
+    // A hard error is real only if it's a parse/compile error or a
+    // non-suppressed type error with severity Error.
+    let has_real_type_error = reportable.iter().any(|e| !e.is_warning);
+    let has_parse_errors = !result.parse_errors.is_empty();
+    let has_real_hard_errors = has_parse_errors || has_real_type_error;
+
     for err in &result.parse_errors {
         eprintln!("{err}");
     }
-    if !suppress_type_errors {
-        for err in &result.type_errors {
-            eprintln!("{err}");
-        }
+    for err in &reportable {
+        eprintln!("{err}");
     }
     for err in &result.compile_errors {
         eprintln!("{err}");
@@ -217,10 +232,8 @@ fn compile_file(path: &str) -> (Vec<Function>, String) {
         eprintln!("{err}");
     }
 
-    // Exit gate: the suppression check here MUST match the one used above.
-    // `type_errors_are_suppressed` is the single source of truth so the two
-    // can't drift apart and silently mask real type errors.
-    if result.has_hard_errors && !suppress_type_errors {
+    // Exit gate: abort iff a real (non-suppressed) hard error exists.
+    if has_real_hard_errors {
         process::exit(1);
     }
 
@@ -671,6 +684,30 @@ fn check_format(path: &str) -> bool {
     }
 }
 
+/// Heuristic: does this source look like a test-only file?
+///
+/// Returns true if the source defines any `fn test_...` function OR contains
+/// a top-level `test.` call (e.g. `test.assert_eq(...)`). Used by `silt run`
+/// to suggest `silt test` when there's no `main()`.
+///
+/// Conservative: we scan whole lines that start (after trimming whitespace)
+/// with `fn test_`, `fn skip_test_`, or `test.` so commented-out code and
+/// string literals containing those substrings don't trigger a false positive.
+fn looks_like_test_file(source: &str) -> bool {
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.starts_with("fn test_")
+            || t.starts_with("fn skip_test_")
+            || t.starts_with("pub fn test_")
+            || t.starts_with("pub fn skip_test_")
+            || t.starts_with("test.")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Recursively find all .silt files in a directory.
 fn find_silt_files(dir: &Path) -> Vec<String> {
     let mut results = Vec::new();
@@ -752,7 +789,17 @@ fn vm_run_file(path: &str) {
                 }
             }
         } else if e.message == "undefined global: main" {
-            eprintln!("{path}: program has no main() function — add one as the entry point");
+            // Detect test-only files so we can nudge the user toward `silt test`
+            // instead of the generic "add a main()" error. We do a conservative
+            // text scan for `fn test_` function definitions or top-level `test.`
+            // builtin calls — both strong signals the user meant `silt test`.
+            if looks_like_test_file(&source) {
+                eprintln!(
+                    "{path}: program has no main() function. This looks like a test file — run it with 'silt test {path}' instead."
+                );
+            } else {
+                eprintln!("{path}: program has no main() function — add one as the entry point");
+            }
         } else {
             eprintln!("{path}: {e}");
         }

@@ -33,9 +33,9 @@ fn apply_binary(stack, op_name, op_fn) {
       let rest = stack
       |> list.tail
       |> list.tail
-      let result = op_fn(a, b)
-      println("{format(a)} {op_name} {format(b)} = {format(result)}")
-      (list.prepend(rest, result), Some("{format(a)} {op_name} {format(b)} = {format(result)}"))
+      let outcome = op_fn(a, b)
+      println("{format(a)} {op_name} {format(b)} = {format(outcome)}")
+      (list.prepend(rest, outcome), Some("{format(a)} {op_name} {format(b)} = {format(outcome)}"))
     }
     _ -> {
       println("Error: need at least 2 values on stack for '{op_name}'")
@@ -52,9 +52,9 @@ fn apply_unary(stack, op_name, op_fn) {
       |> option.unwrap_or(0.0)
       let rest = stack
       |> list.tail
-      let result = op_fn(a)
-      println("{op_name}({format(a)}) = {format(result)}")
-      (list.prepend(rest, result), Some("{op_name}({format(a)}) = {format(result)}"))
+      let outcome = op_fn(a)
+      println("{op_name}({format(a)}) = {format(outcome)}")
+      (list.prepend(rest, outcome), Some("{op_name}({format(a)}) = {format(outcome)}"))
     }
     _ -> {
       println("Error: need at least 1 value on stack for '{op_name}'")
