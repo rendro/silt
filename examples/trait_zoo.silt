@@ -69,8 +69,9 @@ trait Area for Shape {
       Circle(r) -> math.pi * r * r
       Rect(w, h) -> w * h
       Triangle(a, b, c) -> {
-        let s = (a + b + c) / 2.0
-        math.sqrt(s * (s - a) * (s - b) * (s - c))
+        let s: Float = (a + b + c) / 2.0 else 0.0
+        let inner: Float = s * (s - a) * (s - b) * (s - c)
+        math.sqrt(inner) else 0.0
       }
     }
     -- Heron's formula
@@ -142,8 +143,8 @@ fn main() {
   println("")
   println("-- Math Constants --")
   println("  pi = {fmt(math.pi)}")
-  println("  sqrt(2) = {fmt(math.sqrt(2.0))}")
-  println("  sqrt(3) = {fmt(math.sqrt(3.0))}")
+  println("  sqrt(2) = {fmt(math.sqrt(2.0) else 0.0)}")
+  println("  sqrt(3) = {fmt(math.sqrt(3.0) else 0.0)}")
   -- Display colors
   println("")
   println("-- Colors --")

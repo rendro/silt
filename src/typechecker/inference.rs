@@ -9,6 +9,19 @@ impl TypeChecker {
     // ── Check function body ─────────────────────────────────────────
 
     pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
+        self.check_fn_body_with_name(f, env, f.name);
+    }
+
+    /// Like `check_fn_body`, but looks up the registered scheme under an
+    /// explicit name. Used for trait impl methods, which are registered in
+    /// the environment under `TargetType.method_name` rather than the bare
+    /// `method_name`.
+    pub(super) fn check_fn_body_with_name(
+        &mut self,
+        f: &mut FnDecl,
+        env: &TypeEnv,
+        lookup_name: Symbol,
+    ) {
         let mut local_env = env.child();
 
         // Validate where clauses
@@ -25,7 +38,7 @@ impl TypeChecker {
         }
 
         // Look up the function's registered type and instantiate it
-        let fn_scheme = match env.lookup(f.name) {
+        let fn_scheme = match env.lookup(lookup_name) {
             Some(s) => s.clone(),
             None => return, // already reported
         };
@@ -403,7 +416,8 @@ impl TypeChecker {
                         } else if let Some(entry) =
                             self.method_table.get(&(*rec_name, field)).cloned()
                         {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         } else {
@@ -438,7 +452,8 @@ impl TypeChecker {
                         }
                         // Check method table (trait methods)
                         if let Some(entry) = self.method_table.get(&(*type_name, field)).cloned() {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -468,7 +483,8 @@ impl TypeChecker {
                             _ => unreachable!(),
                         };
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -483,7 +499,8 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("List"), field)).cloned()
                         {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -494,7 +511,8 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("Tuple"), field)).cloned()
                         {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -504,7 +522,8 @@ impl TypeChecker {
                     Type::Map(_, _) => {
                         if let Some(entry) = self.method_table.get(&(intern("Map"), field)).cloned()
                         {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -514,7 +533,8 @@ impl TypeChecker {
                     Type::Set(_) => {
                         if let Some(entry) = self.method_table.get(&(intern("Set"), field)).cloned()
                         {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -529,7 +549,8 @@ impl TypeChecker {
                             .copied()
                             .unwrap_or(*variant_name);
                         if let Some(entry) = self.method_table.get(&(parent, field)).cloned() {
-                            let resolved = self.apply(&entry.method_type);
+                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }

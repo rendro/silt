@@ -1259,17 +1259,17 @@ impl Parser {
     }
 
     fn parse_index_expr(&mut self, left: Expr) -> Result<Expr> {
-        let span = left.span;
-        self.expect(&Token::LBracket)?;
-        let index = self.parse_expr()?;
-        self.expect(&Token::RBracket)?;
-        Ok(Expr::new(
-            ExprKind::Call(
-                Box::new(Expr::new(ExprKind::Ident(intern::intern("__index")), span)),
-                vec![left, index],
-            ),
-            span,
-        ))
+        // Postfix indexing (`xs[i]`) is reserved syntax but not yet implemented.
+        // Reject it with an actionable error message pointing at the typed
+        // accessors users should reach for instead.
+        let _ = left;
+        let bracket_span = self.span();
+        Err(ParseError {
+            message: "postfix indexing is not supported; use list.get(xs, i), \
+                      map.get(m, k), or string.char_at(s, i)"
+                .to_string(),
+            span: bracket_span,
+        })
     }
 
     // ── Trailing closures ────────────────────────────────────────────

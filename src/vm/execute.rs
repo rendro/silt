@@ -7,8 +7,371 @@ use crate::bytecode::{Op, VmClosure};
 use crate::scheduler::SliceResult;
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 
-use super::runtime::{CallFrame, SuspendedInvoke};
+use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{Vm, VmError};
+
+/// Kind of higher-order builtin iteration, used by `iterate_builtin` to
+/// determine how to interpret the accumulator and what to do with each
+/// callback result.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuiltinIterKind {
+    // ── list.* / set.* unary-callback iterators ───────────
+    ListMap,
+    ListFilter,
+    ListEach,
+    ListFlatMap,
+    ListFilterMap,
+    ListFind,
+    ListAny,
+    ListAll,
+    ListSortBy,
+    ListGroupBy,
+    // ── list.* / set.* fold-style iterators ────────────────
+    ListFold,
+    ListFoldUntil,
+    // ── set.* unary-callback iterators ─────────────────────
+    SetMap,
+    SetFilter,
+    SetEach,
+    SetFold,
+    // ── map.* key-value-callback iterators ─────────────────
+    MapFilter,
+    MapMap,
+    MapEach,
+}
+
+impl BuiltinIterKind {
+    fn name(self) -> &'static str {
+        match self {
+            BuiltinIterKind::ListMap => "list.map",
+            BuiltinIterKind::ListFilter => "list.filter",
+            BuiltinIterKind::ListEach => "list.each",
+            BuiltinIterKind::ListFlatMap => "list.flat_map",
+            BuiltinIterKind::ListFilterMap => "list.filter_map",
+            BuiltinIterKind::ListFind => "list.find",
+            BuiltinIterKind::ListAny => "list.any",
+            BuiltinIterKind::ListAll => "list.all",
+            BuiltinIterKind::ListSortBy => "list.sort_by",
+            BuiltinIterKind::ListGroupBy => "list.group_by",
+            BuiltinIterKind::ListFold => "list.fold",
+            BuiltinIterKind::ListFoldUntil => "list.fold_until",
+            BuiltinIterKind::SetMap => "set.map",
+            BuiltinIterKind::SetFilter => "set.filter",
+            BuiltinIterKind::SetEach => "set.each",
+            BuiltinIterKind::SetFold => "set.fold",
+            BuiltinIterKind::MapFilter => "map.filter",
+            BuiltinIterKind::MapMap => "map.map",
+            BuiltinIterKind::MapEach => "map.each",
+        }
+    }
+}
+
+/// Control flow signal returned by `apply_callback_result`.
+enum ControlFlow {
+    /// Continue iteration to the next item.
+    Continue,
+    /// Short-circuit and return the given value as the final result.
+    Short(Value),
+}
+
+/// Initial accumulator value for a given builtin kind.
+///
+/// Note: for fold-style kinds (ListFold, ListFoldUntil, SetFold), the caller
+/// is expected to seed the accumulator via a separate mechanism (the initial
+/// fold value is tracked as part of `acc` from the start — see the callers
+/// in collections.rs which pass the fold seed explicitly via `initial_acc`).
+/// This function returns a placeholder for fold kinds that must be replaced
+/// by the caller before invoking `iterate_builtin`.
+fn initial_acc(kind: BuiltinIterKind) -> BuiltinAcc {
+    match kind {
+        BuiltinIterKind::ListMap
+        | BuiltinIterKind::ListFilter
+        | BuiltinIterKind::ListFlatMap
+        | BuiltinIterKind::ListFilterMap
+        | BuiltinIterKind::SetMap
+        | BuiltinIterKind::SetFilter => BuiltinAcc::List(Vec::new()),
+        BuiltinIterKind::ListEach
+        | BuiltinIterKind::SetEach
+        | BuiltinIterKind::MapEach => BuiltinAcc::Unit,
+        BuiltinIterKind::ListFind => BuiltinAcc::Unit,
+        BuiltinIterKind::ListAny => BuiltinAcc::Fold(Value::Bool(false)),
+        BuiltinIterKind::ListAll => BuiltinAcc::Fold(Value::Bool(true)),
+        BuiltinIterKind::ListSortBy => BuiltinAcc::SortPairs(Vec::new()),
+        BuiltinIterKind::ListGroupBy => {
+            BuiltinAcc::Groups(std::collections::BTreeMap::new())
+        }
+        BuiltinIterKind::ListFold | BuiltinIterKind::ListFoldUntil | BuiltinIterKind::SetFold => {
+            // Placeholder — callers seed the accumulator by calling
+            // `iterate_builtin_with_acc` below.
+            BuiltinAcc::Fold(Value::Unit)
+        }
+        BuiltinIterKind::MapFilter | BuiltinIterKind::MapMap => {
+            BuiltinAcc::MapEntries(std::collections::BTreeMap::new())
+        }
+    }
+}
+
+/// Build the argument slice passed to the callback for a given item.
+fn callback_args_for(kind: BuiltinIterKind, acc: &BuiltinAcc, item: &Value) -> Vec<Value> {
+    match kind {
+        BuiltinIterKind::ListFold | BuiltinIterKind::ListFoldUntil | BuiltinIterKind::SetFold => {
+            // Fold callback takes (acc, item).
+            let acc_val = match acc {
+                BuiltinAcc::Fold(v) => v.clone(),
+                _ => Value::Unit,
+            };
+            vec![acc_val, item.clone()]
+        }
+        BuiltinIterKind::MapFilter | BuiltinIterKind::MapMap | BuiltinIterKind::MapEach => {
+            // map.* callback takes (key, value).  For these builtins, `item`
+            // is stored as a Tuple(k, v).
+            if let Value::Tuple(parts) = item
+                && parts.len() == 2
+            {
+                vec![parts[0].clone(), parts[1].clone()]
+            } else {
+                vec![item.clone()]
+            }
+        }
+        _ => vec![item.clone()],
+    }
+}
+
+/// Apply a callback result to the accumulator for the given builtin kind.
+/// Returns `ControlFlow::Short(val)` to short-circuit the iteration.
+fn apply_callback_result(
+    kind: BuiltinIterKind,
+    acc: &mut BuiltinAcc,
+    item: Value,
+    result: Value,
+) -> ControlFlow {
+    match kind {
+        BuiltinIterKind::ListMap | BuiltinIterKind::SetMap => {
+            if let BuiltinAcc::List(v) = acc {
+                v.push(result);
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFilter | BuiltinIterKind::SetFilter => {
+            let keep = value_is_truthy(&result);
+            if keep
+                && let BuiltinAcc::List(v) = acc
+            {
+                v.push(item);
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListEach
+        | BuiltinIterKind::SetEach
+        | BuiltinIterKind::MapEach => {
+            let _ = result;
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFlatMap => {
+            if let BuiltinAcc::List(v) = acc {
+                match result {
+                    Value::List(inner) => v.extend(inner.iter().cloned()),
+                    Value::Range(lo, hi) => {
+                        // Best-effort materialization; caller has already
+                        // checked range limits where applicable.
+                        for i in lo..=hi {
+                            v.push(Value::Int(i));
+                        }
+                    }
+                    other => v.push(other),
+                }
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFilterMap => {
+            if let BuiltinAcc::List(v) = acc {
+                match result {
+                    Value::Variant(ref tag, ref fields)
+                        if tag == "Some" && fields.len() == 1 =>
+                    {
+                        v.push(fields[0].clone());
+                    }
+                    Value::Variant(ref tag, _) if tag == "None" => {}
+                    other => v.push(other),
+                }
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFind => {
+            if value_is_truthy(&result) {
+                return ControlFlow::Short(Value::Variant("Some".into(), vec![item]));
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListAny => {
+            if value_is_truthy(&result) {
+                return ControlFlow::Short(Value::Bool(true));
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListAll => {
+            if !value_is_truthy(&result) {
+                return ControlFlow::Short(Value::Bool(false));
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListSortBy => {
+            if let BuiltinAcc::SortPairs(v) = acc {
+                v.push((result, item));
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListGroupBy => {
+            if let BuiltinAcc::Groups(m) = acc {
+                m.entry(result).or_default().push(item);
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFold | BuiltinIterKind::SetFold => {
+            if let BuiltinAcc::Fold(v) = acc {
+                *v = result;
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::ListFoldUntil => {
+            match result {
+                Value::Variant(ref tag, ref fields)
+                    if tag == "Continue" && fields.len() == 1 =>
+                {
+                    if let BuiltinAcc::Fold(v) = acc {
+                        *v = fields[0].clone();
+                    }
+                    ControlFlow::Continue
+                }
+                Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
+                    ControlFlow::Short(fields[0].clone())
+                }
+                other => {
+                    if let BuiltinAcc::Fold(v) = acc {
+                        *v = other;
+                    }
+                    ControlFlow::Continue
+                }
+            }
+        }
+        BuiltinIterKind::MapFilter => {
+            // item is Tuple(k, v); result is truthy/falsy.
+            if value_is_truthy(&result)
+                && let (BuiltinAcc::MapEntries(m), Value::Tuple(parts)) = (acc, &item)
+                && parts.len() == 2
+            {
+                m.insert(parts[0].clone(), parts[1].clone());
+            }
+            ControlFlow::Continue
+        }
+        BuiltinIterKind::MapMap => {
+            // Callback must return a (key, value) tuple.
+            if let BuiltinAcc::MapEntries(m) = acc {
+                if let Value::Tuple(pair) = result
+                    && pair.len() == 2
+                {
+                    let mut it = pair.into_iter();
+                    let k = it.next().unwrap();
+                    let v = it.next().unwrap();
+                    m.insert(k, v);
+                } else {
+                    // Type mismatch — propagate as a short-circuit error via
+                    // a Variant that the caller will catch post-iteration.
+                    // But we can't return an error from here, so we stash an
+                    // error marker by inserting a sentinel and short-circuit.
+                    return ControlFlow::Short(Value::Variant(
+                        "__MapMapTypeError__".into(),
+                        Vec::new(),
+                    ));
+                }
+            }
+            ControlFlow::Continue
+        }
+    }
+}
+
+/// Finalize the accumulator into a return Value for the given builtin kind.
+fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
+    match kind {
+        BuiltinIterKind::ListMap
+        | BuiltinIterKind::ListFilter
+        | BuiltinIterKind::ListFlatMap
+        | BuiltinIterKind::ListFilterMap => {
+            if let BuiltinAcc::List(v) = acc {
+                Value::List(Arc::new(v))
+            } else {
+                Value::List(Arc::new(Vec::new()))
+            }
+        }
+        BuiltinIterKind::SetMap | BuiltinIterKind::SetFilter => {
+            if let BuiltinAcc::List(v) = acc {
+                let set: BTreeSet<Value> = v.into_iter().collect();
+                Value::Set(Arc::new(set))
+            } else {
+                Value::Set(Arc::new(BTreeSet::new()))
+            }
+        }
+        BuiltinIterKind::ListEach
+        | BuiltinIterKind::SetEach
+        | BuiltinIterKind::MapEach => Value::Unit,
+        BuiltinIterKind::ListFind => {
+            // If we reach finalize (didn't short-circuit), no item matched.
+            Value::Variant("None".into(), Vec::new())
+        }
+        BuiltinIterKind::ListAny => Value::Bool(false),
+        BuiltinIterKind::ListAll => Value::Bool(true),
+        BuiltinIterKind::ListSortBy => {
+            if let BuiltinAcc::SortPairs(mut pairs) = acc {
+                pairs.sort_by(|(a, _), (b, _)| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
+                Value::List(Arc::new(sorted))
+            } else {
+                Value::List(Arc::new(Vec::new()))
+            }
+        }
+        BuiltinIterKind::ListGroupBy => {
+            if let BuiltinAcc::Groups(groups) = acc {
+                let result: BTreeMap<Value, Value> = groups
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::List(Arc::new(v))))
+                    .collect();
+                Value::Map(Arc::new(result))
+            } else {
+                Value::Map(Arc::new(BTreeMap::new()))
+            }
+        }
+        BuiltinIterKind::ListFold
+        | BuiltinIterKind::ListFoldUntil
+        | BuiltinIterKind::SetFold => {
+            if let BuiltinAcc::Fold(v) = acc {
+                v
+            } else {
+                Value::Unit
+            }
+        }
+        BuiltinIterKind::MapFilter | BuiltinIterKind::MapMap => {
+            if let BuiltinAcc::MapEntries(m) = acc {
+                Value::Map(Arc::new(m))
+            } else {
+                Value::Map(Arc::new(BTreeMap::new()))
+            }
+        }
+    }
+}
+
+/// Truthiness helper that mirrors `Vm::is_truthy` but is a free function so
+/// it can be used from the stateless helpers above.
+fn value_is_truthy(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        Value::Unit => false,
+        _ => true,
+    }
+}
 
 /// Result of dispatching a single opcode.
 pub(super) enum DispatchResult {
@@ -386,6 +749,186 @@ impl Vm {
                     return Err(e);
                 }
             }
+        }
+    }
+
+    // ── Higher-order builtin iteration helper ─────────────────────
+
+    /// Run a callback over each item, accumulating results, with correct
+    /// yield/resume handling.
+    ///
+    /// This is the shared driver for all higher-order builtins (`list.map`,
+    /// `list.filter`, `list.fold`, `set.map`, `map.filter`, etc.).  When the
+    /// callback yields (e.g. because it contains an IO call), this function:
+    ///   1. Saves its partial iteration state into `self.suspended_builtin`
+    ///      (the current index, accumulator, callback, and items).
+    ///   2. Re-pushes the builtin's original args so the outer `CallBuiltin`
+    ///      opcode will re-dispatch the same builtin on resume.
+    ///   3. Returns `Err(yield)` so the yield propagates to the scheduler.
+    ///
+    /// On resume, the outer `CallBuiltin` re-pops the args and re-enters this
+    /// helper.  The helper detects that `suspended_builtin` matches the same
+    /// kind, restores state, and — if `suspended_invoke` is also set (because
+    /// the callback was mid-execution when it yielded) — resumes the callback
+    /// via `resume_suspended_invoke` to get its final result before advancing.
+    ///
+    /// The `items` vector should be a fresh materialization of the iteration
+    /// source on first call.  On resume (detected by `suspended_builtin`),
+    /// items are restored from the saved state and the passed-in `items` is
+    /// discarded.
+    ///
+    /// `original_args` is the list of `Value`s that will be re-pushed onto the
+    /// VM stack on yield so that `CallBuiltin` can re-read them on resume.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn iterate_builtin(
+        &mut self,
+        kind: BuiltinIterKind,
+        items: Vec<Value>,
+        callback: Value,
+        original_args: &[Value],
+    ) -> Result<Value, VmError> {
+        self.iterate_builtin_with_acc(kind, items, callback, initial_acc(kind), original_args)
+    }
+
+    /// Like `iterate_builtin`, but lets callers supply an explicit initial
+    /// accumulator.  Used by fold-style builtins (`list.fold`,
+    /// `list.fold_until`, `set.fold`) to seed the accumulator.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn iterate_builtin_with_acc(
+        &mut self,
+        kind: BuiltinIterKind,
+        items: Vec<Value>,
+        callback: Value,
+        seeded_acc: BuiltinAcc,
+        original_args: &[Value],
+    ) -> Result<Value, VmError> {
+        // ── Restore state from a prior yield, if any ──────────
+        let (items, mut index, mut acc, callback) = {
+            let fresh_items = items;
+            let fresh_callback = callback;
+            let fresh_acc = seeded_acc;
+            if let Some(susp) = self.suspended_builtin.take() {
+                if susp.name == kind.name() {
+                    (susp.items, susp.next_index, susp.acc, susp.callback)
+                } else {
+                    // The suspended state belongs to a different builtin.
+                    // Restore it and start fresh — this shouldn't happen in
+                    // practice because yields propagate immediately, but be
+                    // safe and put it back so the correct builtin can pick
+                    // it up.
+                    self.suspended_builtin = Some(susp);
+                    (fresh_items, 0, fresh_acc, fresh_callback)
+                }
+            } else {
+                (fresh_items, 0, fresh_acc, fresh_callback)
+            }
+        };
+
+        // `items` and `callback` are owned locals that may be moved into
+        // `SuspendedBuiltin` on a yield.  They don't need to be declared
+        // `mut` because the moves happen in terminating branches.
+
+        // ── If the callback was mid-execution on yield, finish it now ──
+        if self.suspended_invoke.is_some() {
+            let callback_result = match self.resume_suspended_invoke() {
+                Ok(v) => v,
+                Err(e) if e.is_yield => {
+                    // Still yielding — stash our state and re-push args.
+                    self.suspended_builtin = Some(SuspendedBuiltin {
+                        name: kind.name().to_string(),
+                        items,
+                        next_index: index,
+                        callback,
+                        acc,
+                    });
+                    for a in original_args {
+                        self.push(a.clone());
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            };
+            // The callback that yielded was processing items[index].  Apply
+            // its result to the accumulator and advance the index.
+            if index < items.len() {
+                let item = items[index].clone();
+                match apply_callback_result(kind, &mut acc, item, callback_result) {
+                    ControlFlow::Continue => index += 1,
+                    ControlFlow::Short(val) => {
+                        return Ok(val);
+                    }
+                }
+            } else {
+                // Shouldn't happen — defensive.
+                return Err(VmError::new(
+                    "internal: iterate_builtin resumed with stale index".into(),
+                ));
+            }
+        }
+
+        // ── Main iteration loop ──────────────────────────────
+        loop {
+            if index >= items.len() {
+                break;
+            }
+            let item = items[index].clone();
+            let cb_args = callback_args_for(kind, &acc, &item);
+            let invoke_result = self.invoke_callable(&callback, &cb_args);
+            match invoke_result {
+                Ok(v) => match apply_callback_result(kind, &mut acc, item, v) {
+                    ControlFlow::Continue => index += 1,
+                    ControlFlow::Short(val) => return Ok(val),
+                },
+                Err(e) if e.is_yield => {
+                    // Callback yielded.  Save state and re-push args.
+                    self.suspended_builtin = Some(SuspendedBuiltin {
+                        name: kind.name().to_string(),
+                        items,
+                        next_index: index,
+                        callback,
+                        acc,
+                    });
+                    for a in original_args {
+                        self.push(a.clone());
+                    }
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        // ── Finalize accumulator into return value ───────────
+        // Explicit drops to anchor the lifetime of `items`/`callback` past
+        // the loop even when all callback invocations succeeded.
+        drop(items);
+        drop(callback);
+        Ok(finalize_acc(kind, acc))
+    }
+
+    /// Check `suspended_invoke` on entry to a single-callback builtin
+    /// (e.g. `result.map_ok`).  If set, resume it and return the callback's
+    /// result.  Otherwise, invoke the callback fresh.  On yield, re-push
+    /// the passed `original_args` so the outer `CallBuiltin` can re-dispatch.
+    pub(crate) fn invoke_callable_resumable(
+        &mut self,
+        callback: &Value,
+        cb_args: &[Value],
+        original_args: &[Value],
+    ) -> Result<Value, VmError> {
+        let result = if self.suspended_invoke.is_some() {
+            self.resume_suspended_invoke()
+        } else {
+            self.invoke_callable(callback, cb_args)
+        };
+        match result {
+            Ok(v) => Ok(v),
+            Err(e) if e.is_yield => {
+                for a in original_args {
+                    self.push(a.clone());
+                }
+                Err(e)
+            }
+            Err(e) => Err(e),
         }
     }
 

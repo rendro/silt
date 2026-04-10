@@ -7,7 +7,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use crate::value::{TaskHandle, Value, checked_range_len};
-use crate::vm::{BlockReason, Vm, VmError};
+use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
 
@@ -776,25 +776,51 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                     "regex.replace_all_with requires a string text".into(),
                 ));
             };
-            let callback = args[2].clone();
+            // Materialize match spans and match texts.  Spans are re-derived
+            // deterministically from (pattern, text) on resume so we don't
+            // need to persist them.
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?.clone();
+            let mut spans: Vec<(usize, usize)> = Vec::new();
+            let mut items: Vec<Value> = Vec::new();
+            for m in re.find_iter(text) {
+                spans.push((m.start(), m.end()));
+                items.push(Value::String(m.as_str().to_string()));
+            }
+            // Use iterate_builtin with ListMap semantics to collect the
+            // replacement strings, with correct yield/resume handling.
+            let replacements_val = vm.iterate_builtin(
+                BuiltinIterKind::ListMap,
+                items,
+                args[2].clone(),
+                args,
+            )?;
+            let Value::List(replacements) = replacements_val else {
+                return Err(VmError::new(
+                    "internal: regex.replace_all_with iterate_builtin returned non-list".into(),
+                ));
+            };
+            // Validate that all callback results are strings.
+            for val in replacements.iter() {
+                if !matches!(val, Value::String(_)) {
+                    return Err(VmError::new(
+                        "regex.replace_all_with callback must return a string".into(),
+                    ));
+                }
+            }
+            // Interleave text slices and replacements.
+            let Value::String(text_string) = &args[1] else {
+                unreachable!();
+            };
             let mut result = std::string::String::new();
             let mut last_end = 0;
-            for m in re.find_iter(text) {
-                result.push_str(&text[last_end..m.start()]);
-                let replacement =
-                    vm.invoke_callable(&callback, &[Value::String(m.as_str().to_string())])?;
-                match replacement {
-                    Value::String(s) => result.push_str(&s),
-                    _ => {
-                        return Err(VmError::new(
-                            "regex.replace_all_with callback must return a string".into(),
-                        ));
-                    }
+            for ((start, end), replacement) in spans.iter().zip(replacements.iter()) {
+                result.push_str(&text_string[last_end..*start]);
+                if let Value::String(s) = replacement {
+                    result.push_str(s);
                 }
-                last_end = m.end();
+                last_end = *end;
             }
-            result.push_str(&text[last_end..]);
+            result.push_str(&text_string[last_end..]);
             Ok(Value::String(result))
         }
         "captures" => {

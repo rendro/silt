@@ -23,6 +23,164 @@ struct TrailingComment {
     text: String, // the comment text including `--` prefix
 }
 
+/// Classification of each source line with respect to triple-quoted strings.
+///
+/// `Code` — the whole line is code (or comment, or blank).
+/// `InsideTriple` — the line is entirely inside a `"""..."""` block (raw
+///     content) and must never be classified as a comment.
+/// `TripleEnds { opened_line, after_close }` — the line contains the closing
+///     `"""` of a triple-string that opened on `opened_line` (1-based). The
+///     portion of the line after the closing `"""` starts at byte index
+///     `after_close` and may carry a trailing comment; that comment logically
+///     belongs to the statement that started on `opened_line`.
+#[derive(Debug, Clone, Copy)]
+enum LineKind {
+    Code,
+    InsideTriple,
+    TripleEnds {
+        opened_line: usize,
+        after_close: usize,
+    },
+}
+
+/// Walk the source once and classify each line by triple-string state.
+///
+/// The scan follows the lexer's rules: a `"""` always opens or closes a
+/// triple-quoted string (outside of any other context), and the content
+/// between opening and closing `"""` is raw (no escapes, no interpolation,
+/// no nested strings). Regular double-quoted strings are single-line in
+/// Silt, so they cannot straddle lines.
+fn classify_lines(source: &str) -> Vec<LineKind> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut result = vec![LineKind::Code; lines.len()];
+    // 1-based line number where the currently-open triple-string started,
+    // or None when not inside one.
+    let mut open_at: Option<usize> = None;
+
+    for (idx, line) in lines.iter().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let mut j = 0;
+
+        if let Some(start_line) = open_at {
+            // We began this line inside a triple-string. Scan for the
+            // closing `"""`; everything before it is raw content.
+            let mut closed_at: Option<usize> = None;
+            while j + 3 <= chars.len() {
+                if chars[j] == '"' && chars[j + 1] == '"' && chars[j + 2] == '"' {
+                    closed_at = Some(j + 3);
+                    break;
+                }
+                j += 1;
+            }
+            match closed_at {
+                Some(end) => {
+                    result[idx] = LineKind::TripleEnds {
+                        opened_line: start_line,
+                        after_close: end,
+                    };
+                    open_at = None;
+                    j = end;
+                }
+                None => {
+                    result[idx] = LineKind::InsideTriple;
+                    continue;
+                }
+            }
+        }
+
+        // Scan the remainder of this line (outside any triple-string) for
+        // the next `"""` that would open a new one. Regular `"..."` and
+        // `{- ... -}` contexts must be respected so we don't mistake a `"""`
+        // inside a line comment or regular string for the start of a raw
+        // string. Since `--` and `{-` start contexts that end at end-of-line
+        // (for `--`) or close later, we can be conservative: once we hit
+        // `--`, stop. For `"`, skip characters until the matching `"`. For
+        // `{-`, skip until matching `-}` on the same line (or end).
+        let mut in_string = false;
+        let mut block_depth: usize = 0;
+        while j < chars.len() {
+            let ch = chars[j];
+            if in_string {
+                if ch == '\\' && j + 1 < chars.len() {
+                    j += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    in_string = false;
+                }
+                j += 1;
+                continue;
+            }
+            if block_depth > 0 {
+                if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '}' {
+                    block_depth -= 1;
+                    j += 2;
+                    continue;
+                }
+                if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
+                    block_depth += 1;
+                    j += 2;
+                    continue;
+                }
+                j += 1;
+                continue;
+            }
+            // Line comment — stop scanning this line.
+            if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '-' {
+                break;
+            }
+            // Block comment start
+            if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
+                block_depth += 1;
+                j += 2;
+                continue;
+            }
+            // Triple-quoted string: `"""`
+            if ch == '"'
+                && j + 3 <= chars.len()
+                && chars[j + 1] == '"'
+                && chars[j + 2] == '"'
+            {
+                // Opens a triple string on this line (idx+1 is 1-based).
+                open_at = Some(idx + 1);
+                j += 3;
+                // Check if it also closes on the same line.
+                let mut k = j;
+                let mut same_line_close: Option<usize> = None;
+                while k + 3 <= chars.len() {
+                    if chars[k] == '"' && chars[k + 1] == '"' && chars[k + 2] == '"' {
+                        same_line_close = Some(k + 3);
+                        break;
+                    }
+                    k += 1;
+                }
+                if let Some(end) = same_line_close {
+                    open_at = None;
+                    j = end;
+                    continue;
+                } else {
+                    // Stays open into next line. Remainder of this line is
+                    // raw content, not code. We leave this line as-is in
+                    // `result[idx]` (Code), because the opening portion up
+                    // to `"""` is still code that may have e.g. a `let x =`
+                    // prefix. The classifier only matters for detecting
+                    // that subsequent lines are `InsideTriple`.
+                    break;
+                }
+            }
+            // Regular double-quoted string
+            if ch == '"' {
+                in_string = true;
+                j += 1;
+                continue;
+            }
+            j += 1;
+        }
+    }
+
+    result
+}
+
 /// Extract standalone comments and trailing comments from source text.
 ///
 /// A "standalone" comment is one that occupies its own line(s) — the line has
@@ -34,10 +192,40 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
     let mut comments = Vec::new();
     let mut trailing = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
+    let line_kinds = classify_lines(source);
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim();
+
+        // Lines that are entirely inside a triple-quoted string are raw
+        // content and never classify as comments.
+        if matches!(line_kinds[i], LineKind::InsideTriple) {
+            i += 1;
+            continue;
+        }
+
+        // For a line that contains the closing `"""` of a triple-string,
+        // the raw-content portion is before the `"""`. We still want to
+        // extract any trailing comment that appears *after* the closing
+        // `"""`, but attribute it to the *opening* line of the string so
+        // that the statement that owns the string can pick it up even
+        // after the formatter collapses the string.
+        if let LineKind::TripleEnds {
+            opened_line,
+            after_close,
+        } = line_kinds[i]
+        {
+            let tail: String = line.chars().skip(after_close).collect();
+            if let Some(comment_text) = extract_trailing_comment_from_line(&tail) {
+                trailing.push(TrailingComment {
+                    line: opened_line,
+                    text: comment_text,
+                });
+            }
+            i += 1;
+            continue;
+        }
 
         // Line comment: entire line is `-- ...`
         if trimmed.starts_with("--") {

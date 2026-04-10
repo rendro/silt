@@ -162,14 +162,14 @@ fn main() {
             }
           }
           "sqrt" -> {
-            let (s, e) = apply_unary(stack, "sqrt") { a -> math.sqrt(a) }
+            let (s, e) = apply_unary(stack, "sqrt") { a -> math.sqrt(a) else 0.0 }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
             }
           }
           "pow" -> {
-            let (s, e) = apply_binary(stack, "pow") { a, b -> math.pow(a, b) }
+            let (s, e) = apply_binary(stack, "pow") { a, b -> math.pow(a, b) else 0.0 }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)
@@ -190,7 +190,7 @@ fn main() {
             }
           }
           "log" -> {
-            let (s, e) = apply_unary(stack, "log") { a -> math.log(a) }
+            let (s, e) = apply_unary(stack, "log") { a -> math.log(a) else 0.0 }
             match e {
               Some(h) -> loop(s, list.append(history, h))
               None -> loop(s, history)

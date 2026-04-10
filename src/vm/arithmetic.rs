@@ -135,7 +135,24 @@ impl Vm {
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a
                 .partial_cmp(b)
                 .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
+            // Mixed Float/ExtFloat: the typechecker permits this pair for
+            // ordering comparisons, so widen the `Float` operand to `ExtFloat`
+            // and compare as f64.
+            (Value::Float(a), Value::ExtFloat(b)) => a
+                .partial_cmp(b)
+                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
+            (Value::ExtFloat(a), Value::Float(b)) => a
+                .partial_cmp(b)
+                .ok_or_else(|| VmError::new("cannot compare NaN values".to_string()))?,
             (Value::String(a), Value::String(b)) => a.cmp(b),
+            // List vs List and the mixed List/Range pairings share the same
+            // Silt type (`List(T)`), so must be ordered element-wise. The
+            // `Value::cmp` impl already handles every pairing, including
+            // Range vs List, so defer to it.
+            (Value::List(_), Value::List(_))
+            | (Value::List(_), Value::Range(..))
+            | (Value::Range(..), Value::List(_))
+            | (Value::Range(..), Value::Range(..)) => a.cmp(&b),
             (Value::Record(na, _), Value::Record(nb, _)) if na == nb => a.cmp(&b),
             (Value::Variant(..), Value::Variant(..)) => a.cmp(&b),
             _ => {
@@ -152,12 +169,20 @@ impl Vm {
 
     // ── Type compatibility ────────────────────────────────────────
 
-    /// Returns a discriminant for comparing value types.
+    /// Returns a discriminant used by [`check_same_type`] to decide whether
+    /// two values may be compared for equality. Silt types that the
+    /// typechecker treats interchangeably share a discriminant:
+    /// `Float`/`ExtFloat` (the typechecker permits mixed equality and
+    /// ordering without unifying them) and `List`/`Range` (a range has
+    /// type `List(Int)`).
     pub(super) fn value_disc(val: &Value) -> u8 {
         match val {
             Value::Int(_) => 0,
-            Value::Float(_) => 1,
-            Value::ExtFloat(_) => 2,
+            // Float and ExtFloat share a discriminant so `check_same_type`
+            // accepts the mixed pair that the typechecker permits. The VM
+            // falls through to `Value::eq`, which widens to f64 for both
+            // variants.
+            Value::Float(_) | Value::ExtFloat(_) => 1,
             Value::Bool(_) => 3,
             Value::String(_) => 4,
             Value::List(_) | Value::Range(..) => 5,

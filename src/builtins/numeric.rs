@@ -158,14 +158,34 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "to_string" => {
-            if args.len() != 2 {
-                return Err(VmError::new("float.to_string takes 2 arguments".into()));
+            // Accepts (Float) or (Float, Int). The documented 2-arg form
+            // formats with a fixed number of decimal places; the 1-arg form
+            // uses the shortest round-trippable representation (Rust's
+            // default `Display` for `f64`). The 1-arg form exists because
+            // the typechecker tolerates arity ±1 for module-qualified calls
+            // via `FieldAccess` and some call sites rely on that, so the
+            // runtime mirrors that tolerance rather than erroring.
+            if args.is_empty() || args.len() > 2 {
+                return Err(VmError::new(
+                    "float.to_string takes 1 or 2 arguments".into(),
+                ));
             }
             let f = match &args[0] {
                 Value::Float(f) => *f,
                 Value::ExtFloat(f) => *f,
                 _ => return Err(VmError::new("float.to_string requires a float".into())),
             };
+            if args.len() == 1 {
+                // Shortest round-trippable representation. Force a decimal
+                // point for whole-number floats so the result always parses
+                // as a float (e.g. `3.0` instead of `3`).
+                let s = if f.is_finite() && f.fract() == 0.0 && !f.is_nan() {
+                    format!("{f:.1}")
+                } else {
+                    format!("{f}")
+                };
+                return Ok(Value::String(s));
+            }
             let Value::Int(decimals) = &args[1] else {
                 return Err(VmError::new(
                     "float.to_string requires an int for decimals".into(),

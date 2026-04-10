@@ -228,7 +228,7 @@ let timer = channel.timeout(5000)  -- closes after 5 seconds
 match channel.select([ch, timer]) {
   (^ch, Message(val))  -> println("got: {val}")
   (^timer, Closed)     -> println("timed out after 5s")
-  _                    -> unit
+  _                    -> ()
 }
 ```
 
@@ -315,7 +315,7 @@ match channel.select([ch1, ch2]) {
   (^ch1, Message(val))  -> handle_input(val)
   (^ch2, Message(val))  -> handle_other(val)
   (_, Closed)           -> println("all done")
-  _                     -> unit
+  _                     -> ()
 }
 ```
 
@@ -557,7 +557,7 @@ fn main() {
         println("a channel closed")
         return ()
       }
-      _ -> unit
+      _ -> ()
     }
   }
 }

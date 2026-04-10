@@ -44,7 +44,7 @@ No module qualification is needed once imported.
 | `Empty` | `ChannelResult(a)` | `import channel` | Channel buffer empty (non-blocking receive) |
 | `Sent` | `ChannelResult(a)` | `import channel` | Reserved for future select-send support |
 | `Monday`..`Sunday` | `Weekday` | `import time` | Day-of-week constructors |
-| `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | `HttpMethod` | `import http` | HTTP method constructors |
+| `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | `Method` | `import http` | HTTP method constructors |
 
 
 ## `print`

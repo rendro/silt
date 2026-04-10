@@ -336,6 +336,22 @@ fn main() {
                         eprintln!("--filter requires a pattern");
                         process::exit(1);
                     }
+                } else if args[i] == "--help" || args[i] == "-h" {
+                    eprintln!("Usage: silt test [--filter <pattern>] [file]");
+                    eprintln!();
+                    eprintln!("Options:");
+                    eprintln!("  --filter <pat>   Only run tests whose name contains <pat>");
+                    process::exit(0);
+                } else if args[i].starts_with('-') {
+                    // Unknown flag — don't silently treat as a filename.
+                    let suggestion = match args[i].as_str() {
+                        "--filters" | "-filter" | "-f" => " (did you mean --filter?)",
+                        "--h" | "-help" => " (did you mean --help?)",
+                        _ => "",
+                    };
+                    eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
+                    eprintln!("Run 'silt test --help' for usage.");
+                    process::exit(1);
                 } else {
                     file = Some(args[i].clone());
                     i += 1;
@@ -407,6 +423,16 @@ fn main() {
                     eprintln!("Options:");
                     eprintln!("  --check    Check formatting without modifying files");
                     process::exit(0);
+                } else if arg.starts_with('-') {
+                    // Unknown flag — don't silently treat as a filename.
+                    let suggestion = match arg.as_str() {
+                        "--checks" | "--Check" | "-check" | "-c" => " (did you mean --check?)",
+                        "--h" | "-help" => " (did you mean --help?)",
+                        _ => "",
+                    };
+                    eprintln!("silt fmt: unknown flag '{arg}'{suggestion}");
+                    eprintln!("Run 'silt fmt --help' for usage.");
+                    process::exit(1);
                 } else {
                     files.push(arg.clone());
                 }

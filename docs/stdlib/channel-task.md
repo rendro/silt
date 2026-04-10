@@ -102,7 +102,7 @@ fn main() {
     match channel.receive(ch) {
         Message(v) -> println(v)
         Closed -> println("done")
-        _ -> unit
+        _ -> ()
     }
 }
 ```
@@ -126,7 +126,7 @@ fn main() {
     match channel.select([ch1, ch2]) {
         (^ch2, Message(val)) -> println(val)  -- "hello"
         (_, Closed) -> println("closed")
-        _ -> unit
+        _ -> ()
     }
 }
 ```
@@ -166,7 +166,7 @@ fn main() {
     match channel.select([ch, timer]) {
         (^ch, Message(val)) -> println("got: {val}")
         (^timer, Closed) -> println("timed out")
-        _ -> unit
+        _ -> ()
     }
 }
 ```
@@ -189,7 +189,7 @@ fn main() {
         Message(v) -> println(v)
         Empty -> println("nothing yet")
         Closed -> println("done")
-        _ -> unit
+        _ -> ()
     }
 }
 ```

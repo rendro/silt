@@ -1443,10 +1443,13 @@ impl TypeChecker {
         );
 
         // float.to_string: (Float, Int) -> String
-        // The second argument (decimal places) is optional at runtime;
-        // registering the 2-arg form lets the typechecker validate both
-        // arguments.  The 1-arg call still passes the arity check because
-        // module-qualified calls go through FieldAccess which permits ±1.
+        // The second argument (decimal places) is optional at runtime: the
+        // 1-arg form uses a shortest round-trippable representation, and
+        // the 2-arg form formats with a fixed number of decimal places.
+        // Registering the 2-arg form lets the typechecker validate both
+        // arguments; the 1-arg call still passes the arity check because
+        // module-qualified calls go through FieldAccess which permits ±1,
+        // and the runtime honours that tolerance to match.
         env.define(
             intern("float.to_string"),
             Scheme::mono(Type::Fun(
@@ -2322,12 +2325,15 @@ impl TypeChecker {
             env.define(intern(name), string_to_bool.clone());
         }
 
-        // fs.list_dir: (String) -> List(String)
+        // fs.list_dir: (String) -> Result(List(String), String)
         env.define(
             intern("fs.list_dir"),
             Scheme::mono(Type::Fun(
                 vec![Type::String],
-                Box::new(Type::List(Box::new(Type::String))),
+                Box::new(Type::Generic(
+                    intern("Result"),
+                    vec![Type::List(Box::new(Type::String)), Type::String],
+                )),
             )),
         );
 
@@ -2607,6 +2613,27 @@ impl TypeChecker {
                         ],
                         Box::new(Type::Unit),
                     ),
+                    constraints: vec![],
+                },
+            );
+        }
+
+        // channel.timeout: (Int) -> Channel(a)
+        //
+        // Creates a channel that automatically closes after the given number
+        // of milliseconds. The returned channel carries no values -- the
+        // runtime never sends on it, it just closes it when the deadline
+        // elapses. A polymorphic element type lets the result be mixed into
+        // a `channel.select` alongside channels of any element type (the
+        // element will never actually be observed because the channel closes
+        // before any `Message` arrives).
+        {
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("channel.timeout"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(vec![Type::Int], Box::new(Type::Channel(Box::new(a)))),
                     constraints: vec![],
                 },
             );

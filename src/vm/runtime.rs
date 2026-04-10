@@ -38,6 +38,47 @@ pub(crate) struct SuspendedInvoke {
     pub(crate) func_slot: usize,
 }
 
+// ── Suspended higher-order builtin iteration ────────────────────
+
+/// Accumulator shapes for higher-order builtins that have been suspended
+/// mid-iteration because their callback yielded.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum BuiltinAcc {
+    /// No accumulator (e.g. `each`).
+    Unit,
+    /// A growing list of values (e.g. `map`, `filter`, `flat_map`, `set.map`).
+    List(Vec<Value>),
+    /// A running fold value (e.g. `fold`, `fold_until`).
+    Fold(Value),
+    /// Sort-key/item pairs (e.g. `sort_by`).
+    SortPairs(Vec<(Value, Value)>),
+    /// Group-by accumulator.
+    Groups(std::collections::BTreeMap<Value, Vec<Value>>),
+    /// Map entries accumulator (e.g. `map.filter`, `map.map`).
+    MapEntries(std::collections::BTreeMap<Value, Value>),
+}
+
+/// State for a higher-order builtin whose callback yielded mid-iteration.
+///
+/// When a callback (e.g. `io.read_file` inside a `list.map`) yields, the
+/// builtin stashes its partial state here and re-pushes its own args so the
+/// outer `CallBuiltin` opcode will re-dispatch it on resume.  The builtin
+/// then picks up from `next_index` using `acc` as its running accumulator.
+pub(crate) struct SuspendedBuiltin {
+    /// Qualified name of the builtin (e.g. "list.map") for validation.
+    pub(crate) name: String,
+    /// The materialized list of items being iterated over.  Stored as a
+    /// `Vec<Value>` rather than re-iterating the original collection so that
+    /// Range and lazy iterators work correctly across yields.
+    pub(crate) items: Vec<Value>,
+    /// Index of the next item to process (0-indexed into `items`).
+    pub(crate) next_index: usize,
+    /// The callback value (closure or BuiltinFn).
+    pub(crate) callback: Value,
+    /// The accumulator so far.
+    pub(crate) acc: BuiltinAcc,
+}
+
 // ── Block reason (for M:N scheduler) ────────────────────────────
 
 /// Describes whether a select operation is a receive or send.

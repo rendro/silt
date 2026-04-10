@@ -437,6 +437,27 @@ impl TypeChecker {
         self.instantiate_with_constraints(scheme).0
     }
 
+    /// Instantiate a `MethodEntry`'s template type by generating fresh type
+    /// variables for every free type variable in it.
+    ///
+    /// Method entries store a raw `Type` (not a `Scheme`) for historical
+    /// reasons. Without this instantiation, the first call to a polymorphic
+    /// auto-derived method (e.g. `equal`) would permanently bind its
+    /// parameter type variables via unification, breaking subsequent calls
+    /// with different argument types.
+    pub(super) fn instantiate_method_type(&mut self, ty: &Type) -> Type {
+        let ty = self.apply(ty);
+        let fvs = free_vars_in(&ty);
+        if fvs.is_empty() {
+            return ty;
+        }
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        for v in fvs {
+            mapping.insert(v, self.fresh_var());
+        }
+        substitute_vars(&ty, &mapping)
+    }
+
     /// Instantiate a scheme and remap its where clause constraints.
     /// Returns (instantiated_type, remapped_constraints).
     pub(super) fn instantiate_with_constraints(
@@ -690,6 +711,30 @@ impl TypeChecker {
                         *span,
                     );
                 }
+            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
+                let module_str = resolve(*module);
+                if crate::module::is_builtin_module(&module_str) {
+                    // Built-in module names are already bound via register_builtins
+                    // under their `module.func` qualified form — no additional
+                    // action required here.
+                } else {
+                    // Non-builtin (user) module: the compiler handles these at
+                    // link time. Emit the same "unknown module" warning we use
+                    // for Items/Alias so the CLI's diagnostic-suppression
+                    // heuristic in main.rs fires, and add a minimal binding for
+                    // the module name itself so downstream `module.foo(...)`
+                    // calls don't cascade into "undefined variable" errors.
+                    self.warning(
+                        format!(
+                            "unknown module '{module_str}'; imported module will not be type-checked"
+                        ),
+                        *span,
+                    );
+                    // Bind the module name to a fresh variable so member access
+                    // on it degrades gracefully rather than failing lookup.
+                    let placeholder = self.fresh_var();
+                    env.define(*module, Scheme::mono(placeholder));
+                }
             }
         }
 
@@ -760,8 +805,11 @@ impl TypeChecker {
         }
         for i in 0..program.decls.len() {
             if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                let target = ti.target_type;
                 for j in 0..ti.methods.len() {
-                    self.check_fn_body(&mut ti.methods[j], &env);
+                    let method_name = ti.methods[j].name;
+                    let key = intern(&format!("{target}.{method_name}"));
+                    self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
                 }
             }
         }
@@ -802,8 +850,11 @@ impl TypeChecker {
                 }
                 for i in 0..program.decls.len() {
                     if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                        let target = ti.target_type;
                         for j in 0..ti.methods.len() {
-                            self.check_fn_body(&mut ti.methods[j], &env);
+                            let method_name = ti.methods[j].name;
+                            let key = intern(&format!("{target}.{method_name}"));
+                            self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
                         }
                     }
                 }
@@ -851,11 +902,14 @@ impl TypeChecker {
             for (method_name, trait_method_type) in &trait_info.methods {
                 let key = (*type_name, *method_name);
                 if let Some(entry) = self.method_table.get(&key) {
-                    let impl_type = entry.method_type.clone();
+                    let stored_impl_type = entry.method_type.clone();
                     let impl_span = entry.span;
-                    // Instantiate the trait method type with fresh variables so
-                    // that unification doesn't permanently bind trait-level vars
-                    // (which would break validation of other impls).
+                    // Instantiate BOTH the impl's stored template and the
+                    // trait's declared type with fresh variables so that
+                    // unification doesn't permanently bind either — the
+                    // stored method_table entries are templates reused by
+                    // every lookup site via `instantiate_method_type`.
+                    let impl_type = self.instantiate_method_type(&stored_impl_type);
                     let fvs = free_vars_in(trait_method_type);
                     let mapping: HashMap<TyVar, Type> =
                         fvs.into_iter().map(|v| (v, self.fresh_var())).collect();
@@ -1085,8 +1139,10 @@ impl TypeChecker {
                 match name_str.as_str() {
                     "Int" => Type::Int,
                     "Float" => Type::Float,
+                    "ExtFloat" => Type::ExtFloat,
                     "Bool" => Type::Bool,
                     "String" => Type::String,
+                    "()" | "Unit" => Type::Unit,
                     "List" => {
                         // List without explicit type param => List(fresh_var)
                         Type::List(Box::new(self.fresh_var()))
@@ -1153,6 +1209,10 @@ impl TypeChecker {
                 }
             }
             TypeExpr::Tuple(elems) => {
+                // `()` is the canonical unit type — not a zero-arity tuple.
+                if elems.is_empty() {
+                    return Type::Unit;
+                }
                 let types: Vec<Type> = elems
                     .iter()
                     .map(|e| self.resolve_type_expr(e, param_vars))
@@ -1318,13 +1378,19 @@ impl TypeChecker {
 
         let self_type = Self::type_from_name(ti.target_type);
 
+        let self_sym = intern("self");
         for method in &ti.methods {
             let mut param_map = HashMap::new();
             param_map.insert(intern("Self"), self_type.clone());
             let mut param_types = Vec::new();
-            for param in &method.params {
+            for (i, param) in method.params.iter().enumerate() {
                 let ty = if let Some(te) = &param.ty {
                     self.resolve_type_expr(te, &mut param_map)
+                } else if i == 0 && matches!(&param.pattern, Pattern::Ident(n) if *n == self_sym) {
+                    // Bare `self` parameter in a trait impl: type it as the
+                    // target type so field/method accesses on `self` are
+                    // properly checked against the impl's target.
+                    self_type.clone()
                 } else {
                     self.fresh_var()
                 };
@@ -1338,7 +1404,10 @@ impl TypeChecker {
 
             let fn_type = Type::Fun(param_types, Box::new(ret_type));
 
-            // New: populate method_table.
+            // New: populate method_table. Store the raw template type —
+            // lookup sites wrap it in a scheme and instantiate to get fresh
+            // type variables per call (otherwise the first call would
+            // permanently bind polymorphic params via unification).
             self.method_table.insert(
                 (ti.target_type, method.name),
                 MethodEntry {
@@ -1516,7 +1585,9 @@ impl ReplTypeContext {
             );
         }
 
-        // Register builtin trait implementations for primitive types
+        // Register builtin trait implementations for primitive types.
+        // Each insert uses a `Scheme` with the free vars quantified so
+        // lookup sites can instantiate and get fresh type variables.
         {
             let dummy_span = Span {
                 line: 0,
@@ -1525,37 +1596,42 @@ impl ReplTypeContext {
             };
             let primitive_types = ["Int", "Float", "Bool", "String", "()"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
-            let trait_methods: &[(&str, Type)] = &[
-                (
-                    "display",
-                    Type::Fun(vec![checker.fresh_var()], Box::new(Type::String)),
-                ),
-                (
-                    "equal",
-                    Type::Fun(
-                        vec![checker.fresh_var(), checker.fresh_var()],
-                        Box::new(Type::Bool),
-                    ),
-                ),
-                (
-                    "compare",
-                    Type::Fun(
-                        vec![checker.fresh_var(), checker.fresh_var()],
-                        Box::new(Type::Int),
-                    ),
-                ),
-                (
-                    "hash",
-                    Type::Fun(vec![checker.fresh_var()], Box::new(Type::Int)),
-                ),
-            ];
+            macro_rules! make_trait_methods {
+                ($self:expr) => {
+                    vec![
+                        (
+                            "display",
+                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::String)),
+                        ),
+                        (
+                            "equal",
+                            Type::Fun(
+                                vec![$self.fresh_var(), $self.fresh_var()],
+                                Box::new(Type::Bool),
+                            ),
+                        ),
+                        (
+                            "compare",
+                            Type::Fun(
+                                vec![$self.fresh_var(), $self.fresh_var()],
+                                Box::new(Type::Int),
+                            ),
+                        ),
+                        (
+                            "hash",
+                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::Int)),
+                        ),
+                    ]
+                };
+            }
             for type_name in &primitive_types {
                 for trait_name in &all_traits {
                     checker
                         .trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
-                for (method_name, method_type) in trait_methods {
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
+                for (method_name, method_type) in &trait_methods {
                     checker.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {
@@ -1572,7 +1648,8 @@ impl ReplTypeContext {
                         .trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
-                for (method_name, method_type) in trait_methods {
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
+                for (method_name, method_type) in &trait_methods {
                     checker.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {
@@ -1634,6 +1711,20 @@ impl ReplTypeContext {
                         ),
                         *span,
                     );
+                }
+            } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
+                let module_str = resolve(*module);
+                if !crate::module::is_builtin_module(&module_str) {
+                    self.checker.warning(
+                        format!(
+                            "unknown module '{module_str}'; imported module will not be type-checked"
+                        ),
+                        *span,
+                    );
+                    // Minimal binding so `module.foo(...)` calls don't cascade
+                    // into "undefined variable" errors downstream.
+                    let placeholder = self.checker.fresh_var();
+                    self.env.define(*module, Scheme::mono(placeholder));
                 }
             }
         }
@@ -1706,8 +1797,12 @@ impl ReplTypeContext {
         // Check trait impl method bodies
         for i in 0..program.decls.len() {
             if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                let target = ti.target_type;
                 for j in 0..ti.methods.len() {
-                    self.checker.check_fn_body(&mut ti.methods[j], &self.env);
+                    let method_name = ti.methods[j].name;
+                    let key = intern(&format!("{target}.{method_name}"));
+                    self.checker
+                        .check_fn_body_with_name(&mut ti.methods[j], &self.env, key);
                 }
             }
         }

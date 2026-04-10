@@ -137,6 +137,60 @@ impl fmt::Display for CompileError {
     }
 }
 
+/// Render a lex/parse error that happened inside an imported module into a
+/// human-readable CompileError message. The message embeds a `file:line:col`
+/// prefix plus a source snippet and caret pointing at the offending location
+/// in the *module* file (not the main file), so the outer error reporter can
+/// show the user where the bug is even though it only has the main file's
+/// source for its own snippet rendering.
+fn format_module_source_error(
+    module_name: &str,
+    file_path: &str,
+    source: &str,
+    kind: &str,
+    inner_message: &str,
+    span: Span,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("module '{module_name}': {kind}\n"));
+    out.push_str(&format!(
+        "  --> {file_path}:{line}:{col}\n",
+        line = span.line,
+        col = span.col,
+    ));
+    if let Some(line_text) = source.lines().nth(span.line.saturating_sub(1)) {
+        let line_num_str = span.line.to_string();
+        let gutter_w = line_num_str.len();
+        // blank gutter
+        out.push_str(&format!("  {empty:>width$} |\n", empty = "", width = gutter_w));
+        // source line
+        out.push_str(&format!(
+            "  {ln:>width$} | {src}\n",
+            ln = line_num_str,
+            width = gutter_w,
+            src = line_text,
+        ));
+        // caret
+        let col = span.col.saturating_sub(1);
+        let spacing: String = line_text
+            .chars()
+            .take(col)
+            .map(|ch| if ch == '\t' { '\t' } else { ' ' })
+            .collect();
+        out.push_str(&format!(
+            "  {empty:>width$} | {spacing}^ {msg}",
+            empty = "",
+            width = gutter_w,
+            spacing = spacing,
+            msg = inner_message,
+        ));
+    } else {
+        // No source line available — fall back to just the message.
+        out.push_str(&format!("  {inner_message}"));
+    }
+    out
+}
+
 // ── Compiler ──────────────────────────────────────────────────────────
 
 pub struct Compiler {
@@ -668,15 +722,31 @@ impl Compiler {
             span: Span::new(0, 0),
         })?;
 
+        let file_display = file_path.display().to_string();
+
         let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
-            message: format!("module '{module_name}': lex error: {e}"),
+            message: format_module_source_error(
+                module_name,
+                &file_display,
+                &source,
+                "lex error",
+                &e.message,
+                e.span,
+            ),
             span: Span::new(0, 0),
         })?;
 
         let mut program = Parser::new(tokens)
             .parse_program()
             .map_err(|e| CompileError {
-                message: format!("module '{module_name}': parse error: {e}"),
+                message: format_module_source_error(
+                    module_name,
+                    &file_display,
+                    &source,
+                    "parse error",
+                    &e.message,
+                    e.span,
+                ),
                 span: Span::new(0, 0),
             })?;
 

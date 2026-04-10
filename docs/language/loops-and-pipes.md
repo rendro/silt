@@ -118,7 +118,7 @@ loop {
   let msg = channel.receive(ch)
   match msg {
     Message(val) -> process(val)
-    Closed -> return unit
+    Closed -> return ()
   }
 }
 ```

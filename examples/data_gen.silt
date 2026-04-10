@@ -91,7 +91,7 @@ fn sum_list(nums) {
 fn mean(nums) {
   let n = list.length(nums)
   let total = sum_list(nums)
-  total / int.to_float(n)
+  total / int.to_float(n) else 0.0
 }
 
 fn median(nums) {
@@ -119,7 +119,7 @@ fn std_deviation(nums) {
     let diff = x - avg
     acc + diff * diff
   }
-  math.sqrt(sum_sq / int.to_float(n) else 0.0)
+  math.sqrt(sum_sq / int.to_float(n) else 0.0) else 0.0
 }
 
 -- Histogram: bucket values into ranges and display bars

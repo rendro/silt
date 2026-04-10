@@ -40,7 +40,11 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
             }
             match &args[0] {
                 Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
-                    let new_val = vm.invoke_callable(&args[1], &[fields[0].clone()])?;
+                    let new_val = vm.invoke_callable_resumable(
+                        &args[1],
+                        &[fields[0].clone()],
+                        args,
+                    )?;
                     Ok(Value::Variant("Ok".into(), vec![new_val]))
                 }
                 other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
@@ -54,7 +58,11 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
             match &args[0] {
                 other @ Value::Variant(tag, _) if tag == "Ok" => Ok(other.clone()),
                 Value::Variant(tag, fields) if tag == "Err" && fields.len() == 1 => {
-                    let new_val = vm.invoke_callable(&args[1], &[fields[0].clone()])?;
+                    let new_val = vm.invoke_callable_resumable(
+                        &args[1],
+                        &[fields[0].clone()],
+                        args,
+                    )?;
                     Ok(Value::Variant("Err".into(), vec![new_val]))
                 }
                 _ => Err(VmError::new("result.map_err requires a Result".into())),
@@ -85,7 +93,7 @@ pub fn call_result(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
             }
             match &args[0] {
                 Value::Variant(tag, fields) if tag == "Ok" && fields.len() == 1 => {
-                    vm.invoke_callable(&args[1], &[fields[0].clone()])
+                    vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)
                 }
                 other @ Value::Variant(tag, _) if tag == "Err" => Ok(other.clone()),
                 _ => Err(VmError::new("result.flat_map requires a Result".into())),
@@ -146,7 +154,11 @@ pub fn call_option(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
             }
             match &args[0] {
                 Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
-                    let new_val = vm.invoke_callable(&args[1], &[fields[0].clone()])?;
+                    let new_val = vm.invoke_callable_resumable(
+                        &args[1],
+                        &[fields[0].clone()],
+                        args,
+                    )?;
                     Ok(Value::Variant("Some".into(), vec![new_val]))
                 }
                 other @ Value::Variant(tag, _) if tag == "None" => Ok(other.clone()),
@@ -159,7 +171,7 @@ pub fn call_option(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmE
             }
             match &args[0] {
                 Value::Variant(tag, fields) if tag == "Some" && fields.len() == 1 => {
-                    vm.invoke_callable(&args[1], &[fields[0].clone()])
+                    vm.invoke_callable_resumable(&args[1], &[fields[0].clone()], args)
                 }
                 other @ Value::Variant(tag, _) if tag == "None" => Ok(other.clone()),
                 _ => Err(VmError::new("option.flat_map requires an Option".into())),

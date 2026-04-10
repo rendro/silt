@@ -123,13 +123,34 @@ impl TypeChecker {
                     Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
                 )
             }),
-            // Lists have two constructors: [] (empty) and [_, ..rest] (non-empty).
+            // Lists: enumerate constructors by length — `[]`, `[_]`,
+            // `[_,_]`, ..., up to one past the longest fixed-length pattern
+            // seen in the matrix. The final "open" constructor
+            // `[_, _, ..., _, ..rest]` (of length max+1 with a rest pattern)
+            // stands for "all lists strictly longer than max".
             Type::List(_elem_ty) => {
-                let empty = Pattern::List(vec![], None);
-                let non_empty =
-                    Pattern::List(vec![Pattern::Wildcard], Some(Box::new(Pattern::Wildcard)));
-                self.is_useful(matrix, &empty, ty, depth + 1)
-                    || self.is_useful(matrix, &non_empty, ty, depth + 1)
+                let max_fixed_len = matrix
+                    .iter()
+                    .filter_map(|p| match p {
+                        Pattern::List(elems, None) => Some(elems.len()),
+                        Pattern::List(elems, Some(_)) => Some(elems.len()),
+                        _ => None,
+                    })
+                    .max()
+                    .unwrap_or(0);
+                // Check fixed lengths 0..=max_fixed_len.
+                for len in 0..=max_fixed_len {
+                    let elems: Vec<Pattern> = (0..len).map(|_| Pattern::Wildcard).collect();
+                    let fixed = Pattern::List(elems, None);
+                    if self.is_useful(matrix, &fixed, ty, depth + 1) {
+                        return true;
+                    }
+                }
+                // Check the open "longer than max" constructor.
+                let elems: Vec<Pattern> =
+                    (0..=max_fixed_len).map(|_| Pattern::Wildcard).collect();
+                let open = Pattern::List(elems, Some(Box::new(Pattern::Wildcard)));
+                self.is_useful(matrix, &open, ty, depth + 1)
             }
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => !matrix
@@ -202,32 +223,49 @@ impl TypeChecker {
                     self.is_tuple_useful_recursive(&spec_refs, sub_pats, ty, depth)
                 }
             }
-            // List patterns: [] is the "empty" constructor, [h, ..t] is the "cons" constructor.
+            // List patterns. Each list length is a distinct constructor:
+            //   `[p1, ..., pk]` (no rest) matches lists of length exactly k.
+            //   `[p1, ..., pk, ..rest]` (with rest) matches lists of
+            //                                       length ≥ k.
+            // A query pattern is useful iff some value it matches is not
+            // covered by any row in the matrix. For the constructor check,
+            // we restrict attention to the query's length set and require
+            // that at least one row in the matrix "shape-covers" it. If no
+            // row does, the query is trivially useful. Otherwise we could
+            // additionally check sub-pattern usefulness — but for
+            // wildcard-queried sub-patterns (the common case during the
+            // wildcard expansion in `is_wildcard_useful`) every row that
+            // shape-covers also value-covers, so the shape check is
+            // sufficient.
             Pattern::List(elems, rest) => {
-                let is_empty = elems.is_empty() && rest.is_none();
-                if is_empty {
-                    // Empty list pattern: useful if no empty list or wildcard in matrix
-                    let specialized: Vec<&Pattern> = matrix
-                        .iter()
-                        .filter(|p| {
-                            matches!(p, Pattern::Wildcard | Pattern::Ident(_))
-                                || matches!(p, Pattern::List(e, r) if e.is_empty() && r.is_none())
-                        })
-                        .copied()
-                        .collect();
-                    specialized.is_empty()
-                } else {
-                    // Non-empty list pattern: useful if no non-empty list or wildcard covers it
-                    let specialized: Vec<&Pattern> = matrix
-                        .iter()
-                        .filter(|p| {
-                            matches!(p, Pattern::Wildcard | Pattern::Ident(_))
-                                || matches!(p, Pattern::List(e, _) if !e.is_empty())
-                        })
-                        .copied()
-                        .collect();
-                    specialized.is_empty()
+                let q_len = elems.len();
+                let q_has_rest = rest.is_some();
+
+                // Does `row` cover any list in the query's length set?
+                fn row_covers_query_length(
+                    row: &Pattern,
+                    q_len: usize,
+                    q_has_rest: bool,
+                ) -> bool {
+                    match row {
+                        Pattern::Wildcard | Pattern::Ident(_) => true,
+                        Pattern::List(r_elems, r_rest) => {
+                            let r_len = r_elems.len();
+                            let r_has_rest = r_rest.is_some();
+                            match (q_has_rest, r_has_rest) {
+                                (false, false) => q_len == r_len,
+                                (false, true) => q_len >= r_len,
+                                (true, false) => r_len >= q_len,
+                                (true, true) => true,
+                            }
+                        }
+                        _ => false,
+                    }
                 }
+
+                !matrix
+                    .iter()
+                    .any(|p| row_covers_query_length(p, q_len, q_has_rest))
             }
             // Literal patterns — useful iff no wildcard covers them.
             Pattern::Int(_)

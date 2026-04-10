@@ -190,6 +190,7 @@ fn has_unclosed_delimiters(input: &str) -> bool {
     let mut depth_brace = 0i32;
     let mut depth_paren = 0i32;
     let mut depth_bracket = 0i32;
+    let mut depth_block_comment = 0i32;
     let mut in_string = false;
     let mut in_triple_string = false;
     let mut backslash_count = 0u32;
@@ -200,6 +201,23 @@ fn has_unclosed_delimiters(input: &str) -> bool {
 
     while i < len {
         let ch = chars[i];
+
+        // Inside a (possibly nested) block comment: look for closing `-}`
+        // while still tracking nested `{-`.
+        if depth_block_comment > 0 {
+            if ch == '{' && i + 1 < len && chars[i + 1] == '-' {
+                depth_block_comment += 1;
+                i += 2;
+                continue;
+            }
+            if ch == '-' && i + 1 < len && chars[i + 1] == '}' {
+                depth_block_comment -= 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
 
         // Inside a triple-quoted string: look for closing """
         if in_triple_string {
@@ -223,6 +241,13 @@ fn has_unclosed_delimiters(input: &str) -> bool {
                 backslash_count = 0;
             }
             i += 1;
+            continue;
+        }
+
+        // Block comment opening: `{-` (nests, matching the real lexer).
+        if ch == '{' && i + 1 < len && chars[i + 1] == '-' {
+            depth_block_comment += 1;
+            i += 2;
             continue;
         }
 
@@ -262,7 +287,12 @@ fn has_unclosed_delimiters(input: &str) -> bool {
         i += 1;
     }
 
-    depth_brace > 0 || depth_paren > 0 || depth_bracket > 0 || in_string || in_triple_string
+    depth_brace > 0
+        || depth_paren > 0
+        || depth_bracket > 0
+        || depth_block_comment > 0
+        || in_string
+        || in_triple_string
 }
 
 fn is_declaration(input: &str) -> bool {
@@ -426,10 +456,28 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // Wrap the expression in a fn main() so the compiler can handle it.
     let wrapper_prefix = "fn main() {\n";
     let wrapped = format!("{wrapper_prefix}{input}\n}}");
+    // Total lines in the user's real input (minimum 1), used to clamp errors
+    // that land on synthetic tokens past the user's text.
+    let input_line_count = input.lines().count().max(1);
+    let input_byte_len = input.len();
+    // Length (in columns) of the final user-input line, used when clamping
+    // past-end errors so the caret points at the end of the last real line
+    // instead of column 1 of a synthetic `}`.
+    let last_line_cols = input
+        .lines()
+        .last()
+        .map(|l| l.chars().count())
+        .unwrap_or(0);
     let tokens = match Lexer::new(&wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {
-            let adjusted = adjust_error_span_lex(&e, wrapper_prefix.len());
+            let adjusted = adjust_error_span_lex(
+                &e,
+                wrapper_prefix.len(),
+                input_line_count,
+                input_byte_len,
+                last_line_cols,
+            );
             let source_err = SourceError::from_lex_error(&adjusted, input, "<repl>");
             eprintln!("{source_err}");
             return;
@@ -438,7 +486,13 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     let mut program = match Parser::new(tokens).parse_program() {
         Ok(p) => p,
         Err(e) => {
-            let adjusted = adjust_error_span_parse(&e, wrapper_prefix.len());
+            let adjusted = adjust_error_span_parse(
+                &e,
+                wrapper_prefix.len(),
+                input_line_count,
+                input_byte_len,
+                last_line_cols,
+            );
             let source_err = SourceError::from_parse_error(&adjusted, input, "<repl>");
             eprintln!("{source_err}");
             return;
@@ -449,7 +503,13 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // defined names are visible to this input.
     let type_errors = type_ctx.check(&mut program);
     for te in &type_errors {
-        let adjusted = adjust_error_span_type(te, wrapper_prefix.len());
+        let adjusted = adjust_error_span_type(
+            te,
+            wrapper_prefix.len(),
+            input_line_count,
+            input_byte_len,
+            last_line_cols,
+        );
         let source_err = SourceError::from_type_error(&adjusted, input, "<repl>");
         eprintln!("{source_err}");
     }
@@ -466,7 +526,13 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,
         Err(e) => {
-            let adjusted = adjust_error_span_compile(&e, wrapper_prefix.len());
+            let adjusted = adjust_error_span_compile(
+                &e,
+                wrapper_prefix.len(),
+                input_line_count,
+                input_byte_len,
+                last_line_cols,
+            );
             let source_err = SourceError::from_compile_error(&adjusted, input, "<repl>");
             eprintln!("{source_err}");
             return;
@@ -486,7 +552,13 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
         }
         Err(e) => {
             if let Some(span) = e.span {
-                let adjusted = adjust_span(span, wrapper_prefix.len());
+                let adjusted = adjust_span(
+                    span,
+                    wrapper_prefix.len(),
+                    input_line_count,
+                    input_byte_len,
+                    last_line_cols,
+                );
                 let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
                 eprintln!("{source_err}");
             } else {
@@ -497,41 +569,84 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
 }
 
 /// Adjust a span from `wrapped` coordinates to `input` coordinates.
-/// The wrapper adds one line (`fn main() {\n`) before the user input,
-/// so line numbers are off by 1 and byte offsets are off by `prefix_len`.
-fn adjust_span(span: Span, prefix_len: usize) -> Span {
-    Span::with_offset(
-        span.line.saturating_sub(1),
-        span.col,
-        span.offset.saturating_sub(prefix_len),
-    )
+///
+/// The wrapper adds one line (`fn main() {\n`) before the user input, so line
+/// numbers are off by 1 and byte offsets are off by `prefix_len`. When an
+/// error lands on the synthetic closing `}` — i.e. past the last line of the
+/// user's real input — we clamp it to the last line (and end-of-line column)
+/// so the error pointer stays inside the user's text rather than printing a
+/// phantom line.
+fn adjust_span(
+    span: Span,
+    prefix_len: usize,
+    input_lines: usize,
+    input_bytes: usize,
+    last_line_cols: usize,
+) -> Span {
+    let raw_line = span.line.saturating_sub(1);
+    let (line, col) = if raw_line == 0 {
+        (1, span.col)
+    } else if raw_line > input_lines {
+        // Error lands past the user's input (typically on the synthetic `}`).
+        // Clamp to the end of the last real line.
+        (input_lines, last_line_cols.saturating_add(1).max(1))
+    } else {
+        (raw_line, span.col)
+    };
+    let raw_offset = span.offset.saturating_sub(prefix_len);
+    let offset = raw_offset.min(input_bytes);
+    Span::with_offset(line, col, offset)
 }
 
-fn adjust_error_span_lex(e: &LexError, prefix_len: usize) -> LexError {
+fn adjust_error_span_lex(
+    e: &LexError,
+    prefix_len: usize,
+    input_lines: usize,
+    input_bytes: usize,
+    last_line_cols: usize,
+) -> LexError {
     LexError {
         message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len),
+        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
     }
 }
 
-fn adjust_error_span_parse(e: &ParseError, prefix_len: usize) -> ParseError {
+fn adjust_error_span_parse(
+    e: &ParseError,
+    prefix_len: usize,
+    input_lines: usize,
+    input_bytes: usize,
+    last_line_cols: usize,
+) -> ParseError {
     ParseError {
         message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len),
+        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
     }
 }
 
-fn adjust_error_span_compile(e: &CompileError, prefix_len: usize) -> CompileError {
+fn adjust_error_span_compile(
+    e: &CompileError,
+    prefix_len: usize,
+    input_lines: usize,
+    input_bytes: usize,
+    last_line_cols: usize,
+) -> CompileError {
     CompileError {
         message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len),
+        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
     }
 }
 
-fn adjust_error_span_type(e: &typechecker::TypeError, prefix_len: usize) -> typechecker::TypeError {
+fn adjust_error_span_type(
+    e: &typechecker::TypeError,
+    prefix_len: usize,
+    input_lines: usize,
+    input_bytes: usize,
+    last_line_cols: usize,
+) -> typechecker::TypeError {
     typechecker::TypeError {
         message: e.message.clone(),
-        span: adjust_span(e.span, prefix_len),
+        span: adjust_span(e.span, prefix_len, input_lines, input_bytes, last_line_cols),
         severity: e.severity,
     }
 }

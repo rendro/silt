@@ -10,7 +10,8 @@ mod runtime;
 
 pub use error::VmError;
 pub use runtime::Runtime;
-pub(crate) use runtime::{BlockReason, CallFrame, SelectOpKind};
+pub(crate) use execute::BuiltinIterKind;
+pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind};
 
 use regex::Regex;
 use std::collections::HashMap;
@@ -47,6 +48,11 @@ pub struct Vm {
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
     /// Saved state from an `invoke_callable` that was interrupted by a yield.
     pub(crate) suspended_invoke: Option<runtime::SuspendedInvoke>,
+    /// Saved iteration state for a higher-order builtin (e.g. `list.map`)
+    /// whose callback yielded (e.g. via I/O).  On resume, the outer
+    /// `CallBuiltin` re-dispatches the same builtin, which picks up its
+    /// iteration state from this slot instead of restarting from index 0.
+    pub(crate) suspended_builtin: Option<runtime::SuspendedBuiltin>,
 
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, LRU-like eviction).
@@ -92,6 +98,7 @@ impl Vm {
             is_scheduled_task: false,
             pending_io: None,
             suspended_invoke: None,
+            suspended_builtin: None,
             regex_cache: RegexCache::new(),
         };
         vm.register_builtins();
@@ -236,6 +243,7 @@ impl Vm {
             is_scheduled_task: false,
             pending_io: None,
             suspended_invoke: None,
+            suspended_builtin: None,
             regex_cache: RegexCache::new(),
         }
     }

@@ -868,19 +868,104 @@ impl fmt::Display for Value {
     }
 }
 
+/// Materialized length of the inclusive range `lo..=hi`, clamped to 0 when empty.
+fn range_len(lo: i64, hi: i64) -> i64 {
+    if lo > hi { 0 } else { hi - lo + 1 }
+}
+
+/// Compare a `List` and a `Range` for equality. Returns `true` when the list
+/// has exactly the same materialized elements as the range (all `Int`s in
+/// ascending order from `lo` to `hi` inclusive).
+fn list_eq_range(list: &[Value], lo: i64, hi: i64) -> bool {
+    let len = range_len(lo, hi);
+    if list.len() as i64 != len {
+        return false;
+    }
+    if len == 0 {
+        return true;
+    }
+    let mut cur = lo;
+    for item in list.iter() {
+        match item {
+            Value::Int(n) if *n == cur => {}
+            _ => return false,
+        }
+        // Avoid overflow on the final iteration: only increment while cur < hi.
+        if cur == hi {
+            break;
+        }
+        cur += 1;
+    }
+    true
+}
+
+/// Lexicographically compare a `List` and a `Range`.
+///
+/// Treats the range as its materialized sequence of `Int`s from `lo` to `hi`
+/// inclusive. When `list_first` is true, `list` is the left-hand side; when
+/// false, the range is the left-hand side and the resulting ordering is
+/// reversed accordingly.
+pub(crate) fn cmp_list_range(list: &[Value], lo: i64, hi: i64, list_first: bool) -> Ordering {
+    let range_len = range_len(lo, hi);
+    let common = (list.len() as i64).min(range_len);
+    for i in 0..common {
+        let range_val = Value::Int(lo + i);
+        let list_item = &list[i as usize];
+        let ord = if list_first {
+            list_item.cmp(&range_val)
+        } else {
+            range_val.cmp(list_item)
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    // Shared prefix is equal — the shorter side is less.
+    let list_len = list.len() as i64;
+    let len_ord = list_len.cmp(&range_len);
+    if list_first { len_ord } else { len_ord.reverse() }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits() == b.to_bits(),
+            // Mixed Float/ExtFloat: the typechecker permits this pair for
+            // `==`/`!=`, so the VM must honor it rather than returning
+            // `false` via the fallback arm. We widen the `Float` side to
+            // `f64` and use the standard `PartialEq` for `f64`, which
+            // matches `Float`-vs-`Float` semantics (so `1.0 == 1.0`, and
+            // `NaN` from `ExtFloat` is never equal to a finite `Float`).
+            (Value::Float(a), Value::ExtFloat(b)) | (Value::ExtFloat(b), Value::Float(a)) => {
+                a == b
+            }
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Variant(na, fa), Value::Variant(nb, fb)) => na == nb && fa == fb,
             (Value::Unit, Value::Unit) => true,
             (Value::List(a), Value::List(b)) => a == b,
-            (Value::Range(a1, a2), Value::Range(b1, b2)) => a1 == b1 && a2 == b2,
+            (Value::Range(a1, a2), Value::Range(b1, b2)) => {
+                // Two ranges are equal iff they materialize to the same
+                // sequence. Empty ranges (`lo > hi`) are all equal to each
+                // other regardless of their endpoints.
+                let (a_lo, a_hi) = (*a1, *a2);
+                let (b_lo, b_hi) = (*b1, *b2);
+                let a_empty = a_lo > a_hi;
+                let b_empty = b_lo > b_hi;
+                if a_empty || b_empty {
+                    a_empty && b_empty
+                } else {
+                    a_lo == b_lo && a_hi == b_hi
+                }
+            }
+            // Range vs List: the typechecker gives `Range(..)` the type
+            // `List(Int)`, so the two sides share a Silt type and must have
+            // a defined equality. Walk the range and list element-wise.
+            (Value::List(list), Value::Range(lo, hi)) => list_eq_range(list.as_ref(), *lo, *hi),
+            (Value::Range(lo, hi), Value::List(list)) => list_eq_range(list.as_ref(), *lo, *hi),
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
@@ -945,10 +1030,27 @@ impl Ord for Value {
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits().cmp(&b.to_bits()),
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::List(a), Value::List(b)) => a.as_slice().cmp(b.as_slice()),
-            (Value::Range(a1, a2), Value::Range(b1, b2)) => a1.cmp(b1).then_with(|| a2.cmp(b2)),
-            // Range vs List: compare by start element
-            (Value::Range(..), Value::List(..)) | (Value::List(..), Value::Range(..)) => {
-                Ordering::Equal
+            (Value::Range(a1, a2), Value::Range(b1, b2)) => {
+                // Lexicographically compare materialized ranges. Empty ranges
+                // (lo > hi) are all equal regardless of endpoints.
+                let (al, ah) = (*a1, *a2);
+                let (bl, bh) = (*b1, *b2);
+                let a_len = range_len(al, ah);
+                let b_len = range_len(bl, bh);
+                if a_len == 0 || b_len == 0 {
+                    a_len.cmp(&b_len)
+                } else {
+                    al.cmp(&bl).then_with(|| a_len.cmp(&b_len))
+                }
+            }
+            // Range vs List: walk element-wise. Required for Ord/PartialOrd
+            // consistency with PartialEq when the typechecker hands both
+            // sides the same `List(Int)` type.
+            (Value::List(list), Value::Range(lo, hi)) => {
+                cmp_list_range(list.as_ref(), *lo, *hi, true)
+            }
+            (Value::Range(lo, hi), Value::List(list)) => {
+                cmp_list_range(list.as_ref(), *lo, *hi, false)
             }
             (Value::Tuple(a), Value::Tuple(b)) => a.cmp(b),
             (Value::Map(a), Value::Map(b)) => a.iter().cmp(b.iter()),

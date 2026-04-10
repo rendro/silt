@@ -81,10 +81,15 @@ detect_arch() {
 }
 
 get_latest_version() {
+    # GitHub's /releases/latest endpoint 302-redirects to /releases/tag/<version>.
+    # We fetch only the response headers (no -L) and parse the Location header
+    # case-insensitively, then take the final path segment as the version.
     if command -v curl > /dev/null 2>&1; then
-        curl -fsSL -o /dev/null -w '%{redirect_url}' "$BASE_URL/latest" | rev | cut -d/ -f1 | rev
+        curl -fsI "$BASE_URL/latest" 2>/dev/null \
+            | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     elif command -v wget > /dev/null 2>&1; then
-        wget --spider -q --max-redirect=0 "$BASE_URL/latest" 2>&1 | grep -i location | cut -d/ -f8
+        wget --server-response --spider --max-redirect=0 "$BASE_URL/latest" 2>&1 \
+            | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     fi
 }
 

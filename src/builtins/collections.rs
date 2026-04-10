@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
-use crate::vm::{Vm, VmError};
+use crate::vm::{BuiltinAcc, BuiltinIterKind, Vm, VmError};
 
 /// Lazy iterator over `Value::List` or `Value::Range` without materializing.
 enum ValueIter {
@@ -91,6 +91,24 @@ impl Iterator for ValueIter {
 
 impl ExactSizeIterator for ValueIter {}
 
+/// Materialize a List or Range into a concrete `Vec<Value>` of items.
+/// Used by higher-order list/set/map builtins to feed `iterate_builtin`.
+/// Returns an error if the source is not a list or range, or if the range
+/// would exceed the materialization limit.
+fn materialize_iter(val: &Value, fn_name: &str) -> Result<Vec<Value>, VmError> {
+    match val {
+        Value::List(xs) => Ok((**xs).clone()),
+        Value::Range(lo, hi) => {
+            checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            if *lo > *hi {
+                return Ok(Vec::new());
+            }
+            Ok((*lo..=*hi).map(Value::Int).collect())
+        }
+        _ => Err(VmError::new(format!("{fn_name} requires a list or range"))),
+    }
+}
+
 /// Dispatch `list.<name>(args)`.
 pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -98,137 +116,72 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.map takes 2 arguments (list, fn)".into()));
             }
-            if let Value::Range(lo, hi) = &args[0] {
-                checked_range_len(*lo, *hi).map_err(VmError::new)?;
-            }
-            let mut iter = ValueIter::try_from(&args[0], "list.map")?;
-            let func = &args[1];
-            let mut result = Vec::with_capacity(iter.len());
-            for item in &mut iter {
-                result.push(vm.invoke_callable(func, std::slice::from_ref(&item))?);
-            }
-            Ok(Value::List(Arc::new(result)))
+            // On a fresh call, materialize items.  On resume, the helper
+            // discards this and uses the saved items from `suspended_builtin`.
+            let items = materialize_iter(&args[0], "list.map")?;
+            vm.iterate_builtin(BuiltinIterKind::ListMap, items, args[1].clone(), args)
         }
         "filter" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.filter takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.filter")?;
-            let func = &args[1];
-            let mut result = Vec::new();
-            for item in iter {
-                let keep = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                if vm.is_truthy(&keep) {
-                    result.push(item);
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
+            let items = materialize_iter(&args[0], "list.filter")?;
+            vm.iterate_builtin(BuiltinIterKind::ListFilter, items, args[1].clone(), args)
         }
         "each" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.each takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.each")?;
-            let func = &args[1];
-            for item in iter {
-                vm.invoke_callable(func, std::slice::from_ref(&item))?;
-            }
-            Ok(Value::Unit)
+            let items = materialize_iter(&args[0], "list.each")?;
+            vm.iterate_builtin(BuiltinIterKind::ListEach, items, args[1].clone(), args)
         }
         "fold" => {
             if args.len() != 3 {
                 return Err(VmError::new("list.fold takes 3 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.fold")?;
-            let func = &args[2];
-            let mut acc = args[1].clone();
-            for item in iter {
-                acc = vm.invoke_callable(func, &[acc, item])?;
-            }
-            Ok(acc)
+            let items = materialize_iter(&args[0], "list.fold")?;
+            vm.iterate_builtin_with_acc(
+                BuiltinIterKind::ListFold,
+                items,
+                args[2].clone(),
+                BuiltinAcc::Fold(args[1].clone()),
+                args,
+            )
         }
         "find" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.find takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.find")?;
-            let func = &args[1];
-            for item in iter {
-                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                if vm.is_truthy(&result) {
-                    return Ok(Value::Variant("Some".into(), vec![item]));
-                }
-            }
-            Ok(Value::Variant("None".into(), Vec::new()))
+            let items = materialize_iter(&args[0], "list.find")?;
+            vm.iterate_builtin(BuiltinIterKind::ListFind, items, args[1].clone(), args)
         }
         "any" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.any takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.any")?;
-            let func = &args[1];
-            for item in iter {
-                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                if vm.is_truthy(&result) {
-                    return Ok(Value::Bool(true));
-                }
-            }
-            Ok(Value::Bool(false))
+            let items = materialize_iter(&args[0], "list.any")?;
+            vm.iterate_builtin(BuiltinIterKind::ListAny, items, args[1].clone(), args)
         }
         "all" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.all takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.all")?;
-            let func = &args[1];
-            for item in iter {
-                let result = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                if !vm.is_truthy(&result) {
-                    return Ok(Value::Bool(false));
-                }
-            }
-            Ok(Value::Bool(true))
+            let items = materialize_iter(&args[0], "list.all")?;
+            vm.iterate_builtin(BuiltinIterKind::ListAll, items, args[1].clone(), args)
         }
         "flat_map" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.flat_map takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.flat_map")?;
-            let func = &args[1];
-            let mut result = Vec::new();
-            for item in iter {
-                let val = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                match val {
-                    Value::List(inner) => result.extend(inner.iter().cloned()),
-                    Value::Range(lo, hi) => {
-                        checked_range_len(lo, hi).map_err(VmError::new)?;
-                        for i in lo..=hi {
-                            result.push(Value::Int(i));
-                        }
-                    }
-                    other => result.push(other),
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
+            let items = materialize_iter(&args[0], "list.flat_map")?;
+            vm.iterate_builtin(BuiltinIterKind::ListFlatMap, items, args[1].clone(), args)
         }
         "filter_map" => {
             if args.len() != 2 {
                 return Err(VmError::new("list.filter_map takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.filter_map")?;
-            let func = &args[1];
-            let mut result = Vec::new();
-            for item in iter {
-                let val = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                match val {
-                    Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
-                        result.push(fields[0].clone());
-                    }
-                    Value::Variant(ref tag, _) if tag == "None" => {}
-                    _ => result.push(val),
-                }
-            }
-            Ok(Value::List(Arc::new(result)))
+            let items = materialize_iter(&args[0], "list.filter_map")?;
+            vm.iterate_builtin(BuiltinIterKind::ListFilterMap, items, args[1].clone(), args)
         }
         // Non-closure list builtins
         "zip" => {
@@ -554,42 +507,21 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.sort_by takes 2 arguments".into()));
             }
-            if let Value::Range(lo, hi) = &args[0] {
-                checked_range_len(*lo, *hi).map_err(VmError::new)?;
-            }
-            let iter = ValueIter::try_from(&args[0], "list.sort_by")?;
-            let func = &args[1];
-            let mut pairs: Vec<(Value, Value)> = Vec::with_capacity(iter.len());
-            for item in iter {
-                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                pairs.push((key, item));
-            }
-            pairs.sort_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let sorted: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
-            Ok(Value::List(Arc::new(sorted)))
+            let items = materialize_iter(&args[0], "list.sort_by")?;
+            vm.iterate_builtin(BuiltinIterKind::ListSortBy, items, args[1].clone(), args)
         }
         "fold_until" => {
             if args.len() != 3 {
                 return Err(VmError::new("list.fold_until takes 3 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.fold_until")?;
-            let func = &args[2];
-            let mut acc = args[1].clone();
-            for item in iter {
-                let result = vm.invoke_callable(func, &[acc.clone(), item])?;
-                match result {
-                    Value::Variant(ref tag, ref fields)
-                        if tag == "Continue" && fields.len() == 1 =>
-                    {
-                        acc = fields[0].clone();
-                    }
-                    Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
-                        return Ok(fields[0].clone());
-                    }
-                    _ => acc = result,
-                }
-            }
-            Ok(acc)
+            let items = materialize_iter(&args[0], "list.fold_until")?;
+            vm.iterate_builtin_with_acc(
+                BuiltinIterKind::ListFoldUntil,
+                items,
+                args[2].clone(),
+                BuiltinAcc::Fold(args[1].clone()),
+                args,
+            )
         }
         "unfold" => {
             if args.len() != 2 {
@@ -627,18 +559,8 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.group_by takes 2 arguments".into()));
             }
-            let iter = ValueIter::try_from(&args[0], "list.group_by")?;
-            let func = &args[1];
-            let mut groups: BTreeMap<Value, Vec<Value>> = BTreeMap::new();
-            for item in iter {
-                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
-                groups.entry(key).or_default().push(item);
-            }
-            let result: BTreeMap<Value, Value> = groups
-                .into_iter()
-                .map(|(k, v)| (k, Value::List(Arc::new(v))))
-                .collect();
-            Ok(Value::Map(Arc::new(result)))
+            let items = materialize_iter(&args[0], "list.group_by")?;
+            vm.iterate_builtin(BuiltinIterKind::ListGroupBy, items, args[1].clone(), args)
         }
         _ => Err(VmError::new(format!("unknown list function: {name}"))),
     }
@@ -771,15 +693,12 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Map(m) = &args[0] else {
                 return Err(VmError::new("map.filter requires a map".into()));
             };
-            let func = &args[1];
-            let mut result = BTreeMap::new();
-            for (k, v) in m.iter() {
-                let keep = vm.invoke_callable(func, &[k.clone(), v.clone()])?;
-                if vm.is_truthy(&keep) {
-                    result.insert(k.clone(), v.clone());
-                }
-            }
-            Ok(Value::Map(Arc::new(result)))
+            // Materialize entries as Tuple(k, v) for iterate_builtin.
+            let items: Vec<Value> = m
+                .iter()
+                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+                .collect();
+            vm.iterate_builtin(BuiltinIterKind::MapFilter, items, args[1].clone(), args)
         }
         "map" => {
             if args.len() != 2 {
@@ -788,22 +707,22 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Map(m) = &args[0] else {
                 return Err(VmError::new("map.map requires a map".into()));
             };
-            let func = &args[1];
-            let mut result = BTreeMap::new();
-            for (k, v) in m.iter() {
-                let mapped = vm.invoke_callable(func, &[k.clone(), v.clone()])?;
-                match mapped {
-                    Value::Tuple(pair) if pair.len() == 2 => {
-                        result.insert(pair[0].clone(), pair[1].clone());
-                    }
-                    _ => {
-                        return Err(VmError::new(
-                            "map.map callback must return a (key, value) tuple".into(),
-                        ));
-                    }
-                }
+            let items: Vec<Value> = m
+                .iter()
+                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+                .collect();
+            // iterate_builtin will short-circuit with a marker Variant on a
+            // type error; translate that to a proper VmError here.
+            let result =
+                vm.iterate_builtin(BuiltinIterKind::MapMap, items, args[1].clone(), args)?;
+            if let Value::Variant(ref tag, _) = result
+                && tag == "__MapMapTypeError__"
+            {
+                return Err(VmError::new(
+                    "map.map callback must return a (key, value) tuple".into(),
+                ));
             }
-            Ok(Value::Map(Arc::new(result)))
+            Ok(result)
         }
         "each" => {
             if args.len() != 2 {
@@ -812,11 +731,11 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Map(m) = &args[0] else {
                 return Err(VmError::new("map.each requires a map".into()));
             };
-            let func = &args[1];
-            for (k, v) in m.iter() {
-                vm.invoke_callable(func, &[k.clone(), v.clone()])?;
-            }
-            Ok(Value::Unit)
+            let items: Vec<Value> = m
+                .iter()
+                .map(|(k, v)| Value::Tuple(vec![k.clone(), v.clone()]))
+                .collect();
+            vm.iterate_builtin(BuiltinIterKind::MapEach, items, args[1].clone(), args)
         }
         "update" => {
             if args.len() != 4 {
@@ -831,7 +750,9 @@ pub fn call_map(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let default = &args[2];
             let func = &args[3];
             let current = m.get(key).unwrap_or(default).clone();
-            let new_val = vm.invoke_callable(func, &[current])?;
+            // map.update is a single-callback builtin.  Use the resumable
+            // helper so yields inside `func` are handled correctly.
+            let new_val = vm.invoke_callable_resumable(func, &[current], args)?;
             let mut new_map = (**m).clone();
             new_map.insert(key.clone(), new_val);
             Ok(Value::Map(Arc::new(new_map)))
@@ -945,13 +866,8 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.map requires a set".into()));
             };
-            let func = &args[1];
-            let mut result = BTreeSet::new();
-            for item in s.iter() {
-                let val = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                result.insert(val);
-            }
-            Ok(Value::Set(Arc::new(result)))
+            let items: Vec<Value> = s.iter().cloned().collect();
+            vm.iterate_builtin(BuiltinIterKind::SetMap, items, args[1].clone(), args)
         }
         "filter" => {
             if args.len() != 2 {
@@ -960,15 +876,8 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.filter requires a set".into()));
             };
-            let func = &args[1];
-            let mut result = BTreeSet::new();
-            for item in s.iter() {
-                let keep = vm.invoke_callable(func, std::slice::from_ref(item))?;
-                if vm.is_truthy(&keep) {
-                    result.insert(item.clone());
-                }
-            }
-            Ok(Value::Set(Arc::new(result)))
+            let items: Vec<Value> = s.iter().cloned().collect();
+            vm.iterate_builtin(BuiltinIterKind::SetFilter, items, args[1].clone(), args)
         }
         "each" => {
             if args.len() != 2 {
@@ -977,11 +886,8 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.each requires a set".into()));
             };
-            let func = &args[1];
-            for item in s.iter() {
-                vm.invoke_callable(func, std::slice::from_ref(item))?;
-            }
-            Ok(Value::Unit)
+            let items: Vec<Value> = s.iter().cloned().collect();
+            vm.iterate_builtin(BuiltinIterKind::SetEach, items, args[1].clone(), args)
         }
         "fold" => {
             if args.len() != 3 {
@@ -990,12 +896,14 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             let Value::Set(s) = &args[0] else {
                 return Err(VmError::new("set.fold requires a set".into()));
             };
-            let func = &args[2];
-            let mut acc = args[1].clone();
-            for item in s.iter() {
-                acc = vm.invoke_callable(func, &[acc, item.clone()])?;
-            }
-            Ok(acc)
+            let items: Vec<Value> = s.iter().cloned().collect();
+            vm.iterate_builtin_with_acc(
+                BuiltinIterKind::SetFold,
+                items,
+                args[2].clone(),
+                BuiltinAcc::Fold(args[1].clone()),
+                args,
+            )
         }
         _ => Err(VmError::new(format!("unknown set function: {name}"))),
     }
