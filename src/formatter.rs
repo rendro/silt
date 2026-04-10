@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::*;
@@ -6,6 +7,44 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 
 const INDENT: &str = "  ";
+
+thread_local! {
+    /// The source text of the file currently being formatted, used by
+    /// `format_triple_string` to copy multi-line `"""..."""` content
+    /// verbatim instead of reflowing it.
+    static CURRENT_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+fn with_current_source<R>(source: &str, f: impl FnOnce() -> R) -> R {
+    CURRENT_SOURCE.with(|cell| *cell.borrow_mut() = Some(source.to_string()));
+    let result = f();
+    CURRENT_SOURCE.with(|cell| *cell.borrow_mut() = None);
+    result
+}
+
+/// Extract the raw bytes of a triple-quoted string from the stashed source,
+/// starting at byte offset `offset`. Returns the full `"""..."""` literal
+/// (including the opening and closing `"""`) if found and well-formed.
+fn extract_triple_string_raw(offset: usize) -> Option<String> {
+    CURRENT_SOURCE.with(|cell| {
+        let cell = cell.borrow();
+        let source = cell.as_ref()?;
+        let bytes = source.as_bytes();
+        // Verify the span starts at `"""`.
+        if offset + 3 > bytes.len() || &bytes[offset..offset + 3] != b"\"\"\"" {
+            return None;
+        }
+        // Scan forward for the closing `"""`.
+        let mut i = offset + 3;
+        while i + 3 <= bytes.len() {
+            if &bytes[i..i + 3] == b"\"\"\"" {
+                return Some(source[offset..i + 3].to_string());
+            }
+            i += 1;
+        }
+        None
+    })
+}
 
 // ── Comment extraction ──────────────────────────────────────────────
 
@@ -492,7 +531,9 @@ pub fn format(source: &str) -> Result<String, String> {
     let program = Parser::new(tokens)
         .parse_program()
         .map_err(|e| format!("parse error: {e}"))?;
-    Ok(format_program_with_comments(&program, source))
+    Ok(with_current_source(source, || {
+        format_program_with_comments(&program, source)
+    }))
 }
 
 fn format_program_with_comments(program: &Program, source: &str) -> String {
@@ -1048,6 +1089,16 @@ fn format_stmt(stmt: &Stmt, depth: usize) -> String {
 }
 
 fn format_expr(expr: &Expr, depth: usize) -> String {
+    // Preserve multi-line triple-quoted strings byte-for-byte from the
+    // original source so users' chosen indentation / whitespace survive
+    // formatting unchanged.
+    if let ExprKind::StringLit(s, true) = &expr.kind {
+        if s.contains('\n') {
+            if let Some(raw) = extract_triple_string_raw(expr.span.offset) {
+                return raw;
+            }
+        }
+    }
     format_expr_inner(&expr.kind, depth)
 }
 
@@ -1520,6 +1571,36 @@ fn bar() = 2
         );
         assert!(result.contains("fn foo() = 1"));
         assert!(result.contains("fn bar() = 2"));
+    }
+
+    #[test]
+    fn test_triple_quoted_string_preserved_idempotent() {
+        // Non-canonical wide indentation inside a triple-quoted string
+        // must survive formatting byte-for-byte.
+        let source = "fn main() {\n  let x = \"\"\"\n      hello\n        nested\n      world\n      \"\"\"\n  println(x)\n}\n";
+        let once = format(source).unwrap();
+        assert!(
+            once.contains("      hello"),
+            "expected 6-space indented content to survive; got:\n{once}"
+        );
+        assert!(
+            once.contains("        nested"),
+            "expected 8-space indented line to survive; got:\n{once}"
+        );
+        let twice = format(&once).unwrap();
+        assert_eq!(once, twice, "formatter must be idempotent");
+    }
+
+    #[test]
+    fn test_triple_quoted_string_unusual_indent_preserved() {
+        // A triple string whose interior has completely unusual indentation
+        // relative to the declaration should not be rewritten.
+        let source = "fn main() {\n  let s = \"\"\"\nA\n B\n  C\n\"\"\"\n  println(s)\n}\n";
+        let result = format(source).unwrap();
+        assert!(
+            result.contains("\nA\n B\n  C\n"),
+            "unusual indent must be preserved; got:\n{result}"
+        );
     }
 
     #[test]

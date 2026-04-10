@@ -855,7 +855,10 @@ fn main() {
 
 #[test]
 fn test_select_mixed_send_receive() {
-    // Select with both send and receive operations
+    // Select with both send and receive operations.
+    // Both operations are simultaneously ready (inbox has data, outbox has
+    // capacity) and select chooses fairly between them, so either outcome
+    // is valid — we just assert the select resolved to one of the ready ops.
     let result = run(r#"
 import channel
 fn main() {
@@ -871,7 +874,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::String("hello".into()));
+    assert!(
+        matches!(&result, Value::String(s) if s == "hello" || s == "sent"),
+        "expected one of the ready select arms, got {result:?}"
+    );
 }
 
 #[test]
@@ -7150,7 +7156,8 @@ fn main() {
 #[test]
 fn test_select_receive_and_send_same_channel() {
     // Select with both receive and send on the same buffered channel.
-    // If channel has data, receive should succeed.
+    // With data present and capacity available, BOTH operations are ready.
+    // Fair select chooses between them, so either outcome is valid.
     let result = run(r#"
 import channel
 fn main() {
@@ -7164,7 +7171,10 @@ fn main() {
   }
 }
     "#);
-    assert_eq!(result, Value::Int(100));
+    assert!(
+        matches!(&result, Value::Int(100) | Value::Int(-1)),
+        "expected receive (100) or send (-1), got {result:?}"
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════

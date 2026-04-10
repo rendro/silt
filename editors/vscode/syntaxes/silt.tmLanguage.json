@@ -1,0 +1,173 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Silt",
+  "scopeName": "source.silt",
+  "fileTypes": ["silt"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#booleans" },
+    { "include": "#constructors" },
+    { "include": "#builtins" },
+    { "include": "#modules" },
+    { "include": "#function-def" },
+    { "include": "#type-def" },
+    { "include": "#trait-def" },
+    { "include": "#operators" },
+    { "include": "#collection-prefix" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.silt",
+          "match": "--.*$",
+          "captures": {
+            "0": {
+              "patterns": [
+                { "include": "#todo" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "comment.block.silt",
+          "begin": "\\{-",
+          "end": "-\\}",
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#todo" }
+          ]
+        }
+      ]
+    },
+    "todo": {
+      "name": "keyword.other.todo.silt",
+      "match": "\\b(TODO|FIXME|NOTE|XXX|HACK)\\b"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.silt",
+          "begin": "\"\"\"",
+          "end": "\"\"\""
+        },
+        {
+          "name": "string.quoted.double.silt",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.silt",
+              "match": "\\\\[nrt\\\\\"{}]"
+            },
+            {
+              "name": "meta.interpolation.silt",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.silt" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.silt" }
+              },
+              "patterns": [
+                { "include": "$self" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.silt",
+          "match": "\\b0x[0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.silt",
+          "match": "\\b0b[01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.silt",
+          "match": "\\b\\d[\\d_]*\\.\\d[\\d_]*(?:[eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.silt",
+          "match": "\\b\\d[\\d_]*[eE][+-]?\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.silt",
+          "match": "\\b\\d[\\d_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "name": "keyword.control.silt",
+      "match": "\\b(as|else|fn|import|let|loop|match|mod|pub|return|trait|type|when|where)\\b"
+    },
+    "booleans": {
+      "name": "constant.language.boolean.silt",
+      "match": "\\b(true|false)\\b"
+    },
+    "constructors": {
+      "name": "constant.language.constructor.silt",
+      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty)\\b"
+    },
+    "builtins": {
+      "name": "support.function.builtin.silt",
+      "match": "\\b(print|println|panic)\\b"
+    },
+    "modules": {
+      "name": "entity.name.namespace.silt",
+      "match": "\\b(list|string|int|float|map|set|result|option|io|math|channel|task|regex|json|test|fs|env|http|time)\\b(?=\\.)"
+    },
+    "function-def": {
+      "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.silt" },
+        "2": { "name": "entity.name.function.silt" }
+      }
+    },
+    "type-def": {
+      "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.silt" },
+        "2": { "name": "entity.name.type.silt" }
+      }
+    },
+    "trait-def": {
+      "match": "\\b(trait)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.silt" },
+        "2": { "name": "entity.name.type.trait.silt" }
+      }
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.pipe.silt", "match": "\\|>" },
+        { "name": "keyword.operator.arrow.silt", "match": "->" },
+        { "name": "keyword.operator.range.silt", "match": "\\.\\." },
+        { "name": "keyword.operator.comparison.silt", "match": "==|!=|<=|>=" },
+        { "name": "keyword.operator.logical.silt", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.question.silt", "match": "\\?" },
+        { "name": "keyword.operator.caret.silt", "match": "\\^" },
+        { "name": "keyword.operator.arithmetic.silt", "match": "[+\\-*/%]" },
+        { "name": "keyword.operator.assignment.silt", "match": "=" },
+        { "name": "keyword.operator.relational.silt", "match": "[<>]" }
+      ]
+    },
+    "collection-prefix": {
+      "name": "punctuation.definition.collection.silt",
+      "match": "#\\[|#\\{"
+    },
+    "identifiers": {
+      "name": "variable.other.silt",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+    }
+  }
+}

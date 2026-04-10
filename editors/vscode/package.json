@@ -1,0 +1,65 @@
+{
+  "name": "silt-vscode",
+  "displayName": "Silt",
+  "description": "Silt language support: syntax highlighting and LSP client (diagnostics, hover, go-to-definition, completion, signature help, document symbols, formatting).",
+  "version": "0.1.0",
+  "publisher": "silt-lang",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:silt"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "silt",
+        "aliases": ["Silt", "silt"],
+        "extensions": [".silt"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "silt",
+        "scopeName": "source.silt",
+        "path": "./syntaxes/silt.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Silt",
+      "properties": {
+        "silt.serverPath": {
+          "type": "string",
+          "default": "silt",
+          "description": "Path to the silt executable used to run `silt lsp`. Defaults to `silt` on PATH."
+        },
+        "silt.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace messages between VS Code and the Silt language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.4.0"
+  }
+}

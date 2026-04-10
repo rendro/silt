@@ -411,7 +411,7 @@ fn json_to_record_list(
         let result = json_to_record(vm, type_name, fields, item)?;
         match result {
             Value::Variant(name, inner) if name == "Ok" && inner.len() == 1 => {
-                records.push(inner.into_iter().next().unwrap());
+                records.push(inner.into_iter().next().expect("guard guarantees len==1"));
             }
             Value::Variant(name, inner) if name == "Err" && inner.len() == 1 => {
                 if let Value::String(msg) = &inner[0] {

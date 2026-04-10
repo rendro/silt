@@ -456,3 +456,47 @@ fn test_run_file_directly() {
         "expected 'direct-run' in stdout, got: {stdout}"
     );
 }
+
+// ── Subcommand --help ───────────────────────────────────────────────
+
+#[test]
+fn test_run_help_flag() {
+    for flag in ["--help", "-h"] {
+        let output = silt_cmd()
+            .arg("run")
+            .arg(flag)
+            .output()
+            .expect("failed to run silt");
+        assert!(
+            output.status.success(),
+            "silt run {flag}: expected exit 0, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Usage: silt run"),
+            "silt run {flag}: expected usage text, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn test_disasm_help_flag() {
+    for flag in ["--help", "-h"] {
+        let output = silt_cmd()
+            .arg("disasm")
+            .arg(flag)
+            .output()
+            .expect("failed to run silt");
+        assert!(
+            output.status.success(),
+            "silt disasm {flag}: expected exit 0, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Usage: silt disasm"),
+            "silt disasm {flag}: expected usage text, got: {stdout}"
+        );
+    }
+}

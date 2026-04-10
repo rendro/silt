@@ -284,6 +284,17 @@ fn main() {
             process::exit(0);
         }
         "run" => {
+            if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+                println!("Usage: silt run [--disassemble] <file.silt>");
+                println!();
+                println!("Options:");
+                println!("  --disassemble   Show bytecode disassembly instead of running");
+                println!();
+                println!("Examples:");
+                println!("  silt run main.silt");
+                println!("  silt run --disassemble main.silt");
+                process::exit(0);
+            }
             if args.len() < 3 {
                 eprintln!("Usage: silt run <file.silt>");
                 process::exit(1);
@@ -317,6 +328,15 @@ fn main() {
             }
         }
         "disasm" => {
+            if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+                println!("Usage: silt disasm <file.silt>");
+                println!();
+                println!("Prints the compiled bytecode disassembly for <file.silt>.");
+                println!();
+                println!("Example:");
+                println!("  silt disasm main.silt");
+                process::exit(0);
+            }
             if args.len() < 3 {
                 eprintln!("Usage: silt disasm <file.silt>");
                 process::exit(1);

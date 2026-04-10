@@ -496,10 +496,49 @@ fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
     Ok(ops)
 }
 
-/// Try all select operations non-blocking. Returns the first that succeeds.
+/// Pick a pseudo-random starting index in [0, n) to give `try_select_sweep`
+/// fair semantics: when multiple select ops are simultaneously ready, each
+/// one has a chance of being chosen instead of always the earliest.
+///
+/// Uses the same thread-local xorshift64 pattern as `math.random` in
+/// `src/builtins/numeric.rs` — no extra dependency.
+fn select_start_index(n: usize) -> usize {
+    if n <= 1 {
+        return 0;
+    }
+    use std::cell::Cell;
+    use std::time::SystemTime;
+    thread_local! {
+        static SELECT_RNG: Cell<u64> = Cell::new({
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0xA5A5_A5A5_5A5A_5A5A)
+                | 1 // xorshift64 must not be seeded with 0
+        });
+    }
+    SELECT_RNG.with(|state| {
+        let mut s = state.get();
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        state.set(s);
+        (s as usize) % n
+    })
+}
+
+/// Try all select operations non-blocking. Returns the first that succeeds,
+/// iterating circularly from a pseudo-random start index so that readiness
+/// races between channels are resolved fairly rather than always in list order.
 /// A closed channel counts as a successful receive (returns Closed).
 fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
-    for op in ops {
+    let n = ops.len();
+    if n == 0 {
+        return Ok(None);
+    }
+    let start = select_start_index(n);
+    for i in 0..n {
+        let op = &ops[(start + i) % n];
         match op {
             SelectOp::Receive(ch) => match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
@@ -535,4 +574,53 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod select_fairness_tests {
+    use super::*;
+    use crate::value::Channel;
+    use std::sync::Arc;
+
+    #[test]
+    fn try_select_sweep_is_fair_between_ready_channels() {
+        let ch1 = Arc::new(Channel::new(1, 4));
+        let ch2 = Arc::new(Channel::new(2, 4));
+        // Both channels always have data available.
+        for _ in 0..4 {
+            let _ = ch1.try_send(Value::Int(1));
+            let _ = ch2.try_send(Value::Int(2));
+        }
+        // Refill on every iteration so both stay ready.
+        let mut ch1_wins = 0u32;
+        let mut ch2_wins = 0u32;
+        let iters = 4000u32;
+        for _ in 0..iters {
+            while !matches!(ch1.try_send(Value::Int(1)), TrySendResult::Full) {}
+            while !matches!(ch2.try_send(Value::Int(2)), TrySendResult::Full) {}
+            let ops = vec![
+                SelectOp::Receive(ch1.clone()),
+                SelectOp::Receive(ch2.clone()),
+            ];
+            let result = try_select_sweep(&ops).unwrap().unwrap();
+            if let Value::Tuple(parts) = result {
+                if let Value::Channel(c) = &parts[0] {
+                    if Arc::ptr_eq(c, &ch1) {
+                        ch1_wins += 1;
+                    } else if Arc::ptr_eq(c, &ch2) {
+                        ch2_wins += 1;
+                    }
+                }
+            }
+        }
+        let min_share = iters / 5; // require each ≥ 20%
+        assert!(
+            ch1_wins >= min_share,
+            "ch1 under-selected: {ch1_wins}/{iters}"
+        );
+        assert!(
+            ch2_wins >= min_share,
+            "ch2 under-selected: {ch2_wins}/{iters}"
+        );
+    }
 }

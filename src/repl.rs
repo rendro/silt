@@ -452,6 +452,43 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
     }
 }
 
+/// Compile and run `input` as an expression, returning the resulting Value
+/// (or an error message). This is the testable core of `eval_expression`;
+/// the interactive version adds formatted error reporting and stdout output.
+#[cfg(test)]
+fn eval_expression_value(
+    vm: &mut Vm,
+    type_ctx: &mut ReplTypeContext,
+    input: &str,
+) -> Result<Value, String> {
+    let wrapper_prefix = "fn main() {\n";
+    let wrapped = format!("{wrapper_prefix}{input}\n}}");
+    let tokens = Lexer::new(&wrapped)
+        .tokenize()
+        .map_err(|e| format!("lex error: {}", e.message))?;
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .map_err(|e| format!("parse error: {}", e.message))?;
+    let type_errors = type_ctx.check(&mut program);
+    if let Some(err) = type_errors
+        .iter()
+        .find(|e| e.severity == typechecker::Severity::Error)
+    {
+        return Err(format!("type error: {}", err.message));
+    }
+    let mut compiler = Compiler::new();
+    compiler.import_all_builtins();
+    let functions = compiler
+        .compile_program(&program)
+        .map_err(|e| format!("compile error: {}", e.message))?;
+    let script = functions
+        .into_iter()
+        .next()
+        .ok_or_else(|| "internal error: empty function list".to_string())?;
+    let script = Arc::new(script);
+    vm.run(script).map_err(|e| format!("runtime error: {e}"))
+}
+
 fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // Wrap the expression in a fn main() so the compiler can handle it.
     let wrapper_prefix = "fn main() {\n";
@@ -793,5 +830,126 @@ mod tests {
         // "hello\\\\" in Rust source is the string: hello\\\\ (four backslashes).
         // Even count before the final " means the quote is unescaped — closed.
         assert!(!has_unclosed_delimiters(r#""hello\\\\""#));
+    }
+
+    // ── is_declaration ────────────────────────────────────────────
+
+    #[test]
+    fn is_declaration_recognizes_fn() {
+        assert!(is_declaration("fn foo() {}"));
+        assert!(is_declaration("fn add(a, b) { a + b }"));
+    }
+
+    #[test]
+    fn is_declaration_recognizes_let() {
+        assert!(is_declaration("let x = 42"));
+    }
+
+    #[test]
+    fn is_declaration_recognizes_type_and_trait() {
+        assert!(is_declaration("type Color { Red, Green }"));
+        assert!(is_declaration("trait Show { fn show(self) -> String }"));
+    }
+
+    #[test]
+    fn is_declaration_rejects_expression() {
+        assert!(!is_declaration("1 + 2"));
+        assert!(!is_declaration("foo(42)"));
+    }
+
+    #[test]
+    fn is_declaration_recognizes_pub() {
+        assert!(is_declaration("pub fn foo() {}"));
+    }
+
+    // ── Multi-line input continuation ─────────────────────────────
+    //
+    // The REPL reads lines until `has_unclosed_delimiters` returns false.
+    // These tests assert the condition the interactive loop uses to decide
+    // whether to keep accumulating input rather than evaluating.
+
+    #[test]
+    fn unclosed_brace_continues_input() {
+        // `let x = {` on its own should make the REPL prompt for more.
+        let buffer = "let x = {";
+        assert!(
+            has_unclosed_delimiters(buffer),
+            "unclosed `{{` should trigger multi-line continuation"
+        );
+    }
+
+    #[test]
+    fn unclosed_bracket_continues_input() {
+        let buffer = "let xs = [1, 2,";
+        assert!(
+            has_unclosed_delimiters(buffer),
+            "unclosed `[` should trigger multi-line continuation"
+        );
+    }
+
+    #[test]
+    fn closed_braces_do_not_continue() {
+        let buffer = "let x = { 1 }";
+        assert!(
+            !has_unclosed_delimiters(buffer),
+            "balanced `{{}}` should NOT trigger multi-line continuation"
+        );
+    }
+
+    // ── Expression evaluation ─────────────────────────────────────
+
+    #[test]
+    fn eval_simple_arithmetic() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        let value = eval_expression_value(&mut vm, &mut ctx, "1 + 2").unwrap();
+        assert_eq!(format!("{value}"), "3");
+    }
+
+    #[test]
+    fn eval_string_literal() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        let value = eval_expression_value(&mut vm, &mut ctx, r#""hello""#).unwrap();
+        assert_eq!(format!("{value}"), "hello");
+    }
+
+    #[test]
+    fn eval_bool_expression() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        let value = eval_expression_value(&mut vm, &mut ctx, "true").unwrap();
+        assert_eq!(format!("{value}"), "true");
+    }
+
+    // ── Error recovery ────────────────────────────────────────────
+    //
+    // A syntax error on one line should not corrupt the persistent REPL
+    // state — a valid input on the next turn must still evaluate correctly.
+
+    #[test]
+    fn syntax_error_does_not_break_later_input() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        // First: garbage input → error.
+        let err = eval_expression_value(&mut vm, &mut ctx, "let x =");
+        assert!(err.is_err(), "malformed input should return Err");
+
+        // Second: valid input after the error. The VM and type context
+        // must still be usable.
+        let value = eval_expression_value(&mut vm, &mut ctx, "10 * 10").unwrap();
+        assert_eq!(format!("{value}"), "100");
+    }
+
+    #[test]
+    fn type_error_does_not_crash() {
+        let mut vm = Vm::new();
+        let mut ctx = ReplTypeContext::new();
+        // `1 + "hi"` is a type error.
+        let err = eval_expression_value(&mut vm, &mut ctx, r#"1 + "hi""#);
+        assert!(err.is_err(), "type error should return Err");
+        // Next input must still work.
+        let value = eval_expression_value(&mut vm, &mut ctx, "7").unwrap();
+        assert_eq!(format!("{value}"), "7");
     }
 }

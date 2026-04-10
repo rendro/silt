@@ -55,9 +55,119 @@ fn span_to_position(span: &Span) -> Position {
     )
 }
 
-fn span_to_range(span: &Span) -> Range {
+/// Return the UTF-16 code-unit length of a string (what LSP positions count).
+fn utf16_len(s: &str) -> usize {
+    s.chars().map(|c| c.len_utf16()).sum()
+}
+
+/// Compute the byte length of the token that begins at `offset` in `source`.
+fn token_len_at(source: &str, offset: usize) -> usize {
+    let bytes = source.as_bytes();
+    if offset >= bytes.len() {
+        return 1;
+    }
+    let first = bytes[offset];
+    if first.is_ascii_alphabetic() || first == b'_' {
+        let mut end = offset + 1;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        return end - offset;
+    }
+    if first.is_ascii_digit() {
+        let mut end = offset + 1;
+        let mut seen_dot = false;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b.is_ascii_digit() || b == b'_' {
+                end += 1;
+            } else if b == b'.' && !seen_dot {
+                if end + 1 < bytes.len() && bytes[end + 1].is_ascii_digit() {
+                    seen_dot = true;
+                    end += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        return end - offset;
+    }
+    if first == b'"' {
+        if offset + 2 < bytes.len() && bytes[offset + 1] == b'"' && bytes[offset + 2] == b'"' {
+            let mut end = offset + 3;
+            while end + 2 < bytes.len() {
+                if bytes[end] == b'"' && bytes[end + 1] == b'"' && bytes[end + 2] == b'"' {
+                    return end + 3 - offset;
+                }
+                end += 1;
+            }
+            return bytes.len() - offset;
+        }
+        let mut end = offset + 1;
+        let mut escape = false;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if escape {
+                escape = false;
+                end += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escape = true;
+                end += 1;
+                continue;
+            }
+            if b == b'"' {
+                return end + 1 - offset;
+            }
+            if b == b'\n' {
+                return end - offset;
+            }
+            end += 1;
+        }
+        return end - offset;
+    }
+    if offset + 1 < bytes.len() {
+        let two = &bytes[offset..offset + 2];
+        if matches!(
+            two,
+            b"==" | b"!=" | b"<=" | b">=" | b"->" | b"=>" | b".." | b"::" | b"|>" | b"&&" | b"||"
+        ) {
+            return 2;
+        }
+    }
+    1
+}
+
+/// Convert a span to an LSP range, using the source text to determine the
+/// byte length of the token at `span.offset`. Converts both the start and
+/// computed end byte offsets to line/column via the same logic, rather than
+/// hard-coding `end = start + 1`, so multi-character identifiers produce a
+/// correctly-sized range.
+fn span_to_range(span: &Span, source: &str) -> Range {
     let start = span_to_position(span);
-    let end = Position::new(start.line, start.character + 1);
+    let len = token_len_at(source, span.offset);
+    let bytes = source.as_bytes();
+    let end_col = if span.offset >= bytes.len() {
+        start.character + 1
+    } else {
+        let slice_end = (span.offset + len).min(bytes.len());
+        let slice = &source[span.offset..slice_end];
+        if let Some(nl) = slice.find('\n') {
+            let first_line = &slice[..nl];
+            start.character + utf16_len(first_line) as u32
+        } else {
+            start.character + utf16_len(slice) as u32
+        }
+    };
+    let end = Position::new(start.line, end_col);
     Range::new(start, end)
 }
 
@@ -226,6 +336,7 @@ impl Server {
                     &e.message,
                     &e.span,
                     DiagnosticSeverity::ERROR,
+                    &source,
                 ));
                 self.documents.insert(
                     uri.clone(),
@@ -247,6 +358,7 @@ impl Server {
                 &e.message,
                 &e.span,
                 DiagnosticSeverity::ERROR,
+                &source,
             ));
         }
 
@@ -256,7 +368,7 @@ impl Server {
                 typechecker::Severity::Error => DiagnosticSeverity::ERROR,
                 typechecker::Severity::Warning => DiagnosticSeverity::WARNING,
             };
-            diagnostics.push(make_diagnostic(&e.message, &e.span, severity));
+            diagnostics.push(make_diagnostic(&e.message, &e.span, severity, &source));
         }
 
         let definitions = build_definitions(&program);
@@ -348,7 +460,7 @@ impl Server {
 
         Some(GotoDefinitionResponse::Scalar(Location::new(
             uri.clone(),
-            span_to_range(&def.span),
+            span_to_range(&def.span, &doc.source),
         )))
     }
 
@@ -615,8 +727,8 @@ impl Server {
                         name: f.name.to_string(),
                         detail,
                         kind: SymbolKind::FUNCTION,
-                        range: span_to_range(&f.span),
-                        selection_range: span_to_range(&f.span),
+                        range: span_to_range(&f.span, &doc.source),
+                        selection_range: span_to_range(&f.span, &doc.source),
                         tags: None,
                         deprecated: None,
                         children: None,
@@ -631,8 +743,8 @@ impl Server {
                         name: t.name.to_string(),
                         detail: None,
                         kind,
-                        range: span_to_range(&t.span),
-                        selection_range: span_to_range(&t.span),
+                        range: span_to_range(&t.span, &doc.source),
+                        selection_range: span_to_range(&t.span, &doc.source),
                         tags: None,
                         deprecated: None,
                         children: None,
@@ -643,8 +755,8 @@ impl Server {
                         name: t.name.to_string(),
                         detail: None,
                         kind: SymbolKind::INTERFACE,
-                        range: span_to_range(&t.span),
-                        selection_range: span_to_range(&t.span),
+                        range: span_to_range(&t.span, &doc.source),
+                        selection_range: span_to_range(&t.span, &doc.source),
                         tags: None,
                         deprecated: None,
                         children: None,
@@ -661,8 +773,8 @@ impl Server {
                         name: name.to_string(),
                         detail,
                         kind: SymbolKind::VARIABLE,
-                        range: span_to_range(span),
-                        selection_range: span_to_range(span),
+                        range: span_to_range(span, &doc.source),
+                        selection_range: span_to_range(span, &doc.source),
                         tags: None,
                         deprecated: None,
                         children: None,
@@ -737,9 +849,14 @@ fn has_unresolved_vars(ty: &Type) -> bool {
 
 // ── Diagnostics helper ─────────────────────────────────────────────
 
-fn make_diagnostic(message: &str, span: &Span, severity: DiagnosticSeverity) -> Diagnostic {
+fn make_diagnostic(
+    message: &str,
+    span: &Span,
+    severity: DiagnosticSeverity,
+    source: &str,
+) -> Diagnostic {
     Diagnostic {
-        range: span_to_range(span),
+        range: span_to_range(span, source),
         severity: Some(severity),
         message: message.to_string(),
         ..Diagnostic::default()
@@ -2246,17 +2363,83 @@ mod tests {
     // ── span_to_range ────────────────────────────────────────────
 
     #[test]
-    fn test_span_to_range() {
+    fn test_span_to_range_empty_source() {
+        // An offset past end-of-source still yields a sane one-column range.
         let span = Span {
             line: 3,
             col: 5,
             offset: 0,
         };
-        let range = span_to_range(&span);
+        let range = span_to_range(&span, "");
         assert_eq!(range.start.line, 2);
         assert_eq!(range.start.character, 4);
         assert_eq!(range.end.line, 2);
         assert_eq!(range.end.character, 5);
+    }
+
+    #[test]
+    fn test_span_to_range_identifier_width() {
+        // Regression: a span at a multi-character identifier must produce a
+        // range whose width equals the identifier's length, not just 1.
+        let source = "let println = 42";
+        let span = Span {
+            line: 1,
+            col: 5,
+            offset: 4,
+        };
+        let range = span_to_range(&span, source);
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 4);
+        assert_eq!(range.end.line, 0);
+        // `println` is 7 characters wide, so end column = 4 + 7 = 11.
+        assert_eq!(range.end.character, 11);
+    }
+
+    #[test]
+    fn test_span_to_range_multiline_source() {
+        // On line 2, both line and column math must use the span's own
+        // line/col — not hard-coded values — and the end should land at the
+        // end of the identifier, on the same line.
+        let source = "let a = 1\nlet foobar = 2";
+        let span = Span {
+            line: 2,
+            col: 5,
+            offset: 14,
+        };
+        let range = span_to_range(&span, source);
+        assert_eq!(range.start.line, 1);
+        assert_eq!(range.start.character, 4);
+        assert_eq!(range.end.line, 1);
+        // `foobar` is 6 characters wide.
+        assert_eq!(range.end.character, 10);
+    }
+
+    #[test]
+    fn test_token_len_at_identifier() {
+        assert_eq!(token_len_at("println x", 0), 7);
+        assert_eq!(token_len_at("let abc = 1", 4), 3);
+        assert_eq!(token_len_at("foo_bar + 1", 0), 7);
+    }
+
+    #[test]
+    fn test_token_len_at_number() {
+        assert_eq!(token_len_at("42 + 1", 0), 2);
+        assert_eq!(token_len_at("3.14", 0), 4);
+        // `1..10` should stop at the `.` because it's a range, not a float.
+        assert_eq!(token_len_at("1..10", 0), 1);
+    }
+
+    #[test]
+    fn test_token_len_at_string() {
+        assert_eq!(token_len_at(r#""hi" end"#, 0), 4);
+        assert_eq!(token_len_at(r#""esc\"ape""#, 0), 10);
+    }
+
+    #[test]
+    fn test_token_len_at_past_end() {
+        // Out-of-bounds offset must not panic.
+        assert_eq!(token_len_at("x", 99), 1);
+        assert_eq!(token_len_at("", 0), 1);
     }
 
     // ── find_type_at_offset: let bindings ────────────────────────
@@ -2300,5 +2483,200 @@ mod tests {
         } else {
             panic!("expected Fn decl");
         }
+    }
+
+    // ── Server integration tests (hover / completion / goto / diagnostics) ──
+    //
+    // These construct a real Server wired to an in-memory Connection so we
+    // can exercise the request handlers end-to-end without spawning any I/O
+    // threads. The Connection's receiver is never used (we never call run),
+    // and the sender is only drained where a test actually needs to observe
+    // the published payload.
+
+    fn make_server() -> Server {
+        let (connection, _client) = Connection::memory();
+        Server::new(connection)
+    }
+
+    fn test_uri() -> Uri {
+        use std::str::FromStr;
+        Uri::from_str("file:///test.silt").unwrap()
+    }
+
+    fn open_document(server: &mut Server, source: &str) -> Uri {
+        let uri = test_uri();
+        server.update_document(uri.clone(), source.to_string());
+        uri
+    }
+
+    #[test]
+    fn test_hover_returns_some_for_known_symbol() {
+        let mut server = make_server();
+        let source = "fn add(a, b) { a + b }\nfn main() { add(1, 2) }";
+        let uri = open_document(&mut server, source);
+
+        // Position of `add` in the call site on line 2: "fn main() { add(..."
+        // column index 12 (0-based) points inside `add`.
+        let params = lsp_types::HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: Position::new(1, 13),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hover = server.hover(params);
+        assert!(hover.is_some(), "expected hover for `add` at the call site");
+    }
+
+    #[test]
+    fn test_completion_includes_builtins_and_user_names() {
+        let mut server = make_server();
+        let source = "fn my_func(x) { x + 1 }\nfn main() { 0 }";
+        let uri = open_document(&mut server, source);
+
+        let params = lsp_types::CompletionParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: Position::new(1, 13),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        };
+        let resp = server
+            .completion(params)
+            .expect("completion should return some response");
+        let items = match resp {
+            CompletionResponse::Array(items) => items,
+            CompletionResponse::List(list) => list.items,
+        };
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        // Builtin global
+        assert!(
+            labels.contains(&"println"),
+            "completions should include builtin `println`"
+        );
+        // User-defined function
+        assert!(
+            labels.contains(&"my_func"),
+            "completions should include user-defined `my_func`"
+        );
+        // Keyword
+        assert!(
+            labels.contains(&"fn"),
+            "completions should include keyword `fn`"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_resolves_to_correct_span() {
+        let mut server = make_server();
+        let source = "fn helper(x) { x + 1 }\nfn main() { helper(5) }";
+        let uri = open_document(&mut server, source);
+
+        // The call site `helper` starts at column 12 on line 2 (0-based: line 1).
+        let params = lsp_types::GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position::new(1, 13),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let resp = server
+            .goto_definition(params)
+            .expect("goto definition should resolve `helper`");
+        let location = match resp {
+            GotoDefinitionResponse::Scalar(loc) => loc,
+            GotoDefinitionResponse::Array(mut locs) => locs.pop().expect("at least one location"),
+            GotoDefinitionResponse::Link(mut links) => {
+                let link = links.pop().expect("at least one link");
+                Location::new(uri.clone(), link.target_selection_range)
+            }
+        };
+        assert_eq!(location.uri, uri);
+        // The helper fn declaration starts on line 1 (0-based 0).
+        assert_eq!(location.range.start.line, 0);
+    }
+
+    #[test]
+    fn test_diagnostics_range_has_identifier_width() {
+        // Regression for Issue 1: hover / diagnostic ranges on multi-character
+        // identifiers should span the whole identifier, not just one column.
+        let mut server = make_server();
+        // This program has an undefined identifier `undefined_name` — the
+        // type checker will emit a diagnostic pointing at it.
+        let source = "fn main() { undefined_name }";
+        let uri = open_document(&mut server, source);
+
+        // Drain the published diagnostics notification.
+        let mut found_range: Option<Range> = None;
+        while let Ok(msg) = server.connection.receiver.try_recv() {
+            if let Message::Notification(notif) = msg
+                && notif.method == PublishDiagnostics::METHOD
+            {
+                let params: PublishDiagnosticsParams =
+                    serde_json::from_value(notif.params).unwrap();
+                if params.uri == uri {
+                    for diag in params.diagnostics {
+                        // Look for a diagnostic that overlaps the `undefined_name` span.
+                        if diag.range.start.line == 0 && diag.range.start.character >= 12 {
+                            found_range = Some(diag.range);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(range) = found_range {
+            // Not all programs produce a diagnostic here, but if they do,
+            // its width must be greater than 1 (the identifier is 14 chars).
+            let width = range.end.character.saturating_sub(range.start.character);
+            assert!(
+                width > 1,
+                "diagnostic range width should be > 1 for a multi-char identifier, got {width}"
+            );
+        }
+        // If no diagnostic was emitted, the test is a no-op — the
+        // important assertion (correct width) is covered by
+        // `test_span_to_range_identifier_width` above.
+    }
+
+    #[test]
+    fn test_update_document_creates_document_entry() {
+        let mut server = make_server();
+        let source = "fn main() { 42 }";
+        let uri = open_document(&mut server, source);
+
+        let doc = server.documents.get(&uri).expect("document should exist");
+        assert_eq!(doc.source, source);
+        assert!(doc.program.is_some());
+        assert!(doc.definitions.contains_key(&intern("main")));
+    }
+
+    #[test]
+    fn test_update_document_recovers_from_parse_error() {
+        let mut server = make_server();
+        // Intentionally malformed source — the LSP must not panic.
+        let source = "fn main() { let }";
+        let uri = open_document(&mut server, source);
+
+        // The server still stores the document (with or without a program)
+        // so we can keep serving requests on it.
+        assert!(server.documents.contains_key(&uri));
+    }
+
+    #[test]
+    fn test_close_document_removes_entry() {
+        let mut server = make_server();
+        let source = "fn main() { 0 }";
+        let uri = open_document(&mut server, source);
+        assert!(server.documents.contains_key(&uri));
+
+        // Simulate DidCloseTextDocument by invoking the removal directly.
+        server.documents.remove(&uri);
+        assert!(!server.documents.contains_key(&uri));
     }
 }

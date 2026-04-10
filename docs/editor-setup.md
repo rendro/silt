@@ -92,16 +92,44 @@ Install [nvim-cmp](https://github.com/hrsh7th/nvim-cmp) with the
 
 ## VS Code
 
-Use any generic LSP client extension (e.g., "Language Server Client") with:
+A dedicated VS Code extension lives in `editors/vscode/`. It bundles a
+TextMate grammar for syntax highlighting and bootstraps `silt lsp` as a
+language server for diagnostics, hover, go-to-definition, completion,
+signature help, document symbols, and formatting.
 
-```json
-{
-  "languageServerExample.serverCommand": "silt",
-  "languageServerExample.serverArgs": ["lsp"]
-}
+Build and install it locally:
+
+```bash
+cd editors/vscode
+npm install
+npm run compile
 ```
 
-A dedicated VS Code extension is planned.
+Then either package it as a VSIX:
+
+```bash
+npx vsce package
+code --install-extension silt-vscode-0.1.0.vsix
+```
+
+…or symlink it into your extensions directory:
+
+```bash
+ln -s "$(pwd)" ~/.vscode/extensions/silt-lang.silt-vscode-0.1.0
+```
+
+Reload VS Code and open any `.silt` file — the extension activates on
+`onLanguage:silt` and spawns the language server over stdio.
+
+Settings:
+
+- `silt.serverPath` (default `silt`) — path to the `silt` binary used as
+  the language server. Set this if `silt` is not on your `PATH`.
+- `silt.trace.server` — controls LSP message tracing (`off` | `messages`
+  | `verbose`).
+
+If you'd rather use a generic LSP client extension without the bundled
+grammar, configure it to run `silt lsp` for the `silt` language id.
 
 ## Syntax Highlighting
 

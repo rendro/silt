@@ -110,6 +110,74 @@ impl Parser {
         }
     }
 
+    // ── Delimiter error helpers ──────────────────────────────────────
+    //
+    // These produce actionable errors when a bracketed/braced/parenthesized
+    // construct isn't closed. Rather than the generic
+    //     expected expression, found }
+    // they report
+    //     expected ']' or ',' to continue list literal starting at line N, found }
+    // pointing at the current token. `construct` names the enclosing form
+    // (e.g. "list literal") and `closer` is the expected closing delimiter.
+
+    /// Build an "unclosed delimiter" error for a construct that uses commas
+    /// to separate elements (list, tuple, map, set, call args, fn params).
+    fn delim_unclosed_err(&self, construct: &str, closer: char, opener_span: Span) -> ParseError {
+        ParseError {
+            message: format!(
+                "expected '{closer}' or ',' to continue {construct} starting at line {}, found {}",
+                opener_span.line,
+                self.peek()
+            ),
+            span: self.span(),
+        }
+    }
+
+    /// Build an "unclosed delimiter" error for a construct that does not
+    /// use commas internally (block expressions).
+    fn delim_unclosed_err_no_comma(
+        &self,
+        construct: &str,
+        closer: char,
+        opener_span: Span,
+    ) -> ParseError {
+        ParseError {
+            message: format!(
+                "expected '{closer}' to close {construct} starting at line {}, found {}",
+                opener_span.line,
+                self.peek()
+            ),
+            span: self.span(),
+        }
+    }
+
+    /// True if the current token is a closing delimiter that is NOT the
+    /// one we expect — i.e., we're almost certainly inside a still-open
+    /// enclosing delimited form.
+    fn at_foreign_closer(&self, our_closer: &Token) -> bool {
+        matches!(self.peek(), Token::RBrace | Token::RBracket | Token::RParen)
+            && std::mem::discriminant(self.peek()) != std::mem::discriminant(our_closer)
+    }
+
+    /// Wrap `parse_expr()` so that if it fails because the next token is
+    /// EOF or a foreign closer, the error is upgraded to a contextual
+    /// unclosed-delimiter message.
+    fn parse_expr_in_delim(
+        &mut self,
+        construct: &str,
+        our_closer: &Token,
+        closer_char: char,
+        opener_span: Span,
+    ) -> Result<Expr> {
+        // Pre-check: if we're already at EOF / foreign closer before parsing,
+        // produce the contextual error immediately.
+        self.skip_nl();
+        if self.at(&Token::Eof) || self.at_foreign_closer(our_closer) {
+            return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
+        }
+        self.parse_expr()
+    }
+
     fn save(&self) -> usize {
         self.pos
     }
@@ -583,8 +651,13 @@ impl Parser {
 
     fn parse_block(&mut self) -> Result<Expr> {
         let span = self.span();
+        let opener = self.span();
         self.expect(&Token::LBrace)?;
         let stmts = self.parse_stmt_list(&Token::RBrace)?;
+        self.skip_nl();
+        if self.at(&Token::Eof) {
+            return Err(self.delim_unclosed_err_no_comma("block", '}', opener));
+        }
         self.expect(&Token::RBrace)?;
         Ok(Expr::new(ExprKind::Block(stmts), span))
     }
@@ -1076,6 +1149,7 @@ impl Parser {
                 Ok(Expr::new(ExprKind::Ident(name), span))
             }
             Token::LParen => {
+                let opener = self.span();
                 self.advance();
                 self.skip_nl();
                 // Unit: ()
@@ -1084,7 +1158,12 @@ impl Parser {
                     return Ok(Expr::new(ExprKind::Unit, span));
                 }
                 // Parse first expression
-                let first = self.parse_expr()?;
+                let first = self.parse_expr_in_delim(
+                    "parenthesized expression",
+                    &Token::RParen,
+                    ')',
+                    opener,
+                )?;
                 self.skip_nl();
                 if self.at(&Token::Comma) {
                     // Tuple: (a, b, c)
@@ -1092,7 +1171,15 @@ impl Parser {
                     let mut elems = vec![first];
                     self.skip_nl();
                     while !self.at(&Token::RParen) {
-                        elems.push(self.parse_expr()?);
+                        if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
+                            return Err(self.delim_unclosed_err("tuple", ')', opener));
+                        }
+                        elems.push(self.parse_expr_in_delim(
+                            "tuple",
+                            &Token::RParen,
+                            ')',
+                            opener,
+                        )?);
                         self.skip_nl();
                         if self.at(&Token::Comma) {
                             self.advance();
@@ -1101,6 +1188,8 @@ impl Parser {
                     }
                     self.expect(&Token::RParen)?;
                     Ok(Expr::new(ExprKind::Tuple(elems), span))
+                } else if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
+                    Err(self.delim_unclosed_err_no_comma("parenthesized expression", ')', opener))
                 } else {
                     // Parenthesized expression
                     self.expect(&Token::RParen)?;
@@ -1108,15 +1197,29 @@ impl Parser {
                 }
             }
             Token::LBracket => {
+                let opener = self.span();
                 self.advance();
                 let mut elems = Vec::new();
                 self.skip_nl();
                 while !self.at(&Token::RBracket) {
+                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBracket) {
+                        return Err(self.delim_unclosed_err("list literal", ']', opener));
+                    }
                     if self.at(&Token::DotDot) {
                         self.advance();
-                        elems.push(ListElem::Spread(self.parse_expr()?));
+                        elems.push(ListElem::Spread(self.parse_expr_in_delim(
+                            "list literal",
+                            &Token::RBracket,
+                            ']',
+                            opener,
+                        )?));
                     } else {
-                        elems.push(ListElem::Single(self.parse_expr()?));
+                        elems.push(ListElem::Single(self.parse_expr_in_delim(
+                            "list literal",
+                            &Token::RBracket,
+                            ']',
+                            opener,
+                        )?));
                     }
                     self.skip_nl();
                     if self.at(&Token::Comma) {
@@ -1128,14 +1231,20 @@ impl Parser {
                 Ok(Expr::new(ExprKind::List(elems), span))
             }
             Token::HashBrace => {
+                let opener = self.span();
                 self.advance();
                 let mut pairs = Vec::new();
                 self.skip_nl();
                 while !self.at(&Token::RBrace) {
-                    let key = self.parse_expr()?;
+                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBrace) {
+                        return Err(self.delim_unclosed_err("map literal", '}', opener));
+                    }
+                    let key =
+                        self.parse_expr_in_delim("map literal", &Token::RBrace, '}', opener)?;
                     self.expect(&Token::Colon)?;
                     self.skip_nl();
-                    let value = self.parse_expr()?;
+                    let value =
+                        self.parse_expr_in_delim("map literal", &Token::RBrace, '}', opener)?;
                     pairs.push((key, value));
                     self.skip_nl();
                     if self.at(&Token::Comma) {
@@ -1147,11 +1256,20 @@ impl Parser {
                 Ok(Expr::new(ExprKind::Map(pairs), span))
             }
             Token::HashBracket => {
+                let opener = self.span();
                 self.advance();
                 let mut elems = Vec::new();
                 self.skip_nl();
                 while !self.at(&Token::RBracket) {
-                    elems.push(self.parse_expr()?);
+                    if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RBracket) {
+                        return Err(self.delim_unclosed_err("set literal", ']', opener));
+                    }
+                    elems.push(self.parse_expr_in_delim(
+                        "set literal",
+                        &Token::RBracket,
+                        ']',
+                        opener,
+                    )?);
                     self.skip_nl();
                     if self.at(&Token::Comma) {
                         self.advance();
@@ -1243,11 +1361,20 @@ impl Parser {
     }
 
     fn parse_call_args(&mut self) -> Result<Vec<Expr>> {
+        let opener = self.span();
         self.expect(&Token::LParen)?;
         let mut args = Vec::new();
         self.skip_nl();
         while !self.at(&Token::RParen) {
-            args.push(self.parse_expr()?);
+            if self.at(&Token::Eof) || self.at_foreign_closer(&Token::RParen) {
+                return Err(self.delim_unclosed_err("function call argument list", ')', opener));
+            }
+            args.push(self.parse_expr_in_delim(
+                "function call argument list",
+                &Token::RParen,
+                ')',
+                opener,
+            )?);
             self.skip_nl();
             if self.at(&Token::Comma) {
                 self.advance();

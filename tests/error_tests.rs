@@ -2064,3 +2064,33 @@ fn test_pipe_non_callable_rhs() {
 fn test_pipe_correct_usage() {
     assert_no_type_errors("fn double(x) = x * 2\nfn main() { 5 |> double }");
 }
+
+// ── Parser: unclosed delimiter error messages ──────────────────────
+
+#[test]
+fn test_parse_unclosed_list_literal_points_at_opener() {
+    let msg = parse_err("fn main() {\n  let x = [1, 2, 3\n  x\n}\n");
+    assert!(
+        msg.contains("list literal"),
+        "expected 'list literal' in error, got: {msg}"
+    );
+    assert!(msg.contains("]"), "expected ']' in error, got: {msg}");
+    assert!(
+        msg.contains("line 2"),
+        "expected 'line 2' in error, got: {msg}"
+    );
+}
+
+#[test]
+fn test_parse_unclosed_call_args_points_at_opener() {
+    let msg = parse_err("fn main() {\n  foo(1, 2,\n  3\n}\n");
+    assert!(
+        msg.contains("function call argument list"),
+        "expected 'function call argument list' in error, got: {msg}"
+    );
+    assert!(msg.contains(")"), "expected ')' in error, got: {msg}");
+    assert!(
+        msg.contains("line 2"),
+        "expected 'line 2' in error, got: {msg}"
+    );
+}
