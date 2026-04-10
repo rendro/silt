@@ -557,7 +557,8 @@ fn eval_expression_value(
         .next()
         .ok_or_else(|| "internal error: empty function list".to_string())?;
     let script = Arc::new(script);
-    vm.run(script).map_err(|e| format!("runtime error: {e}"))
+    vm.run(script)
+        .map_err(|e| format!("runtime error: {}", e.message))
 }
 
 fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {

@@ -661,6 +661,72 @@ fn main() {
 }
 
 #[test]
+fn test_task_failure_span_points_at_task_body() {
+    // Regression test for commit d9dd98b: when a spawned closure fails, the
+    // user-visible error's source span must point at the failing instruction
+    // *inside the closure*, not at the `task.join` site in the parent.
+    //
+    // Line layout of the source string below (line 1 is the leading newline):
+    //   line 2: import task
+    //   line 3: fn main() {
+    //   line 4:   let h = task.spawn(fn() {
+    //   line 5:     let y = 10
+    //   line 6:     let x = y / 0    <-- division-by-zero; this is THE line
+    //   line 7:     x
+    //   line 8:   })
+    //   line 9:   task.join(h)       <-- join site; must NOT be reported
+    //   line 10: }
+    let src = r#"
+import task
+fn main() {
+  let h = task.spawn(fn() {
+    let y = 10
+    let x = y / 0
+    x
+  })
+  task.join(h)
+}
+    "#;
+    const DIVISION_LINE: usize = 6;
+    const JOIN_LINE: usize = 9;
+
+    let tokens = Lexer::new(src).tokenize().expect("lexer error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Arc::new(functions.into_iter().next().unwrap());
+    let mut vm = Vm::new();
+    let err = vm.run(script).expect_err("expected runtime error from 1/0");
+
+    // Message must still mention division so diagnostics are not degraded.
+    assert!(
+        err.message.contains("division"),
+        "error message should mention division, got: {}",
+        err.message
+    );
+
+    // The whole point of the regression: the span must exist and must point
+    // at the division line inside the spawned closure, NOT the join site.
+    let span = err
+        .span
+        .expect("task failure must carry a source span after enrich_error");
+    assert_eq!(
+        span.line, DIVISION_LINE,
+        "expected error span at the division line {} inside the spawned \
+         closure, got line {} (message: {}). If this points at line {} \
+         (task.join), the scheduler is re-wrapping errors at the join site \
+         instead of preserving the child VM's original span.",
+        DIVISION_LINE, span.line, err.message, JOIN_LINE
+    );
+    assert_ne!(
+        span.line, JOIN_LINE,
+        "error span must not point at the task.join site (line {})",
+        JOIN_LINE
+    );
+}
+
+#[test]
 fn test_select_expression() {
     let result = run(r#"
 import channel

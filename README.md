@@ -165,7 +165,7 @@ silt init
 silt run main.silt
 ```
 
-See `examples/` for 40+ runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
+See `examples/` for 35+ runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
 ## Tooling
 

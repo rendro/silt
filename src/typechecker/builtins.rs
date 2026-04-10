@@ -311,42 +311,49 @@ impl TypeChecker {
 
         // ── task module ────────────────────────────────────────────────
 
-        // task.spawn: (() -> a) -> Handle
+        // task.spawn: (() -> a) -> Handle(a)
         {
             let (a, av) = self.fresh_tv();
-            let (h, hv) = self.fresh_tv();
             env.define(
                 intern("task.spawn"),
                 Scheme {
-                    vars: vec![av, hv],
-                    ty: Type::Fun(vec![Type::Fun(vec![], Box::new(a))], Box::new(h)),
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Fun(vec![], Box::new(a.clone()))],
+                        Box::new(Type::Generic(intern("Handle"), vec![a])),
+                    ),
                     constraints: vec![],
                 },
             );
         }
 
-        // task.join: (Handle) -> a
+        // task.join: Handle(a) -> a
         {
-            let (h, hv) = self.fresh_tv();
             let (a, av) = self.fresh_tv();
             env.define(
                 intern("task.join"),
                 Scheme {
-                    vars: vec![hv, av],
-                    ty: Type::Fun(vec![h], Box::new(a)),
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Generic(intern("Handle"), vec![a.clone()])],
+                        Box::new(a),
+                    ),
                     constraints: vec![],
                 },
             );
         }
 
-        // task.cancel: (Handle) -> Unit
+        // task.cancel: Handle(a) -> Unit
         {
-            let (h, hv) = self.fresh_tv();
+            let (a, av) = self.fresh_tv();
             env.define(
                 intern("task.cancel"),
                 Scheme {
-                    vars: vec![hv],
-                    ty: Type::Fun(vec![h], Box::new(Type::Unit)),
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Generic(intern("Handle"), vec![a])],
+                        Box::new(Type::Unit),
+                    ),
                     constraints: vec![],
                 },
             );

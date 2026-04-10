@@ -6,6 +6,13 @@
 
 use super::*;
 
+/// Recursion depth bound for the usefulness algorithm. Guards against
+/// pathological blowups on deeply recursive variant types. When this bound
+/// is hit the checker records that it could not fully verify exhaustiveness
+/// via `exhaustiveness_depth_exceeded` on the `TypeChecker`, rather than
+/// silently assuming the match is exhaustive.
+pub(super) const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
+
 impl TypeChecker {
     // ── Exhaustiveness checking (Maranget-style usefulness) ──────────
     //
@@ -29,9 +36,33 @@ impl TypeChecker {
 
         let scrutinee_ty = self.apply(scrutinee_ty);
 
-        if self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty, 0) {
+        // Reset the depth-exceeded flag before running the usefulness
+        // algorithm so we can detect whether any recursive branch bailed
+        // out at the depth bound.
+        self.exhaustiveness_depth_exceeded.set(false);
+        let wildcard_useful = self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty, 0);
+        let depth_exceeded = self.exhaustiveness_depth_exceeded.get();
+        // Clear the flag so `missing_description`'s internal `is_useful`
+        // calls start from a clean slate (their truncation is benign — a
+        // conservative "missing" description is still useful).
+        self.exhaustiveness_depth_exceeded.set(false);
+
+        if wildcard_useful {
             let msg = self.missing_description(&patterns, &scrutinee_ty);
             self.error(format!("non-exhaustive match: {msg}"), span);
+        } else if depth_exceeded {
+            // We bailed out of the usefulness search at the depth bound,
+            // so the "exhaustive" verdict is not trustworthy. Surface this
+            // to the user with an actionable suggestion rather than
+            // silently accepting the match.
+            self.warning(
+                "could not verify exhaustiveness of match: pattern analysis \
+                 exceeded recursion depth limit on a recursive type; \
+                 consider adding a wildcard arm (`_ -> ...`) to guarantee \
+                 coverage"
+                    .into(),
+                span,
+            );
         }
 
         // Warn if ALL arms have guards.
@@ -46,11 +77,25 @@ impl TypeChecker {
     /// Check if `query` is useful with respect to existing patterns.
     /// Returns true if there exists a value matching `query` not matched by `matrix`.
     /// `depth` tracks recursion depth to prevent infinite expansion of recursive types.
-    fn is_useful(&self, matrix: &[&Pattern], query: &Pattern, ty: &Type, depth: usize) -> bool {
+    ///
+    /// Note: when the recursion depth bound `MAX_EXHAUSTIVENESS_DEPTH` is
+    /// hit we return `false` (to unwind cleanly) but also set
+    /// `self.exhaustiveness_depth_exceeded`, so the caller can distinguish
+    /// a real "not useful" verdict from a bailout and emit a "could not
+    /// verify" diagnostic instead of silently accepting the match.
+    pub(super) fn is_useful(
+        &self,
+        matrix: &[&Pattern],
+        query: &Pattern,
+        ty: &Type,
+        depth: usize,
+    ) -> bool {
         // Guard against infinite recursion on recursive types (e.g. type Expr { Num(Int), Add(Expr, Expr) }).
-        // Beyond a reasonable depth, conservatively assume exhaustive (not useful).
-        const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
+        // Beyond the bound we can't trust a "not useful" verdict, so we record
+        // that fact via the depth-exceeded flag and let the caller surface a
+        // "could not verify exhaustiveness" diagnostic.
         if depth > MAX_EXHAUSTIVENESS_DEPTH {
+            self.exhaustiveness_depth_exceeded.set(true);
             return false;
         }
 
@@ -983,5 +1028,111 @@ fn main() { area(Circle(1.0)) }
         "#,
             "non-exhaustive",
         );
+    }
+
+    // ── Depth-limit fallback ────────────────────────────────────────
+    //
+    // Regression for a silent-wrong-behavior bug: when the usefulness
+    // algorithm hit its recursion depth bound on a recursive-variant
+    // match, it used to return `false` ("not useful" ⇒ "exhaustive") and
+    // the match was accepted silently — potentially papering over real
+    // coverage gaps. The checker now sets an interior flag on bailout so
+    // `check_exhaustiveness` can emit a "could not verify" warning
+    // instead, and this test drives the flag directly through the
+    // internal API using a hand-constructed recursive enum and pattern
+    // tree deeper than `MAX_EXHAUSTIVENESS_DEPTH`.
+    #[test]
+    fn test_depth_limit_reports_could_not_verify() {
+        use super::MAX_EXHAUSTIVENESS_DEPTH;
+        use crate::intern::intern;
+        use crate::lexer::Span;
+
+        let mut tc = TypeChecker::new();
+
+        // Register a recursive enum `Expr { Leaf(Int), Pair(Expr, Expr) }`.
+        // (Constructed directly because writing a depth-20+ nested pattern
+        // in source would be unwieldy and fragile.)
+        let expr_name = intern("ExhaustivenessDepthExpr");
+        let leaf_name = intern("ExhaustivenessDepthLeaf");
+        let pair_name = intern("ExhaustivenessDepthPair");
+        let expr_ty = Type::Generic(expr_name, vec![]);
+
+        tc.enums.insert(
+            expr_name,
+            EnumInfo {
+                _name: expr_name,
+                params: vec![],
+                param_var_ids: vec![],
+                variants: vec![
+                    VariantInfo {
+                        name: leaf_name,
+                        field_types: vec![Type::Int],
+                    },
+                    VariantInfo {
+                        name: pair_name,
+                        field_types: vec![expr_ty.clone(), expr_ty.clone()],
+                    },
+                ],
+            },
+        );
+        tc.variant_to_enum.insert(leaf_name, expr_name);
+        tc.variant_to_enum.insert(pair_name, expr_name);
+
+        // Build a two-arm match that IS logically exhaustive — every
+        // `Expr` is either a `Leaf` or a `Pair` — but the Maranget
+        // algorithm can only certify that by recursing into the `Pair`
+        // sub-patterns, where each Expr sub-column forces another round
+        // of constructor enumeration. Because the enum is recursive the
+        // recursion keeps growing and eventually trips the
+        // `MAX_EXHAUSTIVENESS_DEPTH` bound. The old code then silently
+        // returned `false` ("not useful" ⇒ "exhaustive"); the new code
+        // surfaces a "could not verify" warning via the interior flag.
+        let span = Span::new(1, 1);
+        let body = Expr::new(crate::ast::ExprKind::Int(0), span);
+        let arms = vec![
+            MatchArm {
+                pattern: Pattern::Constructor(leaf_name, vec![Pattern::Wildcard]),
+                guard: None,
+                body: body.clone(),
+            },
+            MatchArm {
+                pattern: Pattern::Constructor(
+                    pair_name,
+                    vec![Pattern::Wildcard, Pattern::Wildcard],
+                ),
+                guard: None,
+                body: body.clone(),
+            },
+        ];
+        // Silence unused-warning — `MAX_EXHAUSTIVENESS_DEPTH` is imported
+        // as a documentation anchor for this test.
+        let _ = MAX_EXHAUSTIVENESS_DEPTH;
+
+        tc.check_exhaustiveness(&arms, &expr_ty, span);
+
+        // We should see exactly the "could not verify" warning — not a
+        // silent success and not a plain "non-exhaustive match" error.
+        let could_not_verify: Vec<_> = tc
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("could not verify exhaustiveness"))
+            .collect();
+        assert!(
+            !could_not_verify.is_empty(),
+            "expected a 'could not verify exhaustiveness' diagnostic, got: {:?}",
+            tc.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+        for d in &could_not_verify {
+            assert_eq!(
+                d.severity,
+                Severity::Warning,
+                "depth-limit fallback should be a warning, not an error"
+            );
+            assert!(
+                d.message.contains("wildcard"),
+                "warning should suggest a wildcard arm, got: {}",
+                d.message
+            );
+        }
     }
 }

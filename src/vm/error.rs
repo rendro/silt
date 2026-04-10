@@ -35,7 +35,32 @@ impl VmError {
 
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "VM error: {}", self.message)
+        write!(f, "VM error: {}", self.message)?;
+        if let Some(span) = self.span {
+            write!(f, " at line {}, column {}", span.line, span.col)?;
+        }
+        // Only show the call stack if it has at least two meaningful (non-synthetic)
+        // frames — a single-frame "stack" would just restate the error site above.
+        let meaningful: Vec<_> = self
+            .call_stack
+            .iter()
+            .filter(|(name, _)| !name.starts_with('<'))
+            .collect();
+        if meaningful.len() >= 2 {
+            write!(f, "\ncall stack:")?;
+            for (name, frame_span) in &meaningful {
+                if frame_span.line > 0 {
+                    write!(
+                        f,
+                        "\n  -> {} at line {}, column {}",
+                        name, frame_span.line, frame_span.col
+                    )?;
+                } else {
+                    write!(f, "\n  -> {name}")?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

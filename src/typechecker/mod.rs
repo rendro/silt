@@ -176,6 +176,12 @@ pub struct TypeChecker {
     /// detect duplicate top-level definitions without also flagging
     /// user code that shadows a builtin (which remains a warning).
     pub(super) top_level_names: std::collections::HashSet<Symbol>,
+    /// Set by the exhaustiveness checker when its recursion depth bound is
+    /// exceeded during a single `check_exhaustiveness` call. Interior
+    /// mutability lets the `&self`-taking `is_useful` recursion record the
+    /// event without threading a result type through every recursive call.
+    /// Reset at the start of each `check_exhaustiveness` invocation.
+    pub(super) exhaustiveness_depth_exceeded: std::cell::Cell<bool>,
 }
 
 impl Default for TypeChecker {
@@ -204,6 +210,7 @@ impl TypeChecker {
             pending_field_accesses: Vec::new(),
             pending_numeric_checks: Vec::new(),
             top_level_names: std::collections::HashSet::new(),
+            exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
         }
     }
 
