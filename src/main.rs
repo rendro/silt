@@ -188,7 +188,7 @@ fn all_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
 /// module", which silently masked real type errors in any file that also
 /// happened to import a user module. Filtering per-entry fixes that while
 /// keeping the clean UX for importers.
-fn reportable_type_errors<'a>(result: &'a CompilePipelineResult) -> Vec<&'a SourceError> {
+fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&SourceError> {
     result
         .type_errors
         .iter()

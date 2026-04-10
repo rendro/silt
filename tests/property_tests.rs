@@ -243,7 +243,7 @@ proptest! {
         };
         let _ = silt::typechecker::check(&mut program);
         let mut compiler = silt::compiler::Compiler::new();
-        let functions = match compiler.compile_program(&mut program) {
+        let functions = match compiler.compile_program(&program) {
             Ok(f) => f,
             Err(_) => return Ok(()),
         };

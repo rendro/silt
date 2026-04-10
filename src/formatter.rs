@@ -1092,12 +1092,11 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     // Preserve multi-line triple-quoted strings byte-for-byte from the
     // original source so users' chosen indentation / whitespace survive
     // formatting unchanged.
-    if let ExprKind::StringLit(s, true) = &expr.kind {
-        if s.contains('\n') {
-            if let Some(raw) = extract_triple_string_raw(expr.span.offset) {
-                return raw;
-            }
-        }
+    if let ExprKind::StringLit(s, true) = &expr.kind
+        && s.contains('\n')
+        && let Some(raw) = extract_triple_string_raw(expr.span.offset)
+    {
+        return raw;
     }
     format_expr_inner(&expr.kind, depth)
 }

@@ -1381,10 +1381,10 @@ fn expr_extent(expr: &Expr, source: &str) -> (usize, ()) {
     if start >= source.len() {
         return (source.len(), ());
     }
-    if matches!(&expr.kind, ExprKind::Block(_)) {
-        if let Some(end) = match_closing_brace(source, start) {
-            return (end, ());
-        }
+    if matches!(&expr.kind, ExprKind::Block(_))
+        && let Some(end) = match_closing_brace(source, start)
+    {
+        return (end, ());
     }
     (source.len(), ())
 }

@@ -1,6 +1,10 @@
 //! Hardening tests: formatter idempotency & roundtrip, builtin edge cases,
 //! concurrent panic recovery, and IO error paths.
 
+// `Value` contains variants with interior mutability (Channel), but the
+// tests here use only Value::String / Value::Int as BTreeMap keys.
+#![allow(clippy::mutable_key_type)]
+
 use silt::compiler::Compiler;
 use silt::formatter;
 use silt::lexer::Lexer;

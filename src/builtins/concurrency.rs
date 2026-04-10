@@ -760,13 +760,13 @@ mod select_fairness_tests {
                 SelectOp::Receive(ch2.clone()),
             ];
             let result = try_select_sweep(&ops).unwrap().unwrap();
-            if let Value::Tuple(parts) = result {
-                if let Value::Channel(c) = &parts[0] {
-                    if Arc::ptr_eq(c, &ch1) {
-                        ch1_wins += 1;
-                    } else if Arc::ptr_eq(c, &ch2) {
-                        ch2_wins += 1;
-                    }
+            if let Value::Tuple(parts) = result
+                && let Value::Channel(c) = &parts[0]
+            {
+                if Arc::ptr_eq(c, &ch1) {
+                    ch1_wins += 1;
+                } else if Arc::ptr_eq(c, &ch2) {
+                    ch2_wins += 1;
                 }
             }
         }

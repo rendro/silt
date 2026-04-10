@@ -122,9 +122,10 @@ impl LspClient {
         }
     }
 
-    /// Perform the full LSP initialization handshake: `initialize` request
-    /// + `initialized` notification. Returns `(request_id, raw response)` so
-    /// callers can assert that the response echoes the exact id they sent.
+    /// Perform the full LSP initialization handshake: the `initialize`
+    /// request and the `initialized` notification. Returns
+    /// `(request_id, raw response)` so callers can assert that the response
+    /// echoes the exact id they sent.
     fn initialize(&mut self) -> (u64, ServerMessage) {
         let id = next_id();
         self.send_request(
@@ -246,10 +247,9 @@ fn reader_loop<R: Read + Send + 'static>(stdout: R, tx: Sender<Value>) {
             if let Some(rest) = line
                 .strip_prefix("Content-Length:")
                 .or_else(|| line.strip_prefix("content-length:"))
+                && let Ok(n) = rest.trim().parse::<usize>()
             {
-                if let Ok(n) = rest.trim().parse::<usize>() {
-                    content_length = Some(n);
-                }
+                content_length = Some(n);
             }
         }
         let Some(n) = content_length else {
@@ -600,11 +600,11 @@ fn test_completion_returns_keywords() {
         .filter_map(|it| it.get("label").and_then(|v| v.as_str()))
         .collect();
     assert!(
-        labels.iter().any(|l| *l == "fn"),
+        labels.contains(&"fn"),
         "expected `fn` keyword in completion list, got: {labels:?}"
     );
     assert!(
-        labels.iter().any(|l| *l == "let"),
+        labels.contains(&"let"),
         "expected `let` keyword in completion list, got: {labels:?}"
     );
 
@@ -671,7 +671,7 @@ fn test_completion_returns_local_bindings() {
         .collect();
 
     assert!(
-        labels.iter().any(|l| *l == "greeting"),
+        labels.contains(&"greeting"),
         "expected local binding `greeting` in completion list, got: {labels:?}"
     );
 

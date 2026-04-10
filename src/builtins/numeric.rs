@@ -228,7 +228,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             // reject everything that would round to or past i64::MAX+1.
             const I64_MIN_AS_F64: f64 = i64::MIN as f64;
             const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
-            if !(f >= I64_MIN_AS_F64 && f < I64_MAX_PLUS_ONE) {
+            if !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
                 return Err(VmError::new(format!(
                     "float.to_int: value out of i64 range: {f}"
                 )));

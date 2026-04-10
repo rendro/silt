@@ -2255,13 +2255,13 @@ mod tests {
 
     #[test]
     fn test_compile_float_literal() {
-        let fns = compile("fn main() { 3.14 }");
+        let fns = compile("fn main() { 4.25 }");
         let main = find_fn(&fns, "main");
         assert!(
             main.chunk
                 .constants
                 .iter()
-                .any(|c| matches!(c, Value::Float(f) if (*f - 3.14).abs() < f64::EPSILON))
+                .any(|c| matches!(c, Value::Float(f) if (*f - 4.25).abs() < f64::EPSILON))
         );
     }
 
@@ -3053,10 +3053,10 @@ fn main() {
         let main = find_fn(&fns, "main");
         // Lambda with destructured param is a VmClosure constant
         let lambda = main.chunk.constants.iter().find_map(|c| {
-            if let Value::VmClosure(cl) = c {
-                if cl.function.name == "<lambda>" {
-                    return Some(&cl.function);
-                }
+            if let Value::VmClosure(cl) = c
+                && cl.function.name == "<lambda>"
+            {
+                return Some(&cl.function);
             }
             None
         });

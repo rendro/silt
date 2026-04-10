@@ -1119,7 +1119,7 @@ mod tests {
     #[test]
     fn test_scientific_with_decimal() {
         assert_eq!(lex("1.5e3"), vec![Token::Float(1500.0)]);
-        assert_eq!(lex("3.14e0"), vec![Token::Float(3.14)]);
+        assert_eq!(lex("4.25e0"), vec![Token::Float(4.25)]);
         assert_eq!(lex("2.5e-1"), vec![Token::Float(0.25)]);
     }
 

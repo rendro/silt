@@ -60,7 +60,7 @@ fn every_example_type_checks() {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default();
-        if SKIP.iter().any(|skip| *skip == name) {
+        if SKIP.contains(&name) {
             continue;
         }
 

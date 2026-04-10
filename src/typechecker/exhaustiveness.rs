@@ -295,6 +295,11 @@ impl TypeChecker {
                                 continue;
                             }
                             let mut cols = Vec::with_capacity(q_len);
+                            // We iterate to q_len (not r_elems.len()) because
+                            // when r_has_rest the row is shorter than the query
+                            // and we pad with wildcards — so a direct iterator
+                            // over r_elems wouldn't cover all columns.
+                            #[allow(clippy::needless_range_loop)]
                             for i in 0..q_len {
                                 if i < r_len {
                                     cols.push(r_elems[i].clone());

@@ -677,15 +677,14 @@ fn main() { double(5) }
         );
         // After checking, the function body should have resolved types (no bare Vars)
         for decl in &program.decls {
-            if let Decl::Fn(f) = decl {
-                if f.name == crate::intern::intern("double") {
-                    if let Some(ty) = &f.body.ty {
-                        assert!(
-                            !matches!(ty, Type::Var(_)),
-                            "body type should be resolved, got {ty}"
-                        );
-                    }
-                }
+            if let Decl::Fn(f) = decl
+                && f.name == crate::intern::intern("double")
+                && let Some(ty) = &f.body.ty
+            {
+                assert!(
+                    !matches!(ty, Type::Var(_)),
+                    "body type should be resolved, got {ty}"
+                );
             }
         }
     }

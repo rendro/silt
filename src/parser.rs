@@ -2564,7 +2564,7 @@ fn main() {
             fn good2() { 2 }
         "#,
         );
-        assert!(errs.len() >= 1, "expected at least one error");
+        assert!(!errs.is_empty(), "expected at least one error");
         // Recovery should still produce at least the two valid decls
         assert!(
             prog.decls.len() >= 2,
@@ -2587,7 +2587,7 @@ fn main() {
             "expected at least 2 errors, got {}",
             errs.len()
         );
-        assert!(prog.decls.len() >= 1);
+        assert!(!prog.decls.is_empty());
     }
 
     // ── 2. Pattern parsing ──────────────────────────────────────────

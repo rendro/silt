@@ -134,24 +134,24 @@ impl TypeChecker {
                     // the record definition and validate the field.
                     let type_name = *type_name;
                     let type_args = type_args.clone();
-                    if let Some(rec_info) = self.records.get(&type_name).cloned() {
-                        if let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field) {
-                            let field_ty = if let Some(param_var_ids) =
-                                self.record_param_var_ids.get(&type_name).cloned()
-                            {
-                                let mapping: HashMap<TyVar, Type> = param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect();
-                                let substituted = substitute_vars(ft, &mapping);
-                                self.apply(&substituted)
-                            } else {
-                                self.apply(ft)
-                            };
-                            self.unify(&result_ty, &field_ty, span);
-                            continue;
-                        }
+                    if let Some(rec_info) = self.records.get(&type_name).cloned()
+                        && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                    {
+                        let field_ty = if let Some(param_var_ids) =
+                            self.record_param_var_ids.get(&type_name).cloned()
+                        {
+                            let mapping: HashMap<TyVar, Type> = param_var_ids
+                                .iter()
+                                .zip(type_args.iter())
+                                .map(|(&v, t)| (v, t.clone()))
+                                .collect();
+                            let substituted = substitute_vars(ft, &mapping);
+                            self.apply(&substituted)
+                        } else {
+                            self.apply(ft)
+                        };
+                        self.unify(&result_ty, &field_ty, span);
+                        continue;
                     }
                     // Also check the method table for trait methods.
                     if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
