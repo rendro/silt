@@ -78,8 +78,13 @@ pub fn run_repl() {
         names: names.clone(),
     };
 
-    let mut rl: Editor<SiltHelper, DefaultHistory> =
-        Editor::new().expect("failed to create editor");
+    let mut rl: Editor<SiltHelper, DefaultHistory> = match Editor::new() {
+        Ok(editor) => editor,
+        Err(err) => {
+            eprintln!("silt repl: failed to initialize terminal: {err}");
+            std::process::exit(1);
+        }
+    };
     rl.set_helper(Some(helper));
     let _ = rl.load_history(HISTORY_FILE);
 

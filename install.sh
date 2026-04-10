@@ -61,6 +61,9 @@ main() {
         printf "  Add it with:\n\n"
         printf "    export PATH=\"%s:\$PATH\"\n\n" "$INSTALL_DIR"
     fi
+
+    printf "  LSP: the prebuilt binary includes the language server.\n"
+    printf "  Run 'silt lsp' and see https://github.com/%s/tree/main/editors for editor setup.\n\n" "$REPO"
 }
 
 detect_os() {

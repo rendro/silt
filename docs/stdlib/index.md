@@ -28,4 +28,4 @@ Complete API reference for every built-in function in silt.
 | [time](time.md) | 26 | Dates, times, instants, durations, formatting, parsing, and arithmetic |
 | [http](http.md) | 4 | HTTP client and server |
 
-**Total: 210 names** (19 globals + 4 type descriptors + 187 module functions/constants)
+**Total: 215 names** (12 globals + 203 module functions/constants)

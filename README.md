@@ -181,7 +181,7 @@ silt disasm <file.silt>    Inspect compiled bytecode
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.
 
-LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. Vim/Neovim syntax highlighting ships in `editors/vim/`.
+LSP server with diagnostics, hover types, go-to-definition, completion, signature help, document symbols, and formatting. The prebuilt `silt` binary from the install script includes the LSP server — just run `silt lsp` and point your editor at it. Vim/Neovim syntax highlighting and editor setup ship in `editors/`.
 
 ## Reference
 

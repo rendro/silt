@@ -172,25 +172,55 @@ fn all_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
         .collect()
 }
 
+/// INVARIANT: type errors reported alongside an "unknown module" warning are
+/// artifacts, NOT real errors.
+///
+/// Why: the type checker runs before module resolution (which happens during
+/// compilation). When a program imports from an unknown module, every reference
+/// to an imported name surfaces as an "undefined" type error even though the
+/// compiler will later resolve them correctly. Returning `true` here means
+/// "the type errors in this result are probably noise — don't treat them as
+/// fatal, and skip printing them so the user isn't drowned in false positives."
+///
+/// This helper is the ONE place that decides whether to trust type errors in
+/// the `compile_file` path. Both the print loop and the exit gate must consult
+/// it, so the two can't drift apart during future refactors.
+fn type_errors_are_suppressed(result: &CompilePipelineResult) -> bool {
+    result
+        .type_errors
+        .iter()
+        .any(|e| e.message.contains("unknown module"))
+}
+
 /// Print all diagnostics to stderr and exit(1) if there are hard errors.
 /// Returns the compiled functions and source on success.
 fn compile_file(path: &str) -> (Vec<Function>, String) {
     let result = run_compile_pipeline(path, false, false);
 
-    // Print all diagnostics to stderr.
-    for err in all_diagnostics(&result) {
+    // When type errors are suppressed (see `type_errors_are_suppressed`), skip
+    // printing them entirely — otherwise we'd dump a wall of "undefined" errors
+    // that the compiler is about to resolve anyway. Parse, compile, and warning
+    // diagnostics are always printed.
+    let suppress_type_errors = type_errors_are_suppressed(&result);
+    for err in &result.parse_errors {
+        eprintln!("{err}");
+    }
+    if !suppress_type_errors {
+        for err in &result.type_errors {
+            eprintln!("{err}");
+        }
+    }
+    for err in &result.compile_errors {
+        eprintln!("{err}");
+    }
+    for err in &result.compile_warnings {
         eprintln!("{err}");
     }
 
-    // Type errors from unresolved module imports are expected: the type checker
-    // runs before compilation, which is where modules are resolved.  Only suppress
-    // type errors when there were unresolved module warnings (the "undefined"
-    // errors are artifacts).  Genuine type errors in single-file programs are fatal.
-    let has_unresolved_modules = result
-        .type_errors
-        .iter()
-        .any(|e| e.message.contains("unknown module"));
-    if result.has_hard_errors && !has_unresolved_modules {
+    // Exit gate: the suppression check here MUST match the one used above.
+    // `type_errors_are_suppressed` is the single source of truth so the two
+    // can't drift apart and silently mask real type errors.
+    if result.has_hard_errors && !suppress_type_errors {
         process::exit(1);
     }
 
@@ -207,21 +237,71 @@ fn compile_file(path: &str) -> (Vec<Function>, String) {
     (functions, result.source)
 }
 
+/// Render the usage text shown by `silt --help` and the no-args screen.
+///
+/// Subcommands gated by Cargo features are annotated inline with the
+/// feature they require, and the bottom line lists which features were
+/// compiled in. This lets users discover missing features BEFORE running
+/// a subcommand that would otherwise fail with "The 'X' feature is not
+/// enabled" only after invocation.
+fn usage_text() -> String {
+    // Mark feature-gated subcommands with a `[feature: X]` suffix. The
+    // marker is present regardless of whether the feature is compiled in —
+    // that way `silt --help` is identical across builds and the user can
+    // see what a richer build would offer.
+    let mut out = String::new();
+    out.push_str("silt — a statically-typed, expression-based language\n");
+    out.push('\n');
+    out.push_str("Usage:\n");
+    out.push_str("  silt run [--watch] <file.silt>    Run a program");
+    if !cfg!(feature = "watch") {
+        out.push_str("  [--watch requires feature: watch]");
+    }
+    out.push('\n');
+    out.push_str("  silt check [--watch] <file.silt>  Type-check without running\n");
+    out.push_str("  silt test [--watch] [path]        Run test functions\n");
+    out.push_str("  silt fmt [--check] [files...]       Format source code\n");
+    out.push_str("  silt repl                         Interactive REPL  [feature: repl]\n");
+    out.push_str("  silt init                         Create a new main.silt\n");
+    out.push_str("  silt lsp                          Start the language server  [feature: lsp]\n");
+    out.push_str("  silt disasm <file.silt>           Show bytecode disassembly\n");
+    out.push('\n');
+    out.push_str(&format!("Enabled features: {}\n", enabled_features()));
+    out
+}
+
+/// Comma-separated list of Cargo features compiled into this binary.
+/// Shown in `silt --help` so users can tell at a glance whether the
+/// optional `repl`, `lsp`, and `watch` subcommands are available.
+fn enabled_features() -> String {
+    let mut feats: Vec<&'static str> = Vec::new();
+    if cfg!(feature = "repl") {
+        feats.push("repl");
+    }
+    if cfg!(feature = "lsp") {
+        feats.push("lsp");
+    }
+    if cfg!(feature = "watch") {
+        feats.push("watch");
+    }
+    if cfg!(feature = "local-clock") {
+        feats.push("local-clock");
+    }
+    if cfg!(feature = "http") {
+        feats.push("http");
+    }
+    if feats.is_empty() {
+        "(none)".to_string()
+    } else {
+        feats.join(", ")
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("silt — a statically-typed, expression-based language");
-        eprintln!();
-        eprintln!("Usage:");
-        eprintln!("  silt run [--watch] <file.silt>    Run a program");
-        eprintln!("  silt check [--watch] <file.silt>  Type-check without running");
-        eprintln!("  silt test [--watch] [path]        Run test functions");
-        eprintln!("  silt fmt [--check] [files...]       Format source code");
-        eprintln!("  silt repl                         Interactive REPL");
-        eprintln!("  silt init                         Create a new main.silt");
-        eprintln!("  silt lsp                          Start the language server");
-        eprintln!("  silt disasm <file.silt>           Show bytecode disassembly");
+        eprint!("{}", usage_text());
         process::exit(1);
     }
 
@@ -270,17 +350,7 @@ fn main() {
             process::exit(0);
         }
         "--help" | "-h" | "help" => {
-            println!("silt — a statically-typed, expression-based language");
-            println!();
-            println!("Usage:");
-            println!("  silt run [--watch] <file.silt>    Run a program");
-            println!("  silt check [--watch] <file.silt>  Type-check without running");
-            println!("  silt test [--watch] [path]        Run test functions");
-            println!("  silt fmt [--check] [files...]       Format source code");
-            println!("  silt repl                         Interactive REPL");
-            println!("  silt init                         Create a new main.silt");
-            println!("  silt lsp                          Start the language server");
-            println!("  silt disasm <file.silt>           Show bytecode disassembly");
+            print!("{}", usage_text());
             process::exit(0);
         }
         "run" => {

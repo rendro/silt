@@ -320,13 +320,15 @@ impl TypeChecker {
                         span,
                     );
                 } else {
-                    // Unify fields by name
+                    // Unify fields by name (symmetric check: error if either
+                    // side has fields missing from the other).
                     for (name, t1) in f1 {
                         if let Some((_, t2)) = f2.iter().find(|(n, _)| n == name) {
                             self.unify(t1, t2, span);
+                        } else {
+                            self.error(format!("record is missing field '{name}'"), span);
                         }
                     }
-                    // Check that f2 doesn't have extra fields missing from f1
                     for (name, _t2) in f2 {
                         if !f1.iter().any(|(n, _)| n == name) {
                             self.error(format!("record is missing field '{name}'"), span);

@@ -22,18 +22,31 @@ fn should_rerun_now(last_run: Instant, now: Instant, debounce: Duration) -> bool
 pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
     let (tx, rx) = mpsc::channel();
 
+    // Creating the OS watcher can fail in restrictive environments: sandboxes
+    // where inotify is disabled, read-only filesystems, containers that cap
+    // file descriptors, or platforms where `notify`'s backend can't initialize.
+    // Surface a helpful hint so users know they can fall back to a one-shot
+    // compile instead of staring at a raw errno.
     let mut watcher = notify::recommended_watcher(move |res| {
         let _ = tx.send(res);
     })
     .unwrap_or_else(|e| {
-        eprintln!("error: failed to create file watcher: {e}");
+        eprintln!(
+            "error: failed to start file watcher on {}: {e}. \
+             Try running without --watch to compile once.",
+            watch_dir.display()
+        );
         std::process::exit(1);
     });
 
     watcher
         .watch(watch_dir, RecursiveMode::Recursive)
         .unwrap_or_else(|e| {
-            eprintln!("error: failed to watch {}: {e}", watch_dir.display());
+            eprintln!(
+                "error: failed to start file watcher on {}: {e}. \
+                 Try running without --watch to compile once.",
+                watch_dir.display()
+            );
             std::process::exit(1);
         });
 

@@ -1065,8 +1065,11 @@ impl Vm {
                 let base = self.current_frame()?.base_slot;
                 let value = self.peek()?.clone();
                 let target = base + slot;
-                while self.stack.len() <= target {
-                    self.stack.push(Value::Unit);
+                if target >= self.stack.len() {
+                    return Err(VmError::new(format!(
+                        "internal: SetLocal slot out of range (slot {slot}, base {base}, stack len {})",
+                        self.stack.len()
+                    )));
                 }
                 self.stack[target] = value;
             }

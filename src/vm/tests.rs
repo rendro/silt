@@ -2315,3 +2315,127 @@ fn test_scheduler_task_failure_propagates() {
         err.message
     );
 }
+
+// ── Higher-order builtin suspension tests (G4) ───────────────────────
+//
+// These tests exercise `iterate_builtin` / `iterate_builtin_with_acc` in
+// src/builtins/collections.rs when the user callback yields control back
+// to the scheduler (via `task.join(task.spawn(...))`). They verify that
+// the builtin's internal state — especially the `BuiltinAcc::Fold`
+// accumulator — survives a suspension and resume cleanly.
+
+#[test]
+fn test_scheduler_list_fold_with_yielding_callback() {
+    // list.fold's accumulator must round-trip across a suspension. If the
+    // BuiltinAcc::Fold state is corrupted during suspend/resume, the sum
+    // will be wrong (likely 0 or a partial value).
+    let result = run_vm(
+        r#"
+            import task
+            import list
+            fn main() {
+                [1, 2, 3, 4, 5] |> list.fold(0, fn(acc, n) {
+                    task.join(task.spawn(fn() { acc + n }))
+                })
+            }
+            "#,
+    );
+    assert_eq!(result, Value::Int(15));
+}
+
+#[test]
+fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
+    // A second fold test that uses a non-integer accumulator to ensure
+    // the suspension path preserves arbitrary Value types in the
+    // accumulator (not just small Ints that might be copied trivially).
+    let result = run_vm(
+        r#"
+            import task
+            import list
+            fn main() {
+                ["a", "b", "c"] |> list.fold("", fn(acc, s) {
+                    task.join(task.spawn(fn() { acc + s }))
+                })
+            }
+            "#,
+    );
+    assert_eq!(result, Value::String("abc".into()));
+}
+
+#[test]
+fn test_scheduler_list_filter_with_yielding_predicate() {
+    // list.filter with a yielding predicate. Verifies both the count and
+    // the order of surviving elements (filter must preserve source
+    // order across suspensions).
+    let result = run_vm(
+        r#"
+            import task
+            import list
+            fn main() {
+                [1, 2, 3, 4, 5, 6] |> list.filter(fn(n) {
+                    task.join(task.spawn(fn() { n % 2 == 0 }))
+                })
+            }
+            "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(2),
+            Value::Int(4),
+            Value::Int(6),
+        ]))
+    );
+}
+
+// ── Regex cache eviction test (L5) ───────────────────────────────────
+//
+// The LRU cache in src/vm/runtime.rs holds at most 256 compiled regex
+// patterns and evicts the oldest 64 when full. This test compiles more
+// than 256 distinct patterns from silt code and then verifies that
+// patterns compiled both before and after the eviction threshold still
+// produce correct match results.
+
+#[test]
+fn test_regex_cache_eviction_correctness() {
+    // Compile 260 distinct regex patterns (>256 MAX_ENTRIES), each
+    // matched against a string that should succeed. Then verify that
+    // both an "early" pattern (likely evicted and recompiled) and a
+    // "late" pattern (still cached) still match correctly, and that
+    // a non-matching case also works.
+    //
+    // The patterns are of the form "pat<n>" where <n> varies, making
+    // each pattern a distinct literal that matches itself.
+    let result = run_vm(
+        r#"
+            import list
+            import regex
+            fn main() {
+                -- Force compilation of 260 distinct patterns.
+                1..260 |> list.each(fn(n) {
+                    regex.is_match("pat{n}", "pat{n}")
+                })
+                -- After eviction, verify correct match results on
+                -- patterns spanning the full range:
+                --   pat1:   likely evicted, must recompile cleanly
+                --   pat130: middle, possibly cached
+                --   pat259: newest, definitely cached
+                --   "pat1" vs "pat2": must NOT match
+                let early_ok = regex.is_match("pat1", "pat1")
+                let mid_ok = regex.is_match("pat130", "pat130")
+                let late_ok = regex.is_match("pat259", "pat259")
+                let no_match = regex.is_match("pat1", "pat2")
+                [early_ok, mid_ok, late_ok, no_match]
+            }
+            "#,
+    );
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(true),
+            Value::Bool(false),
+        ]))
+    );
+}
