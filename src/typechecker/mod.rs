@@ -580,37 +580,41 @@ impl TypeChecker {
             };
             let primitive_types = ["Int", "Float", "Bool", "String", "()"];
             let all_traits = ["Equal", "Compare", "Hash", "Display"];
-            let trait_methods: &[(&str, Type)] = &[
-                (
-                    "display",
-                    Type::Fun(vec![self.fresh_var()], Box::new(Type::String)),
-                ),
-                (
-                    "equal",
-                    Type::Fun(
-                        vec![self.fresh_var(), self.fresh_var()],
-                        Box::new(Type::Bool),
-                    ),
-                ),
-                (
-                    "compare",
-                    Type::Fun(
-                        vec![self.fresh_var(), self.fresh_var()],
-                        Box::new(Type::Int),
-                    ),
-                ),
-                (
-                    "hash",
-                    Type::Fun(vec![self.fresh_var()], Box::new(Type::Int)),
-                ),
-            ];
+            macro_rules! make_trait_methods {
+                ($self:expr) => {
+                    vec![
+                        (
+                            "display",
+                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::String)),
+                        ),
+                        (
+                            "equal",
+                            Type::Fun(
+                                vec![$self.fresh_var(), $self.fresh_var()],
+                                Box::new(Type::Bool),
+                            ),
+                        ),
+                        (
+                            "compare",
+                            Type::Fun(
+                                vec![$self.fresh_var(), $self.fresh_var()],
+                                Box::new(Type::Int),
+                            ),
+                        ),
+                        (
+                            "hash",
+                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::Int)),
+                        ),
+                    ]
+                };
+            }
             for type_name in &primitive_types {
                 for trait_name in &all_traits {
                     self.trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
-                // Register method entries for each builtin trait method
-                for (method_name, method_type) in trait_methods {
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
+                for (method_name, method_type) in &trait_methods {
                     self.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {
@@ -626,7 +630,8 @@ impl TypeChecker {
                     self.trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
-                for (method_name, method_type) in trait_methods {
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
+                for (method_name, method_type) in &trait_methods {
                     self.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {

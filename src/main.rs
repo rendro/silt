@@ -209,7 +209,7 @@ fn main() {
         eprintln!("  silt run [--watch] <file.silt>    Run a program");
         eprintln!("  silt check [--watch] <file.silt>  Type-check without running");
         eprintln!("  silt test [--watch] [path]        Run test functions");
-        eprintln!("  silt fmt <file.silt>              Format source code");
+        eprintln!("  silt fmt [--check] [files...]       Format source code");
         eprintln!("  silt repl                         Interactive REPL");
         eprintln!("  silt init                         Create a new main.silt");
         eprintln!("  silt lsp                          Start the language server");
@@ -268,7 +268,7 @@ fn main() {
             println!("  silt run [--watch] <file.silt>    Run a program");
             println!("  silt check [--watch] <file.silt>  Type-check without running");
             println!("  silt test [--watch] [path]        Run test functions");
-            println!("  silt fmt <file.silt>              Format source code");
+            println!("  silt fmt [--check] [files...]       Format source code");
             println!("  silt repl                         Interactive REPL");
             println!("  silt init                         Create a new main.silt");
             println!("  silt lsp                          Start the language server");
@@ -385,6 +385,12 @@ fn main() {
             for arg in &args[2..] {
                 if arg == "--check" {
                     check_mode = true;
+                } else if arg == "--help" || arg == "-h" {
+                    eprintln!("Usage: silt fmt [--check] [files...]");
+                    eprintln!();
+                    eprintln!("Options:");
+                    eprintln!("  --check    Check formatting without modifying files");
+                    process::exit(0);
                 } else {
                     files.push(arg.clone());
                 }
@@ -513,7 +519,11 @@ fn vm_run_file(path: &str) {
     silt::intern::reset();
     let (functions, source) = compile_file(path);
 
-    let script = Arc::new(functions.into_iter().next().unwrap());
+    let Some(script) = functions.into_iter().next() else {
+        eprintln!("{path}: internal error: empty function list");
+        process::exit(1);
+    };
+    let script = Arc::new(script);
 
     // Run via VM
     let mut vm = Vm::new();

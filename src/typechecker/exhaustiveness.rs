@@ -235,7 +235,8 @@ impl TypeChecker {
             | Pattern::StringLit(..)
             | Pattern::Range(..)
             | Pattern::FloatRange(..)
-            | Pattern::Pin(_) => !matrix
+            | Pattern::Pin(_)
+            | Pattern::Map(..) => !matrix
                 .iter()
                 .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
             _ => false,

@@ -102,6 +102,7 @@ fn main() {
     match channel.receive(ch) {
         Message(v) -> println(v)
         Closed -> println("done")
+        _ -> unit
     }
 }
 ```
@@ -188,6 +189,7 @@ fn main() {
         Message(v) -> println(v)
         Empty -> println("nothing yet")
         Closed -> println("done")
+        _ -> unit
     }
 }
 ```

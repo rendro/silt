@@ -340,7 +340,11 @@ fn eval_declaration(
         }
     };
 
-    let script = Arc::new(functions.into_iter().next().unwrap());
+    let Some(script) = functions.into_iter().next() else {
+        eprintln!("internal error: empty function list");
+        return;
+    };
+    let script = Arc::new(script);
     if let Err(e) = vm.run(script) {
         if let Some(span) = e.span {
             let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
@@ -469,7 +473,11 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
         }
     };
 
-    let script = Arc::new(functions.into_iter().next().unwrap());
+    let Some(script) = functions.into_iter().next() else {
+        eprintln!("internal error: empty function list");
+        return;
+    };
+    let script = Arc::new(script);
     match vm.run(script) {
         Ok(val) => {
             if !matches!(val, Value::Unit) {
