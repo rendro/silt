@@ -627,7 +627,7 @@ fn adjust_span(
     } else if raw_line > input_lines {
         // Error lands past the user's input (typically on the synthetic `}`).
         // Clamp to the end of the last real line.
-        (input_lines, last_line_cols.saturating_add(1).max(1))
+        (input_lines, last_line_cols.max(1))
     } else {
         (raw_line, span.col)
     };
@@ -956,5 +956,52 @@ mod tests {
         // Next input must still work.
         let value = eval_expression_value(&mut vm, &mut ctx, "7").unwrap();
         assert_eq!(format!("{value}"), "7");
+    }
+
+    // ── adjust_span clamping ──────────────────────────────────────
+    //
+    // When a parse error lands past the user's input (on the synthetic
+    // closing `}` the REPL appends), `adjust_span` clamps the span back
+    // to the last column of the last real line — not one past it.
+
+    #[test]
+    fn adjust_span_clamps_synthetic_brace_to_last_real_column() {
+        // Simulate input `42 +` (4 cols on line 1 of user input), wrapped
+        // as `fn main() {\n42 +\n}`. A parse error on the synthetic `}`
+        // arrives as line 3 in wrapped coordinates. After adjustment it
+        // should sit on the last real column (4, the `+`), not column 5.
+        let prefix_len = "fn main() {\n".len();
+        let input = "42 +";
+        let input_bytes = input.len();
+        let last_line_cols = 4; // `+` is column 4
+        let wrapped_span = Span::with_offset(3, 1, prefix_len + input_bytes + 1);
+
+        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input_bytes, last_line_cols);
+
+        assert_eq!(adjusted.line, 1, "line should clamp to last real line");
+        assert_eq!(
+            adjusted.col, 4,
+            "col should sit on the last real column (the `+`), not one past it"
+        );
+        assert_eq!(
+            adjusted.offset, input_bytes,
+            "offset should clamp to end of real input"
+        );
+    }
+
+    #[test]
+    fn adjust_span_preserves_in_range_spans() {
+        // An error on line 1 col 3 of wrapped input maps back to line 1
+        // col 3 of user input (line is offset by 1 in wrapped form, but
+        // raw_line == 0 falls through to the first arm unchanged).
+        let prefix_len = "fn main() {\n".len();
+        let input = "foo";
+        let wrapped_span = Span::with_offset(2, 3, prefix_len + 2);
+
+        let adjusted = adjust_span(wrapped_span, prefix_len, 1, input.len(), 3);
+
+        assert_eq!(adjusted.line, 1);
+        assert_eq!(adjusted.col, 3);
+        assert_eq!(adjusted.offset, 2);
     }
 }

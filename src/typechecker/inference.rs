@@ -552,22 +552,6 @@ impl TypeChecker {
                         self.error(format!("unknown method '{field}' on Set"), span);
                         Type::Error
                     }
-                    // Variant types — look up parent enum
-                    Type::Variant(variant_name, _) => {
-                        let parent = self
-                            .variant_to_enum
-                            .get(variant_name)
-                            .copied()
-                            .unwrap_or(*variant_name);
-                        if let Some(entry) = self.method_table.get(&(parent, field)).cloned() {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
-                            let resolved = self.apply(&instantiated);
-                            expr.ty = Some(resolved.clone());
-                            return resolved;
-                        }
-                        self.error(format!("unknown method '{field}' on type {parent}"), span);
-                        Type::Error
-                    }
                     Type::Var(v) => {
                         // Check if this type variable has trait constraints
                         if let Some(trait_names) = self.active_constraints.get(v).cloned() {

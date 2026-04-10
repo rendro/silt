@@ -221,10 +221,6 @@ impl TypeChecker {
                 let fields = fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
                 Type::Record(*name, fields)
             }
-            Type::Variant(name, args) => {
-                let args = args.iter().map(|a| self.apply(a)).collect();
-                Type::Variant(*name, args)
-            }
             Type::Generic(name, args) => {
                 let args = args.iter().map(|a| self.apply(a)).collect();
                 Type::Generic(*name, args)
@@ -390,25 +386,6 @@ impl TypeChecker {
                 }
             }
 
-            (Type::Variant(n1, a1), Type::Variant(n2, a2)) => {
-                if n1 != n2 {
-                    self.error(format!("variant mismatch: expected {n2}, got {n1}"), span);
-                } else if a1.len() != a2.len() {
-                    self.error(
-                        format!(
-                            "variant field count mismatch for {n1}: expected {}, got {}",
-                            a1.len(),
-                            a2.len()
-                        ),
-                        span,
-                    );
-                } else {
-                    for (x, y) in a1.iter().zip(a2.iter()) {
-                        self.unify(x, y, span);
-                    }
-                }
-            }
-
             _ => {
                 self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
             }
@@ -496,14 +473,6 @@ impl TypeChecker {
             Type::Unit => Some(intern("()")),
             Type::Record(name, _) => Some(*name),
             Type::Generic(name, _) => Some(*name),
-            Type::Variant(name, _) => {
-                // Look up the parent enum name for this variant
-                if let Some(enum_name) = self.variant_to_enum.get(name) {
-                    Some(*enum_name)
-                } else {
-                    Some(*name)
-                }
-            }
             Type::List(_) => Some(intern("List")),
             Type::Map(_, _) => Some(intern("Map")),
             Type::Set(_) => Some(intern("Set")),
@@ -1481,7 +1450,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::List(inner) => occurs_in(var, inner),
         Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
         Type::Record(_, fields) => fields.iter().any(|(_, t)| occurs_in(var, t)),
-        Type::Variant(_, args) | Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
+        Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
         Type::Channel(inner) => occurs_in(var, inner),

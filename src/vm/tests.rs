@@ -391,6 +391,267 @@ fn test_popn() {
     assert_eq!(result, Value::Int(1));
 }
 
+#[test]
+fn test_sub_int() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Sub, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Int(7));
+}
+
+#[test]
+fn test_sub_int_underflow() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(i64::MIN)).unwrap();
+        let b = chunk.add_constant(Value::Int(1)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Sub, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("integer overflow"));
+}
+
+#[test]
+fn test_sub_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(5.5)).unwrap();
+        let b = chunk.add_constant(Value::Float(2.25)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Sub, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Float(3.25));
+}
+
+#[test]
+fn test_mod_int() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Mod, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn test_mod_int_by_zero() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(10)).unwrap();
+        let b = chunk.add_constant(Value::Int(0)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Mod, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("modulo by zero"));
+}
+
+#[test]
+fn test_mod_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(5.5)).unwrap();
+        let b = chunk.add_constant(Value::Float(2.0)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Mod, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Float(1.5));
+}
+
+#[test]
+fn test_gt_int() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(7)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Gt, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_gt_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(1.5)).unwrap();
+        let b = chunk.add_constant(Value::Float(2.5)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Gt, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_geq_int() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(5)).unwrap();
+        let b = chunk.add_constant(Value::Int(5)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Geq, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_geq_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(4.0)).unwrap();
+        let b = chunk.add_constant(Value::Float(4.5)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Geq, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_leq_int() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(3)).unwrap();
+        let b = chunk.add_constant(Value::Int(3)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Leq, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_leq_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(2.5)).unwrap();
+        let b = chunk.add_constant(Value::Float(1.5)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(b, span());
+        chunk.emit_op(Op::Leq, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_and() {
+    let script = make_function(|chunk| {
+        chunk.emit_op(Op::True, span());
+        chunk.emit_op(Op::False, span());
+        chunk.emit_op(Op::And, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(false));
+}
+
+#[test]
+fn test_or() {
+    let script = make_function(|chunk| {
+        chunk.emit_op(Op::True, span());
+        chunk.emit_op(Op::False, span());
+        chunk.emit_op(Op::Or, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn test_negate_float() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Float(3.5)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Negate, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script).unwrap();
+    assert_eq!(result, Value::Float(-3.5));
+}
+
+#[test]
+fn test_negate_int_overflow() {
+    let script = make_function(|chunk| {
+        let a = chunk.add_constant(Value::Int(i64::MIN)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(a, span());
+        chunk.emit_op(Op::Negate, span());
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let result = vm.run(script);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("integer overflow"));
+}
+
 // ── Phase 2 end-to-end tests ──────────────────────────────────
 
 #[test]

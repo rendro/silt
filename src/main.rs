@@ -371,8 +371,26 @@ fn main() {
                 eprintln!("Usage: silt run <file.silt>");
                 process::exit(1);
             }
-            let disasm = args.iter().any(|a| a == "--disassemble");
-            let file = args.iter().skip(2).find(|a| !a.starts_with("--")).cloned();
+            let mut disasm = false;
+            let mut file: Option<String> = None;
+            for arg in &args[2..] {
+                if arg == "--disassemble" {
+                    disasm = true;
+                } else if arg.starts_with('-') {
+                    let suggestion = match arg.as_str() {
+                        "--disasm" | "--disassembly" | "-d" => {
+                            " (did you mean --disassemble?)"
+                        }
+                        "--h" | "-help" => " (did you mean --help?)",
+                        _ => "",
+                    };
+                    eprintln!("silt run: unknown flag '{arg}'{suggestion}");
+                    eprintln!("Run 'silt run --help' for usage.");
+                    process::exit(1);
+                } else if file.is_none() {
+                    file = Some(arg.clone());
+                }
+            }
             let Some(file) = file else {
                 eprintln!("Usage: silt run <file.silt>");
                 process::exit(1);

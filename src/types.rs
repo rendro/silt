@@ -32,8 +32,6 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// A nominal record type: name + field name/type pairs.
     Record(Symbol, Vec<(Symbol, Type)>),
-    /// A variant/constructor from an enum type.
-    Variant(Symbol, Vec<Type>),
     /// A generic/parameterized type like Result(Int, String).
     Generic(Symbol, Vec<Type>),
     /// Map type: key type -> value type.
@@ -88,20 +86,6 @@ impl std::fmt::Display for Type {
                     write!(f, "{n}: {t}")?;
                 }
                 write!(f, "}}")
-            }
-            Type::Variant(name, args) => {
-                write!(f, "{name}")?;
-                if !args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, a) in args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{a}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
             }
             Type::Generic(name, args) => {
                 write!(f, "{name}")?;
@@ -226,7 +210,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             }
             fvs
         }
-        Type::Variant(_, args) | Type::Generic(_, args) => {
+        Type::Generic(_, args) => {
             let mut fvs = Vec::new();
             for a in args {
                 for v in free_vars_in(a) {
@@ -284,10 +268,6 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                 .map(|(n, t)| (*n, substitute_vars(t, mapping)))
                 .collect();
             Type::Record(*name, fields)
-        }
-        Type::Variant(name, args) => {
-            let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
-            Type::Variant(*name, args)
         }
         Type::Generic(name, args) => {
             let args = args.iter().map(|a| substitute_vars(a, mapping)).collect();
@@ -369,12 +349,6 @@ pub fn substitute_enum_params(
             fields
                 .iter()
                 .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
-                .collect(),
-        ),
-        Type::Variant(name, args) => Type::Variant(
-            *name,
-            args.iter()
-                .map(|a| substitute_enum_params(a, param_var_ids, type_args))
                 .collect(),
         ),
         _ => field_ty.clone(),

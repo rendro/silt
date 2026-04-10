@@ -171,6 +171,38 @@ fn test_run_runtime_error() {
     );
 }
 
+// ── 7b. Run rejects unknown flags ──────────────────────────────────
+
+#[test]
+fn test_run_unknown_flag() {
+    let path = temp_silt_file(
+        "run_unknown_flag",
+        r#"fn main() {
+  println("hello")
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg("--bogus")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success(), "expected non-zero exit code");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("silt run: unknown flag '--bogus'"),
+        "expected unknown-flag error in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Run 'silt run --help' for usage."),
+        "expected help hint in stderr, got: {stderr}"
+    );
+}
+
 // ── 8. Check valid file ────────────────────────────────────────────
 
 #[test]
