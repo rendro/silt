@@ -1014,12 +1014,9 @@ fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> 
                 for param in &f.params {
                     if let Pattern::Ident(name) = &param.pattern {
                         let name_str = resolve(*name);
-                        if let Some(off) = find_ident_in_range(
-                            source,
-                            f.span.offset,
-                            params_search_end,
-                            &name_str,
-                        ) {
+                        if let Some(off) =
+                            find_ident_in_range(source, f.span.offset, params_search_end, &name_str)
+                        {
                             // Look up the param type from the typed body.
                             let ty = find_param_type(&f.body, *name);
                             bindings.push(LocalBinding {
@@ -1042,13 +1039,7 @@ fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> 
                 );
             }
             Decl::Let { value, .. } => {
-                collect_local_bindings_in_expr(
-                    value,
-                    source,
-                    0,
-                    source.len(),
-                    &mut bindings,
-                );
+                collect_local_bindings_in_expr(value, source, 0, source.len(), &mut bindings);
             }
             Decl::TraitImpl(ti) => {
                 for method in &ti.methods {
@@ -1108,12 +1099,9 @@ fn collect_local_bindings_in_expr(
                         let value_start = value.span.offset;
                         if let Pattern::Ident(name) = pattern {
                             let name_str = resolve(*name);
-                            if let Some(off) = find_ident_in_range(
-                                source,
-                                scope_start,
-                                value_start,
-                                &name_str,
-                            ) {
+                            if let Some(off) =
+                                find_ident_in_range(source, scope_start, value_start, &name_str)
+                            {
                                 bindings.push(LocalBinding {
                                     name: *name,
                                     binding_offset: off,
@@ -1130,7 +1118,11 @@ fn collect_local_bindings_in_expr(
                             }
                         }
                         collect_local_bindings_in_expr(
-                            value, source, scope_start, scope_end, bindings,
+                            value,
+                            source,
+                            scope_start,
+                            scope_end,
+                            bindings,
                         );
                     }
                     Stmt::When {
@@ -1149,10 +1141,18 @@ fn collect_local_bindings_in_expr(
                             bindings,
                         );
                         collect_local_bindings_in_expr(
-                            expr, source, scope_start, scope_end, bindings,
+                            expr,
+                            source,
+                            scope_start,
+                            scope_end,
+                            bindings,
                         );
                         collect_local_bindings_in_expr(
-                            else_body, source, scope_start, scope_end, bindings,
+                            else_body,
+                            source,
+                            scope_start,
+                            scope_end,
+                            bindings,
                         );
                     }
                     Stmt::WhenBool {
@@ -1160,16 +1160,22 @@ fn collect_local_bindings_in_expr(
                         else_body,
                     } => {
                         collect_local_bindings_in_expr(
-                            condition, source, scope_start, scope_end, bindings,
+                            condition,
+                            source,
+                            scope_start,
+                            scope_end,
+                            bindings,
                         );
                         collect_local_bindings_in_expr(
-                            else_body, source, scope_start, scope_end, bindings,
+                            else_body,
+                            source,
+                            scope_start,
+                            scope_end,
+                            bindings,
                         );
                     }
                     Stmt::Expr(e) => {
-                        collect_local_bindings_in_expr(
-                            e, source, scope_start, scope_end, bindings,
-                        );
+                        collect_local_bindings_in_expr(e, source, scope_start, scope_end, bindings);
                     }
                 }
             }
@@ -1180,12 +1186,9 @@ fn collect_local_bindings_in_expr(
             for p in params {
                 if let Pattern::Ident(name) = &p.pattern {
                     let name_str = resolve(*name);
-                    if let Some(off) = find_ident_in_range(
-                        source,
-                        scope_start,
-                        body_start,
-                        &name_str,
-                    ) {
+                    if let Some(off) =
+                        find_ident_in_range(source, scope_start, body_start, &name_str)
+                    {
                         bindings.push(LocalBinding {
                             name: *name,
                             binding_offset: off,
@@ -1221,17 +1224,17 @@ fn collect_local_bindings_in_expr(
                 collect_local_bindings_in_expr(&arm.body, source, arm_start, arm_end, bindings);
             }
         }
-        ExprKind::Loop { bindings: loop_bindings, body } => {
+        ExprKind::Loop {
+            bindings: loop_bindings,
+            body,
+        } => {
             let body_start = body.span.offset;
             let (body_end, _) = expr_extent(body, source);
             for (name, init) in loop_bindings {
                 let name_str = resolve(*name);
-                if let Some(off) = find_ident_in_range(
-                    source,
-                    scope_start,
-                    init.span.offset,
-                    &name_str,
-                ) {
+                if let Some(off) =
+                    find_ident_in_range(source, scope_start, init.span.offset, &name_str)
+                {
                     bindings.push(LocalBinding {
                         name: *name,
                         binding_offset: off,
@@ -1282,7 +1285,13 @@ fn collect_pattern_bindings(
         Pattern::Tuple(pats) | Pattern::Or(pats) => {
             for p in pats {
                 collect_pattern_bindings(
-                    p, source, search_start, search_end, None, scope_end, bindings,
+                    p,
+                    source,
+                    search_start,
+                    search_end,
+                    None,
+                    scope_end,
+                    bindings,
                 );
             }
         }
@@ -1310,7 +1319,13 @@ fn collect_pattern_bindings(
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_bindings(
-                        p, source, search_start, search_end, None, scope_end, bindings,
+                        p,
+                        source,
+                        search_start,
+                        search_end,
+                        None,
+                        scope_end,
+                        bindings,
                     );
                 } else {
                     let name_str = resolve(*name);
@@ -1332,12 +1347,24 @@ fn collect_pattern_bindings(
         Pattern::List(pats, rest) => {
             for p in pats {
                 collect_pattern_bindings(
-                    p, source, search_start, search_end, None, scope_end, bindings,
+                    p,
+                    source,
+                    search_start,
+                    search_end,
+                    None,
+                    scope_end,
+                    bindings,
                 );
             }
             if let Some(r) = rest {
                 collect_pattern_bindings(
-                    r, source, search_start, search_end, None, scope_end, bindings,
+                    r,
+                    source,
+                    search_start,
+                    search_end,
+                    None,
+                    scope_end,
+                    bindings,
                 );
             }
         }
@@ -1450,16 +1477,14 @@ fn find_ident_in_range(source: &str, start: usize, end: usize, name: &str) -> Op
     let mut i = bytes.len().saturating_sub(name_len);
     loop {
         if &bytes[i..i + name_len] == name_bytes {
-            let before_ok = i == 0
-                || {
-                    let b = bytes[i - 1];
-                    !(b.is_ascii_alphanumeric() || b == b'_')
-                };
-            let after_ok = i + name_len == bytes.len()
-                || {
-                    let b = bytes[i + name_len];
-                    !(b.is_ascii_alphanumeric() || b == b'_')
-                };
+            let before_ok = i == 0 || {
+                let b = bytes[i - 1];
+                !(b.is_ascii_alphanumeric() || b == b'_')
+            };
+            let after_ok = i + name_len == bytes.len() || {
+                let b = bytes[i + name_len];
+                !(b.is_ascii_alphanumeric() || b == b'_')
+            };
             if before_ok && after_ok {
                 return Some(start + i);
             }

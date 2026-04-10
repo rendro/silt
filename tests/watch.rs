@@ -200,11 +200,9 @@ fn watch_rerun_on_modification() {
     fs::write(&file, program_printing("after-edit-xyz")).unwrap();
 
     // Wait for the post-edit marker to appear.
-    let snap = proc.wait_until(
-        "rerun 'after-edit-xyz'",
-        Duration::from_secs(10),
-        |snap| snap.contains("after-edit-xyz"),
-    );
+    let snap = proc.wait_until("rerun 'after-edit-xyz'", Duration::from_secs(10), |snap| {
+        snap.contains("after-edit-xyz")
+    });
 
     // Sanity: the first marker is still present (watch mode didn't wipe
     // the stdout pipe) and the new marker really did come from a rerun,
@@ -226,11 +224,9 @@ fn watch_ignores_non_silt_changes() {
     let proc = WatchProc::spawn(&file);
 
     // Wait for initial run.
-    proc.wait_until(
-        "initial 'only-once-qqq'",
-        Duration::from_secs(10),
-        |snap| snap.contains("only-once-qqq"),
-    );
+    proc.wait_until("initial 'only-once-qqq'", Duration::from_secs(10), |snap| {
+        snap.contains("only-once-qqq")
+    });
 
     let initial_count = count_occurrences(&proc.stdout_snapshot(), "only-once-qqq");
     assert_eq!(
@@ -256,7 +252,8 @@ fn watch_ignores_non_silt_changes() {
 
     let final_count = count_occurrences(&proc.stdout_snapshot(), "only-once-qqq");
     assert_eq!(
-        final_count, 1,
+        final_count,
+        1,
         "non-.silt file change must not trigger a rerun (saw {final_count} prints):\n{}",
         proc.stdout_snapshot()
     );
@@ -273,11 +270,9 @@ fn watch_recovers_from_syntax_error() {
     let proc = WatchProc::spawn(&file);
 
     // Wait for initial run to succeed.
-    proc.wait_until(
-        "initial 'good-v1-mno'",
-        Duration::from_secs(10),
-        |snap| snap.contains("good-v1-mno"),
-    );
+    proc.wait_until("initial 'good-v1-mno'", Duration::from_secs(10), |snap| {
+        snap.contains("good-v1-mno")
+    });
 
     // Edit to a syntactically invalid program. Watch mode should print a
     // parse error (to stderr, which we're discarding) but keep running.

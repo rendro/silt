@@ -863,8 +863,7 @@ impl TypeChecker {
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
-                    let constrained =
-                        self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                    let constrained = self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
                     // Write the body-inferred type back into method_table so
                     // that downstream call sites see the concrete return
                     // type instead of the still-polymorphic template.
@@ -909,7 +908,8 @@ impl TypeChecker {
                 // top-level let inference earlier). They'll be re-collected
                 // during the re-check with narrowed schemes.
                 self.pending_field_accesses.truncate(pre_pass3_field_count);
-                self.pending_numeric_checks.truncate(pre_pass3_numeric_count);
+                self.pending_numeric_checks
+                    .truncate(pre_pass3_numeric_count);
 
                 // Re-check function bodies with narrowed schemes
                 for i in 0..program.decls.len() {
@@ -923,8 +923,8 @@ impl TypeChecker {
                         for j in 0..ti.methods.len() {
                             let method_name = ti.methods[j].name;
                             let key = intern(&format!("{target}.{method_name}"));
-                            let constrained = self
-                                .check_fn_body_with_name(&mut ti.methods[j], &env, key);
+                            let constrained =
+                                self.check_fn_body_with_name(&mut ti.methods[j], &env, key);
                             if let Some(ty) = constrained
                                 && let Some(entry) =
                                     self.method_table.get_mut(&(target, method_name))
@@ -1970,9 +1970,9 @@ impl ReplTypeContext {
                 for j in 0..ti.methods.len() {
                     let method_name = ti.methods[j].name;
                     let key = intern(&format!("{target}.{method_name}"));
-                    let constrained = self
-                        .checker
-                        .check_fn_body_with_name(&mut ti.methods[j], &self.env, key);
+                    let constrained =
+                        self.checker
+                            .check_fn_body_with_name(&mut ti.methods[j], &self.env, key);
                     if let Some(ty) = constrained
                         && let Some(entry) =
                             self.checker.method_table.get_mut(&(target, method_name))

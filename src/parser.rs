@@ -724,10 +724,9 @@ impl Parser {
                             | Token::LBrace
                             | Token::LBracket
                     ),
-                    "break" | "continue" => matches!(
-                        next,
-                        Token::Newline | Token::RBrace | Token::Eof
-                    ),
+                    "break" | "continue" => {
+                        matches!(next, Token::Newline | Token::RBrace | Token::Eof)
+                    }
                     _ => false,
                 };
                 if looks_like_mistake {

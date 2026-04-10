@@ -3082,9 +3082,10 @@ let a = id(5)
         .expect("parse");
     let errors = silt::typechecker::check(&mut program);
     assert!(
-        errors.iter().any(|e| e.severity
-            == silt::types::Severity::Error
-            && e.message.contains("could not fully determine the type")),
+        errors
+            .iter()
+            .any(|e| e.severity == silt::types::Severity::Error
+                && e.message.contains("could not fully determine the type")),
         "expected 'could not fully determine the type' error, got: {:?}",
         errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );

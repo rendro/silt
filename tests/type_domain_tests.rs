@@ -155,7 +155,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("z") || e.contains("unknown")),
+        errs.iter()
+            .any(|e| e.contains("z") || e.contains("unknown")),
         "expected an unknown-field error, got: {errs:?}"
     );
 }

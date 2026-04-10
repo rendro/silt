@@ -118,9 +118,7 @@ impl TypeChecker {
             // Record types have a single constructor — decompose into field
             // columns and recurse, so we properly check sub-pattern coverage
             // (not just "some row has a record pattern").
-            Type::Record(name, fields) => {
-                self.is_record_useful(matrix, *name, fields, depth)
-            }
+            Type::Record(name, fields) => self.is_record_useful(matrix, *name, fields, depth),
             // Lists: enumerate constructors by length — `[]`, `[_]`,
             // `[_,_]`, ..., up to one past the longest fixed-length pattern
             // seen in the matrix. The final "open" constructor
@@ -330,15 +328,12 @@ impl TypeChecker {
                 let tuple_refs: Vec<&Pattern> = tuple_matrix.iter().collect();
                 let tuple_ty = Type::Tuple(vec![elem_ty; q_len]);
                 let query_tuple_sub = elems.clone();
-                self.is_tuple_useful_recursive(
-                    &tuple_refs,
-                    &query_tuple_sub,
-                    &tuple_ty,
-                    depth + 1,
-                )
+                self.is_tuple_useful_recursive(&tuple_refs, &query_tuple_sub, &tuple_ty, depth + 1)
             }
             // Record patterns: decompose into field columns and recurse.
-            Pattern::Record { fields: q_fields, .. } => {
+            Pattern::Record {
+                fields: q_fields, ..
+            } => {
                 let resolved = self.apply(ty);
                 if let Type::Record(_name, rec_fields) = &resolved {
                     // Build query columns from q_fields (fill omitted
@@ -389,8 +384,7 @@ impl TypeChecker {
         rec_fields: &[(Symbol, Type)],
         depth: usize,
     ) -> bool {
-        let query_cols: Vec<Pattern> =
-            rec_fields.iter().map(|_| Pattern::Wildcard).collect();
+        let query_cols: Vec<Pattern> = rec_fields.iter().map(|_| Pattern::Wildcard).collect();
         self.is_record_useful_with_query(matrix, rec_fields, &query_cols, depth)
     }
 
@@ -427,7 +421,9 @@ impl TypeChecker {
                         rec_fields.iter().map(|_| Pattern::Wildcard).collect();
                     tuple_rows.push(Pattern::Tuple(wilds));
                 }
-                Pattern::Record { fields: r_fields, .. } => {
+                Pattern::Record {
+                    fields: r_fields, ..
+                } => {
                     let mut cols: Vec<Pattern> = Vec::with_capacity(rec_fields.len());
                     for (fname, _) in rec_fields {
                         let pat = r_fields

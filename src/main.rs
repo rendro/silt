@@ -201,7 +201,9 @@ fn reportable_type_errors<'a>(result: &'a CompilePipelineResult) -> Vec<&'a Sour
 /// both the warning severity and the message prefix so a future real type
 /// error that happens to mention those words isn't swallowed.
 fn is_unknown_module_warning(err: &SourceError) -> bool {
-    err.is_warning && err.kind == silt::errors::ErrorKind::Type && err.message.contains("unknown module")
+    err.is_warning
+        && err.kind == silt::errors::ErrorKind::Type
+        && err.message.contains("unknown module")
 }
 
 /// Print all diagnostics to stderr and exit(1) if there are hard errors.
@@ -391,9 +393,7 @@ fn main() {
                     disasm = true;
                 } else if arg.starts_with('-') {
                     let suggestion = match arg.as_str() {
-                        "--disasm" | "--disassembly" | "-d" => {
-                            " (did you mean --disassemble?)"
-                        }
+                        "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
                         "--h" | "-help" => " (did you mean --help?)",
                         _ => "",
                     };
@@ -603,9 +603,7 @@ fn main() {
                         "silt fmt: refusing to recursively format {} — no project anchor (silt.toml or .git) found",
                         cwd.display()
                     );
-                    eprintln!(
-                        "         pass an explicit `.` or file paths to format anyway."
-                    );
+                    eprintln!("         pass an explicit `.` or file paths to format anyway.");
                     process::exit(1);
                 }
                 eprintln!(

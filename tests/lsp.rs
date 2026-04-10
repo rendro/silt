@@ -169,10 +169,7 @@ impl LspClient {
                     if msg.get("id").is_none()
                         && msg.get("method").and_then(|v| v.as_str())
                             == Some("textDocument/publishDiagnostics")
-                        && msg
-                            .pointer("/params/uri")
-                            .and_then(|v| v.as_str())
-                            == Some(uri)
+                        && msg.pointer("/params/uri").and_then(|v| v.as_str()) == Some(uri)
                     {
                         return msg;
                     }
@@ -739,9 +736,7 @@ fn test_completion_returns_module_members_after_dot() {
         .collect();
 
     // At least one well-known `string` module member must appear.
-    let has_known_member = labels
-        .iter()
-        .any(|l| *l == "length" || *l == "contains");
+    let has_known_member = labels.iter().any(|l| *l == "length" || *l == "contains");
     assert!(
         has_known_member,
         "expected dot-completion after `string.` to include `length` or `contains`, got: {labels:?}"

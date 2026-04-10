@@ -468,10 +468,7 @@ mod tests {
     #[test]
     fn float_to_int_truncates_negative_fraction() {
         let v = to_int(-42.5).expect("-42.5 should convert");
-        assert!(
-            matches!(v, Value::Int(-42)),
-            "expected Int(-42), got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(-42)), "expected Int(-42), got {v:?}");
     }
 
     #[test]

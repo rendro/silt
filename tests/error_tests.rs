@@ -1224,10 +1224,7 @@ fn test_integer_overflow_is_runtime_error() {
 fn test_integer_subtraction_overflow_is_runtime_error() {
     // i64::MIN - 1 must overflow. We construct i64::MIN at runtime as
     // (-i64::MAX - 1) so the literal itself fits in i64, then subtract 1.
-    let err = run_err(&format!(
-        "fn main() {{ (-{max} - 1) - 1 }}",
-        max = i64::MAX
-    ));
+    let err = run_err(&format!("fn main() {{ (-{max} - 1) - 1 }}", max = i64::MAX));
     assert!(
         err.contains("integer overflow"),
         "expected overflow error, got: {err}"

@@ -2641,11 +2641,7 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
     );
     assert_eq!(
         result,
-        Value::List(Arc::new(vec![
-            Value::Int(2),
-            Value::Int(4),
-            Value::Int(6),
-        ]))
+        Value::List(Arc::new(vec![Value::Int(2), Value::Int(4), Value::Int(6),]))
     );
 }
 

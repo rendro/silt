@@ -153,7 +153,9 @@ impl TimerManager {
         let deadline = Instant::now() + delay;
         if let Err(e) = self.sender.lock().send((deadline, ch)) {
             debug_assert!(false, "TimerManager worker thread is gone: {e}");
-            eprintln!("silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire");
+            eprintln!(
+                "silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire"
+            );
         }
     }
 }

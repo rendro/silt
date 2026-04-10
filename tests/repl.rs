@@ -53,15 +53,14 @@ fn run_session(script: &str) -> SessionOutput {
     // Write the full scripted input, always terminated by `:quit\n` so
     // the REPL exits cleanly regardless of what the caller wrote.
     {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .expect("child stdin was not piped");
+        let stdin = child.stdin.as_mut().expect("child stdin was not piped");
         stdin
             .write_all(script.as_bytes())
             .expect("failed to write script to repl stdin");
         if !script.ends_with('\n') {
-            stdin.write_all(b"\n").expect("failed to write trailing newline");
+            stdin
+                .write_all(b"\n")
+                .expect("failed to write trailing newline");
         }
         stdin
             .write_all(b":quit\n")

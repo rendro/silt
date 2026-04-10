@@ -125,10 +125,7 @@ impl TypeChecker {
                         let ft = field_ty.clone();
                         self.unify(&result_ty, &ft, span);
                     } else {
-                        self.error(
-                            format!("unknown field '{field}' on type {resolved}"),
-                            span,
-                        );
+                        self.error(format!("unknown field '{field}' on type {resolved}"), span);
                     }
                 }
                 Type::Generic(type_name, type_args) => {
@@ -138,9 +135,7 @@ impl TypeChecker {
                     let type_name = *type_name;
                     let type_args = type_args.clone();
                     if let Some(rec_info) = self.records.get(&type_name).cloned() {
-                        if let Some((_, ft)) =
-                            rec_info.fields.iter().find(|(n, _)| *n == field)
-                        {
+                        if let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field) {
                             let field_ty = if let Some(param_var_ids) =
                                 self.record_param_var_ids.get(&type_name).cloned()
                             {
@@ -159,9 +154,7 @@ impl TypeChecker {
                         }
                     }
                     // Also check the method table for trait methods.
-                    if let Some(entry) =
-                        self.method_table.get(&(type_name, field)).cloned()
-                    {
+                    if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
                         let instantiated = self.instantiate_method_type(&entry.method_type);
                         let method_ty = self.apply(&instantiated);
                         // Method types include `self` as the first param.
@@ -175,8 +168,7 @@ impl TypeChecker {
                                 Type::Fun(call_params, call_ret),
                                 Type::Fun(method_params, method_ret),
                             ) if method_params.len() == call_params.len() + 1 => {
-                                for (cp, mp) in
-                                    call_params.iter().zip(method_params.iter().skip(1))
+                                for (cp, mp) in call_params.iter().zip(method_params.iter().skip(1))
                                 {
                                     self.unify(cp, mp, span);
                                 }
@@ -1089,7 +1081,11 @@ impl TypeChecker {
                                 // Defer — may resolve later.
                                 self.pending_numeric_checks.push((
                                     resolved.clone(),
-                                    if is_equality { "'=='/'!='" } else { "ordering comparison" },
+                                    if is_equality {
+                                        "'=='/'!='"
+                                    } else {
+                                        "ordering comparison"
+                                    },
                                     span,
                                 ));
                             }
@@ -2115,9 +2111,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         | Type::Error
         | Type::Never => true,
         Type::Var(_) => true,
-        Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_)
-            if is_equality =>
-        {
+        Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_) if is_equality => {
             true
         }
         _ => false,
