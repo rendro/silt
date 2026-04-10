@@ -90,16 +90,14 @@ fn initial_acc(kind: BuiltinIterKind) -> BuiltinAcc {
         | BuiltinIterKind::ListFilterMap
         | BuiltinIterKind::SetMap
         | BuiltinIterKind::SetFilter => BuiltinAcc::List(Vec::new()),
-        BuiltinIterKind::ListEach
-        | BuiltinIterKind::SetEach
-        | BuiltinIterKind::MapEach => BuiltinAcc::Unit,
+        BuiltinIterKind::ListEach | BuiltinIterKind::SetEach | BuiltinIterKind::MapEach => {
+            BuiltinAcc::Unit
+        }
         BuiltinIterKind::ListFind => BuiltinAcc::Unit,
         BuiltinIterKind::ListAny => BuiltinAcc::Fold(Value::Bool(false)),
         BuiltinIterKind::ListAll => BuiltinAcc::Fold(Value::Bool(true)),
         BuiltinIterKind::ListSortBy => BuiltinAcc::SortPairs(Vec::new()),
-        BuiltinIterKind::ListGroupBy => {
-            BuiltinAcc::Groups(std::collections::BTreeMap::new())
-        }
+        BuiltinIterKind::ListGroupBy => BuiltinAcc::Groups(std::collections::BTreeMap::new()),
         BuiltinIterKind::ListFold | BuiltinIterKind::ListFoldUntil | BuiltinIterKind::SetFold => {
             // Placeholder — callers seed the accumulator by calling
             // `iterate_builtin_with_acc` below.
@@ -154,16 +152,12 @@ fn apply_callback_result(
         }
         BuiltinIterKind::ListFilter | BuiltinIterKind::SetFilter => {
             let keep = value_is_truthy(&result);
-            if keep
-                && let BuiltinAcc::List(v) = acc
-            {
+            if keep && let BuiltinAcc::List(v) = acc {
                 v.push(item);
             }
             ControlFlow::Continue
         }
-        BuiltinIterKind::ListEach
-        | BuiltinIterKind::SetEach
-        | BuiltinIterKind::MapEach => {
+        BuiltinIterKind::ListEach | BuiltinIterKind::SetEach | BuiltinIterKind::MapEach => {
             let _ = result;
             ControlFlow::Continue
         }
@@ -186,9 +180,7 @@ fn apply_callback_result(
         BuiltinIterKind::ListFilterMap => {
             if let BuiltinAcc::List(v) = acc {
                 match result {
-                    Value::Variant(ref tag, ref fields)
-                        if tag == "Some" && fields.len() == 1 =>
-                    {
+                    Value::Variant(ref tag, ref fields) if tag == "Some" && fields.len() == 1 => {
                         v.push(fields[0].clone());
                     }
                     Value::Variant(ref tag, _) if tag == "None" => {}
@@ -233,27 +225,23 @@ fn apply_callback_result(
             }
             ControlFlow::Continue
         }
-        BuiltinIterKind::ListFoldUntil => {
-            match result {
-                Value::Variant(ref tag, ref fields)
-                    if tag == "Continue" && fields.len() == 1 =>
-                {
-                    if let BuiltinAcc::Fold(v) = acc {
-                        *v = fields[0].clone();
-                    }
-                    ControlFlow::Continue
+        BuiltinIterKind::ListFoldUntil => match result {
+            Value::Variant(ref tag, ref fields) if tag == "Continue" && fields.len() == 1 => {
+                if let BuiltinAcc::Fold(v) = acc {
+                    *v = fields[0].clone();
                 }
-                Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
-                    ControlFlow::Short(fields[0].clone())
-                }
-                other => {
-                    if let BuiltinAcc::Fold(v) = acc {
-                        *v = other;
-                    }
-                    ControlFlow::Continue
-                }
+                ControlFlow::Continue
             }
-        }
+            Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
+                ControlFlow::Short(fields[0].clone())
+            }
+            other => {
+                if let BuiltinAcc::Fold(v) = acc {
+                    *v = other;
+                }
+                ControlFlow::Continue
+            }
+        },
         BuiltinIterKind::MapFilter => {
             // item is Tuple(k, v); result is truthy/falsy.
             if value_is_truthy(&result)
@@ -313,9 +301,9 @@ fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
                 Value::Set(Arc::new(BTreeSet::new()))
             }
         }
-        BuiltinIterKind::ListEach
-        | BuiltinIterKind::SetEach
-        | BuiltinIterKind::MapEach => Value::Unit,
+        BuiltinIterKind::ListEach | BuiltinIterKind::SetEach | BuiltinIterKind::MapEach => {
+            Value::Unit
+        }
         BuiltinIterKind::ListFind => {
             // If we reach finalize (didn't short-circuit), no item matched.
             Value::Variant("None".into(), Vec::new())
@@ -344,9 +332,7 @@ fn finalize_acc(kind: BuiltinIterKind, acc: BuiltinAcc) -> Value {
                 Value::Map(Arc::new(BTreeMap::new()))
             }
         }
-        BuiltinIterKind::ListFold
-        | BuiltinIterKind::ListFoldUntil
-        | BuiltinIterKind::SetFold => {
+        BuiltinIterKind::ListFold | BuiltinIterKind::ListFoldUntil | BuiltinIterKind::SetFold => {
             if let BuiltinAcc::Fold(v) = acc {
                 v
             } else {

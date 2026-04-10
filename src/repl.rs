@@ -463,11 +463,7 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
     // Length (in columns) of the final user-input line, used when clamping
     // past-end errors so the caret points at the end of the last real line
     // instead of column 1 of a synthetic `}`.
-    let last_line_cols = input
-        .lines()
-        .last()
-        .map(|l| l.chars().count())
-        .unwrap_or(0);
+    let last_line_cols = input.lines().last().map(|l| l.chars().count()).unwrap_or(0);
     let tokens = match Lexer::new(&wrapped).tokenize() {
         Ok(t) => t,
         Err(e) => {

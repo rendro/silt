@@ -12,8 +12,8 @@ No import or qualification needed.
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `print` | `(a) -> ()` | Print a value without trailing newline |
-| `println` | `(a) -> ()` | Print a value with trailing newline |
+| `print` | `(a) -> () where a: Display` | Print a value without trailing newline |
+| `println` | `(a) -> () where a: Display` | Print a value with trailing newline |
 | `panic` | `(a) -> b where a: Display` | Crash with an error message |
 | `Ok` | `(a) -> Result(a, e)` | Construct a success Result |
 | `Err` | `(e) -> Result(a, e)` | Construct an error Result |
@@ -50,11 +50,11 @@ No module qualification is needed once imported.
 ## `print`
 
 ```
-print(value: a) -> ()
+print(value: a) -> () where a: Display
 ```
 
-Prints a value to stdout. Does not append a newline. Multiple values in a single
-call are separated by spaces.
+Prints a value to stdout. Does not append a newline. Accepts a single value that
+implements `Display`.
 
 ```silt
 fn main() {
@@ -68,10 +68,11 @@ fn main() {
 ## `println`
 
 ```
-println(value: a) -> ()
+println(value: a) -> () where a: Display
 ```
 
-Prints a value to stdout followed by a newline.
+Prints a value to stdout followed by a newline. Accepts a single value that
+implements `Display`.
 
 ```silt
 fn main() {

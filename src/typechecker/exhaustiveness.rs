@@ -147,8 +147,7 @@ impl TypeChecker {
                     }
                 }
                 // Check the open "longer than max" constructor.
-                let elems: Vec<Pattern> =
-                    (0..=max_fixed_len).map(|_| Pattern::Wildcard).collect();
+                let elems: Vec<Pattern> = (0..=max_fixed_len).map(|_| Pattern::Wildcard).collect();
                 let open = Pattern::List(elems, Some(Box::new(Pattern::Wildcard)));
                 self.is_useful(matrix, &open, ty, depth + 1)
             }
@@ -242,11 +241,7 @@ impl TypeChecker {
                 let q_has_rest = rest.is_some();
 
                 // Does `row` cover any list in the query's length set?
-                fn row_covers_query_length(
-                    row: &Pattern,
-                    q_len: usize,
-                    q_has_rest: bool,
-                ) -> bool {
+                fn row_covers_query_length(row: &Pattern, q_len: usize, q_has_rest: bool) -> bool {
                     match row {
                         Pattern::Wildcard | Pattern::Ident(_) => true,
                         Pattern::List(r_elems, r_rest) => {

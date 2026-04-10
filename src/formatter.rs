@@ -136,11 +136,7 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                 continue;
             }
             // Triple-quoted string: `"""`
-            if ch == '"'
-                && j + 3 <= chars.len()
-                && chars[j + 1] == '"'
-                && chars[j + 2] == '"'
-            {
+            if ch == '"' && j + 3 <= chars.len() && chars[j + 1] == '"' && chars[j + 2] == '"' {
                 // Opens a triple string on this line (idx+1 is 1-based).
                 open_at = Some(idx + 1);
                 j += 3;

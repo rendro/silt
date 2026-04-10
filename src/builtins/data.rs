@@ -788,12 +788,8 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             }
             // Use iterate_builtin with ListMap semantics to collect the
             // replacement strings, with correct yield/resume handling.
-            let replacements_val = vm.iterate_builtin(
-                BuiltinIterKind::ListMap,
-                items,
-                args[2].clone(),
-                args,
-            )?;
+            let replacements_val =
+                vm.iterate_builtin(BuiltinIterKind::ListMap, items, args[2].clone(), args)?;
             let Value::List(replacements) = replacements_val else {
                 return Err(VmError::new(
                     "internal: regex.replace_all_with iterate_builtin returned non-list".into(),

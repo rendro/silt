@@ -7,8 +7,9 @@ use super::*;
 
 impl TypeChecker {
     pub(super) fn register_builtins(&mut self, env: &mut TypeEnv) {
-        // ── print / println: (a) -> () ─────────────────────────────────
-        // Accept any type (the runtime uses Display for formatting).
+        // ── print / println: (a) -> () where a: Display ────────────────
+        // The runtime uses Display for formatting, so the argument must
+        // implement Display.
         {
             let (a, av) = self.fresh_tv();
             env.define(
@@ -16,7 +17,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![],
+                    constraints: vec![(av, intern("Display"))],
                 },
             );
         }
@@ -27,7 +28,7 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![av],
                     ty: Type::Fun(vec![a.clone()], Box::new(Type::Unit)),
-                    constraints: vec![],
+                    constraints: vec![(av, intern("Display"))],
                 },
             );
         }

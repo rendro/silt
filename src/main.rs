@@ -372,6 +372,22 @@ fn main() {
                         eprintln!("--format requires 'json'");
                         process::exit(1);
                     }
+                } else if args[i] == "--help" || args[i] == "-h" {
+                    eprintln!("Usage: silt check [--format json] <file.silt>");
+                    eprintln!();
+                    eprintln!("Options:");
+                    eprintln!("  --format json   Emit diagnostics as JSON");
+                    process::exit(0);
+                } else if args[i].starts_with('-') {
+                    // Unknown flag — don't silently treat as a filename.
+                    let suggestion = match args[i].as_str() {
+                        "--formats" | "-format" | "-f" => " (did you mean --format?)",
+                        "--h" | "-help" => " (did you mean --help?)",
+                        _ => "",
+                    };
+                    eprintln!("silt check: unknown flag '{}'{}", args[i], suggestion);
+                    eprintln!("Run 'silt check --help' for usage.");
+                    process::exit(1);
                 } else {
                     file = Some(args[i].clone());
                     i += 1;

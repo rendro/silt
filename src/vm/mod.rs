@@ -9,8 +9,8 @@ mod execute;
 mod runtime;
 
 pub use error::VmError;
-pub use runtime::Runtime;
 pub(crate) use execute::BuiltinIterKind;
+pub use runtime::Runtime;
 pub(crate) use runtime::{BlockReason, BuiltinAcc, CallFrame, SelectOpKind};
 
 use regex::Regex;

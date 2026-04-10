@@ -923,7 +923,11 @@ pub(crate) fn cmp_list_range(list: &[Value], lo: i64, hi: i64, list_first: bool)
     // Shared prefix is equal — the shorter side is less.
     let list_len = list.len() as i64;
     let len_ord = list_len.cmp(&range_len);
-    if list_first { len_ord } else { len_ord.reverse() }
+    if list_first {
+        len_ord
+    } else {
+        len_ord.reverse()
+    }
 }
 
 impl PartialEq for Value {
@@ -938,9 +942,7 @@ impl PartialEq for Value {
             // `f64` and use the standard `PartialEq` for `f64`, which
             // matches `Float`-vs-`Float` semantics (so `1.0 == 1.0`, and
             // `NaN` from `ExtFloat` is never equal to a finite `Float`).
-            (Value::Float(a), Value::ExtFloat(b)) | (Value::ExtFloat(b), Value::Float(a)) => {
-                a == b
-            }
+            (Value::Float(a), Value::ExtFloat(b)) | (Value::ExtFloat(b), Value::Float(a)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Tuple(a), Value::Tuple(b)) => a == b,

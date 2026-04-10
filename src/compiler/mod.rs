@@ -162,7 +162,11 @@ fn format_module_source_error(
         let line_num_str = span.line.to_string();
         let gutter_w = line_num_str.len();
         // blank gutter
-        out.push_str(&format!("  {empty:>width$} |\n", empty = "", width = gutter_w));
+        out.push_str(&format!(
+            "  {empty:>width$} |\n",
+            empty = "",
+            width = gutter_w
+        ));
         // source line
         out.push_str(&format!(
             "  {ln:>width$} | {src}\n",
@@ -594,7 +598,7 @@ impl Compiler {
                     self.imported_builtin_modules.insert(name_str);
                     return Ok(());
                 }
-                self.compile_file_module(&name_str)?;
+                self.compile_file_module(&name_str, span)?;
                 Ok(())
             }
             ImportTarget::Items(module_name, items) => {
@@ -617,7 +621,7 @@ impl Compiler {
                 }
                 // File-based selective import: compile the module, then alias
                 // "module.item" -> bare "item" for each selected name.
-                self.compile_file_module(&mod_str)?;
+                self.compile_file_module(&mod_str, span)?;
                 for item in items {
                     let item_str = resolve(*item);
                     let qualified = format!("{mod_str}.{item_str}");
@@ -655,7 +659,7 @@ impl Compiler {
                 }
                 // File module with alias: compile under original name, then
                 // re-register each public declaration under the alias prefix.
-                let public_names = self.compile_file_module(&mod_str)?;
+                let public_names = self.compile_file_module(&mod_str, span)?;
                 for name in &public_names {
                     let original = format!("{mod_str}.{name}");
                     let qi = self.add_constant(Value::String(original), span)?;
@@ -676,7 +680,11 @@ impl Compiler {
     /// unit. Each public declaration is registered as a global named
     /// `"module_name.decl_name"`. Returns the list of public names exported by
     /// this module.
-    fn compile_file_module(&mut self, module_name: &str) -> Result<Vec<String>, CompileError> {
+    fn compile_file_module(
+        &mut self,
+        module_name: &str,
+        span: Span,
+    ) -> Result<Vec<String>, CompileError> {
         // Guard against double-compilation.
         if self.compiled_modules.contains(module_name) {
             return Ok(vec![]);
@@ -688,12 +696,12 @@ impl Compiler {
                 message: format!(
                     "circular import detected: module '{module_name}' imports itself (directly or indirectly)"
                 ),
-                span: Span::new(0, 0),
+                span,
             });
         }
         self.compiling_modules.insert(module_name.to_string());
 
-        let result = self.compile_file_module_inner(module_name);
+        let result = self.compile_file_module_inner(module_name, span);
 
         self.compiling_modules.remove(module_name);
         if result.is_ok() {
@@ -707,11 +715,12 @@ impl Compiler {
     fn compile_file_module_inner(
         &mut self,
         module_name: &str,
+        span: Span,
     ) -> Result<Vec<String>, CompileError> {
         let project_root = self.project_root.as_ref().ok_or_else(|| {
             CompileError {
                 message: format!("cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"),
-                span: Span::new(0, 0),
+                span,
             }
         })?;
 
@@ -719,7 +728,7 @@ impl Compiler {
         let file_path = project_root.join(format!("{module_name}.silt"));
         let source = std::fs::read_to_string(&file_path).map_err(|e| CompileError {
             message: format!("cannot load module '{module_name}': {e}"),
-            span: Span::new(0, 0),
+            span,
         })?;
 
         let file_display = file_path.display().to_string();
@@ -733,7 +742,7 @@ impl Compiler {
                 &e.message,
                 e.span,
             ),
-            span: Span::new(0, 0),
+            span,
         })?;
 
         let mut program = Parser::new(tokens)
@@ -747,7 +756,7 @@ impl Compiler {
                     &e.message,
                     e.span,
                 ),
-                span: Span::new(0, 0),
+                span,
             })?;
 
         // Type-check the imported module before compiling.
@@ -790,8 +799,9 @@ impl Compiler {
 
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
-        // internal helpers that closures might reference).
-        let span = Span::new(0, 0);
+        // internal helpers that closures might reference). Synthetic emissions
+        // below (Op::SetGlobal, constants, etc.) carry the import statement's
+        // span so anything that blames them points back to the import site.
         for decl in &program.decls {
             match decl {
                 Decl::Fn(fn_decl) => {
