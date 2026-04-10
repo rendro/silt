@@ -98,6 +98,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.map takes 2 arguments (list, fn)".into()));
             }
+            if let Value::Range(lo, hi) = &args[0] {
+                checked_range_len(*lo, *hi).map_err(VmError::new)?;
+            }
             let mut iter = ValueIter::try_from(&args[0], "list.map")?;
             let func = &args[1];
             let mut result = Vec::with_capacity(iter.len());

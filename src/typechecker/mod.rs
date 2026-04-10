@@ -481,6 +481,12 @@ impl TypeChecker {
                     Some(*name)
                 }
             }
+            Type::List(_) => Some(intern("List")),
+            Type::Map(_, _) => Some(intern("Map")),
+            Type::Set(_) => Some(intern("Set")),
+            Type::Channel(_) => Some(intern("Channel")),
+            Type::Tuple(_) => Some(intern("Tuple")),
+            Type::ExtFloat => Some(intern("ExtFloat")),
             Type::Var(_) => None, // unresolved
             _ => None,
         }

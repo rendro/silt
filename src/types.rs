@@ -364,6 +364,19 @@ pub fn substitute_enum_params(
             param_var_ids,
             type_args,
         ))),
+        Type::Record(name, fields) => Type::Record(
+            *name,
+            fields
+                .iter()
+                .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
+                .collect(),
+        ),
+        Type::Variant(name, args) => Type::Variant(
+            *name,
+            args.iter()
+                .map(|a| substitute_enum_params(a, param_var_ids, type_args))
+                .collect(),
+        ),
         _ => field_ty.clone(),
     }
 }

@@ -46,7 +46,7 @@ fit:
 - **Code stays sequential.** Each task reads like straight-line code. The
   concurrency is in how tasks are wired together via channels, not in how
   individual tasks are written.
-- **Tasks share the environment via `Rc`.** This is safe because everything is
+- **Tasks share the environment via `Arc`.** This is safe because everything is
   immutable -- multiple tasks can hold references to the same values without
   risk of data races.
 
@@ -255,7 +255,7 @@ OS thread. It returns a `Handle` value immediately.
 The function is a closure: it captures variables from the surrounding scope.
 Since all values in silt are immutable, sharing captured variables between the
 spawning task and the spawned task is safe. Under the hood, captured values are
-shared via `Rc` (reference counting).
+shared via `Arc` (atomic reference counting).
 
 ```silt
 let multiplier = 10

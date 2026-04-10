@@ -31,6 +31,8 @@ impl Vm {
             .insert("Closed".into(), Value::Variant("Closed".into(), Vec::new()));
         self.globals
             .insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
+        self.globals
+            .insert("Sent".into(), Value::Variant("Sent".into(), Vec::new()));
         for day in [
             "Monday",
             "Tuesday",

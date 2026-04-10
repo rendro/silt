@@ -226,6 +226,7 @@ impl TypeChecker {
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
+                self.unify(&key_ty, &Type::String, span);
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(ty, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);
@@ -1313,8 +1314,15 @@ impl TypeChecker {
                 let expr_span = expr.span;
                 let expr_ty = self.infer_expr(expr, env);
 
-                // Type check the else body
-                let _else_ty = self.infer_expr(else_body, env);
+                // Type check the else body — it must diverge (return / panic)
+                let else_ty = self.infer_expr(else_body, env);
+                let resolved_else = self.apply(&else_ty);
+                if !matches!(resolved_else, Type::Never | Type::Error) {
+                    self.error(
+                        "'when' else body must diverge — use 'return' or 'panic'".to_string(),
+                        else_body.span,
+                    );
+                }
 
                 // Bind the pattern in the current scope (type narrowing)
                 self.bind_pattern(pattern, &expr_ty, env, expr_span);
@@ -1354,8 +1362,15 @@ impl TypeChecker {
                 let cond_ty = self.infer_expr(condition, env);
                 self.unify(&cond_ty, &Type::Bool, condition.span);
 
-                // Type check the else body
-                let _else_ty = self.infer_expr(else_body, env);
+                // Type check the else body — it must diverge (return / panic)
+                let else_ty = self.infer_expr(else_body, env);
+                let resolved_else = self.apply(&else_ty);
+                if !matches!(resolved_else, Type::Never | Type::Error) {
+                    self.error(
+                        "'when' else body must diverge — use 'return' or 'panic'".to_string(),
+                        else_body.span,
+                    );
+                }
 
                 Type::Unit
             }
@@ -1530,6 +1545,7 @@ impl TypeChecker {
             Pattern::Map(entries) => {
                 let key_ty = self.fresh_var();
                 let val_ty = self.fresh_var();
+                self.unify(&key_ty, &Type::String, span);
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(expected, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);

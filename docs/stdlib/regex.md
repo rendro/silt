@@ -152,6 +152,9 @@ Replaces all matches by calling `f` with each matched text. The callback must
 return a string.
 
 ```silt
+import int
+import result
+
 fn main() {
     let result = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
         int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })

@@ -507,3 +507,90 @@ fn main() {
     // x = 7, y = 49, double(49) = 98
     assert_eq!(result, Value::Int(98));
 }
+
+// ── Regression tests for pipe/module bugs ────────────────────────────
+
+#[test]
+fn test_pipe_inside_record_in_module() {
+    // Regression: pipe inside a list literal inside a record literal in a module
+    // used to create a ghost stack slot (hidden __pipe_val__ local) that shifted
+    // all subsequent record field values.
+    let result = run_module_test(
+        &[(
+            "shapes.silt",
+            r#"
+pub type Point { x: Int, y: Int }
+pub fn make(n) { Point { x: n, y: n } }
+pub fn double_x(p) { p.{ x: p.x * 2 } }
+
+pub type Box { name: String, label: String, points: List(Point) }
+
+pub fn create(name, label) {
+    Box { name: name, label: label, points: [make(1) |> double_x] }
+}
+            "#,
+        )],
+        r#"
+import shapes
+
+fn main() {
+    let b = shapes.create("mybox", "mylabel")
+    -- Before the fix: name="mylabel", label=Point{...} (shifted!)
+    -- After the fix:  name="mybox",   label="mylabel"
+    b.name
+}
+        "#,
+    );
+    assert_eq!(result, Value::String("mybox".into()));
+}
+
+#[test]
+fn test_intra_module_private_fn_calls() {
+    // Regression: private functions in modules were registered under mangled
+    // names (__module__fn) but intra-module calls used bare names, causing
+    // "undefined global" at runtime.
+    let result = run_module_test(
+        &[(
+            "helpers.silt",
+            r#"
+fn internal_double(x) { x * 2 }
+pub fn quadruple(x) { internal_double(internal_double(x)) }
+            "#,
+        )],
+        r#"
+import helpers
+fn main() { helpers.quadruple(5) }
+        "#,
+    );
+    assert_eq!(result, Value::Int(20));
+}
+
+#[test]
+fn test_transitive_module_scope() {
+    // Regression: when module A imports module B which imports module C,
+    // compiling C cleared A's module scope (not saved/restored), breaking
+    // intra-module calls in A.
+    let result = run_module_test(
+        &[
+            (
+                "base.silt",
+                r#"
+pub fn add(a, b) { a + b }
+            "#,
+            ),
+            (
+                "mid.silt",
+                r#"
+import base
+fn helper(x) { base.add(x, 10) }
+pub fn process(x) { helper(x) }
+            "#,
+            ),
+        ],
+        r#"
+import mid
+fn main() { mid.process(5) }
+        "#,
+    );
+    assert_eq!(result, Value::Int(15));
+}

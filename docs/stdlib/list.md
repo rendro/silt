@@ -203,6 +203,8 @@ Applies `f` to each element. Keeps the inner values from `Some` results and
 discards `None` results. Combines filtering and mapping in one pass.
 
 ```silt
+import int
+
 fn main() {
     let results = ["1", "abc", "3"] |> list.filter_map { s ->
         match int.parse(s) {

@@ -204,10 +204,7 @@ impl Compiler {
 
     /// Mark all builtin modules as imported (used by the REPL).
     pub fn import_all_builtins(&mut self) {
-        for name in &[
-            "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel",
-            "task", "regex", "json", "set", "math",
-        ] {
+        for name in crate::module::BUILTIN_MODULES {
             self.imported_builtin_modules.insert(name.to_string());
         }
     }
@@ -1717,16 +1714,21 @@ impl Compiler {
         span: Span,
         tail: bool,
     ) -> Result<(), CompileError> {
-        // Compile the left value first
-        self.compile_expr(left)?;
-
         // val |> f(args) -> f(val, args)
         // val |> f       -> f(val)
+        //
+        // For builtins (CallBuiltin): val first, then args — the builtin
+        // reads them positionally, no callee on the stack.
+        //
+        // For non-builtins (Call): callee first, then val, then args — Call
+        // pops callee + N args.  Compiling callee before val avoids needing
+        // a hidden local to stash the pipe value, which previously leaked a
+        // ghost stack slot and corrupted record field assignments.
         match &right.kind {
             ExprKind::Call(callee, args) => {
-                // Check if callee is a module-qualified builtin
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
-                    // left is already on stack, compile remaining args
+                    // Builtins: val on stack first, then args
+                    self.compile_expr(left)?;
                     for arg in args {
                         self.compile_expr(arg)?;
                     }
@@ -1736,18 +1738,9 @@ impl Compiler {
                     self.current_chunk().emit_u16(name_idx, span);
                     self.current_chunk().emit_u8(argc, span);
                 } else {
-                    // Store val in a hidden local so it persists while we compile callee.
-                    // SetLocal does NOT pop; the value stays on the stack at the local's slot.
-                    let pipe_slot = self.add_local(intern("__pipe_val__"));
-                    self.current_chunk().emit_op(Op::SetLocal, span);
-                    self.current_chunk().emit_u16(pipe_slot, span);
-
-                    // Compile callee
+                    // Non-builtin: callee first, then val, then args
                     self.compile_expr(callee)?;
-                    // Push val back from its local slot
-                    self.current_chunk().emit_op(Op::GetLocal, span);
-                    self.current_chunk().emit_u16(pipe_slot, span);
-                    // Push remaining args
+                    self.compile_expr(left)?;
                     for arg in args {
                         self.compile_expr(arg)?;
                     }
@@ -1763,15 +1756,9 @@ impl Compiler {
                 }
             }
             _ => {
-                // val |> f or val |> expr
-                // Store val in a hidden local, compile RHS, get val, call.
-                let pipe_slot = self.add_local(intern("__pipe_val__"));
-                self.current_chunk().emit_op(Op::SetLocal, span);
-                self.current_chunk().emit_u16(pipe_slot, span);
-
+                // val |> f: callee first, then val
                 self.compile_expr(right)?;
-                self.current_chunk().emit_op(Op::GetLocal, span);
-                self.current_chunk().emit_u16(pipe_slot, span);
+                self.compile_expr(left)?;
                 if tail {
                     self.current_chunk().emit_op(Op::TailCall, span);
                     self.current_chunk().emit_u8(1, span);

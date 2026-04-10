@@ -169,11 +169,14 @@ silt run main.silt
 silt run <file.silt>       Run a program
 silt run -w <file.silt>    Run and re-run on file changes
 silt check <file.silt>     Type-check without running
+silt check --format json   Type-check with JSON output (for CI/editors)
 silt test [path]           Run test functions
-silt fmt <file.silt>       Format source code
+silt fmt [files...]        Format source code
+silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init                  Create a new main.silt
 silt lsp                   Start the language server
+silt disasm <file.silt>    Inspect compiled bytecode
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.

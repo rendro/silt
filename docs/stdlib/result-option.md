@@ -32,6 +32,8 @@ If `r` is `Ok(v)`, calls `f(v)` and returns its result. If `r` is `Err`,
 returns the `Err` unchanged. Useful for chaining fallible operations.
 
 ```silt
+import int
+
 fn main() {
     let r = Ok("42")
         |> result.flat_map { s -> int.parse(s) }

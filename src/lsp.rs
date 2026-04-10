@@ -1014,6 +1014,10 @@ fn find_type_in_expr<'a>(expr: &'a Expr, cursor: usize, best: &mut Option<&'a Ty
                 }
             }
         }
+        ExprKind::FloatElse(expr, fallback) => {
+            find_type_in_expr(expr, cursor, best);
+            find_type_in_expr(fallback, cursor, best);
+        }
         _ => {}
     }
 }
@@ -1173,6 +1177,10 @@ fn find_field_in_expr(
                     }
                 }
             }
+            ExprKind::FloatElse(expr, fallback) => {
+                find_field_in_expr(expr, source, cursor, result);
+                find_field_in_expr(fallback, source, cursor, result);
+            }
             _ => {}
         }
     }
@@ -1323,6 +1331,10 @@ fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
                     f(e);
                 }
             }
+        }
+        ExprKind::FloatElse(expr, fallback) => {
+            f(expr);
+            f(fallback);
         }
         _ => {}
     }

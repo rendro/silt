@@ -182,14 +182,22 @@ fn compile_file(path: &str) -> (Vec<Function>, String) {
         eprintln!("{err}");
     }
 
-    if result.has_hard_errors {
+    // Type errors from unresolved module imports are expected: the type checker
+    // runs before compilation, which is where modules are resolved.  Only suppress
+    // type errors when there were unresolved module warnings (the "undefined"
+    // errors are artifacts).  Genuine type errors in single-file programs are fatal.
+    let has_unresolved_modules = result
+        .type_errors
+        .iter()
+        .any(|e| e.message.contains("unknown module"));
+    if result.has_hard_errors && !has_unresolved_modules {
         process::exit(1);
     }
 
-    let functions = result.functions.unwrap_or_else(|| {
-        eprintln!("{path}: internal error: compilation produced no output");
-        process::exit(1);
-    });
+    let functions = match result.functions {
+        Some(f) => f,
+        None => process::exit(1),
+    };
 
     if functions.is_empty() {
         eprintln!("{path}: internal error: no functions compiled");
@@ -809,7 +817,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 let name = silt::intern::resolve(f.name);
                 if name.starts_with("skip_test_") {
                     total += 1;
-                    println!("  SKIP {path}::{name}");
+                    eprintln!("  SKIP {path}::{name}");
                     skipped += 1;
                     continue;
                 }
@@ -823,17 +831,17 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     let caller = silt::bytecode::call_global_script(&name);
                     match vm.run(Arc::new(caller)) {
                         Ok(_) => {
-                            println!("  PASS {path}::{name}");
+                            eprintln!("  PASS {path}::{name}");
                             passed += 1;
                         }
                         Err(e) => {
-                            println!("  FAIL {path}::{name}");
+                            eprintln!("  FAIL {path}::{name}");
                             if let Some(span) = e.span {
                                 let source_err =
                                     SourceError::runtime_at(&e.message, span, &source, path);
-                                println!("    {source_err}");
+                                eprintln!("    {source_err}");
                             } else {
-                                println!("    Error: {e}");
+                                eprintln!("    Error: {e}");
                             }
                             failed += 1;
                         }
@@ -843,7 +851,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     }
 
-    println!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
+    eprintln!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
+    if total == 0 {
+        eprintln!(
+            "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
+        );
+    }
     if failed > 0 {
         process::exit(1);
     }
