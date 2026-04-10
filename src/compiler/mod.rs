@@ -527,13 +527,13 @@ impl Compiler {
                 Ok(())
             }
 
-            Decl::Import(target) => self.compile_import(target),
+            Decl::Import(target, span) => self.compile_import(target, *span),
         }
     }
 
     // ── Import compilation ─────────────────────────────────────────
 
-    fn compile_import(&mut self, target: &ImportTarget) -> Result<(), CompileError> {
+    fn compile_import(&mut self, target: &ImportTarget, span: Span) -> Result<(), CompileError> {
         match target {
             ImportTarget::Module(name) => {
                 // Builtin modules (io, string, list, ...) are already registered
@@ -551,7 +551,6 @@ impl Compiler {
                 if module::is_builtin_module(&mod_str) {
                     self.imported_builtin_modules.insert(mod_str.clone());
                     // For builtin modules, create aliases: bare "item" -> "module.item"
-                    let span = Span::new(0, 0);
                     for item in items {
                         let item_str = resolve(*item);
                         let qualified = format!("{mod_str}.{item_str}");
@@ -568,7 +567,6 @@ impl Compiler {
                 // File-based selective import: compile the module, then alias
                 // "module.item" -> bare "item" for each selected name.
                 self.compile_file_module(&mod_str)?;
-                let span = Span::new(0, 0);
                 for item in items {
                     let item_str = resolve(*item);
                     let qualified = format!("{mod_str}.{item_str}");
@@ -588,7 +586,6 @@ impl Compiler {
                 if module::is_builtin_module(&mod_str) {
                     self.imported_builtin_modules.insert(mod_str.clone());
                     // Builtin alias: copy all "module.func" globals to "alias.func".
-                    let span = Span::new(0, 0);
                     let names = module::builtin_module_functions(&mod_str)
                         .into_iter()
                         .chain(module::builtin_module_constants(&mod_str));
@@ -608,7 +605,6 @@ impl Compiler {
                 // File module with alias: compile under original name, then
                 // re-register each public declaration under the alias prefix.
                 let public_names = self.compile_file_module(&mod_str)?;
-                let span = Span::new(0, 0);
                 for name in &public_names {
                     let original = format!("{mod_str}.{name}");
                     let qi = self.add_constant(Value::String(original), span)?;
@@ -852,7 +848,7 @@ impl Compiler {
                     // Private type — compile it anyway (might be referenced).
                     self.compile_decl(decl)?;
                 }
-                Decl::Import(_) => {
+                Decl::Import(..) => {
                     // Nested imports from within a module.
                     self.compile_decl(decl)?;
                 }
@@ -1875,9 +1871,12 @@ impl Compiler {
             "Compiler::ctx() called with empty context stack — \
              this indicates a mismatched push_context/pop_context pair"
         );
-        self.contexts
-            .last()
-            .expect("Compiler::ctx(): no active compile context (context stack is empty)")
+        self.contexts.last().unwrap_or_else(|| {
+            panic!(
+                "internal compiler error: context stack is empty in ctx(); \
+                 this indicates a mismatched push_context/pop_context pair"
+            )
+        })
     }
 
     fn ctx_mut(&mut self) -> &mut CompileContext {
@@ -1886,9 +1885,12 @@ impl Compiler {
             "Compiler::ctx_mut() called with empty context stack — \
              this indicates a mismatched push_context/pop_context pair"
         );
-        self.contexts
-            .last_mut()
-            .expect("Compiler::ctx_mut(): no active compile context (context stack is empty)")
+        self.contexts.last_mut().unwrap_or_else(|| {
+            panic!(
+                "internal compiler error: context stack is empty in ctx_mut(); \
+                 this indicates a mismatched push_context/pop_context pair"
+            )
+        })
     }
 
     fn current_chunk(&mut self) -> &mut Chunk {

@@ -646,7 +646,7 @@ impl TypeChecker {
 
         // Process imports: register selective/aliased import names in the type environment
         for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items)) = decl {
+            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     for item in items {
@@ -662,10 +662,10 @@ impl TypeChecker {
                         format!(
                             "unknown module '{module_str}'; imported items will not be type-checked"
                         ),
-                        Span::new(0, 0),
+                        *span,
                     );
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
+            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     let names = crate::module::builtin_module_functions(&module_str)
@@ -681,7 +681,7 @@ impl TypeChecker {
                 } else {
                     self.warning(
                         format!("unknown module '{module_str}'; aliased imports will not be type-checked"),
-                        Span::new(0, 0),
+                        *span,
                     );
                 }
             }
@@ -1591,7 +1591,7 @@ impl ReplTypeContext {
 
         // Process imports
         for decl in &program.decls {
-            if let Decl::Import(ImportTarget::Items(module, items)) = decl {
+            if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     for item in items {
@@ -1605,10 +1605,10 @@ impl ReplTypeContext {
                         format!(
                             "unknown module '{module_str}'; imported items will not be type-checked"
                         ),
-                        Span::new(0, 0),
+                        *span,
                     );
                 }
-            } else if let Decl::Import(ImportTarget::Alias(module, alias)) = decl {
+            } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     let names = crate::module::builtin_module_functions(&module_str)
@@ -1626,7 +1626,7 @@ impl ReplTypeContext {
                         format!(
                             "unknown module '{module_str}'; aliased imports will not be type-checked"
                         ),
-                        Span::new(0, 0),
+                        *span,
                     );
                 }
             }

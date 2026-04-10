@@ -294,7 +294,7 @@ pub enum Decl {
     Type(TypeDecl),
     Trait(TraitDecl),
     TraitImpl(TraitImpl),
-    Import(ImportTarget),
+    Import(ImportTarget, Span),
     Let {
         pattern: Pattern,
         ty: Option<TypeExpr>,

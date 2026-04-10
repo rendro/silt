@@ -488,7 +488,7 @@ impl Parser {
     }
 
     fn parse_import(&mut self) -> Result<Decl> {
-        self.expect(&Token::Import)?;
+        let (_, import_span) = self.expect(&Token::Import)?;
         let (name, _) = self.expect_ident()?;
 
         self.skip_nl();
@@ -507,13 +507,13 @@ impl Parser {
                 }
             }
             self.expect(&Token::RBrace)?;
-            Ok(Decl::Import(ImportTarget::Items(name, items)))
+            Ok(Decl::Import(ImportTarget::Items(name, items), import_span))
         } else if self.at(&Token::As) {
             self.advance();
             let (alias, _) = self.expect_ident()?;
-            Ok(Decl::Import(ImportTarget::Alias(name, alias)))
+            Ok(Decl::Import(ImportTarget::Alias(name, alias), import_span))
         } else {
-            Ok(Decl::Import(ImportTarget::Module(name)))
+            Ok(Decl::Import(ImportTarget::Module(name), import_span))
         }
     }
 
@@ -2985,13 +2985,13 @@ fn main() {
         );
         assert_eq!(prog.decls.len(), 3);
         assert!(
-            matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m)) if *m == intern::intern("io"))
+            matches!(&prog.decls[0], Decl::Import(ImportTarget::Module(m), _) if *m == intern::intern("io"))
         );
         assert!(
-            matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items)) if *m == intern::intern("math") && items.len() == 2)
+            matches!(&prog.decls[1], Decl::Import(ImportTarget::Items(m, items), _) if *m == intern::intern("math") && items.len() == 2)
         );
         assert!(
-            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a)) if *m == intern::intern("http") && *a == intern::intern("h"))
+            matches!(&prog.decls[2], Decl::Import(ImportTarget::Alias(m, a), _) if *m == intern::intern("http") && *a == intern::intern("h"))
         );
     }
 

@@ -47,7 +47,7 @@ type User {
 }
 
 fn main() {
-    let input = "{\"name\": \"Alice\", \"age\": 30}"
+    let input = """{"name": "Alice", "age": 30}"""
     match json.parse(User, input) {
         Ok(user) -> println(user.name)
         Err(e) -> println("Error: {e}")

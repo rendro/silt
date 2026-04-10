@@ -370,6 +370,14 @@ fn main() {
         }
         #[cfg(feature = "repl")]
         "repl" => {
+            for arg in &args[2..] {
+                if arg == "--help" || arg == "-h" {
+                    eprintln!("Usage: silt repl");
+                    eprintln!();
+                    eprintln!("Start an interactive REPL session. Type :help inside for commands.");
+                    process::exit(0);
+                }
+            }
             silt::repl::run_repl();
         }
         #[cfg(not(feature = "repl"))]
@@ -427,6 +435,14 @@ fn main() {
             }
         }
         "init" => {
+            for arg in &args[2..] {
+                if arg == "--help" || arg == "-h" {
+                    eprintln!("Usage: silt init");
+                    eprintln!();
+                    eprintln!("Create a new main.silt file in the current directory.");
+                    process::exit(0);
+                }
+            }
             init_project();
         }
         // If the argument looks like a file, run it directly

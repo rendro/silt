@@ -168,7 +168,7 @@ fn decl_start_line(decl: &Decl) -> Option<usize> {
         Decl::Type(t) => Some(t.span.line),
         Decl::Trait(t) => Some(t.span.line),
         Decl::TraitImpl(t) => Some(t.span.line),
-        Decl::Import(_) => None, // no span on ImportTarget
+        Decl::Import(_, span) => Some(span.line),
         Decl::Let { span, .. } => Some(span.line),
     }
 }
@@ -223,7 +223,7 @@ fn decl_has_block_body(decl: &Decl) -> bool {
     match decl {
         Decl::Fn(f) => matches!(f.body.kind, ExprKind::Block(_)),
         Decl::Trait(_) | Decl::TraitImpl(_) | Decl::Type(_) => true,
-        Decl::Import(_) | Decl::Let { .. } => false,
+        Decl::Import(..) | Decl::Let { .. } => false,
     }
 }
 
@@ -390,7 +390,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     // Collect and sort import strings; track which decl indices are imports.
     let mut is_import = vec![false; program.decls.len()];
     for (i, decl) in program.decls.iter().enumerate() {
-        if matches!(decl, Decl::Import(_)) {
+        if matches!(decl, Decl::Import(..)) {
             // Gather preceding comments for this import (bucket[i], skip bucket[0]
             // which is emitted separately as pre-first-decl comments).
             let comment_block = if i > 0 && !buckets[i].is_empty() {
@@ -484,7 +484,7 @@ fn format_decl_with_comments(
         Decl::TraitImpl(t) => {
             format_trait_impl_with_comments(t, depth, body_comments, trailing_map)
         }
-        Decl::Import(i) => format_import(i, depth),
+        Decl::Import(i, _) => format_import(i, depth),
         Decl::Let {
             pattern,
             ty,
