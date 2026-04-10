@@ -17,7 +17,7 @@ communication between tasks spawned with `task.spawn`.
 | `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
 | `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
-| `select` | `(List(Channel \| (Channel, a))) -> (Channel, ChannelResult(a))` | Wait on multiple operations |
+| `select` | `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels |
 | `send` | `(Channel, a) -> ()` | Blocking send |
 | `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
 | `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
@@ -110,14 +110,12 @@ fn main() {
 ## `channel.select`
 
 ```
-channel.select(ops: List(Channel | (Channel, a))) -> (Channel, ChannelResult(a))
+channel.select(ops: List(Channel(a))) -> (Channel(a), ChannelResult(a))
 ```
 
-Waits until one of the operations completes. Each element of the list is either
-a bare channel (receive) or a `(channel, value)` tuple (send). Returns a
-2-tuple of `(channel, result)` where `result` is `Message(val)` for a
-successful receive, `Sent` for a successful send, or `Closed` if the channel
-is closed.
+Waits until one of the channels has data or is closed. Takes a list of channels
+and returns a 2-tuple of `(channel, result)` where `result` is `Message(val)`
+for a successful receive or `Closed` if the channel is closed.
 
 ```silt
 fn main() {
@@ -127,21 +125,7 @@ fn main() {
     match channel.select([ch1, ch2]) {
         (^ch2, Message(val)) -> println(val)  -- "hello"
         (_, Closed) -> println("closed")
-    }
-}
-```
-
-Send operations in select:
-
-```silt
-fn main() {
-    let input = channel.new(10)
-    let output = channel.new(10)
-    channel.send(input, 42)
-    match channel.select([input, (output, "result")]) {
-        (^input, Message(val)) -> println("received: {val}")
-        (^output, Sent) -> println("sent to output")
-        (_, Closed) -> println("closed")
+        _ -> unit
     }
 }
 ```
@@ -181,6 +165,7 @@ fn main() {
     match channel.select([ch, timer]) {
         (^ch, Message(val)) -> println("got: {val}")
         (^timer, Closed) -> println("timed out")
+        _ -> unit
     }
 }
 ```

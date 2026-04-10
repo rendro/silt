@@ -936,10 +936,11 @@ impl Ord for Value {
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
             (Value::Float(a), Value::Float(b)) => {
-                a.partial_cmp(b).unwrap_or_else(|| {
-                    // NaN handling: treat as equal for ordering purposes
-                    a.to_bits().cmp(&b.to_bits())
-                })
+                // Float values are guaranteed finite, so partial_cmp always
+                // returns Some. The fallback to Equal is a safety net that
+                // keeps Eq/Ord consistent (NaN == NaN) if a non-finite value
+                // ever appears.
+                a.partial_cmp(b).unwrap_or(Ordering::Equal)
             }
             (Value::ExtFloat(a), Value::ExtFloat(b)) => a.to_bits().cmp(&b.to_bits()),
             (Value::String(a), Value::String(b)) => a.cmp(b),

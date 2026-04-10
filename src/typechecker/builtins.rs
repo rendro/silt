@@ -222,32 +222,35 @@ impl TypeChecker {
         }
 
         // ChannelResult enum: Message(a) / Closed — for channel.receive
-        self.enums.insert(
-            intern("ChannelResult"),
-            EnumInfo {
-                _name: intern("ChannelResult"),
-                params: vec![intern("a")],
-                param_var_ids: vec![0],
-                variants: vec![
-                    VariantInfo {
-                        name: intern("Message"),
-                        field_types: vec![Type::Var(0)],
-                    },
-                    VariantInfo {
-                        name: intern("Closed"),
-                        field_types: vec![],
-                    },
-                    VariantInfo {
-                        name: intern("Sent"),
-                        field_types: vec![],
-                    },
-                    VariantInfo {
-                        name: intern("Empty"),
-                        field_types: vec![],
-                    },
-                ],
-            },
-        );
+        {
+            let (cr_a, cr_av) = self.fresh_tv();
+            self.enums.insert(
+                intern("ChannelResult"),
+                EnumInfo {
+                    _name: intern("ChannelResult"),
+                    params: vec![intern("a")],
+                    param_var_ids: vec![cr_av],
+                    variants: vec![
+                        VariantInfo {
+                            name: intern("Message"),
+                            field_types: vec![cr_a],
+                        },
+                        VariantInfo {
+                            name: intern("Closed"),
+                            field_types: vec![],
+                        },
+                        VariantInfo {
+                            name: intern("Sent"),
+                            field_types: vec![],
+                        },
+                        VariantInfo {
+                            name: intern("Empty"),
+                            field_types: vec![],
+                        },
+                    ],
+                },
+            );
+        }
         self.variant_to_enum
             .insert(intern("Message"), intern("ChannelResult"));
         self.variant_to_enum

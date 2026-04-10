@@ -62,6 +62,14 @@ impl TypeChecker {
         let body_type = self.infer_expr(&mut f.body, &mut local_env);
         self.unify(&body_type, &ret_type, f.body.span);
 
+        // Record the body-constrained function type for scheme narrowing
+        let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
+        let constrained_ret = self.apply(&ret_type);
+        self.fn_body_types.insert(
+            f.name,
+            Type::Fun(constrained_params, Box::new(constrained_ret)),
+        );
+
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;
@@ -794,7 +802,14 @@ impl TypeChecker {
                             self.unify(&fn_type, &fn_ty, span);
                             ret
                         }
-                        _ => self.fresh_var(),
+                        _ => {
+                            self.error(
+                                "pipe operator requires a function on the right-hand side"
+                                    .to_string(),
+                                rhs.span,
+                            );
+                            self.fresh_var()
+                        }
                     }
                 }
             }
@@ -1176,33 +1191,42 @@ impl TypeChecker {
 
             ExprKind::Loop { bindings, body } => {
                 let mut loop_env = env.child();
-                let binding_count = bindings.len();
+                let mut binding_types = Vec::new();
                 for (name, value) in bindings.iter_mut() {
                     let ty = self.infer_expr(value, env);
+                    binding_types.push(ty.clone());
                     loop_env.define(*name, Scheme::mono(ty));
                 }
-                let prev_loop = self.loop_binding_count;
-                self.loop_binding_count = Some(binding_count);
+                let prev_loop = self.loop_binding_types.take();
+                self.loop_binding_types = Some(binding_types);
                 let result = self.infer_expr(body, &mut loop_env);
-                self.loop_binding_count = prev_loop;
+                self.loop_binding_types = prev_loop;
                 result
             }
 
             ExprKind::Recur(args) => {
                 let recur_count = args.len();
-                for arg in args {
-                    let _ty = self.infer_expr(arg, env);
-                }
-                if let Some(expected) = self.loop_binding_count
-                    && recur_count != expected
-                {
-                    self.warning(
-                        format!(
-                            "loop has {} binding(s), but recur supplies {} argument(s)",
-                            expected, recur_count
-                        ),
-                        span,
-                    );
+                let arg_types: Vec<Type> = args
+                    .iter_mut()
+                    .map(|arg| self.infer_expr(arg, env))
+                    .collect();
+                if let Some(binding_types) = self.loop_binding_types.clone() {
+                    if recur_count != binding_types.len() {
+                        self.warning(
+                            format!(
+                                "loop has {} binding(s), but recur supplies {} argument(s)",
+                                binding_types.len(),
+                                recur_count
+                            ),
+                            span,
+                        );
+                    }
+                    // Unify each recur arg with its corresponding loop binding type
+                    for (i, arg_ty) in arg_types.iter().enumerate() {
+                        if let Some(binding_ty) = binding_types.get(i) {
+                            self.unify(arg_ty, binding_ty, span);
+                        }
+                    }
                 }
                 self.fresh_var()
             }

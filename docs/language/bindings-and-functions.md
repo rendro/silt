@@ -36,9 +36,10 @@ namespace clean and avoids the PHP problem of too many bare globals.
 The global namespace has only 7 names that are always available: `print`,
 `println`, `panic`, `Ok`, `Err`, `Some`, `None`. Additional constructors
 become available with imports: `Stop`/`Continue` (require `import list`),
-`Message`/`Closed`/`Empty`/`Sent` (require `import channel`), and the
-`Weekday` variants (require `import time`). Everything else requires module
-qualification.
+`Message`/`Closed`/`Empty`/`Sent` (require `import channel`), the
+`Weekday` variants (require `import time`), and the HTTP method constructors
+`GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`HEAD`/`OPTIONS` (require `import http`).
+Everything else requires module qualification.
 
 What is _not_ a keyword matters too. `true`/`false` are builtin literals.
 `Ok`, `Err`, `Some`, `None` are builtin variant constructors -- ordinary

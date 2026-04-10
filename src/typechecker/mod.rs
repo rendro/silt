@@ -148,9 +148,9 @@ pub struct TypeChecker {
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
-    /// Tracks the number of bindings in the enclosing `loop` (if any),
-    /// so that `recur` arity can be validated.
-    pub(super) loop_binding_count: Option<usize>,
+    /// Tracks the types of bindings in the enclosing `loop` (if any),
+    /// so that `recur` arity and types can be validated.
+    pub(super) loop_binding_types: Option<Vec<Type>>,
     /// Active trait constraints for type variables in the current function body.
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
@@ -159,6 +159,8 @@ pub struct TypeChecker {
     pub(super) current_return_type: Option<Type>,
     /// Maps record type names to their type parameter TyVar ids.
     pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
+    /// Maps function names to their body-constrained types (populated during check_fn_body).
+    pub(super) fn_body_types: HashMap<Symbol, Type>,
 }
 
 impl Default for TypeChecker {
@@ -179,10 +181,11 @@ impl TypeChecker {
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
             errors: Vec::new(),
-            loop_binding_count: None,
+            loop_binding_types: None,
             active_constraints: HashMap::new(),
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
+            fn_body_types: HashMap::new(),
         }
     }
 
@@ -737,18 +740,61 @@ impl TypeChecker {
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
-        // Third pass: type check function bodies (mutable access needed)
+        // Third pass: type check function bodies to discover constraints
+        let pre_pass3_error_count = self.errors.len();
         for i in 0..program.decls.len() {
             if let Decl::Fn(ref mut f) = program.decls[i] {
                 self.check_fn_body(f, &env);
             }
         }
-
-        // Also check trait impl method bodies (mutable access needed)
         for i in 0..program.decls.len() {
             if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
                 for j in 0..ti.methods.len() {
                     self.check_fn_body(&mut ti.methods[j], &env);
+                }
+            }
+        }
+
+        // Narrow function schemes based on body constraints, then re-check
+        let body_types: HashMap<Symbol, Type> = std::mem::take(&mut self.fn_body_types);
+        if !body_types.is_empty() {
+            let mut any_narrowed = false;
+            for (name, constrained_type) in &body_types {
+                let new_scheme = self.generalize(&env, constrained_type);
+                // Preserve where-clause constraints from the original scheme
+                if let Some(original_scheme) = env.lookup(*name).cloned()
+                    && original_scheme.vars.len() != new_scheme.vars.len()
+                {
+                    // Scheme was narrowed — some vars got constrained
+                    any_narrowed = true;
+                    let mut final_scheme = new_scheme.clone();
+                    // Remap constraints that still apply
+                    for (tv, trait_name) in &original_scheme.constraints {
+                        if new_scheme.vars.contains(tv) {
+                            final_scheme.constraints.push((*tv, *trait_name));
+                        }
+                    }
+                    env.define(*name, final_scheme);
+                }
+            }
+
+            if any_narrowed {
+                // Discard pass 3 errors — they'll be re-emitted with better accuracy
+                self.errors.truncate(pre_pass3_error_count);
+                self.fn_body_types.clear();
+
+                // Re-check function bodies with narrowed schemes
+                for i in 0..program.decls.len() {
+                    if let Decl::Fn(ref mut f) = program.decls[i] {
+                        self.check_fn_body(f, &env);
+                    }
+                }
+                for i in 0..program.decls.len() {
+                    if let Decl::TraitImpl(ref mut ti) = program.decls[i] {
+                        for j in 0..ti.methods.len() {
+                            self.check_fn_body(&mut ti.methods[j], &env);
+                        }
+                    }
                 }
             }
         }

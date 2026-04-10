@@ -408,8 +408,15 @@ fn main() {
                     process::exit(1);
                 }
             } else {
+                let mut any_failed = false;
                 for file in &files {
-                    format_file(file);
+                    if let Err(e) = format_file(file) {
+                        eprintln!("{e}");
+                        any_failed = true;
+                    }
+                }
+                if any_failed {
+                    process::exit(1);
                 }
             }
         }
@@ -447,26 +454,11 @@ fn init_project() {
     println!("  test:  silt test");
 }
 
-fn format_file(path: &str) {
-    let source = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error reading {path}: {e}");
-            process::exit(1);
-        }
-    };
-    match silt::formatter::format(&source) {
-        Ok(formatted) => {
-            if let Err(e) = fs::write(path, formatted) {
-                eprintln!("error writing {path}: {e}");
-                process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("{path}: {e}");
-            process::exit(1);
-        }
-    }
+fn format_file(path: &str) -> Result<(), String> {
+    let source = fs::read_to_string(path).map_err(|e| format!("error reading {path}: {e}"))?;
+    let formatted = silt::formatter::format(&source).map_err(|e| format!("{path}: {e}"))?;
+    fs::write(path, formatted).map_err(|e| format!("error writing {path}: {e}"))?;
+    Ok(())
 }
 
 /// Check if a file is already formatted. Returns true if it is, false otherwise.

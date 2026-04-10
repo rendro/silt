@@ -285,6 +285,35 @@ fn test_fmt_file() {
     );
 }
 
+// ── 11b. Format multiple files continues past errors ───────────────
+
+#[test]
+fn test_fmt_continues_past_error_in_multi_file() {
+    // Create a valid file and an invalid file (syntax error)
+    let good = temp_silt_file("fmt_good", "fn  main( ) {\nprintln(\"hello\")\n}\n");
+    let bad = temp_silt_file("fmt_bad", "fn { invalid syntax ???");
+
+    let output = silt_cmd()
+        .arg("fmt")
+        .arg(&bad)
+        .arg(&good)
+        .output()
+        .expect("failed to run silt");
+
+    // Should exit non-zero because of the bad file
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit due to bad file"
+    );
+
+    // The good file should still have been formatted despite the bad file
+    let formatted = fs::read_to_string(&good).expect("failed to read good file");
+    assert!(
+        formatted.contains("fn main()"),
+        "good file should still be formatted even when a sibling file fails, got: {formatted}"
+    );
+}
+
 // ── 12. Init creates file ──────────────────────────────────────────
 
 #[test]

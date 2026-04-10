@@ -2000,3 +2000,67 @@ fn main() { float.to_string(3.14, 2) }
     "#);
     assert_eq!(result, Value::String("3.14".into()));
 }
+
+// ════════════════════════════════════════════════════════════════════
+// SCHEME NARROWING (function body constraints reflected in inferred types)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_scheme_narrowing_rejects_wrong_type() {
+    // fn add_one(x) = x + 1 should infer Int -> Int, not forall a. a -> a
+    let result = run_err("fn add_one(x) = x + 1\nfn main() { add_one(\"hello\") }");
+    assert!(result.contains("type mismatch") || result.contains("cannot"));
+}
+
+#[test]
+fn test_scheme_narrowing_preserves_polymorphism() {
+    // fn id(x) = x should remain polymorphic
+    run_ok("fn id(x) = x\nfn main() { let a = id(1)\nlet b = id(\"hello\")\na }");
+}
+
+#[test]
+fn test_scheme_narrowing_pattern_match() {
+    // fn process(pair) { match pair { (a, b) -> b + 10 } } should constrain b to Int
+    let result = run_err(
+        "fn process(pair) { match pair { (a, b) -> b + 10 } }\nfn main() { process((1, \"hello\")) }",
+    );
+    assert!(result.contains("type mismatch") || result.contains("cannot"));
+}
+
+#[test]
+fn test_scheme_narrowing_multiple_params() {
+    // fn sum(x, y) = x + y + 1 constrains both params to Int via the + 1 literal
+    let result = run_err("fn sum(x, y) = x + y + 1\nfn main() { sum(\"hello\", \"world\") }");
+    // sum should be narrowed to (Int, Int) -> Int because + 1 forces Int
+    // Passing strings should fail
+    assert!(result.contains("type mismatch") || result.contains("cannot"));
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RECUR TYPE CHECKING AND PIPE OPERATOR
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_recur_type_mismatch() {
+    assert_type_error(
+        "fn main() {\n  loop i = 0, s = \"hello\" {\n    match i > 3 {\n      true -> s\n      false -> loop(true, 42)\n    }\n  }\n}",
+        "type mismatch",
+    );
+}
+
+#[test]
+fn test_recur_correct_types() {
+    assert_no_type_errors(
+        "fn main() { loop i = 0 { match i > 5 { true -> i\n false -> loop(i + 1) } } }",
+    );
+}
+
+#[test]
+fn test_pipe_non_callable_rhs() {
+    assert_type_error("fn main() { 42 |> \"hello\" }", "pipe");
+}
+
+#[test]
+fn test_pipe_correct_usage() {
+    assert_no_type_errors("fn double(x) = x * 2\nfn main() { 5 |> double }");
+}

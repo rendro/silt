@@ -114,6 +114,7 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
 /// Skips `--` that appear inside string literals.
 fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     let mut in_string = false;
+    let mut block_depth: usize = 0;
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -126,6 +127,23 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             if ch == '"' {
                 in_string = false;
             }
+            i += 1;
+            continue;
+        }
+        // Check for block comment start `{-`
+        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            block_depth += 1;
+            i += 2;
+            continue;
+        }
+        // Check for block comment end `-}`
+        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' && block_depth > 0 {
+            block_depth -= 1;
+            i += 2;
+            continue;
+        }
+        // Skip everything inside block comments
+        if block_depth > 0 {
             i += 1;
             continue;
         }
@@ -2383,6 +2401,40 @@ import a
         assert!(
             a_pos < z_pos,
             "import a should come before import z after sorting, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_block_comment_with_double_dash_not_extracted_as_trailing() {
+        // A block comment containing `--` should NOT be treated as a trailing line comment.
+        let line = r#"let x = 1 {- not -- a comment -} + 2"#;
+        let result = extract_trailing_comment_from_line(line);
+        assert!(
+            result.is_none(),
+            "block comment containing -- should not be extracted as trailing comment, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_after_block_comment() {
+        // A real trailing comment after a block comment should still be extracted.
+        let line = r#"let x = 1 {- block -} + 2 -- real comment"#;
+        let result = extract_trailing_comment_from_line(line);
+        assert_eq!(
+            result.as_deref(),
+            Some("-- real comment"),
+            "trailing comment after block comment should be extracted"
+        );
+    }
+
+    #[test]
+    fn test_nested_block_comment_with_double_dash() {
+        // Nested block comments with `--` inside should not be extracted.
+        let line = r#"x {- outer {- inner -- nested -} end -} + y"#;
+        let result = extract_trailing_comment_from_line(line);
+        assert!(
+            result.is_none(),
+            "nested block comment containing -- should not be extracted, got: {result:?}"
         );
     }
 }

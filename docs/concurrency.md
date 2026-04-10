@@ -228,6 +228,7 @@ let timer = channel.timeout(5000)  -- closes after 5 seconds
 match channel.select([ch, timer]) {
   (^ch, Message(val))  -> println("got: {val}")
   (^timer, Closed)     -> println("timed out after 5s")
+  _                    -> unit
 }
 ```
 
@@ -303,22 +304,18 @@ Returns `Unit`.
 
 ## 4. Select
 
-### `channel.select(operations)`
+### `channel.select(channels)`
 
-`channel.select` lets a task wait on multiple channel operations at once. It
-takes a list of operations and returns a tuple of `(channel, status)` for
-whichever operation completes first.
-
-Operations in the list can be either receives or sends:
-
-- **Bare channel** -- receive from that channel: `ch`
-- **`(channel, value)` tuple** -- send a value to that channel: `(ch, val)`
+`channel.select` lets a task wait on multiple channels at once. It takes a list
+of channels and returns a tuple of `(channel, status)` for whichever channel
+has data first.
 
 ```silt
-match channel.select([ch_in, (ch_out, result)]) {
-  (^ch_in, Message(val))  -> handle_input(val)
-  (^ch_out, Sent)         -> println("sent result")
-  (_, Closed)             -> println("all done")
+match channel.select([ch1, ch2]) {
+  (^ch1, Message(val))  -> handle_input(val)
+  (^ch2, Message(val))  -> handle_other(val)
+  (_, Closed)           -> println("all done")
+  _                     -> unit
 }
 ```
 
@@ -327,8 +324,7 @@ The return value is a 2-tuple:
 - **First element:** the channel that produced the result.
 - **Second element:** one of:
   - `Message(value)` -- a value was received from that channel.
-  - `Sent` -- a value was successfully sent to that channel.
-  - `Closed` -- the channel is closed (and drained, for receives).
+  - `Closed` -- the channel is closed (and drained).
 
 ### The pin operator `^`
 
@@ -379,12 +375,10 @@ match channel.select([ch1, ch2]) {
 
 ### How select works internally
 
-`channel.select` checks the operations in list order and returns the first one
-that succeeds. For a receive, "succeeds" means data is available (or the
-channel is closed). For a send, "succeeds" means there is space in the buffer
-(or a receiver is waiting, for rendezvous channels).
+`channel.select` checks the channels in list order and returns the first one
+that has data available or is closed.
 
-If no operation is ready, the task is parked until one of the channels becomes
+If no channel is ready, the task is parked until one of the channels becomes
 ready (via waker-based notification). When it encounters a closed channel
 during its sweep, it returns `(channel, Closed)` for the first closed channel
 found. If no tasks can make progress and no channels have data, it detects a
@@ -555,7 +549,6 @@ fn main() {
 
   -- Process messages from both channels, prioritizing urgent
   -- (select polls in list order, so urgent is checked first)
-  let done = false
   loop {
     match channel.select([urgent, normal]) {
       (^urgent, Message(msg)) -> println("URGENT: {msg}")
@@ -564,6 +557,7 @@ fn main() {
         println("a channel closed")
         return ()
       }
+      _ -> unit
     }
   }
 }
@@ -756,8 +750,7 @@ operations block synchronously, just like channel operations.
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
 | Try receive | `channel.try_receive(ch)` | `Message(val)`, `Empty`, or `Closed` |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select (receive) | `channel.select([ch1, ch2])` | `(channel, Message(val))`, `(channel, Closed)` |
-| Select (send) | `channel.select([(ch, val)])` | `(channel, Sent)`, `(channel, Closed)` |
+| Select | `channel.select([ch1, ch2])` | `(channel, Message(val))`, `(channel, Closed)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value |

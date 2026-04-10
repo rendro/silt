@@ -109,7 +109,25 @@ use `string.join`. This keeps the string model simple and eliminates the
 `"hello " + name + "!"` anti-pattern.
 
 
-## Loop Expression
+## Infinite Loops
+
+A `loop` without bindings repeats its body indefinitely. Use `return` to exit:
+
+```silt
+loop {
+  let msg = channel.receive(ch)
+  match msg {
+    Message(val) -> process(val)
+    Closed -> return unit
+  }
+}
+```
+
+This form is useful in concurrency patterns where a task should keep running
+until a channel closes or some condition is met.
+
+
+## Loop with State
 
 `loop` is an expression that binds state variables and re-enters via
 `loop(new_values)`:

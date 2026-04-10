@@ -10125,3 +10125,258 @@ fn main() {
     "#);
     assert_eq!(result, Value::Int(142));
 }
+
+#[test]
+fn test_scheme_narrowing_correct_usage_works() {
+    run_ok("fn double(x) = x * 2\nfn main() { double(5) }");
+}
+
+// ── list.set ────────────────────────────────────────────────────────
+
+#[test]
+fn test_list_set_basic() {
+    let result = run(r#"
+import list
+fn main() { list.set([1, 2, 3], 1, 99) }
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(99), Value::Int(3)]))
+    );
+}
+
+#[test]
+fn test_list_set_first_element() {
+    let result = run(r#"
+import list
+fn main() { list.set([10, 20, 30], 0, 42) }
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(42),
+            Value::Int(20),
+            Value::Int(30)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_set_last_element() {
+    let result = run(r#"
+import list
+fn main() { list.set([10, 20, 30], 2, 42) }
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(10),
+            Value::Int(20),
+            Value::Int(42)
+        ]))
+    );
+}
+
+#[test]
+fn test_list_set_negative_index() {
+    let err = run_err(
+        r#"
+import list
+fn main() { list.set([1, 2, 3], -1, 99) }
+    "#,
+    );
+    assert!(err.contains("negative index"), "got: {err}");
+}
+
+#[test]
+fn test_list_set_out_of_bounds() {
+    let err = run_err(
+        r#"
+import list
+fn main() { list.set([1, 2, 3], 5, 99) }
+    "#,
+    );
+    assert!(err.contains("out of bounds"), "got: {err}");
+}
+
+#[test]
+fn test_list_set_empty_list() {
+    let err = run_err(
+        r#"
+import list
+fn main() { list.set([], 0, 99) }
+    "#,
+    );
+    assert!(err.contains("out of bounds"), "got: {err}");
+}
+
+#[test]
+fn test_list_set_immutable() {
+    // list.set returns a new list; the original is unchanged
+    let result = run(r#"
+import list
+fn main() {
+  let a = [1, 2, 3]
+  let b = list.set(a, 1, 99)
+  (a, b)
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::List(Arc::new(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+            Value::List(Arc::new(vec![Value::Int(1), Value::Int(99), Value::Int(3)])),
+        ])
+    );
+}
+
+// ── map.update ──────────────────────────────────────────────────────
+
+#[test]
+fn test_map_update_existing_key() {
+    let result = run(r#"
+import map
+fn main() {
+  let m = #{ "x": 10 }
+  let m2 = map.update(m, "x", 0) { v -> v + 1 }
+  map.get(m2, "x")
+}
+    "#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(11)]));
+}
+
+#[test]
+fn test_map_update_missing_key_uses_default() {
+    let result = run(r#"
+import map
+fn main() {
+  let m = #{ "a": 1 }
+  let m2 = map.update(m, "b", 100) { v -> v * 2 }
+  map.get(m2, "b")
+}
+    "#);
+    // key "b" is missing, so default 100 is used, then fn applied: 100 * 2 = 200
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(200)]));
+}
+
+#[test]
+fn test_map_update_preserves_other_keys() {
+    let result = run(r#"
+import map
+fn main() {
+  let m = #{ "a": 1, "b": 2 }
+  let m2 = map.update(m, "a", 0) { v -> v + 10 }
+  (map.get(m2, "a"), map.get(m2, "b"))
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::Tuple(vec![
+            Value::Variant("Some".into(), vec![Value::Int(11)]),
+            Value::Variant("Some".into(), vec![Value::Int(2)]),
+        ])
+    );
+}
+
+// ── string.repeat (overflow guard) ──────────────────────────────────
+
+#[test]
+fn test_string_repeat_basic() {
+    let result = run(r#"
+import string
+fn main() { string.repeat("ab", 3) }
+    "#);
+    assert_eq!(result, Value::String("ababab".into()));
+}
+
+#[test]
+fn test_string_repeat_zero() {
+    let result = run(r#"
+import string
+fn main() { string.repeat("hello", 0) }
+    "#);
+    assert_eq!(result, Value::String("".into()));
+}
+
+#[test]
+fn test_string_repeat_negative_count() {
+    let err = run_err(
+        r#"
+import string
+fn main() { string.repeat("x", -1) }
+    "#,
+    );
+    assert!(err.contains("negative count"), "got: {err}");
+}
+
+#[test]
+fn test_string_repeat_overflow_guard() {
+    // MAX_RANGE_MATERIALIZE is 10_000_000.
+    // "x" (1 byte) repeated 10_000_001 times exceeds the limit.
+    let err = run_err(
+        r#"
+import string
+fn main() { string.repeat("x", 10000001) }
+    "#,
+    );
+    assert!(err.contains("maximum string size"), "got: {err}");
+}
+
+#[test]
+fn test_string_repeat_overflow_guard_multi_byte() {
+    // "ab" (2 bytes) repeated 5_000_001 times = 10_000_002 bytes > limit.
+    let err = run_err(
+        r#"
+import string
+fn main() { string.repeat("ab", 5000001) }
+    "#,
+    );
+    assert!(err.contains("maximum string size"), "got: {err}");
+}
+
+// ── string.from_char_code (edge cases) ──────────────────────────────
+
+#[test]
+fn test_string_from_char_code_zero() {
+    let result = run(r#"
+import string
+fn main() { string.from_char_code(0) }
+    "#);
+    assert_eq!(result, Value::String("\0".into()));
+}
+
+#[test]
+fn test_string_from_char_code_negative() {
+    // Negative i64 wraps to invalid u32 via `as u32`, char::from_u32 returns None
+    let err = run_err(
+        r#"
+import string
+fn main() { string.from_char_code(-1) }
+    "#,
+    );
+    assert!(err.contains("invalid code point"), "got: {err}");
+}
+
+#[test]
+fn test_string_from_char_code_surrogate() {
+    // 0xD800 is a surrogate code point, not a valid Unicode scalar value
+    let err = run_err(
+        r#"
+import string
+fn main() { string.from_char_code(55296) }
+    "#,
+    );
+    assert!(err.contains("invalid code point"), "got: {err}");
+}
+
+#[test]
+fn test_string_from_char_code_very_large() {
+    // Value larger than max Unicode code point (0x10FFFF = 1114111)
+    let err = run_err(
+        r#"
+import string
+fn main() { string.from_char_code(1114112) }
+    "#,
+    );
+    assert!(err.contains("invalid code point"), "got: {err}");
+}

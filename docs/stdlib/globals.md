@@ -42,8 +42,9 @@ No module qualification is needed once imported.
 | `Message` | `(a) -> ChannelResult(a)` | `import channel` | Wraps a received channel value |
 | `Closed` | `ChannelResult(a)` | `import channel` | Channel is closed |
 | `Empty` | `ChannelResult(a)` | `import channel` | Channel buffer empty (non-blocking receive) |
-| `Sent` | `ChannelResult(a)` | `import channel` | Value was sent successfully (select send) |
+| `Sent` | `ChannelResult(a)` | `import channel` | Reserved for future select-send support |
 | `Monday`..`Sunday` | `Weekday` | `import time` | Day-of-week constructors |
+| `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | `HttpMethod` | `import http` | HTTP method constructors |
 
 
 ## `print`
@@ -242,15 +243,7 @@ Indicates the channel buffer is currently empty but not closed. Only returned by
 Sent : ChannelResult(a)
 ```
 
-Indicates a value was successfully sent to a channel. Returned by
-`channel.select` when a send operation completes.
-
-```silt
-fn main() {
-    let ch = channel.new(1)
-    match channel.select([(ch, 42)]) {
-        (_, Sent) -> println("sent!")
-        (_, Closed) -> println("closed")
-    }
-}
-```
+Reserved for future use. `Sent` is defined as a `ChannelResult` variant and
+will indicate a successful send operation once `channel.select` supports
+mixed send/receive operations. Currently, `channel.select` only accepts a
+list of channels for receiving.

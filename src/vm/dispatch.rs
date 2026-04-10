@@ -133,9 +133,14 @@ impl Vm {
                 let other = &extra_args[0];
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
-                    (Value::Float(a), Value::Float(b)) => {
-                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                    }
+                    (Value::Float(a), Value::Float(b)) => match a.partial_cmp(b) {
+                        Some(ord) => ord,
+                        None => {
+                            return Some(Err(VmError::new(
+                                "compare() cannot compare non-finite float values".into(),
+                            )));
+                        }
+                    },
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     _ => {
