@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -21,7 +22,67 @@ use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
 use crate::vm::Vm;
 
-const HISTORY_FILE: &str = ".silt_history";
+/// Compute the path to the REPL history file.
+///
+/// Resolution order (first match wins):
+/// 1. `$SILT_HISTORY_FILE` if set — lets tests and power users override.
+/// 2. `$XDG_DATA_HOME/silt/history` on Linux/macOS if `XDG_DATA_HOME` is set.
+/// 3. `$HOME/.local/share/silt/history` on Linux/macOS.
+/// 4. `%APPDATA%\silt\history` on Windows.
+/// 5. `None` — caller should skip history load/save gracefully.
+///
+/// The parent directory is created on a best-effort basis; errors are ignored.
+fn history_path() -> Option<PathBuf> {
+    // Explicit override wins over everything else.
+    if let Ok(p) = std::env::var("SILT_HISTORY_FILE")
+        && !p.is_empty()
+    {
+        let path = PathBuf::from(p);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        return Some(path);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA")
+            && !appdata.is_empty()
+        {
+            let mut p = PathBuf::from(appdata);
+            p.push("silt");
+            let _ = std::fs::create_dir_all(&p);
+            p.push("history");
+            return Some(p);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+            && !xdg.is_empty()
+        {
+            let mut p = PathBuf::from(xdg);
+            p.push("silt");
+            let _ = std::fs::create_dir_all(&p);
+            p.push("history");
+            return Some(p);
+        }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            let mut p = PathBuf::from(home);
+            p.push(".local");
+            p.push("share");
+            p.push("silt");
+            let _ = std::fs::create_dir_all(&p);
+            p.push("history");
+            return Some(p);
+        }
+    }
+
+    None
+}
 
 // ── Tab completion helper ───────────────────────────────────────────
 
@@ -86,7 +147,10 @@ pub fn run_repl() {
         }
     };
     rl.set_helper(Some(helper));
-    let _ = rl.load_history(HISTORY_FILE);
+    let history_path = history_path();
+    if let Some(ref p) = history_path {
+        let _ = rl.load_history(p);
+    }
 
     let mut vm = Vm::new();
     let mut type_ctx = ReplTypeContext::new();
@@ -152,7 +216,9 @@ pub fn run_repl() {
         }
     }
 
-    let _ = rl.save_history(HISTORY_FILE);
+    if let Some(ref p) = history_path {
+        let _ = rl.save_history(p);
+    }
 }
 
 fn builtin_names() -> Vec<String> {
@@ -560,6 +626,7 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
 
     // Use compile_program which emits GetGlobal "main"; Call 0; Return
     let mut compiler = Compiler::new();
+    compiler.set_repl_mode(true);
     compiler.import_all_builtins();
     let functions = match compiler.compile_program(&program) {
         Ok(f) => f,

@@ -39,11 +39,30 @@ struct DefInfo {
     params: Vec<String>,
 }
 
+/// A local binding (let-bound identifier, function parameter, match binding, …)
+/// with its approximate source position, for hover / goto-def on locals.
+struct LocalBinding {
+    /// The identifier name (interned).
+    name: Symbol,
+    /// Byte offset in the source where the binding identifier starts.
+    binding_offset: usize,
+    /// Byte length of the binding identifier.
+    binding_len: usize,
+    /// Start offset of the scope in which this binding is visible.
+    scope_start: usize,
+    /// End offset of the scope (exclusive).
+    scope_end: usize,
+    /// Inferred type, if known.
+    ty: Option<Type>,
+}
+
 struct Document {
     source: String,
     program: Option<Program>,
     /// Definition map: name → definition info (built from top-level declarations).
     definitions: HashMap<Symbol, DefInfo>,
+    /// Local bindings (let, params, match/when) with approximate source positions.
+    locals: Vec<LocalBinding>,
 }
 
 // ── Span ↔ LSP conversion ─────────────────────────────────────────
@@ -344,6 +363,7 @@ impl Server {
                         source,
                         program: None,
                         definitions: HashMap::new(),
+                        locals: Vec::new(),
                     },
                 );
                 self.publish_diagnostics(uri, diagnostics);
@@ -372,6 +392,7 @@ impl Server {
         }
 
         let definitions = build_definitions(&program);
+        let locals = collect_local_bindings(&program, &source);
 
         self.documents.insert(
             uri.clone(),
@@ -379,6 +400,7 @@ impl Server {
                 source,
                 program: Some(program),
                 definitions,
+                locals,
             },
         );
 
@@ -413,6 +435,22 @@ impl Server {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: format!("```silt\n{field_name}: {field_ty}\n```"),
+                }),
+                range: None,
+            });
+        }
+
+        // If the cursor is sitting on the BINDING (LHS) identifier of a local
+        // let / param / match binding, prefer that binding's type over the
+        // enclosing expression's type. Otherwise `hover` on `x` in `let x = 42`
+        // returns the enclosing block's Unit type. See B9 in codebase audit.
+        if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor)
+            && let Some(ref ty) = binding.ty
+        {
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```silt\n{ty}\n```"),
                 }),
                 range: None,
             });
@@ -455,7 +493,29 @@ impl Server {
         let program = doc.program.as_ref()?;
 
         let cursor = position_to_offset(&doc.source, &pos);
+
+        // If the cursor is already ON a binding site, jump to itself. This
+        // gives editors a sensible answer and keeps goto-def idempotent.
+        if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor)
+            && let Some(range) =
+                binding_range(&doc.source, binding.binding_offset, binding.binding_len)
+        {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                uri.clone(),
+                range,
+            )));
+        }
+
         let name = find_ident_at_offset(program, cursor)?;
+
+        // Prefer local bindings in scope at the cursor position.
+        if let Some(binding) = nearest_local_binding_for(&doc.locals, name, cursor) {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                uri.clone(),
+                binding_range(&doc.source, binding.binding_offset, binding.binding_len)?,
+            )));
+        }
+
         let def = doc.definitions.get(&name)?;
 
         Some(GotoDefinitionResponse::Scalar(Location::new(
@@ -932,6 +992,545 @@ fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
         }
     }
     defs
+}
+
+// ── Local binding collection (for hover/goto on locals) ──────────────
+
+/// Walk the program and collect every local binding (let, parameter, match)
+/// with its approximate source position. Binding offsets are recovered by
+/// scanning the source text between the enclosing scope start and a known
+/// reference offset (`value.span.offset` for lets, `f.span.offset` for
+/// params), which covers the common `let x = e` and `let x: T = e` cases.
+fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> {
+    let mut bindings: Vec<LocalBinding> = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => {
+                let body_start = f.body.span.offset;
+                let (body_end, _) = expr_extent(&f.body, source);
+                // Function parameters: find each in the param-list region
+                // before the body start.
+                let params_search_end = body_start;
+                for param in &f.params {
+                    if let Pattern::Ident(name) = &param.pattern {
+                        let name_str = resolve(*name);
+                        if let Some(off) = find_ident_in_range(
+                            source,
+                            f.span.offset,
+                            params_search_end,
+                            &name_str,
+                        ) {
+                            // Look up the param type from the typed body.
+                            let ty = find_param_type(&f.body, *name);
+                            bindings.push(LocalBinding {
+                                name: *name,
+                                binding_offset: off,
+                                binding_len: name_str.len(),
+                                scope_start: body_start,
+                                scope_end: body_end,
+                                ty,
+                            });
+                        }
+                    }
+                }
+                collect_local_bindings_in_expr(
+                    &f.body,
+                    source,
+                    body_start,
+                    body_end,
+                    &mut bindings,
+                );
+            }
+            Decl::Let { value, .. } => {
+                collect_local_bindings_in_expr(
+                    value,
+                    source,
+                    0,
+                    source.len(),
+                    &mut bindings,
+                );
+            }
+            Decl::TraitImpl(ti) => {
+                for method in &ti.methods {
+                    let body_start = method.body.span.offset;
+                    let (body_end, _) = expr_extent(&method.body, source);
+                    for param in &method.params {
+                        if let Pattern::Ident(name) = &param.pattern {
+                            let name_str = resolve(*name);
+                            if let Some(off) = find_ident_in_range(
+                                source,
+                                method.span.offset,
+                                body_start,
+                                &name_str,
+                            ) {
+                                let ty = find_param_type(&method.body, *name);
+                                bindings.push(LocalBinding {
+                                    name: *name,
+                                    binding_offset: off,
+                                    binding_len: name_str.len(),
+                                    scope_start: body_start,
+                                    scope_end: body_end,
+                                    ty,
+                                });
+                            }
+                        }
+                    }
+                    collect_local_bindings_in_expr(
+                        &method.body,
+                        source,
+                        body_start,
+                        body_end,
+                        &mut bindings,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
+/// Collect local bindings inside an expression, given the enclosing scope.
+fn collect_local_bindings_in_expr(
+    expr: &Expr,
+    source: &str,
+    scope_start: usize,
+    scope_end: usize,
+    bindings: &mut Vec<LocalBinding>,
+) {
+    match &expr.kind {
+        ExprKind::Block(stmts) => {
+            // Each `let x = v` in a block is visible from that point to the
+            // end of the block.
+            for stmt in stmts.iter() {
+                match stmt {
+                    Stmt::Let { pattern, value, .. } => {
+                        let value_start = value.span.offset;
+                        if let Pattern::Ident(name) = pattern {
+                            let name_str = resolve(*name);
+                            if let Some(off) = find_ident_in_range(
+                                source,
+                                scope_start,
+                                value_start,
+                                &name_str,
+                            ) {
+                                bindings.push(LocalBinding {
+                                    name: *name,
+                                    binding_offset: off,
+                                    binding_len: name_str.len(),
+                                    // Scope: from the start of the let's
+                                    // value expression to the end of the
+                                    // enclosing block. The binding itself
+                                    // sits just before `value_start` so the
+                                    // `binding_offset` check is separate.
+                                    scope_start: value_start,
+                                    scope_end,
+                                    ty: value.ty.clone(),
+                                });
+                            }
+                        }
+                        collect_local_bindings_in_expr(
+                            value, source, scope_start, scope_end, bindings,
+                        );
+                    }
+                    Stmt::When {
+                        pattern,
+                        expr,
+                        else_body,
+                    } => {
+                        // Pattern idents are bound in the rest of the block.
+                        collect_pattern_bindings(
+                            pattern,
+                            source,
+                            scope_start,
+                            expr.span.offset,
+                            expr.ty.as_ref(),
+                            scope_end,
+                            bindings,
+                        );
+                        collect_local_bindings_in_expr(
+                            expr, source, scope_start, scope_end, bindings,
+                        );
+                        collect_local_bindings_in_expr(
+                            else_body, source, scope_start, scope_end, bindings,
+                        );
+                    }
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
+                        collect_local_bindings_in_expr(
+                            condition, source, scope_start, scope_end, bindings,
+                        );
+                        collect_local_bindings_in_expr(
+                            else_body, source, scope_start, scope_end, bindings,
+                        );
+                    }
+                    Stmt::Expr(e) => {
+                        collect_local_bindings_in_expr(
+                            e, source, scope_start, scope_end, bindings,
+                        );
+                    }
+                }
+            }
+        }
+        ExprKind::Lambda { params, body } => {
+            let body_start = body.span.offset;
+            let (body_end, _) = expr_extent(body, source);
+            for p in params {
+                if let Pattern::Ident(name) = &p.pattern {
+                    let name_str = resolve(*name);
+                    if let Some(off) = find_ident_in_range(
+                        source,
+                        scope_start,
+                        body_start,
+                        &name_str,
+                    ) {
+                        bindings.push(LocalBinding {
+                            name: *name,
+                            binding_offset: off,
+                            binding_len: name_str.len(),
+                            scope_start: body_start,
+                            scope_end: body_end,
+                            ty: find_param_type(body, *name),
+                        });
+                    }
+                }
+            }
+            collect_local_bindings_in_expr(body, source, body_start, body_end, bindings);
+        }
+        ExprKind::Match { expr, arms } => {
+            if let Some(e) = expr {
+                collect_local_bindings_in_expr(e, source, scope_start, scope_end, bindings);
+            }
+            for arm in arms {
+                let arm_start = arm.body.span.offset;
+                let (arm_end, _) = expr_extent(&arm.body, source);
+                collect_pattern_bindings(
+                    &arm.pattern,
+                    source,
+                    scope_start,
+                    arm_start,
+                    expr.as_ref().and_then(|e| e.ty.as_ref()),
+                    arm_end,
+                    bindings,
+                );
+                if let Some(ref g) = arm.guard {
+                    collect_local_bindings_in_expr(g, source, arm_start, arm_end, bindings);
+                }
+                collect_local_bindings_in_expr(&arm.body, source, arm_start, arm_end, bindings);
+            }
+        }
+        ExprKind::Loop { bindings: loop_bindings, body } => {
+            let body_start = body.span.offset;
+            let (body_end, _) = expr_extent(body, source);
+            for (name, init) in loop_bindings {
+                let name_str = resolve(*name);
+                if let Some(off) = find_ident_in_range(
+                    source,
+                    scope_start,
+                    init.span.offset,
+                    &name_str,
+                ) {
+                    bindings.push(LocalBinding {
+                        name: *name,
+                        binding_offset: off,
+                        binding_len: name_str.len(),
+                        scope_start: body_start,
+                        scope_end: body_end,
+                        ty: init.ty.clone(),
+                    });
+                }
+                collect_local_bindings_in_expr(init, source, scope_start, scope_end, bindings);
+            }
+            collect_local_bindings_in_expr(body, source, body_start, body_end, bindings);
+        }
+        _ => {
+            visit_expr_children(expr, |child| {
+                collect_local_bindings_in_expr(child, source, scope_start, scope_end, bindings);
+            });
+        }
+    }
+}
+
+/// Collect the identifiers introduced by a (match/when) pattern.
+/// We don't try to recover precise offsets for constructor sub-patterns;
+/// instead, we scan the `(search_start..search_end)` window for each bound name.
+fn collect_pattern_bindings(
+    pattern: &Pattern,
+    source: &str,
+    search_start: usize,
+    search_end: usize,
+    expr_ty: Option<&Type>,
+    scope_end: usize,
+    bindings: &mut Vec<LocalBinding>,
+) {
+    match pattern {
+        Pattern::Ident(name) if resolve(*name) != "_" => {
+            let name_str = resolve(*name);
+            if let Some(off) = find_ident_in_range(source, search_start, search_end, &name_str) {
+                bindings.push(LocalBinding {
+                    name: *name,
+                    binding_offset: off,
+                    binding_len: name_str.len(),
+                    scope_start: search_end,
+                    scope_end,
+                    ty: expr_ty.cloned(),
+                });
+            }
+        }
+        Pattern::Tuple(pats) | Pattern::Or(pats) => {
+            for p in pats {
+                collect_pattern_bindings(
+                    p, source, search_start, search_end, None, scope_end, bindings,
+                );
+            }
+        }
+        Pattern::Constructor(ctor, fields) => {
+            // For Ok/Err/Some, try to propagate the inner type.
+            let inner_ty: Option<Type> = match (resolve(*ctor).as_str(), expr_ty) {
+                ("Ok", Some(Type::Generic(_, args))) => args.first().cloned(),
+                ("Err", Some(Type::Generic(_, args))) => args.get(1).cloned(),
+                ("Some", Some(Type::Generic(_, args))) => args.first().cloned(),
+                _ => None,
+            };
+            for p in fields {
+                collect_pattern_bindings(
+                    p,
+                    source,
+                    search_start,
+                    search_end,
+                    inner_ty.as_ref(),
+                    scope_end,
+                    bindings,
+                );
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for (name, sub) in fields {
+                if let Some(p) = sub {
+                    collect_pattern_bindings(
+                        p, source, search_start, search_end, None, scope_end, bindings,
+                    );
+                } else {
+                    let name_str = resolve(*name);
+                    if let Some(off) =
+                        find_ident_in_range(source, search_start, search_end, &name_str)
+                    {
+                        bindings.push(LocalBinding {
+                            name: *name,
+                            binding_offset: off,
+                            binding_len: name_str.len(),
+                            scope_start: search_end,
+                            scope_end,
+                            ty: None,
+                        });
+                    }
+                }
+            }
+        }
+        Pattern::List(pats, rest) => {
+            for p in pats {
+                collect_pattern_bindings(
+                    p, source, search_start, search_end, None, scope_end, bindings,
+                );
+            }
+            if let Some(r) = rest {
+                collect_pattern_bindings(
+                    r, source, search_start, search_end, None, scope_end, bindings,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Return the approximate (end_offset, _) extent of an expression in the source.
+/// For block expressions we scan forward to the matching `}` using a simple
+/// brace/paren-aware walker that skips string literals and comments. For
+/// other expressions we conservatively return the end of the source.
+fn expr_extent(expr: &Expr, source: &str) -> (usize, ()) {
+    let start = expr.span.offset;
+    if start >= source.len() {
+        return (source.len(), ());
+    }
+    if matches!(&expr.kind, ExprKind::Block(_)) {
+        if let Some(end) = match_closing_brace(source, start) {
+            return (end, ());
+        }
+    }
+    (source.len(), ())
+}
+
+/// Given an offset at (or just before) a `{`, return the byte offset of the
+/// matching `}` (exclusive end). Skips string literals, char escapes, and
+/// line/block comments so we don't get fooled by `"}"` or `// }`.
+fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    // Find the first `{` at or after `start`.
+    let mut i = start;
+    while i < bytes.len() && bytes[i] != b'{' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    let mut depth = 0i32;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            b'"' => {
+                // Triple-quoted string?
+                if i + 2 < bytes.len() && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+                    i += 3;
+                    while i + 2 < bytes.len()
+                        && !(bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
+                    {
+                        i += 1;
+                    }
+                    i = (i + 3).min(bytes.len());
+                } else {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(bytes.len());
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Scan `source[start..end]` for the LAST occurrence of `name` as a whole
+/// word (not surrounded by identifier characters). Returns the absolute byte
+/// offset in `source`.
+fn find_ident_in_range(source: &str, start: usize, end: usize, name: &str) -> Option<usize> {
+    if name.is_empty() || start >= source.len() || end > source.len() || start >= end {
+        return None;
+    }
+    let hay = &source[start..end];
+    let bytes = hay.as_bytes();
+    let name_bytes = name.as_bytes();
+    let name_len = name_bytes.len();
+    if name_len > bytes.len() {
+        return None;
+    }
+    // Walk from the end backward for the LAST match.
+    let mut i = bytes.len().saturating_sub(name_len);
+    loop {
+        if &bytes[i..i + name_len] == name_bytes {
+            let before_ok = i == 0
+                || {
+                    let b = bytes[i - 1];
+                    !(b.is_ascii_alphanumeric() || b == b'_')
+                };
+            let after_ok = i + name_len == bytes.len()
+                || {
+                    let b = bytes[i + name_len];
+                    !(b.is_ascii_alphanumeric() || b == b'_')
+                };
+            if before_ok && after_ok {
+                return Some(start + i);
+            }
+        }
+        if i == 0 {
+            return None;
+        }
+        i -= 1;
+    }
+}
+
+/// Find the binding whose identifier span contains the given cursor offset.
+fn find_local_binding_at_offset(locals: &[LocalBinding], cursor: usize) -> Option<&LocalBinding> {
+    locals
+        .iter()
+        .find(|b| cursor >= b.binding_offset && cursor < b.binding_offset + b.binding_len)
+}
+
+/// Find the nearest (by scope) local binding with the given name visible at the cursor.
+fn nearest_local_binding_for(
+    locals: &[LocalBinding],
+    name: Symbol,
+    cursor: usize,
+) -> Option<&LocalBinding> {
+    // Prefer the innermost scope that contains the cursor (smallest scope
+    // width), breaking ties by picking the later binding offset so shadowed
+    // bindings resolve to the most recent one.
+    locals
+        .iter()
+        .filter(|b| b.name == name)
+        .filter(|b| cursor >= b.scope_start && cursor <= b.scope_end)
+        .min_by(|a, b| {
+            let wa = a.scope_end.saturating_sub(a.scope_start);
+            let wb = b.scope_end.saturating_sub(b.scope_start);
+            wa.cmp(&wb)
+                .then_with(|| b.binding_offset.cmp(&a.binding_offset))
+        })
+}
+
+/// Build an LSP range for a binding at `(offset, len)` using the source text.
+fn binding_range(source: &str, offset: usize, len: usize) -> Option<Range> {
+    if offset > source.len() || !source.is_char_boundary(offset) {
+        return None;
+    }
+    let end_byte = (offset + len).min(source.len());
+    let end_byte = if source.is_char_boundary(end_byte) {
+        end_byte
+    } else {
+        return None;
+    };
+
+    // Compute line/column for the start offset.
+    let mut line = 0u32;
+    let mut col = 0u32;
+    let mut idx = 0usize;
+    for ch in source.chars() {
+        if idx == offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += ch.len_utf16() as u32;
+        }
+        idx += ch.len_utf8();
+    }
+    let start = Position::new(line, col);
+    let end_col = col + utf16_len(&source[offset..end_byte]) as u32;
+    let end = Position::new(line, end_col);
+    Some(Range::new(start, end))
 }
 
 fn fn_param_names(f: &FnDecl) -> Vec<String> {

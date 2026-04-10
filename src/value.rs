@@ -225,11 +225,21 @@ impl Channel {
     }
 
     pub fn close(&self) {
+        // B1 fix: do NOT clear the handoff slot. A rendezvous `try_send`
+        // succeeds by placing a value in the handoff slot, but the receiver
+        // may not have taken it yet. Clearing the slot here silently drops
+        // that final message. Instead, leave the slot alone — `try_receive`
+        // and `receive_blocking` drain the slot BEFORE checking `closed`,
+        // so the last value is still observed after close.
+        //
+        // We still acquire + release the handoff lock here to act as a
+        // memory barrier synchronising with the rendezvous `receive_blocking`
+        // loop (which holds that lock while checking `closed`). Without this,
+        // the receiver could see `closed == false` in the loop, enter
+        // `condvar.wait` just after we set `closed = true` and fired
+        // `notify_all`, and then miss the wakeup.
         self.closed.store(true, AtomicOrdering::Release);
-        // Clear any pending handoff value.
-        // This also synchronises with the rendezvous receive_blocking path
-        // (which holds the handoff lock while checking `closed`).
-        *self.handoff.lock() = None;
+        drop(self.handoff.lock());
         // Acquire + release the buffer lock so that any thread in the
         // buffered receive_blocking path that already checked `closed`
         // (saw false) but hasn't entered condvar.wait yet will finish
@@ -873,9 +883,22 @@ impl fmt::Display for Value {
     }
 }
 
-/// Materialized length of the inclusive range `lo..=hi`, clamped to 0 when empty.
+/// Materialized length of the inclusive range `lo..=hi`, clamped to 0 when
+/// empty and saturating to `i64::MAX` for ranges larger than `i64::MAX`
+/// elements (e.g. `i64::MIN..=i64::MAX`). Computed via `i128` to avoid
+/// overflow on the subtraction/addition. L2 fix: the old implementation
+/// computed `hi - lo + 1` directly in i64, which panicked in debug and
+/// wrapped in release builds for extreme ranges.
 fn range_len(lo: i64, hi: i64) -> i64 {
-    if lo > hi { 0 } else { hi - lo + 1 }
+    if lo > hi {
+        return 0;
+    }
+    let len = (hi as i128) - (lo as i128) + 1;
+    if len > i64::MAX as i128 {
+        i64::MAX
+    } else {
+        len as i64
+    }
 }
 
 /// Compare a `List` and a `Range` for equality. Returns `true` when the list
@@ -1716,5 +1739,165 @@ mod tests {
             format!("{}", Value::BuiltinFn("println".into())),
             "<builtin:println>"
         );
+    }
+
+    // ── Channel: close-drops-data regression tests (B1) ─────────────
+
+    /// B1: On a rendezvous channel, `send(v); close()` must leave `v`
+    /// observable to the receiver rather than silently dropping it.
+    #[test]
+    fn channel_rendezvous_send_then_close_preserves_value() {
+        let ch = Channel::new(0, 0);
+        // Simulate a receiver being ready (as rendezvous try_send requires).
+        ch.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
+        match ch.try_send(Value::Int(42)) {
+            TrySendResult::Sent => {}
+            _ => panic!("expected Sent"),
+        }
+        ch.close();
+        match ch.try_receive() {
+            TryReceiveResult::Value(Value::Int(42)) => {}
+            other => panic!(
+                "expected Value(Int(42)) after close, got {}",
+                match other {
+                    TryReceiveResult::Value(v) => format!("Value({v:?})"),
+                    TryReceiveResult::Empty => "Empty".into(),
+                    TryReceiveResult::Closed => "Closed".into(),
+                }
+            ),
+        }
+        ch.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
+        // After draining, next receive sees Closed.
+        match ch.try_receive() {
+            TryReceiveResult::Closed => {}
+            _ => panic!("expected Closed after draining last value"),
+        }
+    }
+
+    /// B1: On a buffered channel, all messages sent before close must be
+    /// observable in order, with Closed reported only after the last one.
+    #[test]
+    fn channel_buffered_send_then_close_preserves_values() {
+        let ch = Channel::new(0, 4);
+        for i in 1..=3 {
+            match ch.try_send(Value::Int(i)) {
+                TrySendResult::Sent => {}
+                _ => panic!("expected Sent for {i}"),
+            }
+        }
+        ch.close();
+        for expected in 1..=3 {
+            match ch.try_receive() {
+                TryReceiveResult::Value(Value::Int(n)) if n == expected => {}
+                other => panic!(
+                    "expected Int({expected}), got {}",
+                    match other {
+                        TryReceiveResult::Value(v) => format!("Value({v:?})"),
+                        TryReceiveResult::Empty => "Empty".into(),
+                        TryReceiveResult::Closed => "Closed".into(),
+                    }
+                ),
+            }
+        }
+        match ch.try_receive() {
+            TryReceiveResult::Closed => {}
+            _ => panic!("expected Closed after draining buffer"),
+        }
+    }
+
+    /// B1: Sending to an already-closed channel must report Closed, not panic.
+    #[test]
+    fn channel_send_after_close_reports_closed() {
+        let ch = Channel::new(0, 2);
+        ch.close();
+        match ch.try_send(Value::Int(1)) {
+            TrySendResult::Closed => {}
+            _ => panic!("expected TrySendResult::Closed for send after close"),
+        }
+    }
+
+    /// B1: A receiver already blocked in receive_blocking must see the
+    /// final rendezvous value before seeing Closed.
+    #[test]
+    fn channel_rendezvous_blocking_receive_sees_final_value() {
+        let ch = Arc::new(Channel::new(0, 0));
+        let ch_producer = ch.clone();
+        // Spawn a producer that sends then closes after the receiver
+        // has started blocking.
+        let producer = std::thread::spawn(move || {
+            // Spin until a receiver registers so try_send succeeds.
+            while ch_producer.waiting_receivers.load(AtomicOrdering::Acquire) == 0 {
+                std::thread::yield_now();
+            }
+            match ch_producer.try_send(Value::Int(42)) {
+                TrySendResult::Sent => {}
+                _ => panic!("expected Sent"),
+            }
+            ch_producer.close();
+        });
+        let first = ch.receive_blocking();
+        match first {
+            TryReceiveResult::Value(Value::Int(42)) => {}
+            other => panic!(
+                "expected Value(Int(42)) as final rendezvous value, got {}",
+                match other {
+                    TryReceiveResult::Value(v) => format!("Value({v:?})"),
+                    TryReceiveResult::Empty => "Empty".into(),
+                    TryReceiveResult::Closed => "Closed".into(),
+                }
+            ),
+        }
+        // Join the producer so we know close() has completed before we
+        // call receive again (otherwise we could block indefinitely).
+        producer.join().expect("producer thread panicked");
+        // Next receive returns Closed.
+        match ch.receive_blocking() {
+            TryReceiveResult::Closed => {}
+            _ => panic!("expected Closed after final rendezvous value"),
+        }
+    }
+
+    /// B1: Buffered close-then-drain — receiver waiting in receive_blocking
+    /// should get queued data after close.
+    #[test]
+    fn channel_buffered_close_then_drain() {
+        let ch = Arc::new(Channel::new(0, 4));
+        match ch.try_send(Value::Int(1)) {
+            TrySendResult::Sent => {}
+            _ => panic!("expected Sent for 1"),
+        }
+        match ch.try_send(Value::Int(2)) {
+            TrySendResult::Sent => {}
+            _ => panic!("expected Sent for 2"),
+        }
+        ch.close();
+        match ch.receive_blocking() {
+            TryReceiveResult::Value(Value::Int(1)) => {}
+            _ => panic!("expected Int(1)"),
+        }
+        match ch.receive_blocking() {
+            TryReceiveResult::Value(Value::Int(2)) => {}
+            _ => panic!("expected Int(2)"),
+        }
+        match ch.receive_blocking() {
+            TryReceiveResult::Closed => {}
+            _ => panic!("expected Closed after draining buffer"),
+        }
+    }
+
+    // ── range_len overflow regression (L2) ──────────────────────────
+
+    /// L2: `range_len(i64::MIN, i64::MAX)` used to overflow at
+    /// `hi - lo + 1`. After fix it must saturate to `i64::MAX`.
+    #[test]
+    fn range_len_no_overflow_on_full_i64_range() {
+        assert_eq!(range_len(i64::MIN, i64::MAX), i64::MAX);
+        assert_eq!(range_len(0, i64::MAX), i64::MAX);
+        assert_eq!(range_len(i64::MIN, 0), i64::MAX);
+        assert_eq!(range_len(i64::MIN, -1), i64::MAX);
+        // Normal small ranges still work.
+        assert_eq!(range_len(1, 5), 5);
+        assert_eq!(range_len(0, 0), 1);
+        assert_eq!(range_len(10, 5), 0); // empty
     }
 }

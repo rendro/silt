@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
@@ -460,11 +460,11 @@ fn main() {
                         process::exit(1);
                     }
                 } else if args[i] == "--help" || args[i] == "-h" {
-                    eprintln!("Usage: silt test [--filter <pattern>] [--watch] [file]");
-                    eprintln!();
-                    eprintln!("Options:");
-                    eprintln!("  --filter <pat>   Only run tests whose name contains <pat>");
-                    eprintln!("  --watch, -w      Re-run on file changes");
+                    println!("Usage: silt test [--filter <pattern>] [--watch] [file]");
+                    println!();
+                    println!("Options:");
+                    println!("  --filter <pat>   Only run tests whose name contains <pat>");
+                    println!("  --watch, -w      Re-run on file changes");
                     process::exit(0);
                 } else if args[i].starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.
@@ -497,11 +497,11 @@ fn main() {
                         process::exit(1);
                     }
                 } else if args[i] == "--help" || args[i] == "-h" {
-                    eprintln!("Usage: silt check [--format json] [--watch] <file.silt>");
-                    eprintln!();
-                    eprintln!("Options:");
-                    eprintln!("  --format json   Emit diagnostics as JSON");
-                    eprintln!("  --watch, -w     Re-run on file changes");
+                    println!("Usage: silt check [--format json] [--watch] <file.silt>");
+                    println!();
+                    println!("Options:");
+                    println!("  --format json   Emit diagnostics as JSON");
+                    println!("  --watch, -w     Re-run on file changes");
                     process::exit(0);
                 } else if args[i].starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.
@@ -537,9 +537,9 @@ fn main() {
         "repl" => {
             for arg in &args[2..] {
                 if arg == "--help" || arg == "-h" {
-                    eprintln!("Usage: silt repl");
-                    eprintln!();
-                    eprintln!("Start an interactive REPL session. Type :help inside for commands.");
+                    println!("Usage: silt repl");
+                    println!();
+                    println!("Start an interactive REPL session. Type :help inside for commands.");
                     process::exit(0);
                 }
             }
@@ -559,10 +559,10 @@ fn main() {
                 if arg == "--check" {
                     check_mode = true;
                 } else if arg == "--help" || arg == "-h" {
-                    eprintln!("Usage: silt fmt [--check] [files...]");
-                    eprintln!();
-                    eprintln!("Options:");
-                    eprintln!("  --check    Check formatting without modifying files");
+                    println!("Usage: silt fmt [--check] [files...]");
+                    println!();
+                    println!("Options:");
+                    println!("  --check    Check formatting without modifying files");
                     process::exit(0);
                 } else if arg.starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.
@@ -578,12 +578,46 @@ fn main() {
                     files.push(arg.clone());
                 }
             }
-            // If no files given, find all .silt files in the current directory recursively.
-            if files.is_empty() {
+            // If no files given (or just an explicit `.`), find all .silt files
+            // in the current directory recursively. This is risky if the user
+            // happens to run `silt fmt` outside a project, so we require a
+            // project anchor (silt.toml, .git) OR an explicit `.` argument,
+            // and always emit a loud warning + file preview when the recursion
+            // is triggered implicitly.
+            let explicit_dot = files.iter().any(|f| f == "." || f == "./");
+            if explicit_dot {
+                // Strip the `.` marker; we'll treat it as the recursive sentinel.
+                files.retain(|f| f != "." && f != "./");
+            }
+            let implicit_recursive = files.is_empty();
+            if implicit_recursive {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let has_anchor = project_anchor(&cwd).is_some();
                 files = find_silt_files(Path::new("."));
                 if files.is_empty() {
                     eprintln!("no .silt files found in current directory");
                     process::exit(1);
+                }
+                if !has_anchor && !explicit_dot {
+                    eprintln!(
+                        "silt fmt: refusing to recursively format {} — no project anchor (silt.toml or .git) found",
+                        cwd.display()
+                    );
+                    eprintln!(
+                        "         pass an explicit `.` or file paths to format anyway."
+                    );
+                    process::exit(1);
+                }
+                eprintln!(
+                    "silt fmt: no files specified; recursively formatting all .silt files under {}",
+                    cwd.display()
+                );
+                let preview = files.iter().take(5).collect::<Vec<_>>();
+                for f in &preview {
+                    eprintln!("  {f}");
+                }
+                if files.len() > preview.len() {
+                    eprintln!("  ... ({} more)", files.len() - preview.len());
                 }
             }
             if check_mode {
@@ -612,9 +646,9 @@ fn main() {
         "init" => {
             for arg in &args[2..] {
                 if arg == "--help" || arg == "-h" {
-                    eprintln!("Usage: silt init");
-                    eprintln!();
-                    eprintln!("Create a new main.silt file in the current directory.");
+                    println!("Usage: silt init");
+                    println!();
+                    println!("Create a new main.silt file in the current directory.");
                     process::exit(0);
                 }
             }
@@ -684,6 +718,19 @@ fn check_format(path: &str) -> bool {
     }
 }
 
+/// Return true if `e` is the "program has no main function" runtime error.
+///
+/// AUDIT-NOTE: this hint is keyed on a stringly-typed error; a proper fix
+/// would introduce a typed error variant. Tests pinning this live in
+/// tests/cli.rs. The matcher is intentionally more permissive than a single
+/// exact-string compare so a future cosmetic tweak to the producing
+/// `format!` in src/vm/execute.rs doesn't silently break the "silt test"
+/// nudge.
+fn is_missing_main_error(e: &silt::vm::VmError) -> bool {
+    let msg = &e.message;
+    msg.starts_with("undefined global: ") && msg.contains("main")
+}
+
 /// Heuristic: does this source look like a test-only file?
 ///
 /// Returns true if the source defines any `fn test_...` function OR contains
@@ -706,6 +753,27 @@ fn looks_like_test_file(source: &str) -> bool {
         }
     }
     false
+}
+
+/// Walk upward from `start` looking for a project anchor — `silt.toml` or a
+/// `.git` directory. Returns the anchor path if found, else `None`. Used by
+/// `silt fmt` to avoid recursively formatting everything when invoked outside
+/// any recognisable project.
+fn project_anchor(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
+    loop {
+        let toml = cur.join("silt.toml");
+        if toml.exists() {
+            return Some(toml);
+        }
+        let git = cur.join(".git");
+        if git.exists() {
+            return Some(git);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
 }
 
 /// Recursively find all .silt files in a directory.
@@ -788,7 +856,7 @@ fn vm_run_file(path: &str) {
                     }
                 }
             }
-        } else if e.message == "undefined global: main" {
+        } else if is_missing_main_error(&e) {
             // Detect test-only files so we can nudge the user toward `silt test`
             // instead of the generic "add a main()" error. We do a conservative
             // text scan for `fn test_` function definitions or top-level `test.`

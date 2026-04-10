@@ -532,3 +532,186 @@ fn test_disasm_help_flag() {
         );
     }
 }
+
+// ── 16. silt test passes a simple test file (G3) ──────────────────
+
+#[test]
+fn test_test_subcommand_runs_passing_tests() {
+    let path = temp_silt_file(
+        "test_pass",
+        r#"import test
+
+fn test_add() {
+  test.assert_eq(1 + 1, 2)
+}
+
+fn test_mul() {
+  test.assert_eq(2 * 3, 6)
+}
+
+fn skip_test_broken() {
+  test.assert(false, "not ready yet")
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        output.status.success(),
+        "expected exit 0, stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        combined.contains("passed"),
+        "expected 'passed' in output, got stdout: {stdout}\nstderr: {stderr}"
+    );
+    // Summary should report exactly 2 passed, 0 failed, 1 skipped
+    assert!(
+        combined.contains("2 passed"),
+        "expected '2 passed' in summary, got: {combined}"
+    );
+    assert!(
+        combined.contains("0 failed"),
+        "expected '0 failed' in summary, got: {combined}"
+    );
+    assert!(
+        combined.contains("1 skipped"),
+        "expected '1 skipped' in summary, got: {combined}"
+    );
+}
+
+// ── 17. silt test --filter only runs matching tests (G3) ──────────
+
+#[test]
+fn test_test_subcommand_filter_flag() {
+    let path = temp_silt_file(
+        "test_filter",
+        r#"import test
+
+fn test_add_small() {
+  test.assert_eq(1 + 1, 2)
+}
+
+fn test_subtract() {
+  test.assert_eq(5 - 3, 2)
+}
+
+fn test_add_big() {
+  test.assert_eq(100 + 200, 300)
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .arg("--filter")
+        .arg("add")
+        .output()
+        .expect("failed to run silt");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        output.status.success(),
+        "expected exit 0, stdout: {stdout}\nstderr: {stderr}"
+    );
+    // Only the two tests containing 'add' should have run.
+    assert!(
+        combined.contains("2 passed"),
+        "expected '2 passed' from --filter add, got: {combined}"
+    );
+    assert!(
+        combined.contains("test_add_small"),
+        "expected test_add_small in output, got: {combined}"
+    );
+    assert!(
+        combined.contains("test_add_big"),
+        "expected test_add_big in output, got: {combined}"
+    );
+    assert!(
+        !combined.contains("test_subtract"),
+        "did not expect test_subtract in filtered output, got: {combined}"
+    );
+}
+
+// ── 18. silt test reports failure with non-zero exit (G3) ─────────
+
+#[test]
+fn test_test_subcommand_failing_test_exits_nonzero() {
+    let path = temp_silt_file(
+        "test_fail",
+        r#"import test
+
+fn test_ok() {
+  test.assert_eq(1, 1)
+}
+
+fn test_fails() {
+  test.assert_eq(1, 2, "one equals two")
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code from failing test"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("1 failed") || combined.contains("FAIL"),
+        "expected failure report in output, got stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+// ── 19. silt run on a file without main() shows test-file hint (L6) ───
+
+#[test]
+fn test_run_missing_main_test_file_hint() {
+    // File contains fn test_* but no main — run should detect and nudge.
+    let path = temp_silt_file(
+        "no_main_test",
+        r#"import test
+
+fn test_thing() {
+  test.assert_eq(1, 1)
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code when main is missing"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("looks like a test file"),
+        "expected 'looks like a test file' hint in stderr, got: {stderr}"
+    );
+}

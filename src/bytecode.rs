@@ -175,8 +175,13 @@ pub enum Op {
     DestructMapValue, // operand: u16 const_index (string key)
 
     // ── Loop ───────────────────────────────────────────────────
-    /// Store `u8` values from stack into loop-binding locals.
-    LoopSetup, // operand: u8 binding_count
+    /// Reserved/unused. The compiler does NOT emit this opcode — loop
+    /// bindings are established by the normal local-variable path. Kept
+    /// in the enum so the `#[repr(u8)]` numbering of subsequent opcodes
+    /// is not perturbed (L4 fix). The VM dispatch arm panics with
+    /// `unreachable!()` if this is ever encountered, so an accidental
+    /// emission crashes loudly instead of silently no-oping.
+    LoopSetup, // operand: u8 binding_count (unused)
     /// Update loop bindings and jump back.
     Recur, // operand: u8 arg_count
 

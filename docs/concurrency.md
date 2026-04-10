@@ -653,6 +653,7 @@ fn drain(ch) {
     }
     Empty  -> println("no more data (channel still open)")
     Closed -> println("channel closed, all done")
+    _ -> ()
   }
 }
 

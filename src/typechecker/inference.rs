@@ -90,6 +90,171 @@ impl TypeChecker {
         Some(constrained_fn)
     }
 
+    // ── Deferred check finalization ─────────────────────────────────
+
+    /// Resolve any deferred field-access and numeric-op checks that were
+    /// recorded against type variables during inference. Called after all
+    /// function bodies have been processed so we can see the final
+    /// substitution.
+    ///
+    /// Important architectural note: Silt uses Algorithm W with
+    /// let-polymorphism, so the body of a polymorphic function is
+    /// inferred once using fresh instantiated vars that are NEVER unified
+    /// with call-site concrete types (each call instantiates *another*
+    /// set of fresh vars). This means that if a polymorphic function's
+    /// body uses an ambiguous field access or arithmetic op, the body-
+    /// inference-time vars stay unresolved at finalization. We cannot
+    /// emit errors on those, because that would reject legitimate
+    /// polymorphic definitions like `fn add(a, b) { a + b }` or
+    /// `fn get_x(obj) { obj.x }`. Instead, the deferred-check pass ONLY
+    /// fires when the operand / receiver has resolved to a concrete,
+    /// non-conforming type (e.g. a monomorphic `let s = "hi"; -s`).
+    pub(super) fn finalize_deferred_checks(&mut self) {
+        // B4: pending field accesses on type variables. Only flag when
+        // the receiver resolved to a concrete type.
+        let pending_fields = std::mem::take(&mut self.pending_field_accesses);
+        for (obj_ty, field, result_ty, span) in pending_fields {
+            let resolved = self.apply(&obj_ty);
+            match &resolved {
+                Type::Error | Type::Never => {}
+                Type::Var(_) => {
+                    // Polymorphic / unresolved — leave alone (see above).
+                }
+                Type::Record(_, rec_fields) => {
+                    if let Some((_, field_ty)) = rec_fields.iter().find(|(n, _)| *n == field) {
+                        let ft = field_ty.clone();
+                        self.unify(&result_ty, &ft, span);
+                    } else {
+                        self.error(
+                            format!("unknown field '{field}' on type {resolved}"),
+                            span,
+                        );
+                    }
+                }
+                Type::Generic(type_name, type_args) => {
+                    // User-declared records with or without type parameters
+                    // are represented as Type::Generic(name, args). Look up
+                    // the record definition and validate the field.
+                    let type_name = *type_name;
+                    let type_args = type_args.clone();
+                    if let Some(rec_info) = self.records.get(&type_name).cloned() {
+                        if let Some((_, ft)) =
+                            rec_info.fields.iter().find(|(n, _)| *n == field)
+                        {
+                            let field_ty = if let Some(param_var_ids) =
+                                self.record_param_var_ids.get(&type_name).cloned()
+                            {
+                                let mapping: HashMap<TyVar, Type> = param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect();
+                                let substituted = substitute_vars(ft, &mapping);
+                                self.apply(&substituted)
+                            } else {
+                                self.apply(ft)
+                            };
+                            self.unify(&result_ty, &field_ty, span);
+                            continue;
+                        }
+                    }
+                    // Also check the method table for trait methods.
+                    if let Some(entry) =
+                        self.method_table.get(&(type_name, field)).cloned()
+                    {
+                        let instantiated = self.instantiate_method_type(&entry.method_type);
+                        let method_ty = self.apply(&instantiated);
+                        // Method types include `self` as the first param.
+                        // When the call site originally saw this field
+                        // access as an unknown Var, it unified the var with
+                        // a function type built from the *explicit* args
+                        // only (no receiver). Strip `self` when adapting.
+                        let result_resolved = self.apply(&result_ty);
+                        match (&result_resolved, &method_ty) {
+                            (
+                                Type::Fun(call_params, call_ret),
+                                Type::Fun(method_params, method_ret),
+                            ) if method_params.len() == call_params.len() + 1 => {
+                                for (cp, mp) in
+                                    call_params.iter().zip(method_params.iter().skip(1))
+                                {
+                                    self.unify(cp, mp, span);
+                                }
+                                self.unify(call_ret, method_ret, span);
+                            }
+                            _ => {
+                                self.unify(&result_ty, &method_ty, span);
+                            }
+                        }
+                        continue;
+                    }
+                    self.error(
+                        format!("unknown field or method '{field}' on type {type_name}"),
+                        span,
+                    );
+                }
+                _ => {
+                    self.error(
+                        format!("unknown field or method '{field}' on type {resolved}"),
+                        span,
+                    );
+                }
+            }
+        }
+
+        // B5 / B2 / B3: pending numeric / comparison checks on type variables.
+        let pending_numeric = std::mem::take(&mut self.pending_numeric_checks);
+        for (ty, op_desc, span) in pending_numeric {
+            let resolved = self.apply(&ty);
+            // Early-exit for types that never participate in operator errors.
+            if matches!(resolved, Type::Error | Type::Never) {
+                continue;
+            }
+            // If the operand is still a type variable at the end of inference,
+            // it's either (a) a function parameter that's genuinely polymorphic
+            // (e.g. `fn add(a, b) { a + b }` that's never called) — in which
+            // case the fn was never monomorphized so we can't validate, or
+            // (b) a body inference var from a polymorphic fn template whose
+            // call sites were processed using fresh instantiated vars (so the
+            // template var never got constrained). Both cases are harmless;
+            // the concrete error would fire on the call site's operand.
+            if matches!(resolved, Type::Var(_)) {
+                continue;
+            }
+            // Classify the op based on its recorded tag (string literals set
+            // at the binary-op or unary-op site).
+            let valid = match op_desc {
+                // Arithmetic that allows strings (Add).
+                "'+'" => is_valid_arith_operand(&resolved, true),
+                // Numeric-only arithmetic.
+                "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => {
+                    is_valid_arith_operand(&resolved, false)
+                        && !matches!(resolved, Type::String | Type::Var(_))
+                }
+                // Equality: anything comparable.
+                "'=='/'!='" => is_valid_compare_operand(&resolved, true),
+                // Ordering comparison: stricter domain.
+                "ordering comparison" => is_valid_compare_operand(&resolved, false),
+                _ => true,
+            };
+            if !valid {
+                let domain = match op_desc {
+                    "'+'" => "Int, Float, ExtFloat, or String",
+                    "'-'" | "'*'" | "'/'" | "'%'" | "unary '-'" => "Int, Float, or ExtFloat",
+                    "'=='/'!='" => "a comparable type",
+                    "ordering comparison" => {
+                        "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                    }
+                    _ => "a valid operand",
+                };
+                self.error(
+                    format!("operator {op_desc} requires {domain}, got '{resolved}'"),
+                    span,
+                );
+            }
+        }
+    }
+
     // ── Pattern type binding ────────────────────────────────────────
 
     /// Bind names in a pattern to their types in the environment.
@@ -300,9 +465,24 @@ impl TypeChecker {
                 self.unify(ty, &Type::Float, span);
             }
             Pattern::Map(entries) => {
-                let key_ty = self.fresh_var();
+                // L3: Map patterns are currently restricted to String keys at
+                // parse time — `Pattern::Map(Vec<(String, Pattern)>)` in
+                // src/ast.rs. If the scrutinee has a non-String key type, give
+                // a targeted error rather than the cryptic unification failure.
                 let val_ty = self.fresh_var();
-                self.unify(&key_ty, &Type::String, span);
+                let resolved_scrutinee = self.apply(ty);
+                if let Type::Map(existing_key, _) = &resolved_scrutinee {
+                    let existing_key = self.apply(existing_key);
+                    if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
+                        self.error(
+                            format!(
+                                "map patterns currently only match string keys; your scrutinee has key type '{existing_key}'"
+                            ),
+                            span,
+                        );
+                    }
+                }
+                let key_ty = Type::String;
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(ty, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);
@@ -708,8 +888,18 @@ impl TypeChecker {
                                 Type::Error
                             }
                         } else {
-                            // Unconstrained type variable — stay lenient (may resolve later)
-                            self.fresh_var()
+                            // B4: Unconstrained type variable — may resolve later to
+                            // a record/variant. Record the obligation and re-check at
+                            // the end of inference. Return a fresh var for the result
+                            // type so downstream inference can continue.
+                            let result_ty = self.fresh_var();
+                            self.pending_field_accesses.push((
+                                obj_ty.clone(),
+                                field,
+                                result_ty.clone(),
+                                span,
+                            ));
+                            result_ty
                         }
                     }
                     Type::Error => {
@@ -760,11 +950,39 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
                                 self.unify(&lt, &rt, span);
+                                // B2: enforce operand domain — Add accepts
+                                // Int/Float/ExtFloat or String (concatenation).
+                                let resolved = self.apply(&lt);
+                                match &resolved {
+                                    Type::Var(_) => {
+                                        // Still unresolved — defer to final pass.
+                                        self.pending_numeric_checks.push((
+                                            resolved.clone(),
+                                            "'+'",
+                                            span,
+                                        ));
+                                    }
+                                    _ if !is_valid_arith_operand(&resolved, true) => {
+                                        self.error(
+                                            format!(
+                                                "operator '+' requires Int, Float, ExtFloat, or String, got '{resolved}'"
+                                            ),
+                                            span,
+                                        );
+                                    }
+                                    _ => {}
+                                }
                                 lt
                             }
                         }
                     }
                     BinOp::Sub | BinOp::Mul | BinOp::Mod => {
+                        let op_str = match op {
+                            BinOp::Sub => "'-'",
+                            BinOp::Mul => "'*'",
+                            BinOp::Mod => "'%'",
+                            _ => unreachable!(),
+                        };
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
                         match (&resolved_l, &resolved_r) {
@@ -781,6 +999,26 @@ impl TypeChecker {
                             }
                             _ => {
                                 self.unify(&lt, &rt, span);
+                                // B2: enforce numeric-only operand domain.
+                                let resolved = self.apply(&lt);
+                                match &resolved {
+                                    Type::Var(_) => {
+                                        self.pending_numeric_checks.push((
+                                            resolved.clone(),
+                                            op_str,
+                                            span,
+                                        ));
+                                    }
+                                    _ if !is_valid_arith_operand(&resolved, false) => {
+                                        self.error(
+                                            format!(
+                                                "operator {op_str} requires Int, Float, or ExtFloat, got '{resolved}'"
+                                            ),
+                                            span,
+                                        );
+                                    }
+                                    _ => {}
+                                }
                                 lt
                             }
                         }
@@ -795,11 +1033,41 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             _ => {
                                 self.unify(&lt, &rt, span);
+                                // B2: enforce numeric-only operand domain.
+                                let resolved = self.apply(&lt);
+                                match &resolved {
+                                    Type::Var(_) => {
+                                        self.pending_numeric_checks.push((
+                                            resolved.clone(),
+                                            "'/'",
+                                            span,
+                                        ));
+                                    }
+                                    _ if !is_valid_arith_operand(&resolved, false) => {
+                                        self.error(
+                                            format!(
+                                                "operator '/' requires Int, Float, or ExtFloat, got '{resolved}'"
+                                            ),
+                                            span,
+                                        );
+                                    }
+                                    _ => {}
+                                }
                                 lt
                             }
                         }
                     }
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => {
+                        let is_equality = matches!(op, BinOp::Eq | BinOp::Neq);
+                        let op_str = match op {
+                            BinOp::Eq => "'=='",
+                            BinOp::Neq => "'!='",
+                            BinOp::Lt => "'<'",
+                            BinOp::Gt => "'>'",
+                            BinOp::Leq => "'<='",
+                            BinOp::Geq => "'>='",
+                            _ => unreachable!(),
+                        };
                         let resolved_l = self.apply(&lt);
                         let resolved_r = self.apply(&rt);
                         match (&resolved_l, &resolved_r) {
@@ -809,6 +1077,36 @@ impl TypeChecker {
                             _ => {
                                 self.unify(&lt, &rt, span);
                             }
+                        }
+                        // B3: enforce comparison operand domain. The VM's
+                        // compare() (src/vm/arithmetic.rs) only supports
+                        // Int/Float/ExtFloat/String/List/Range/Record/Variant
+                        // for ordering. Equality additionally supports
+                        // Tuple/Map/Set/Bool/Unit via Value's PartialEq.
+                        let resolved = self.apply(&lt);
+                        match &resolved {
+                            Type::Var(_) => {
+                                // Defer — may resolve later.
+                                self.pending_numeric_checks.push((
+                                    resolved.clone(),
+                                    if is_equality { "'=='/'!='" } else { "ordering comparison" },
+                                    span,
+                                ));
+                            }
+                            _ if !is_valid_compare_operand(&resolved, is_equality) => {
+                                let domain = if is_equality {
+                                    "a comparable type"
+                                } else {
+                                    "Int, Float, ExtFloat, String, List, Range, Record, or Variant"
+                                };
+                                self.error(
+                                    format!(
+                                        "operator {op_str} requires {domain}, got '{resolved}'"
+                                    ),
+                                    span,
+                                );
+                            }
+                            _ => {}
                         }
                         Type::Bool
                     }
@@ -829,7 +1127,17 @@ impl TypeChecker {
                         let resolved = self.apply(&t);
                         match &resolved {
                             Type::Int | Type::Float | Type::ExtFloat => {}
-                            Type::Var(_) => {}
+                            Type::Error | Type::Never => {}
+                            Type::Var(_) => {
+                                // B5: unresolved — defer until after all bodies are
+                                // inferred. If still a Var at that point, it's an
+                                // ambiguity error.
+                                self.pending_numeric_checks.push((
+                                    resolved.clone(),
+                                    "unary '-'",
+                                    operand_span,
+                                ));
+                            }
                             _ => {
                                 self.error(
                                     format!(
@@ -952,6 +1260,18 @@ impl TypeChecker {
 
                     match &fn_type {
                         Type::Fun(params, ret) => {
+                            // B6: A plain function reference on the RHS of `|>`
+                            // must have arity 1. Piping into a multi-arg function
+                            // without an explicit call forgets the remaining args.
+                            if params.len() != 1 {
+                                self.error(
+                                    format!(
+                                        "cannot pipe into function taking {} argument(s); wrap in a call or use partial application",
+                                        params.len()
+                                    ),
+                                    span,
+                                );
+                            }
                             if !params.is_empty() {
                                 self.unify(&arg_type, &params[0], span);
                             }
@@ -1228,15 +1548,16 @@ impl TypeChecker {
 
                     Type::Record(name, instantiated_fields)
                 } else {
-                    // Unknown record type - infer from fields
-                    let field_types: Vec<(Symbol, Type)> = fields
-                        .iter_mut()
-                        .map(|(n, e)| {
-                            let ty = self.infer_expr(e, env);
-                            (*n, ty)
-                        })
-                        .collect();
-                    Type::Record(name, field_types)
+                    // G2: Unknown record type — this used to silently synthesize
+                    // an anonymous record. Emit an error so the user notices a
+                    // typo or missing type declaration. We still walk the field
+                    // expressions so nested errors are reported, but return
+                    // Type::Error to prevent downstream cascades.
+                    for (_, e) in fields.iter_mut() {
+                        let _ = self.infer_expr(e, env);
+                    }
+                    self.error(format!("undefined type '{name}'"), span);
+                    Type::Error
                 }
             }
 
@@ -1722,9 +2043,23 @@ impl TypeChecker {
                 self.unify(expected, &Type::Float, span);
             }
             Pattern::Map(entries) => {
-                let key_ty = self.fresh_var();
+                // L3: Map patterns are restricted to String keys (parser
+                // invariant — see Pattern::Map in src/ast.rs). Give a
+                // targeted error if the scrutinee has a non-String key type.
                 let val_ty = self.fresh_var();
-                self.unify(&key_ty, &Type::String, span);
+                let resolved_scrutinee = self.apply(expected);
+                if let Type::Map(existing_key, _) = &resolved_scrutinee {
+                    let existing_key = self.apply(existing_key);
+                    if !matches!(existing_key, Type::String | Type::Var(_) | Type::Error) {
+                        self.error(
+                            format!(
+                                "map patterns currently only match string keys; your scrutinee has key type '{existing_key}'"
+                            ),
+                            span,
+                        );
+                    }
+                }
+                let key_ty = Type::String;
                 let map_ty = Type::Map(Box::new(key_ty), Box::new(val_ty.clone()));
                 self.unify(expected, &map_ty, span);
                 let resolved_val = self.apply(&val_ty);
@@ -1748,6 +2083,44 @@ impl TypeChecker {
                 }
             }
         }
+    }
+}
+
+/// Returns true if the given type is a valid operand for arithmetic operators.
+/// `allow_string` widens the domain for `+`, which supports string concatenation.
+/// Type variables and `Type::Error` are treated as "maybe valid" (caller handles
+/// the Var case via deferred checks).
+pub(super) fn is_valid_arith_operand(ty: &Type, allow_string: bool) -> bool {
+    match ty {
+        Type::Int | Type::Float | Type::ExtFloat | Type::Error | Type::Never => true,
+        Type::Var(_) => true,
+        Type::String if allow_string => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the given type is a valid operand for comparison operators.
+/// `is_equality` widens the domain to include types supported by Value's
+/// PartialEq implementation but not `Value::cmp` (Tuple, Map, Set, Bool, Unit).
+/// Type variables and `Type::Error` are treated as "maybe valid".
+pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
+    match ty {
+        Type::Int
+        | Type::Float
+        | Type::ExtFloat
+        | Type::String
+        | Type::List(_)
+        | Type::Record(..)
+        | Type::Generic(..)
+        | Type::Error
+        | Type::Never => true,
+        Type::Var(_) => true,
+        Type::Bool | Type::Unit | Type::Tuple(_) | Type::Map(..) | Type::Set(_)
+            if is_equality =>
+        {
+            true
+        }
+        _ => false,
     }
 }
 

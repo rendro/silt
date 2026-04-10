@@ -216,6 +216,23 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.to_int: cannot convert non-finite float to int".into(),
                 ));
             }
+            // B7 fix: `as i64` saturates for out-of-range finite floats,
+            // silently clamping e.g. 1e20 to i64::MAX. Reject such values
+            // explicitly so callers see a clear runtime error.
+            //
+            // The f64 representation of `i64::MIN` (-9223372036854775808) is
+            // exact, so `f >= i64::MIN as f64` correctly accepts values
+            // down to and including `i64::MIN`. `i64::MAX` is NOT exactly
+            // representable (rounds up to 9223372036854775808.0), so we
+            // compare strictly less than `(i64::MAX as f64) + 1.0` to
+            // reject everything that would round to or past i64::MAX+1.
+            const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+            const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
+            if !(f >= I64_MIN_AS_F64 && f < I64_MAX_PLUS_ONE) {
+                return Err(VmError::new(format!(
+                    "float.to_int: value out of i64 range: {f}"
+                )));
+            }
             Ok(Value::Int(f as i64))
         }
         "min" => {
@@ -384,5 +401,104 @@ pub fn call_math(name: &str, args: &[Value]) -> Result<Value, VmError> {
             Ok(Value::Float(val))
         }
         _ => Err(VmError::new(format!("unknown math function: {name}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_int(f: f64) -> Result<Value, VmError> {
+        call_float("to_int", &[Value::Float(f)])
+    }
+
+    // ── float.to_int: B7 out-of-range regression ──────────────────
+
+    #[test]
+    fn float_to_int_rejects_positive_out_of_range() {
+        let err = to_int(1.0e20).expect_err("expected out-of-range error");
+        assert!(
+            err.message.contains("out of i64 range"),
+            "error should mention out-of-range, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn float_to_int_rejects_negative_out_of_range() {
+        let err = to_int(-1.0e20).expect_err("expected out-of-range error");
+        assert!(
+            err.message.contains("out of i64 range"),
+            "error should mention out-of-range, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn float_to_int_rejects_exactly_i64_max_plus_one() {
+        // `i64::MAX + 1 == 9223372036854775808` is exactly representable in
+        // f64 (it's 2^63) and is the first value strictly outside the i64
+        // range. It must be rejected.
+        let err = to_int(9_223_372_036_854_775_808.0)
+            .expect_err("expected out-of-range for i64::MAX + 1");
+        assert!(
+            err.message.contains("out of i64 range"),
+            "error should mention out-of-range, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn float_to_int_accepts_near_i64_max_after_rounding() {
+        // f64 cannot exactly represent 9_223_372_036_854_775_000; it rounds
+        // *down* to 9_223_372_036_854_774_784 (the nearest representable
+        // value below i64::MAX), which IS within range and must convert
+        // successfully. This pins the boundary so a future tightening of
+        // the range check doesn't accidentally reject it.
+        let v = to_int(9_223_372_036_854_775_000.0).expect("in-range after rounding");
+        assert!(matches!(v, Value::Int(_)));
+    }
+
+    #[test]
+    fn float_to_int_truncates_positive_fraction() {
+        let v = to_int(42.5).expect("42.5 should convert");
+        assert!(matches!(v, Value::Int(42)), "expected Int(42), got {v:?}");
+    }
+
+    #[test]
+    fn float_to_int_truncates_negative_fraction() {
+        let v = to_int(-42.5).expect("-42.5 should convert");
+        assert!(
+            matches!(v, Value::Int(-42)),
+            "expected Int(-42), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn float_to_int_accepts_zero() {
+        let v = to_int(0.0).expect("0.0 should convert");
+        assert!(matches!(v, Value::Int(0)), "expected Int(0), got {v:?}");
+        let v = to_int(-0.0).expect("-0.0 should convert");
+        assert!(matches!(v, Value::Int(0)), "expected Int(0), got {v:?}");
+    }
+
+    #[test]
+    fn float_to_int_rejects_nan_and_infinity() {
+        let err = to_int(f64::NAN).expect_err("NaN should error");
+        assert!(err.message.contains("non-finite"), "got: {}", err.message);
+        let err = to_int(f64::INFINITY).expect_err("+inf should error");
+        assert!(err.message.contains("non-finite"), "got: {}", err.message);
+        let err = to_int(f64::NEG_INFINITY).expect_err("-inf should error");
+        assert!(err.message.contains("non-finite"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn float_to_int_accepts_i64_min_exact() {
+        // i64::MIN is exactly representable as f64.
+        let v = to_int(i64::MIN as f64).expect("i64::MIN as f64 should convert");
+        assert!(
+            matches!(v, Value::Int(n) if n == i64::MIN),
+            "expected Int(i64::MIN), got {v:?}"
+        );
     }
 }

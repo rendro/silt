@@ -161,6 +161,21 @@ pub struct TypeChecker {
     pub(super) record_param_var_ids: HashMap<Symbol, Vec<TyVar>>,
     /// Maps function names to their body-constrained types (populated during check_fn_body).
     pub(super) fn_body_types: HashMap<Symbol, Type>,
+    /// Deferred checks for field access on type variables (B4).
+    /// Each entry is `(object_type, field_name, result_type, span)`.
+    /// Re-examined after all function bodies are inferred: if the object type
+    /// is still a Var, we emit an error.
+    pub(super) pending_field_accesses: Vec<(Type, Symbol, Type, Span)>,
+    /// Deferred checks for numeric operations on type variables (B5 / B2).
+    /// Each entry is `(operand_type, op_description, span)`. Re-examined after
+    /// all function bodies are inferred: if the operand is still a Var, we
+    /// emit an error.
+    pub(super) pending_numeric_checks: Vec<(Type, &'static str, Span)>,
+    /// Names that have been registered as user-defined top-level declarations
+    /// (functions, let bindings, type/record/enum names). Used by G1 to
+    /// detect duplicate top-level definitions without also flagging
+    /// user code that shadows a builtin (which remains a warning).
+    pub(super) top_level_names: std::collections::HashSet<Symbol>,
 }
 
 impl Default for TypeChecker {
@@ -186,6 +201,9 @@ impl TypeChecker {
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
+            pending_field_accesses: Vec::new(),
+            pending_numeric_checks: Vec::new(),
+            top_level_names: std::collections::HashSet::new(),
         }
     }
 
@@ -623,13 +641,65 @@ impl TypeChecker {
                     );
                 }
             }
-            for type_name in &["List", "Tuple", "Map", "Set"] {
+            // L5: The VM's compare() (src/vm/arithmetic.rs) only supports
+            // ordering for List/Range and primitives. Tuple, Map, and Set
+            // are NOT orderable at runtime, so they only auto-derive
+            // Equal/Hash/Display — not Compare.
+            let non_ordering_traits = ["Equal", "Hash", "Display"];
+            for type_name in &["List"] {
                 for trait_name in &all_traits {
                     self.trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
                 let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
                 for (method_name, method_type) in &trait_methods {
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+            // Tuple/Map/Set: Equal, Hash, Display only (no Compare).
+            for type_name in &["Tuple", "Map", "Set"] {
+                for trait_name in &non_ordering_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
+                for (method_name, method_type) in &trait_methods {
+                    // Skip "compare" for these types.
+                    if *method_name == "compare" {
+                        continue;
+                    }
+                    self.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+            // B10: Option and Result auto-derive Equal, Hash, Display.
+            // (Compare is not supported because ordering on Variants is
+            // limited to same-name variants at runtime.) Both types wrap
+            // generic parameters, but the auto-derived methods are stored
+            // as polymorphic templates and instantiated at each call site.
+            for type_name in &["Option", "Result"] {
+                for trait_name in &non_ordering_traits {
+                    self.trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
+                for (method_name, method_type) in &trait_methods {
+                    if *method_name == "compare" {
+                        continue;
+                    }
                     self.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {
@@ -757,6 +827,17 @@ impl TypeChecker {
                     Scheme::mono(self.apply(&val_ty))
                 };
                 if let Pattern::Ident(name) = pattern {
+                    // G1: top-level duplicate let binding.
+                    if self.top_level_names.contains(name) {
+                        self.error(
+                            format!(
+                                "duplicate top-level definition of '{}'; names must be unique at module scope",
+                                name
+                            ),
+                            span,
+                        );
+                    }
+                    self.top_level_names.insert(*name);
                     env.define(*name, scheme);
                 } else {
                     self.bind_pattern(pattern, &val_ty, &mut env, span);
@@ -769,6 +850,8 @@ impl TypeChecker {
 
         // Third pass: type check function bodies to discover constraints
         let pre_pass3_error_count = self.errors.len();
+        let pre_pass3_field_count = self.pending_field_accesses.len();
+        let pre_pass3_numeric_count = self.pending_numeric_checks.len();
         for i in 0..program.decls.len() {
             if let Decl::Fn(ref mut f) = program.decls[i] {
                 self.check_fn_body(f, &env);
@@ -821,6 +904,12 @@ impl TypeChecker {
                 // Discard pass 3 errors — they'll be re-emitted with better accuracy
                 self.errors.truncate(pre_pass3_error_count);
                 self.fn_body_types.clear();
+                // Also truncate deferred checks back to the pre-pass-3
+                // baseline (preserving any obligations recorded by the
+                // top-level let inference earlier). They'll be re-collected
+                // during the re-check with narrowed schemes.
+                self.pending_field_accesses.truncate(pre_pass3_field_count);
+                self.pending_numeric_checks.truncate(pre_pass3_numeric_count);
 
                 // Re-check function bodies with narrowed schemes
                 for i in 0..program.decls.len() {
@@ -847,6 +936,10 @@ impl TypeChecker {
                 }
             }
         }
+
+        // Resolve any deferred checks (field-access / numeric ops on type
+        // variables) before generating "unresolved type" errors.
+        self.finalize_deferred_checks();
 
         // Fourth pass: detect unresolved type variables on let-binding values
         // where the user did not provide a type annotation.
@@ -936,6 +1029,20 @@ impl TypeChecker {
     // ── Register type declarations ──────────────────────────────────
 
     fn register_type_decl(&mut self, td: &TypeDecl, env: &mut TypeEnv) {
+        // G1: Detect duplicate top-level type declarations. Only user-defined
+        // top-level names count; collision with a builtin type (Option,
+        // Result, ChannelResult, Step) is handled by the shadow-warning
+        // path elsewhere.
+        if self.top_level_names.contains(&td.name) {
+            self.error(
+                format!(
+                    "duplicate top-level type declaration '{}'; type names must be unique at module scope",
+                    td.name
+                ),
+                td.span,
+            );
+        }
+        self.top_level_names.insert(td.name);
         // Create a mapping from type param names to placeholder type vars
         let mut param_vars: HashMap<Symbol, Type> = HashMap::new();
         for p in &td.params {
@@ -1228,6 +1335,20 @@ impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
     fn register_fn_decl(&mut self, f: &FnDecl, env: &mut TypeEnv) {
+        // G1: Detect duplicate top-level function definitions. We only report
+        // a hard error when the name collides with another user-registered
+        // top-level name. Collisions with builtins are handled elsewhere as
+        // a shadow warning.
+        if self.top_level_names.contains(&f.name) {
+            self.error(
+                format!(
+                    "duplicate top-level definition of '{}'; names must be unique at module scope",
+                    f.name
+                ),
+                f.span,
+            );
+        }
+        self.top_level_names.insert(f.name);
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
 
@@ -1629,7 +1750,11 @@ impl ReplTypeContext {
                     );
                 }
             }
-            for type_name in &["List", "Tuple", "Map", "Set"] {
+            // L5: See check_program — the VM only supports ordering for
+            // List/Range among collection types. Tuple/Map/Set get
+            // Equal/Hash/Display but not Compare.
+            let non_ordering_traits = ["Equal", "Hash", "Display"];
+            for type_name in &["List"] {
                 for trait_name in &all_traits {
                     checker
                         .trait_impl_set
@@ -1637,6 +1762,49 @@ impl ReplTypeContext {
                 }
                 let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
                 for (method_name, method_type) in &trait_methods {
+                    checker.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+            for type_name in &["Tuple", "Map", "Set"] {
+                for trait_name in &non_ordering_traits {
+                    checker
+                        .trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
+                for (method_name, method_type) in &trait_methods {
+                    if *method_name == "compare" {
+                        continue;
+                    }
+                    checker.method_table.insert(
+                        (intern(type_name), intern(method_name)),
+                        MethodEntry {
+                            method_type: method_type.clone(),
+                            span: dummy_span,
+                            is_auto_derived: true,
+                        },
+                    );
+                }
+            }
+            // B10: Option and Result auto-derive Equal, Hash, Display.
+            for type_name in &["Option", "Result"] {
+                for trait_name in &non_ordering_traits {
+                    checker
+                        .trait_impl_set
+                        .insert((intern(trait_name), intern(type_name)));
+                }
+                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
+                for (method_name, method_type) in &trait_methods {
+                    if *method_name == "compare" {
+                        continue;
+                    }
                     checker.method_table.insert(
                         (intern(type_name), intern(method_name)),
                         MethodEntry {
@@ -1658,6 +1826,9 @@ impl ReplTypeContext {
     pub fn check(&mut self, program: &mut Program) -> Vec<TypeError> {
         // Clear errors from the previous input
         self.checker.errors.clear();
+        // G1: REPL inputs naturally redefine names across entries; only
+        // duplicates WITHIN a single input should error.
+        self.checker.top_level_names.clear();
 
         // Process imports
         for decl in &program.decls {
@@ -1763,6 +1934,17 @@ impl ReplTypeContext {
                     Scheme::mono(self.checker.apply(&val_ty))
                 };
                 if let Pattern::Ident(name) = pattern {
+                    // G1: duplicate top-level let binding within a single REPL input.
+                    if self.checker.top_level_names.contains(name) {
+                        self.checker.error(
+                            format!(
+                                "duplicate top-level definition of '{}'; names must be unique at module scope",
+                                name
+                            ),
+                            span,
+                        );
+                    }
+                    self.checker.top_level_names.insert(*name);
                     self.env.define(*name, scheme);
                 } else {
                     self.checker
@@ -1800,6 +1982,9 @@ impl ReplTypeContext {
                 }
             }
         }
+
+        // Resolve deferred checks before reporting unresolved types.
+        self.checker.finalize_deferred_checks();
 
         // Detect unresolved type variables and resolve remaining types
         self.checker.check_unresolved_let_types(program);

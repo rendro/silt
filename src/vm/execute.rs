@@ -1682,7 +1682,12 @@ impl Vm {
                 }
             }
             Op::LoopSetup => {
-                let _ = self.read_u8()?;
+                // L4 fix: this opcode is reserved but never emitted by
+                // the compiler. If we ever reach it, that is a compiler
+                // bug — crash loudly rather than silently no-op.
+                unreachable!(
+                    "Op::LoopSetup is not emitted by the compiler; this is a compiler bug"
+                );
             }
             Op::Recur => {
                 let arg_count = self.read_u8()? as usize;

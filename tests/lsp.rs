@@ -749,3 +749,147 @@ fn test_completion_returns_module_members_after_dot() {
 
     client.shutdown();
 }
+
+// ── 9. hover on a let-binding site returns the binding's type (B9) ──
+
+#[test]
+fn test_hover_on_let_binding_site_returns_binding_type() {
+    // Regression test for B9: hovering the identifier `x` *at its binding
+    // site* (`let x = 42`) used to return the enclosing block's `()` Unit
+    // type instead of `Int`. The fix makes the hover handler notice when
+    // the cursor sits on a local binding LHS and return its definition
+    // type instead.
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    //   line 0: fn main() {
+    //   line 1:   let x = 42
+    //   line 2: }
+    let source = "fn main() {\n  let x = 42\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position: line 1, character 6 — the `x` in "  let x = 42":
+    //   0         1
+    //   0123456789012
+    //         ^— 'x' is at column 6.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "hover request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("hover response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null hover result on the binding `x`"
+    );
+
+    let value = result
+        .pointer("/contents/value")
+        .and_then(|v| v.as_str())
+        .expect("hover result must contain contents.value string");
+
+    // The binding's type is `Int` (from the 42 literal), not `()` / Unit.
+    assert!(
+        value.contains("Int"),
+        "hover on `let x = 42` binding site should mention `Int`, got: {value}"
+    );
+    assert!(
+        !value.contains("()"),
+        "hover on binding site should not return the enclosing block's Unit type, got: {value}"
+    );
+
+    client.shutdown();
+}
+
+// ── 10. goto-definition on a local variable use site (G5) ──────────
+
+#[test]
+fn test_goto_definition_on_local_variable() {
+    // Regression test for G5: `textDocument/definition` on a local binding
+    // used to return `null` because the definitions map only contained
+    // top-level declarations. The fix adds a per-document locals table so
+    // the request resolves to the `x` in `let x = 42`.
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    //   line 0: fn main() {
+    //   line 1:   let x = 42
+    //   line 2:   println(x)
+    //   line 3: }
+    let source = "fn main() {\n  let x = 42\n  println(x)\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // Position: line 2, character 10 — the `x` inside `println(x)`:
+    //   0         1
+    //   01234567890
+    //             ^— `x` is at column 10.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 10 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "definition request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("definition response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null definition result for a local binding, got null"
+    );
+
+    let def_uri = result
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .expect("definition result must have a uri");
+    assert_eq!(
+        def_uri, uri,
+        "definition must point back into the same document"
+    );
+
+    // The binding `x` is on line 1 (`  let x = 42`).
+    let line = result
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("definition result must have a range.start.line");
+    assert_eq!(
+        line, 1,
+        "definition of local `x` should be on line index 1 (the `let`), got line {line}"
+    );
+
+    // And the character should be 6 (the `x` in `  let x = 42`).
+    let character = result
+        .pointer("/range/start/character")
+        .and_then(|v| v.as_u64())
+        .expect("definition result must have a range.start.character");
+    assert_eq!(
+        character, 6,
+        "definition of local `x` should be at column 6 (the `x` in `let x`), got character {character}"
+    );
+
+    client.shutdown();
+}

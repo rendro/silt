@@ -143,56 +143,25 @@ impl fmt::Display for CompileError {
 /// in the *module* file (not the main file), so the outer error reporter can
 /// show the user where the bug is even though it only has the main file's
 /// source for its own snippet rendering.
+/// Format a cross-module error as a single-line summary suitable for
+/// embedding in an outer `CompileError.message`. The outer `SourceError`
+/// Display impl already renders the import site's caret and snippet, so
+/// we deliberately avoid duplicating the inner file's source-line context
+/// here — older versions of this helper did that and the result was the
+/// inner snippet being printed twice (L7).
 fn format_module_source_error(
     module_name: &str,
     file_path: &str,
-    source: &str,
+    _source: &str,
     kind: &str,
     inner_message: &str,
     span: Span,
 ) -> String {
-    let mut out = String::new();
-    out.push_str(&format!("module '{module_name}': {kind}\n"));
-    out.push_str(&format!(
-        "  --> {file_path}:{line}:{col}\n",
+    format!(
+        "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
         line = span.line,
         col = span.col,
-    ));
-    if let Some(line_text) = source.lines().nth(span.line.saturating_sub(1)) {
-        let line_num_str = span.line.to_string();
-        let gutter_w = line_num_str.len();
-        // blank gutter
-        out.push_str(&format!(
-            "  {empty:>width$} |\n",
-            empty = "",
-            width = gutter_w
-        ));
-        // source line
-        out.push_str(&format!(
-            "  {ln:>width$} | {src}\n",
-            ln = line_num_str,
-            width = gutter_w,
-            src = line_text,
-        ));
-        // caret
-        let col = span.col.saturating_sub(1);
-        let spacing: String = line_text
-            .chars()
-            .take(col)
-            .map(|ch| if ch == '\t' { '\t' } else { ' ' })
-            .collect();
-        out.push_str(&format!(
-            "  {empty:>width$} | {spacing}^ {msg}",
-            empty = "",
-            width = gutter_w,
-            spacing = spacing,
-            msg = inner_message,
-        ));
-    } else {
-        // No source line available — fall back to just the message.
-        out.push_str(&format!("  {inner_message}"));
-    }
-    out
+    )
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────
@@ -217,6 +186,15 @@ pub struct Compiler {
     /// to their qualified equivalents so intra-module calls resolve.
     /// Value is (module_name, map_of fn_name -> is_public).
     module_scope: Option<(String, HashMap<String, bool>)>,
+    /// Whether this compiler is being used to compile a REPL entry. In REPL
+    /// mode, an unknown `name.field` where `name` is neither a local nor a
+    /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
+    /// so that a previously-bound REPL value (stored as a VM global) can have
+    /// its fields accessed. In non-REPL mode, unknown `name.field` is still
+    /// emitted as `GetGlobal("name.field")` so that foreign-function modules
+    /// (e.g. `mylib.double` registered via `register_fn1`) and file-module
+    /// aliases (`import string as s` → `s.split`) continue to work.
+    repl_mode: bool,
 }
 
 impl Default for Compiler {
@@ -237,6 +215,7 @@ impl Compiler {
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
+            repl_mode: false,
         }
     }
 
@@ -252,7 +231,13 @@ impl Compiler {
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
+            repl_mode: false,
         }
+    }
+
+    /// Enable REPL mode. See the `repl_mode` field for semantics.
+    pub fn set_repl_mode(&mut self, enabled: bool) {
+        self.repl_mode = enabled;
     }
 
     /// Returns warnings emitted during compilation.
@@ -1297,8 +1282,8 @@ impl Compiler {
                     let is_local = self.resolve_local(*name).is_some()
                         || self.resolve_upvalue(*name)?.is_some();
                     if !is_local {
-                        // Gate: require import for builtin modules
                         let name_str = resolve(*name);
+                        // Gate: require import for builtin modules.
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
                         {
@@ -1309,12 +1294,29 @@ impl Compiler {
                                 span,
                             });
                         }
-                        // Module-qualified global: list.map, string.length, etc.
-                        let qualified = format!("{name}.{field}");
-                        let name_idx = self.add_constant(Value::String(qualified), span)?;
-                        self.current_chunk().emit_op(Op::GetGlobal, span);
-                        self.current_chunk().emit_u16(name_idx, span);
-                        return Ok(());
+                        // B8: In REPL mode, a previously-bound value like `p`
+                        // is a VM global (created via `eval_declaration`), not
+                        // a module. When the identifier is NOT a known builtin
+                        // module name, fall through to the receiver-expression
+                        // path below, which emits `GetGlobal(name)` followed
+                        // by `GetField(field)`. That resolves `p.x` against
+                        // the stored record value.
+                        //
+                        // In non-REPL mode we preserve the long-standing
+                        // behaviour of emitting `GetGlobal("name.field")`,
+                        // which is how foreign-function modules registered
+                        // via `vm.register_fn1("mylib.double", ...)` and
+                        // file-module aliases like `import string as s` are
+                        // found (the alias path registers `s.split` as a
+                        // standalone global).
+                        if !self.repl_mode || module::is_builtin_module(&name_str) {
+                            let qualified = format!("{name}.{field}");
+                            let name_idx = self.add_constant(Value::String(qualified), span)?;
+                            self.current_chunk().emit_op(Op::GetGlobal, span);
+                            self.current_chunk().emit_u16(name_idx, span);
+                            return Ok(());
+                        }
+                        // REPL mode, non-module name — fall through.
                     }
                 }
                 let field_str = resolve(*field);

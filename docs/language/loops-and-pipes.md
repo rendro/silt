@@ -119,6 +119,7 @@ loop {
   match msg {
     Message(val) -> process(val)
     Closed -> return ()
+    _ -> ()
   }
 }
 ```

@@ -77,3 +77,41 @@ jobs:
 
       - name: cargo test
         run: cargo test --all-features
+
+  fuzz-smoke:
+    name: Fuzz Smoke (libfuzzer, 30s per target)
+    runs-on: ubuntu-latest
+    # Non-blocking: fuzz crashes should not fail unrelated PRs until the
+    # corpus stabilises. Remove continue-on-error once the corpus is seeded.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly (required by cargo-fuzz)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz lexer (30s)
+        run: cargo +nightly fuzz run fuzz_lexer -- -max_total_time=30
+        working-directory: .
+
+      - name: Fuzz parser (30s)
+        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=30
+        working-directory: .
+
+      - name: Fuzz formatter (30s)
+        run: cargo +nightly fuzz run fuzz_formatter -- -max_total_time=30
+        working-directory: .
+
+      - name: Fuzz roundtrip (30s)
+        run: cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time=30
+        working-directory: .
