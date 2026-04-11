@@ -717,3 +717,146 @@ fn main() {
     );
 }
 
+// ── BROKEN (round 17 F1): where-clause constraints dropped by scheme narrowing
+//
+// After pass-3 body inference, the narrowing path in
+// `src/typechecker/mod.rs` called `generalize()` which produced a
+// fresh scheme with brand-new TyVar IDs, then a "preserve where
+// constraints" loop filtered the original constraints by
+// `new_scheme.vars.contains(tv)`. The TyVars never matched because
+// they came from different instantiations, so the constraint set was
+// silently emptied and calls like `use_doublable("text")` slipped
+// through typecheck. At runtime the VM aborted with "no method
+// 'doubled' for type 'String'".
+//
+// Fix: walk the original and narrowed types in lockstep to build an
+// old→new TyVar remap, then carry the original constraints across the
+// narrowing. Regression covered here.
+
+#[test]
+fn test_where_constraint_preserved_across_scheme_narrowing() {
+    assert_type_error(
+        r#"
+trait Doublable { fn doubled(self) -> Int }
+trait Doublable for Int { fn doubled(self) -> Int { self * 2 } }
+fn use_doublable(x: t) where t: Doublable { x.doubled() }
+fn main() {
+  let s = "text"
+  let r = use_doublable(s)
+  println(r)
+}
+"#,
+        "does not implement trait 'Doublable'",
+    );
+}
+
+// ── BROKEN (round 17 F2): where-clause obligation dropped inside callback
+//
+// When a call with a deferred where obligation sits inside a lambda
+// passed to a higher-order fn, the enclosing fn may have no params at
+// all (e.g. `main`). The finalize pass's `touches_fn_param` test
+// correctly returned false — BUT it then bailed out before checking
+// whether the deferred TyVar had in fact resolved to a concrete type
+// by the time finalize ran. The obligation was silently dropped.
+// Once the outer call site unified the lambda's param to a concrete
+// type that did not implement the required trait, no second check
+// ran and the program crashed at runtime with "no method 'double'
+// for type 'String'".
+//
+// Fix: even when the deferred TyVar doesn't touch any enclosing fn
+// param, apply the substitution and check against the concrete type
+// if resolved. Only fall through to the "enclosing fn must declare
+// constraint" path when the var is still unresolved.
+
+#[test]
+fn test_where_constraint_preserved_inside_callback_lambda() {
+    assert_type_error(
+        r#"
+trait Doubler { fn double(self) -> Int }
+trait Doubler for Int { fn double(self) -> Int { self * 2 } }
+fn run_callback(f) { f("hello") }
+fn needs_doubler(x: a) where a: Doubler { x.double() }
+fn main() {
+  let r = run_callback({ x -> needs_doubler(x) })
+  println(r)
+}
+"#,
+        "does not implement trait 'Doubler'",
+    );
+}
+
+// ── GAP (round 17 F3): method-name coherence across distinct traits
+//
+// Registering two user-defined traits with the same method name on
+// the same target type silently overwrote the first impl's entry in
+// `method_table`, so `.name()` routed to the last-registered trait.
+// Must now be a hard error "ambiguous method ..." at impl
+// registration time.
+
+#[test]
+fn test_ambiguous_method_across_distinct_traits_rejected() {
+    assert_type_error(
+        r#"
+trait First { fn name(self) -> String }
+trait Second { fn name(self) -> String }
+trait First for Int { fn name(self) -> String { "first" } }
+trait Second for Int { fn name(self) -> String { "second" } }
+fn main() { println((5).name()) }
+"#,
+        "ambiguous method 'name' on type 'Int'",
+    );
+}
+
+#[test]
+fn test_ambiguous_method_across_distinct_traits_names_both() {
+    let errs = type_errors(
+        r#"
+trait First { fn name(self) -> String }
+trait Second { fn name(self) -> String }
+trait First for Int { fn name(self) -> String { "first" } }
+trait Second for Int { fn name(self) -> String { "second" } }
+fn main() { println((5).name()) }
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("First") && e.contains("Second")),
+        "expected both trait names in ambiguity error, got: {errs:?}"
+    );
+}
+
+// ── GAP (round 17 F5): (s)-pluralization in arity errors
+//
+// Typechecker arity errors used the awkward "1 argument(s), got 2"
+// form. Pin the proper pluralization: both "1 argument" (singular)
+// and "2 arguments" (plural) must appear across the fixed error
+// sites.
+
+#[test]
+fn test_arity_error_uses_singular_for_one_arg() {
+    let errs = type_errors(
+        r#"
+fn takes_one(x) { x + 1 }
+fn main() { takes_one(1, 2) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("1 argument, got 2")),
+        "expected '1 argument, got 2' (singular), got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_arity_error_uses_plural_for_multiple_args() {
+    let errs = type_errors(
+        r#"
+fn takes_two(x, y) { x + y }
+fn main() { takes_two(1) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("2 arguments, got 1")),
+        "expected '2 arguments, got 1' (plural), got: {errs:?}"
+    );
+}
+

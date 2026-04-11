@@ -390,6 +390,252 @@ fn test_one() {
     );
 }
 
+// ── F12: multi-line VmError body renders below caret ─────────────────
+
+/// Round-17 audit F12: a runtime error whose message body spans
+/// multiple lines (e.g. `regex.is_match("[unclosed", "hello")`'s parse
+/// error, which embeds its own caret diagram) must render the body as
+/// `  = note:` continuation lines AFTER the caret block, not inline
+/// with the header where it orphans above the `-->` location.
+///
+/// Mutation reasoning: reverting the F12 fix in src/errors.rs (removing
+/// the `note_body` emission block and writing the full `self.message`
+/// into the header as before) makes the `  = note:` substring either
+/// not appear at all, or appear BEFORE the caret — both of which fail
+/// the ordering assertion below.
+#[test]
+fn test_multi_line_vm_error_renders_body_below_caret() {
+    let path = temp_silt_file(
+        "multi_line_vm_err",
+        r#"import regex
+fn main() {
+  let r = regex.is_match("[unclosed", "hello")
+  r
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected multi-line regex error to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("error[runtime]"),
+        "expected 'error[runtime]' label, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("-->"),
+        "expected '-->' locator, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("= note:"),
+        "expected '= note:' continuation marker, got: {stderr}"
+    );
+
+    // Ordering: the header must come first, then `-->`, then the caret
+    // line, then the `= note:` body. Any other order is the F12 bug.
+    let header_idx = stderr
+        .find("error[runtime]")
+        .expect("header not found");
+    let loc_idx = stderr.find("-->").expect("--> not found");
+    // Find the caret-bearing line (the one with `^` pointing at the
+    // offending source span). This must come after `-->` and before
+    // the `= note:` body.
+    let caret_idx = stderr
+        .lines()
+        .scan(0usize, |acc, l| {
+            let at = *acc;
+            *acc += l.len() + 1;
+            Some((at, l))
+        })
+        .find(|(_, l)| l.contains('^') && l.contains("invalid regex"))
+        .map(|(at, _)| at)
+        .expect("caret line with 'invalid regex' not found");
+    let note_idx = stderr.find("= note:").expect("= note: not found");
+
+    assert!(
+        header_idx < loc_idx,
+        "header must precede '-->' locator, got: {stderr}"
+    );
+    assert!(
+        loc_idx < caret_idx,
+        "'-->' locator must precede caret, got: {stderr}"
+    );
+    assert!(
+        caret_idx < note_idx,
+        "caret must precede '= note:' body, got: {stderr}"
+    );
+}
+
+// ── F14: multiple errors have blank separator ───────────────────────
+
+/// Round-17 audit F14: when `silt check` reports multiple type errors
+/// in a single file, consecutive error blocks must be separated by a
+/// blank line — otherwise the terminal output looks like a solid wall
+/// of text that's hard to scan. rustc/gcc both follow this convention.
+///
+/// Mutation reasoning: reverting the F14 fix in src/main.rs (dropping
+/// the `eprintln!()` after each `eprintln!("{err}")` in the check path)
+/// removes the blank separator, so `"\n\nerror["` is no longer present
+/// between consecutive errors.
+#[test]
+fn test_multiple_errors_render_with_blank_separator() {
+    let path = temp_silt_file(
+        "multi_err_separator",
+        r#"fn main() {
+  let a: Int = "foo"
+  let b: Int = true
+  let c: Int = [1]
+  a
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected multi-error file to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // At least two error blocks must be present.
+    let error_count = stderr.matches("error[type]").count();
+    assert!(
+        error_count >= 2,
+        "expected >= 2 type errors, got {error_count}: {stderr}"
+    );
+    // The key ordering marker: two consecutive newlines (a blank line)
+    // immediately before the second `error[` header. rustc convention.
+    assert!(
+        stderr.contains("\n\nerror["),
+        "expected '\\n\\nerror[' (blank line between diagnostics), got: {stderr}"
+    );
+}
+
+// ── F13: cross-module call stack consistent path style ─────────────
+
+/// Round-17 audit F13: when a runtime error's call stack crosses a
+/// module boundary, every `->` frame line in the rendered stack must
+/// use a consistent path style (either all absolute or all relative to
+/// cwd). Previously the module_sources lookup returned absolute paths
+/// while the fallback user path was verbatim (often relative), so a
+/// cross-module stack rendered a confusing mix like
+/// `-> wrapper  at /tmp/.../calc.silt:2:20` alongside
+/// `-> main  at main.silt:9:11`.
+///
+/// Mutation reasoning: reverting the F13 fix in src/main.rs (dropping
+/// the path-normalization in `print_frame`) makes the paths for
+/// module-local frames absolute while user-code frames stay verbatim
+/// (relative), tripping the "consistent prefix" assertion below.
+#[test]
+fn test_cross_module_call_stack_uses_consistent_path_style() {
+    // Set up a temp dir with lib + main; use relative path on the
+    // command line so the main file's path stays relative. The module
+    // resolver canonicalizes imports to absolute paths — that's the
+    // asymmetry the finding points at.
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_cross_module_paths_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+    let lib = dir.join("calc.silt");
+    let main = dir.join("main.silt");
+    fs::write(
+        &lib,
+        "pub fn kaboom() = 1 / 0\npub fn wrapper() = kaboom()\n",
+    )
+    .unwrap();
+    fs::write(
+        &main,
+        r#"import calc
+
+fn helper() {
+  let r = calc.wrapper()
+  r
+}
+
+fn main() {
+  let r = helper()
+  r
+}
+"#,
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg("main.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected runtime error to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("division by zero"),
+        "expected division by zero, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("call stack:"),
+        "expected call stack block, got: {stderr}"
+    );
+
+    // Collect every "  -> <name>  at <path>:line:col" frame line. The
+    // path prefix before the `<name>.silt:` portion must be consistent
+    // across all frames — either all absolute (starting with `/`) or
+    // all relative (no leading `/`).
+    let frame_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.trim_start().starts_with("->") && l.contains(".silt:"))
+        .collect();
+    assert!(
+        frame_lines.len() >= 2,
+        "expected >= 2 frame lines, got: {stderr}"
+    );
+
+    // Extract the "at <path>" portion of each frame line. A consistent
+    // style means every extracted path either all starts with `/` or
+    // none do.
+    let mut absolute_count = 0;
+    let mut relative_count = 0;
+    for line in &frame_lines {
+        let Some(at_idx) = line.find(" at ") else {
+            continue;
+        };
+        let after_at = &line[at_idx + 4..];
+        // Trim to just the path portion (before the final `:line:col`).
+        // We don't need perfect parsing — just check whether it starts
+        // with `/`.
+        if after_at.starts_with('/') {
+            absolute_count += 1;
+        } else {
+            relative_count += 1;
+        }
+    }
+
+    assert!(
+        absolute_count == 0 || relative_count == 0,
+        "expected consistent path style across frames (all absolute OR all relative), \
+         got {absolute_count} absolute and {relative_count} relative frames.\n\
+         frame lines:\n{}\n\nfull stderr:\n{stderr}",
+        frame_lines.join("\n")
+    );
+}
+
 /// A multi-test run should still print "N tests:" (plural).
 ///
 /// Mutation reasoning: reverting the L4 fix to hard-code "test" would

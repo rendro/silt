@@ -240,6 +240,20 @@ impl fmt::Display for SourceError {
         let label_color = if self.is_warning { c.yellow } else { c.red };
         let label = if self.is_warning { "warning" } else { "error" };
 
+        // F12 fix (audit round 17): multi-line messages must only put
+        // the first line in the header, and emit remaining lines as
+        // `  = note: ...` continuation lines AFTER the caret block.
+        // Otherwise regex/parse errors with embedded snippet bodies
+        // orphan the body text above the `-->` locator, breaking the
+        // clean rustc-style layout.
+        //
+        // Lock: tests/cli_test_rendering_tests.rs
+        // `test_multi_line_vm_error_renders_body_below_caret`.
+        let (header_msg, note_body): (&str, Option<&str>) = match self.message.split_once('\n') {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (self.message.as_str(), None),
+        };
+
         write!(
             f,
             "{bold}{label_color}{label}[{kind}]{reset}{bold}: {msg}{reset}",
@@ -248,7 +262,7 @@ impl fmt::Display for SourceError {
             label = label,
             kind = self.kind,
             reset = c.reset,
-            msg = self.message,
+            msg = header_msg,
         )?;
 
         // Location line: --> file:line:col
@@ -312,11 +326,7 @@ impl fmt::Display for SourceError {
             // the header at the top of the block, and once again
             // here after the outer caret. Lock: tests/modules.rs
             // `test_module_parse_error_inner_snippet_rendered_once`.
-            let caret_msg = self
-                .message
-                .split_once('\n')
-                .map(|(head, _)| head)
-                .unwrap_or(self.message.as_str());
+            // Multi-line body continues as `  = note:` lines below.
             write!(
                 f,
                 "\n {cyan}{gutter:>width$} |{reset} {spacing}{label_color}{bold}^ {msg}{reset}",
@@ -327,11 +337,46 @@ impl fmt::Display for SourceError {
                 spacing = spacing,
                 label_color = label_color,
                 bold = c.bold,
-                msg = caret_msg,
+                msg = header_msg,
             )?;
         }
 
+        // Multi-line body: emit remaining message lines as `= note:`
+        // continuation lines AFTER the caret block, so regex/parse
+        // errors with embedded snippets render cleanly below the
+        // locator instead of being orphaned above it.
+        if let Some(body) = note_body {
+            for (i, line) in body.lines().enumerate() {
+                let prefix = if i == 0 { "= note:" } else { "        " };
+                write!(
+                    f,
+                    "\n  {cyan}{prefix}{reset} {line}",
+                    cyan = c.cyan,
+                    reset = c.reset,
+                    prefix = prefix,
+                    line = line,
+                )?;
+            }
+        }
+
         Ok(())
+    }
+}
+
+/// Render a sequence of errors to stderr with a blank line between each
+/// diagnostic, following the rustc/gcc convention. Used by the `silt run`
+/// and `silt check` paths so multiple errors don't form a solid wall of
+/// text. A trailing newline after the last error is NOT emitted — callers
+/// that need one should add it themselves.
+///
+/// Lock: tests/cli_test_rendering_tests.rs
+/// `test_multiple_errors_render_with_blank_separator`.
+pub fn eprintln_errors_with_separator(errors: &[&SourceError]) {
+    for (i, err) in errors.iter().enumerate() {
+        if i > 0 {
+            eprintln!();
+        }
+        eprintln!("{err}");
     }
 }
 

@@ -464,23 +464,30 @@ impl Parser {
 
         match result {
             Ok(decl) => Ok((decl, None)),
-            Err((stub, err)) => Ok((stub, Some(err))),
+            Err(boxed) => {
+                let (stub, err) = *boxed;
+                Ok((stub, Some(err)))
+            }
         }
     }
 
     /// Parse the tail of a function declaration (after `fn name`), with
     /// partial salvage on errors. On success, returns a complete FnDecl.
-    /// On failure, returns `(stub_fn_decl, parse_error)`.
+    /// On failure, returns `(stub_fn_decl, parse_error)` boxed to keep
+    /// the `Err` variant small (clippy `result_large_err`).
     fn parse_fn_decl_tail(
         &mut self,
         name: Symbol,
         span: Span,
-    ) -> std::result::Result<FnDecl, (FnDecl, ParseError)> {
+    ) -> std::result::Result<FnDecl, Box<(FnDecl, ParseError)>> {
         // Try to parse params. On failure, emit a stub with empty params.
         let params = match self.parse_fn_params() {
             Ok(p) => p,
             Err(e) => {
-                return Err((self.make_recovery_stub(name, Vec::new(), None, span), e));
+                return Err(Box::new((
+                    self.make_recovery_stub(name, Vec::new(), None, span),
+                    e,
+                )));
             }
         };
 
@@ -490,10 +497,10 @@ impl Parser {
             match self.parse_type_expr() {
                 Ok(t) => Some(t),
                 Err(e) => {
-                    return Err((
+                    return Err(Box::new((
                         self.make_recovery_stub(name, params, None, span),
                         e,
-                    ));
+                    )));
                 }
             }
         } else {
@@ -526,10 +533,10 @@ impl Parser {
                 Ok(())
             })();
             if let Err(e) = result {
-                return Err((
+                return Err(Box::new((
                     self.make_recovery_stub(name, params, return_type, span),
                     e,
-                ));
+                )));
             }
             clauses
         } else {
@@ -544,20 +551,20 @@ impl Parser {
             match self.parse_expr() {
                 Ok(e) => e,
                 Err(err) => {
-                    return Err((
+                    return Err(Box::new((
                         self.make_recovery_stub(name, params, return_type, span),
                         err,
-                    ));
+                    )));
                 }
             }
         } else if self.at(&Token::LBrace) {
             match self.parse_block() {
                 Ok(b) => b,
                 Err(err) => {
-                    return Err((
+                    return Err(Box::new((
                         self.make_recovery_stub(name, params, return_type, span),
                         err,
-                    ));
+                    )));
                 }
             }
         } else {

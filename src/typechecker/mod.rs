@@ -124,6 +124,35 @@ pub(super) struct MethodEntry {
     pub(super) method_type: Type,
     pub(super) span: Span,
     pub(super) is_auto_derived: bool,
+    /// GAP (round 17 F3): name of the trait that provided this method.
+    /// Used for coherence diagnostics when two distinct traits supply
+    /// a method with the same name for the same target type. `None`
+    /// for auto-derived entries (Showable on every type, etc.) that
+    /// don't participate in user-visible coherence rules.
+    pub(super) trait_name: Option<Symbol>,
+}
+
+/// A deferred where-clause obligation captured at a call site whose
+/// type argument was still an unresolved type variable. Resolved at
+/// the end of inference in `finalize_deferred_checks`.
+#[derive(Debug, Clone)]
+pub(super) struct PendingWhereConstraint {
+    /// The tyvar at the call site that carries the obligation.
+    pub(super) tyvar: TyVar,
+    /// The trait name the obligation requires.
+    pub(super) trait_name: Symbol,
+    /// Name of the callee function (for nicer diagnostics).
+    pub(super) callee_fn_name: Option<Symbol>,
+    /// Span of the call site.
+    pub(super) span: Span,
+    /// Snapshot of the enclosing fn's active constraints at the
+    /// time of the call (used to decide whether the obligation is
+    /// already covered).
+    pub(super) active_snapshot: HashMap<TyVar, Vec<Symbol>>,
+    /// Snapshot of the enclosing fn's param tyvars at the time of
+    /// the call (used to decide whether the obligation touches the
+    /// enclosing fn's own polymorphism).
+    pub(super) param_tyvars: Vec<TyVar>,
 }
 
 // ── The type checker ────────────────────────────────────────────────
@@ -202,22 +231,14 @@ pub struct TypeChecker {
     /// caller has populated it.
     pub(super) current_type_anno_span: Option<Span>,
     /// B4: deferred where-clause obligations seen at call sites where
-    /// the type argument stayed an unresolved type variable. Each
-    /// entry is `(tyvar_at_call_site, trait_name, callee_fn_name,
-    /// span, snapshot_of_active_constraints)`. Finalize re-applies
-    /// the substitution after all bodies are inferred: if the var
-    /// resolved to a concrete type with a matching impl, the
-    /// obligation is satisfied; if it resolved to a type variable
-    /// still not covered by the enclosing fn's active constraints at
-    /// the time of the call, a clean diagnostic is emitted.
-    pub(super) pending_where_constraints: Vec<(
-        TyVar,
-        Symbol,
-        Option<Symbol>,
-        Span,
-        HashMap<TyVar, Vec<Symbol>>,
-        Vec<TyVar>,
-    )>,
+    /// the type argument stayed an unresolved type variable.
+    /// Finalize re-applies the substitution after all bodies are
+    /// inferred: if the var resolved to a concrete type with a
+    /// matching impl, the obligation is satisfied; if it resolved to
+    /// a type variable still not covered by the enclosing fn's
+    /// active constraints at the time of the call, a clean
+    /// diagnostic is emitted.
+    pub(super) pending_where_constraints: Vec<PendingWhereConstraint>,
     /// B4: the instantiated type-variable IDs of the enclosing function's
     /// parameters at the time `check_fn_body` is running. Used to decide
     /// whether a call-site where-constraint is touching the enclosing fn's
@@ -732,6 +753,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -754,6 +776,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -776,6 +799,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -801,6 +825,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -992,10 +1017,27 @@ impl TypeChecker {
                     // Scheme was narrowed — some vars got constrained
                     any_narrowed = true;
                     let mut final_scheme = new_scheme.clone();
-                    // Remap constraints that still apply
-                    for (tv, trait_name) in &original_scheme.constraints {
-                        if new_scheme.vars.contains(tv) {
-                            final_scheme.constraints.push((*tv, *trait_name));
+                    // BROKEN (round 17 F1): `original_scheme.constraints` uses
+                    // the pass-2 tyvars, while `new_scheme.vars` uses fresh
+                    // pass-3 tyvars from `instantiate_with_constraints` that
+                    // flowed through body inference into `fn_body_types`.
+                    // A direct `new_scheme.vars.contains(old_tv)` check never
+                    // matches, so constraints were silently dropped and calls
+                    // like `use_doublable("text")` slipped through typecheck
+                    // and crashed at runtime with "no method doubled for
+                    // String". Walk the two `Type` trees structurally in
+                    // lockstep to build an old→new tyvar remap, then rewrite
+                    // the original constraints through it. Narrowing can only
+                    // tighten the scheme (never introduce new vars), so any
+                    // original constraint whose old var is still free in the
+                    // new scheme maps to a concrete new var.
+                    let remap =
+                        align_tyvars(&original_scheme.ty, &new_scheme.ty);
+                    for (old_tv, trait_name) in &original_scheme.constraints {
+                        if let Some(&new_tv) = remap.get(old_tv)
+                            && new_scheme.vars.contains(&new_tv)
+                        {
+                            final_scheme.constraints.push((new_tv, *trait_name));
                         }
                     }
                     env.define(*name, final_scheme);
@@ -1395,6 +1437,7 @@ impl TypeChecker {
                     method_type: method_type.clone(),
                     span: dummy_span,
                     is_auto_derived: true,
+                    trait_name: None,
                 },
             );
         }
@@ -1772,6 +1815,31 @@ impl TypeChecker {
 
             let fn_type = Type::Fun(param_types, Box::new(ret_type));
 
+            // GAP (round 17 F3): method-name coherence across distinct
+            // traits on the same target. If `(target, method_name)` is
+            // already in the method table and came from a *different*
+            // user-defined trait, registering this impl would silently
+            // overwrite the earlier one and route every `.method()`
+            // call to the last-registered trait. Reject with an
+            // ambiguity error that names both traits.
+            if let Some(existing) =
+                self.method_table.get(&(ti.target_type, method.name))
+                && !existing.is_auto_derived
+                && let Some(existing_trait) = existing.trait_name
+                && existing_trait != ti.trait_name
+            {
+                self.error(
+                    format!(
+                        "ambiguous method '{}' on type '{}': provided by traits {}, {}",
+                        method.name,
+                        ti.target_type,
+                        existing_trait,
+                        ti.trait_name
+                    ),
+                    ti.span,
+                );
+            }
+
             // New: populate method_table. Store the raw template type —
             // lookup sites wrap it in a scheme and instantiate to get fresh
             // type variables per call (otherwise the first call would
@@ -1782,6 +1850,7 @@ impl TypeChecker {
                     method_type: fn_type.clone(),
                     span: ti.span,
                     is_auto_derived: false,
+                    trait_name: Some(ti.trait_name),
                 },
             );
 
@@ -1794,6 +1863,61 @@ impl TypeChecker {
 }
 
 // ── Helper functions ────────────────────────────────────────────────
+
+/// Walk two types in parallel and build a mapping from `old` tyvars to
+/// `new` tyvars wherever they appear at the same structural position.
+/// Used by pass-3 scheme narrowing to remap where-clause constraints
+/// from their pass-2 tyvar ids (stored in the original scheme) to the
+/// fresh pass-3 tyvar ids that ended up in the narrowed scheme after
+/// body inference. Structurally divergent positions are skipped — the
+/// caller only uses the mapping for entries whose new tyvar is still
+/// free in the narrowed scheme, so spurious matches are harmless.
+pub(super) fn align_tyvars(old: &Type, new: &Type) -> HashMap<TyVar, TyVar> {
+    let mut map = HashMap::new();
+    align_tyvars_into(old, new, &mut map);
+    map
+}
+
+fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
+    match (old, new) {
+        (Type::Var(o), Type::Var(n)) => {
+            map.entry(*o).or_insert(*n);
+        }
+        (Type::Fun(op, or_), Type::Fun(np, nr)) => {
+            if op.len() == np.len() {
+                for (a, b) in op.iter().zip(np.iter()) {
+                    align_tyvars_into(a, b, map);
+                }
+            }
+            align_tyvars_into(or_, nr, map);
+        }
+        (Type::List(o), Type::List(n)) => align_tyvars_into(o, n, map),
+        (Type::Set(o), Type::Set(n)) => align_tyvars_into(o, n, map),
+        (Type::Channel(o), Type::Channel(n)) => align_tyvars_into(o, n, map),
+        (Type::Tuple(o), Type::Tuple(n)) => {
+            if o.len() == n.len() {
+                for (a, b) in o.iter().zip(n.iter()) {
+                    align_tyvars_into(a, b, map);
+                }
+            }
+        }
+        (Type::Map(ok, ov), Type::Map(nk, nv)) => {
+            align_tyvars_into(ok, nk, map);
+            align_tyvars_into(ov, nv, map);
+        }
+        (Type::Record(_, of), Type::Record(_, nf)) if of.len() == nf.len() => {
+            for ((_, a), (_, b)) in of.iter().zip(nf.iter()) {
+                align_tyvars_into(a, b, map);
+            }
+        }
+        (Type::Generic(_, oa), Type::Generic(_, na)) if oa.len() == na.len() => {
+            for (a, b) in oa.iter().zip(na.iter()) {
+                align_tyvars_into(a, b, map);
+            }
+        }
+        _ => {}
+    }
+}
 
 /// Collect the set of variable names bound by a pattern.
 pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
@@ -2006,6 +2130,7 @@ impl ReplTypeContext {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2028,6 +2153,7 @@ impl ReplTypeContext {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2049,6 +2175,7 @@ impl ReplTypeContext {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2071,6 +2198,7 @@ impl ReplTypeContext {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3260,22 +3388,34 @@ fn main() {
 
     #[test]
     fn test_where_constraint_violated() {
-        // Should produce an error: Int doesn't implement Showable
+        // GAP (round 17 F4): the previous test only bound `where x: Showable`
+        // on `x` which never referenced a valid type variable — the
+        // constraint-introduction check fired with a suggestion string
+        // that happened to contain "Showable", and the test's disjunctive
+        // assertion (`contains("does not implement") || contains("Showable")`)
+        // matched the wrong branch. It was green against a codebase that
+        // completely dropped the "does not implement" check.
+        //
+        // Pin the real path: declare `display` with a proper typed
+        // parameter `x: a where a: Showable`, implement Showable for Int
+        // only, then call `display("text")`. Int satisfies; String does
+        // not. Must now produce "type 'String' does not implement trait
+        // 'Showable'".
         let errors = check_errors(
             r#"
-            trait Showable {
-                fn show(self) -> String { "default" }
-            }
-            fn display(x) where x: Showable {
-                x
-            }
-            fn main() {
-                display(42)
-            }
+            trait Showable { fn show(self) -> String }
+            trait Showable for Int { fn show(self) -> String { "int" } }
+            fn display(x: a) -> String where a: Showable { x.show() }
+            fn main() { display("text") }
         "#,
         );
-        assert!(errors.iter().any(|e| e.message.contains("does not implement") || e.message.contains("Showable")),
-            "expected constraint violation error, got: {:?}", errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("does not implement")
+                    && e.message.contains("Showable")),
+            "expected 'does not implement trait Showable', got: {errors:?}"
+        );
     }
 
     // ── Record types with generic fields (List, Map) ───────────────

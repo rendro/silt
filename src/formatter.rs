@@ -973,9 +973,9 @@ fn extract_comments(
 ///   2. A `{- ... -}` block comment (possibly nested) that follows code
 ///      and whose closer is followed only by whitespace (or an even later
 ///      trailing `--` line comment), e.g.
-///          `let x = 1 {- trailing -}`
-///          `let x = 1 {- {- nested -} -}`
-///          `let x = 1 {- block -} -- followed by line comment`
+///      `let x = 1 {- trailing -}`
+///      `let x = 1 {- {- nested -} -}`
+///      `let x = 1 {- block -} -- followed by line comment`
 ///      A block comment with more code after its closer is NOT a trailing
 ///      comment for the statement — it is an inline annotation.
 ///
@@ -1055,9 +1055,7 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     // No line comment. If we saw a block comment, check whether it
     // qualifies as a trailing block comment — its closer must be
     // followed only by whitespace (or a `--` line comment).
-    let Some(start) = block_start else {
-        return None;
-    };
+    let start = block_start?;
     // Walk from `start` to find the matching close, accounting for
     // nesting. The outer scan above already tracked depth, but by that
     // point it may have discovered additional block comments later on
@@ -1274,12 +1272,357 @@ impl std::error::Error for FmtError {}
 
 pub fn format(source: &str) -> Result<String, FmtError> {
     let tokens = Lexer::new(source).tokenize().map_err(FmtError::Lex)?;
-    let program = Parser::new(tokens)
+    let program = Parser::new(tokens.clone())
         .parse_program()
         .map_err(FmtError::Parse)?;
-    Ok(with_current_source(source, || {
+    let formatted = with_current_source(source, || {
         format_program_with_comments(&program, source)
-    }))
+    });
+    Ok(splice_inline_block_comments(source, &tokens, formatted))
+}
+
+/// Post-processing pass that re-inserts any `{- ... -}` block comments
+/// from the source that the main pretty-printer dropped. The formatter's
+/// primary comment-handling logic recognises block comments at a handful
+/// of structural positions (leading inline on a statement line, trailing
+/// on a code line, standalone on their own line), but silently loses
+/// block comments that appear mid-expression, inside parameter lists,
+/// call argument lists, or list-literal elements — because the lexer
+/// treats them as whitespace and the AST has nowhere to store them.
+///
+/// We reconstruct these "interstitial" comments by:
+///
+///   1. Scanning the original source for every `{- ... -}` byte range
+///      (respecting string literals and `--` line comments).
+///   2. Classifying each range by the token-stream "gap" it occupies —
+///      a gap is the space between two consecutive non-trivia tokens in
+///      the source.
+///   3. Re-lexing the formatter's output and locating the SAME gap index
+///      (the output's token stream is identical to the source's modulo
+///      whitespace and comments, since the formatter is AST-preserving).
+///   4. Checking whether the exact block-comment text is already present
+///      inside the output's gap byte range (which will be true when the
+///      main formatter already emitted it via its leading-inline /
+///      trailing / standalone paths). If absent, splice the block
+///      comment in just before the next token with appropriate single-
+///      space padding on each side.
+fn splice_inline_block_comments(
+    source: &str,
+    source_tokens: &[crate::lexer::SpannedToken],
+    output: String,
+) -> String {
+    // Collect source block-comment byte ranges (outside strings / line comments).
+    let src_comments = collect_source_block_comments(source);
+    if src_comments.is_empty() {
+        return output;
+    }
+    // Filter source tokens to drop Eof. We'll treat "before first token"
+    // comments (handled by the top-level leading-comment emitter) as
+    // out-of-scope, but comments after the last real token need to be
+    // spliced into the tail of the output so they aren't lost.
+    let src_tokens: Vec<&crate::lexer::SpannedToken> = source_tokens
+        .iter()
+        .filter(|(tok, _)| !matches!(tok, crate::lexer::Token::Eof | crate::lexer::Token::Newline))
+        .collect();
+    if src_tokens.is_empty() {
+        return output;
+    }
+    let src_token_offsets: Vec<usize> = src_tokens.iter().map(|(_, sp)| sp.offset).collect();
+
+    // Gap index semantics:
+    //   gap_index in 0..src_tokens.len()-1 => "between src_tokens[gap]
+    //     and src_tokens[gap+1]".
+    //   gap_index == src_tokens.len()-1 (the LAST gap slot, aka TAIL) =>
+    //     "after src_tokens[last]", used for comments that sit between
+    //     the final real token and end of file.
+    // We skip comments that fall strictly BEFORE the first token —
+    // those are handled by the top-level standalone-comment emitter.
+    let tail_gap = src_tokens.len() - 1;
+    let mut gap_comments: Vec<(usize, String)> = Vec::new();
+    for (cmt_off, cmt_text) in &src_comments {
+        // Find first i such that src_token_offsets[i] > cmt_off.
+        let gap = match src_token_offsets.iter().position(|&o| o > *cmt_off) {
+            Some(0) => continue, // before first token — skip
+            Some(k) => k - 1,
+            None => tail_gap, // after last token — route to tail gap
+        };
+        gap_comments.push((gap, cmt_text.clone()));
+    }
+    if gap_comments.is_empty() {
+        return output;
+    }
+
+    // Re-lex the formatter output. This should produce the same token
+    // sequence as the source (modulo comments/whitespace). If re-lexing
+    // fails for any reason, fall back to returning the output unchanged
+    // (never corrupt a working format by panicking on a splice).
+    let out_tokens = match Lexer::new(&output).tokenize() {
+        Ok(t) => t,
+        Err(_) => return output,
+    };
+    let out_tokens: Vec<crate::lexer::SpannedToken> = out_tokens
+        .into_iter()
+        .filter(|(tok, _)| !matches!(tok, crate::lexer::Token::Eof | crate::lexer::Token::Newline))
+        .collect();
+    // The formatter occasionally ADDS tokens relative to source — for
+    // example, record-field trailing commas. Greedy-align the source
+    // token stream onto the output token stream so that each source
+    // token maps to an output token even if the formatter inserted
+    // extras in between. If alignment fails (source has tokens the
+    // output lacks, or the two streams diverge irreconcilably) we fall
+    // back to returning the unspliced output rather than risking
+    // corruption.
+    let src_to_out = match align_source_tokens_to_output(&src_tokens, &out_tokens) {
+        Some(m) => m,
+        None => return output,
+    };
+    let out_token_offsets: Vec<usize> = out_tokens.iter().map(|(_, sp)| sp.offset).collect();
+
+    // Group comments by gap index in source order. Within a single gap,
+    // multiple block comments keep their source order.
+    gap_comments.sort_by_key(|(g, _)| *g);
+
+    // Build a list of (insertion_offset, text_to_insert) pairs. Apply
+    // right-to-left so earlier positions stay valid.
+    let mut insertions: Vec<(usize, String)> = Vec::new();
+    for (gap, cmt_text) in &gap_comments {
+        if *gap == tail_gap {
+            // Tail-of-file comment. Check whether it's already emitted
+            // anywhere after the last source-corresponding token in the
+            // output; if so, skip. Otherwise insert it just before the
+            // output's final trailing newline(s) so the file still ends
+            // with `\n`.
+            let tail_start = out_token_offsets[src_to_out[tail_gap]];
+            let tail_slice = &output[tail_start..];
+            if tail_slice.contains(cmt_text.as_str()) {
+                continue;
+            }
+            // Find insertion point: just before any trailing newline(s).
+            let bytes = output.as_bytes();
+            let mut insert_at = output.len();
+            while insert_at > 0 && bytes[insert_at - 1] == b'\n' {
+                insert_at -= 1;
+            }
+            let before = output[..insert_at].chars().last();
+            let needs_lead_space = match before {
+                Some(c) => !c.is_whitespace(),
+                None => false,
+            };
+            let mut payload = String::new();
+            if needs_lead_space {
+                payload.push(' ');
+            }
+            payload.push_str(cmt_text);
+            insertions.push((insert_at, payload));
+            continue;
+        }
+
+        // Inter-source-token gap: the comment sits between source
+        // tokens at indices `gap` and `gap+1`. Map those to their
+        // positions in the output token stream. Between the two mapped
+        // output-token positions there may be additional tokens that
+        // the formatter inserted (e.g. a trailing comma) — we still
+        // want to splice the comment right before the next
+        // source-corresponding output token.
+        let gap_lo_out = src_to_out[*gap];
+        let gap_hi_out = src_to_out[gap + 1];
+        let gap_lo = out_token_offsets[gap_lo_out];
+        let gap_hi = out_token_offsets[gap_hi_out];
+        if gap_hi > output.len() {
+            continue;
+        }
+        let gap_slice = &output[gap_lo..gap_hi];
+        if gap_slice.contains(cmt_text.as_str()) {
+            continue;
+        }
+        // Insertion position: just before the next source-corresponding
+        // output token.
+        let insert_at = gap_hi;
+        let before = output[..insert_at].chars().last();
+        let after_ch = output[insert_at..].chars().next();
+        let needs_lead_space = match before {
+            Some(c) => !c.is_whitespace(),
+            None => false,
+        };
+        // Only pad AFTER the comment when the next character is alphanumeric
+        // or an opening bracket — the kinds of token starts that would
+        // otherwise glue against the `-}`. Closing punctuation (`,`, `)`,
+        // `]`, `}`) must stay tight so we don't produce `a {- c -} ,`.
+        let needs_trail_space = match after_ch {
+            Some(c) => {
+                !c.is_whitespace()
+                    && !matches!(c, ',' | ')' | ']' | '}' | ';' | '.')
+            }
+            None => false,
+        };
+        let mut payload = String::new();
+        if needs_lead_space {
+            payload.push(' ');
+        }
+        payload.push_str(cmt_text);
+        if needs_trail_space {
+            payload.push(' ');
+        }
+        insertions.push((insert_at, payload));
+    }
+    if insertions.is_empty() {
+        return output;
+    }
+    // Apply insertions right-to-left so earlier positions stay valid.
+    insertions.sort_by_key(|(off, _)| *off);
+    let mut result = output;
+    for (off, text) in insertions.iter().rev() {
+        result.insert_str(*off, text);
+    }
+    result
+}
+
+/// Greedily align a source token stream onto an output token stream
+/// produced by re-lexing the formatter's output. Returns a vector
+/// `src_to_out` where `src_to_out[i]` is the output-token index
+/// corresponding to source-token `i`, or `None` if alignment fails.
+///
+/// The formatter may ADD tokens relative to source (for example by
+/// inserting a trailing comma on the last record field), but is
+/// AST-preserving and therefore preserves every token that was in
+/// source in the same relative order. We walk both streams in parallel,
+/// skipping output tokens that don't match the current source token;
+/// alignment only fails if a source token has no corresponding output
+/// token at all, which would indicate a more serious mismatch.
+fn align_source_tokens_to_output(
+    src: &[&crate::lexer::SpannedToken],
+    out: &[crate::lexer::SpannedToken],
+) -> Option<Vec<usize>> {
+    let mut map = Vec::with_capacity(src.len());
+    let mut j = 0usize;
+    for (src_tok, _) in src.iter().map(|st| (&st.0, &st.1)) {
+        // Advance `j` until `out[j]` matches `src_tok` (or we run out).
+        while j < out.len() && !token_kinds_equivalent(src_tok, &out[j].0) {
+            j += 1;
+        }
+        if j >= out.len() {
+            return None;
+        }
+        map.push(j);
+        j += 1;
+    }
+    Some(map)
+}
+
+/// Strict token-kind equality for the splicer's alignment. Two tokens
+/// match if they are the same variant with the same payload — including
+/// literal values, identifiers, and string content — since the
+/// formatter is AST-preserving and must reproduce each token verbatim.
+fn token_kinds_equivalent(a: &crate::lexer::Token, b: &crate::lexer::Token) -> bool {
+    a == b
+}
+
+/// Scan `source` for every `{- ... -}` block comment span that sits
+/// outside of string literals and `--` line comments. Returns a list
+/// of (byte_start, raw_text) where `raw_text` includes the outermost
+/// `{-` and `-}`. Nesting is tracked so `{- outer {- inner -} outer -}`
+/// produces ONE span covering the entire outer comment.
+fn collect_source_block_comments(source: &str) -> Vec<(usize, String)> {
+    let bytes = source.as_bytes();
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut in_triple = false;
+    while i < bytes.len() {
+        // Triple-quoted string: skip content until closing `"""`.
+        if !in_string && !in_triple
+            && i + 2 < bytes.len()
+            && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"'
+        {
+            in_triple = true;
+            i += 3;
+            continue;
+        }
+        if in_triple {
+            if i + 2 < bytes.len()
+                && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"'
+            {
+                in_triple = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        // Line comment `-- ...` to end of line.
+        if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Block comment `{- ... -}` (nesting allowed).
+        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            let start = i;
+            let mut depth: usize = 1;
+            i += 2;
+            while i < bytes.len() && depth > 0 {
+                if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                    depth += 1;
+                    i += 2;
+                    continue;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                    depth -= 1;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
+            if depth == 0 {
+                // Valid, terminated block comment.
+                let text = source[start..i].to_string();
+                out.push((start, text));
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Normalize a top-level comment's raw text for emission: strip trailing
+/// ASCII whitespace (spaces, tabs, carriage returns) from every line. This
+/// matches the body comment emission path, which calls `.trim()` on each
+/// comment line, and prevents round-tripping from silently inserting
+/// trailing spaces on comment-only lines.
+///
+/// For multi-line block comments (which may span several physical lines
+/// in `c.text`) we walk line by line so interior indentation on
+/// subsequent lines is preserved while stray trailing whitespace on each
+/// line is removed.
+fn top_level_comment_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut first = true;
+    for line in raw.split('\n') {
+        if !first {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end_matches([' ', '\t', '\r']));
+        first = false;
+    }
+    out
 }
 
 fn format_program_with_comments(program: &Program, source: &str) -> String {
@@ -1291,7 +1634,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         }
         let mut result: String = comments
             .iter()
-            .map(|c| c.text.clone())
+            .map(|c| top_level_comment_text(&c.text))
             .collect::<Vec<_>>()
             .join("\n");
         if !result.ends_with('\n') {
@@ -1381,7 +1724,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
             let comment_block = if i > 0 && !buckets[i].is_empty() {
                 let mut cb = String::new();
                 for c in &buckets[i] {
-                    cb.push_str(&c.text);
+                    cb.push_str(&top_level_comment_text(&c.text));
                     cb.push('\n');
                 }
                 cb
@@ -1399,7 +1742,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
 
     // Comments before first declaration
     for c in &buckets[0] {
-        result.push_str(&c.text);
+        result.push_str(&top_level_comment_text(&c.text));
         result.push('\n');
     }
     if !buckets[0].is_empty() {
@@ -1432,7 +1775,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         // (skip bucket[0] since it was already emitted above)
         if i > 0 && !buckets[i].is_empty() {
             for c in &buckets[i] {
-                result.push_str(&c.text);
+                result.push_str(&top_level_comment_text(&c.text));
                 result.push('\n');
             }
             result.push('\n');
@@ -1445,7 +1788,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     if !buckets[n].is_empty() {
         result.push_str("\n\n");
         for c in &buckets[n] {
-            result.push_str(&c.text);
+            result.push_str(&top_level_comment_text(&c.text));
             result.push('\n');
         }
     }

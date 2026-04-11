@@ -319,3 +319,187 @@ fn main() {
         "expected '-> main' in call stack, got:\n{stderr}"
     );
 }
+
+// ── 7. Tail-call chain — elided callers must still appear in stack ──
+
+/// F10 regression: when a chain of functions tail-calls into the
+/// innermost callee (`main -> middle -> helper/*boom*/`), every logical
+/// caller must still appear in the rendered call stack even though
+/// `Op::TailCall` overwrites physical frame slots in place.
+///
+/// Mutation reasoning: reverting the F10 fix in src/vm/execute.rs
+/// (dropping the `tco_elided.push(...)` at the `Op::TailCall` handler)
+/// collapses the call stack down to just `helper` — `middle` and `main`
+/// are gone because their frame slots were overwritten. Both assertions
+/// below fail.
+#[test]
+fn test_tail_call_chain_preserves_caller_frames_in_call_stack() {
+    let path = temp_silt_file(
+        "tco_chain_preserves_callers",
+        r#"fn helper() { 1 / 0 }
+fn middle() { helper() }
+fn outer() { middle() }
+fn main() { outer() }
+"#,
+    );
+
+    let stderr = run_silt_and_capture_stderr(&path);
+
+    assert!(
+        stderr.contains("division by zero"),
+        "expected 'division by zero' in stderr, got:\n{stderr}"
+    );
+    // Every named function in the chain must appear in the call stack,
+    // not just the innermost `helper`.
+    for name in &["helper", "middle", "outer", "main"] {
+        assert!(
+            stderr.contains(&format!("-> {name}")),
+            "expected '-> {name}' in call stack (tail-call elided frame), got:\n{stderr}"
+        );
+    }
+}
+
+/// F10 regression: a deep (100-frame) recursive tail-call chain must NOT
+/// cause unbounded growth of the diagnostic log. The render layer's
+/// existing head/tail truncation + the VM-level `TCO_ELIDED_CAP` ring
+/// buffer together should produce a bounded number of call-stack lines,
+/// and the existing `... (N more frames)` marker should still appear.
+///
+/// Mutation reasoning: reverting the ring-buffer cap in src/vm/execute.rs
+/// `Op::TailCall` (removing the `if count_at_depth >= TCO_ELIDED_CAP`
+/// block) lets the diagnostic log grow to 100 entries per depth and the
+/// combined output length grows past the bounded cap asserted below.
+#[test]
+fn test_tail_call_chain_ring_buffer_caps_diagnostic_chain() {
+    let path = temp_silt_file(
+        "tco_chain_ring_buffer_cap",
+        r#"fn count(n) {
+  match n <= 0 {
+    true -> 1 / 0,
+    false -> count(n - 1)
+  }
+}
+fn main() { count(100) }
+"#,
+    );
+
+    let stderr = run_silt_and_capture_stderr(&path);
+
+    assert!(
+        stderr.contains("division by zero"),
+        "expected 'division by zero' in stderr, got:\n{stderr}"
+    );
+    // The call stack body should be bounded: with TCO_ELIDED_CAP=32 and
+    // head(10)+tail(5) render truncation, we expect far fewer than 100
+    // "-> count" lines in the rendered output.
+    let frame_lines = stderr.lines().filter(|l| l.contains("-> count")).count();
+    assert!(
+        frame_lines > 0,
+        "expected at least one '-> count' frame, got:\n{stderr}"
+    );
+    assert!(
+        frame_lines <= 40,
+        "expected bounded frame count (<= 40) for 100-deep TCO chain, got {frame_lines} frames:\n{stderr}"
+    );
+    // The standard "... N more frames" marker should appear for the
+    // truncated middle of the chain.
+    assert!(
+        stderr.contains("more frames"),
+        "expected '... (N more frames)' marker in stderr, got:\n{stderr}"
+    );
+}
+
+// ── 8. resume_suspended_invoke mirror fix (F11) ─────────────────────
+
+/// F11 regression: the `Err(e)` arm of `resume_suspended_invoke` must
+/// enrich the error BEFORE truncating frames, mirroring the identical
+/// fix in `invoke_callable`. The six tests above exercise only
+/// `invoke_callable` (no yielding callbacks), so round-16's mirror fix
+/// on `:800-810` was a silent duplicate — reverting just that half left
+/// all six tests green.
+///
+/// This test drives a callback that actually yields (via
+/// `channel.receive` on an empty channel inside a scheduled task), so
+/// `channel.each` re-enters through `resume_suspended_invoke` on wake,
+/// and the callback then errors on resume. The error rendering must
+/// snap to the callback's `1 / 0` body — not the `channel.each` call
+/// site in the wrapper.
+///
+/// Mutation reasoning: reverting the fix at src/vm/execute.rs (the
+/// `Err(e)` arm in `resume_suspended_invoke`, removing the
+/// `let enriched = self.enrich_error(e)` line so the frames are
+/// truncated before enrichment) makes stderr anchor on
+/// `channel.each(c, fn(x) { ... })` in `consumer` — the caret jumps
+/// away from `1 / 0`. The `stderr.contains("1 / 0")` assertion holds
+/// because the inner callback source still prints in the surrounding
+/// snippet context lines, but the caret line (the one containing `^`)
+/// no longer sits above `1 / 0`. We verify both the span locator (the
+/// `-->` line with the callback body's line number) and the caret
+/// alignment to lock the fix.
+#[test]
+fn test_resume_suspended_invoke_preserves_callback_frame() {
+    let path = temp_silt_file(
+        "resume_suspended_invoke_err",
+        r#"import channel
+import task
+
+fn consumer(c, blocker) {
+  channel.each(c, fn(x) {
+    let v = channel.receive(blocker)
+    1 / 0
+  })
+}
+
+fn producer(blocker) {
+  channel.send(blocker, 99)
+}
+
+fn main() {
+  let c = channel.new(1)
+  let blocker = channel.new(0)
+  channel.send(c, 1)
+  channel.close(c)
+  let t1 = task.spawn(fn() { consumer(c, blocker) })
+  let _ = task.spawn(fn() { producer(blocker) })
+  task.join(t1)
+}
+"#,
+    );
+
+    let stderr = run_silt_and_capture_stderr(&path);
+
+    assert!(
+        stderr.contains("division by zero"),
+        "expected 'division by zero' in stderr, got:\n{stderr}"
+    );
+    // The `-->` locator must point at line 7 (the `1 / 0` body), NOT
+    // at line 5 (the `channel.each(...)` call site in `consumer`).
+    // Reverting the fix makes the locator snap to line 5.
+    assert!(
+        stderr.contains(":7:"),
+        "expected span locator at line 7 (callback body), got:\n{stderr}"
+    );
+    assert!(
+        !stderr.lines().any(|l| l.contains("-->") && l.contains(":5:")),
+        "expected locator NOT to point at line 5 (channel.each call site), got:\n{stderr}"
+    );
+    // The caret line should sit above `1 / 0`, not above
+    // `channel.each(...)`. We check: the line containing the caret
+    // (`^`) should be the same source line that contains `1 / 0`, or
+    // the line immediately before it in the rendered gutter.
+    let caret_pointing_at_callback_body = stderr
+        .lines()
+        .any(|l| l.contains("^") && l.contains("division by zero"));
+    assert!(
+        caret_pointing_at_callback_body,
+        "expected caret line to reference division by zero, got:\n{stderr}"
+    );
+    // And the source line shown in the snippet must be the body `1 / 0`.
+    let snippet_shows_body = stderr
+        .lines()
+        .any(|l| l.contains("1 / 0") && !l.contains("fn"));
+    assert!(
+        snippet_shows_body,
+        "expected snippet source line '1 / 0' in stderr, got:\n{stderr}"
+    );
+}

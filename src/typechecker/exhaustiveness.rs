@@ -868,7 +868,8 @@ impl TypeChecker {
                     if missing.is_empty() {
                         "not all patterns are covered".into()
                     } else {
-                        format!("missing variant(s) {}", missing.join(", "))
+                        let word = if missing.len() == 1 { "variant" } else { "variants" };
+                        format!("missing {} {}", word, missing.join(", "))
                     }
                 } else if let Some(rec_info) = self.records.get(name).cloned() {
                     // B1 (round 15): mirror the enum branch for records

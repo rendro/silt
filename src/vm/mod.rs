@@ -54,6 +54,20 @@ pub struct Vm {
     /// iteration state from this slot instead of restarting from index 0.
     pub(crate) suspended_builtin: Option<runtime::SuspendedBuiltin>,
 
+    /// Diagnostic log of callers that were elided by tail-call replacement.
+    /// Each entry is `(frame_depth, caller_name, caller_span)` where
+    /// `frame_depth` is the index in `self.frames` at which the TCO happened
+    /// (i.e. `self.frames.len() - 1` at that moment).  `enrich_error` reads
+    /// this log so tail-call chains still render a full call stack instead
+    /// of showing only the innermost callee.  Entries are pruned when the
+    /// frame at `frame_depth` pops, and the log is bounded per-depth by
+    /// `runtime::TCO_ELIDED_CAP` to cap memory under deeply recursive
+    /// tail-call loops.
+    ///
+    /// Lock: tests/callback_frame_capture_tests.rs
+    /// `test_tail_call_chain_preserves_caller_frames_in_call_stack`.
+    pub(crate) tco_elided: Vec<(usize, String, crate::lexer::Span)>,
+
     // ── Caches ──────────────────────────────────────────────────
     /// Cache for compiled regex patterns (bounded, LRU-like eviction).
     pub(crate) regex_cache: RegexCache,
@@ -100,6 +114,7 @@ impl Vm {
             suspended_invoke: None,
             suspended_builtin: None,
             regex_cache: RegexCache::new(),
+            tco_elided: Vec::new(),
         };
         vm.register_builtins();
         vm
@@ -247,6 +262,7 @@ impl Vm {
             suspended_invoke: None,
             suspended_builtin: None,
             regex_cache: RegexCache::new(),
+            tco_elided: Vec::new(),
         }
     }
 
@@ -392,10 +408,25 @@ impl Vm {
         Ok(&self.current_frame()?.closure.function.chunk)
     }
 
+    /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
+    /// entries that belong to frames no longer on the physical stack.
+    /// Called after any frame pop / truncate / split-off so stale
+    /// diagnostic state doesn't bleed across unrelated calls.
+    pub(crate) fn prune_tco_elided(&mut self, keep_depth: usize) {
+        self.tco_elided.retain(|(d, _, _)| *d < keep_depth);
+    }
+
     // ── Error enrichment ─────────────────────────────────────────
 
     /// Enrich a VmError with the current instruction's source span and the
     /// call stack derived from the VM's frame list.
+    ///
+    /// Tail-call replaced callers are interleaved from `self.tco_elided` so
+    /// the rendered call stack still shows every logical caller even after
+    /// `Op::TailCall` overwrote the physical frame slot in place. Without
+    /// this merge, a chain like `main -> middle -> helper/*boom*/` (where
+    /// `middle` and `main` both tail-called) would render a single-frame
+    /// stack that drops both intermediate names. See F10 in audit round 17.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
         if err.is_yield || err.span.is_some() {
             return err;
@@ -408,13 +439,25 @@ impl Vm {
                 err.span = Some(span);
             }
         }
-        // Build call stack from all frames (skip the top frame since that's the error site).
+        // Build call stack from all frames, innermost first (matches the
+        // existing rendering contract in vm/error.rs::render_call_stack).
+        // For each physical frame at depth `d`, emit (a) the physical
+        // frame's own (name, ip-span), then (b) any `tco_elided` entries
+        // logged at that same depth — newest caller first so the chain
+        // reads "callee -> most-recent-tco-caller -> ... -> oldest-caller".
         let mut stack = Vec::new();
-        for frame in self.frames.iter().rev() {
+        for (depth, frame) in self.frames.iter().enumerate().rev() {
             let func_name = frame.closure.function.name.clone();
             let ip = frame.ip.saturating_sub(1);
             let span = frame.closure.function.chunk.span_at(ip);
             stack.push((func_name, span));
+            // Newer (later-pushed) entries for this depth are more recent
+            // callers, so walk in reverse to keep the callee-first order.
+            for (d, name, caller_span) in self.tco_elided.iter().rev() {
+                if *d == depth {
+                    stack.push((name.clone(), *caller_span));
+                }
+            }
         }
         err.call_stack = stack;
         err

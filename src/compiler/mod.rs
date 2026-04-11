@@ -1261,10 +1261,10 @@ impl Compiler {
     ) -> Option<CompileError> {
         // Don't shadow intra-module lookups: if we're compiling inside
         // `module` itself, the caller already has access via `module_scope`.
-        if let Some((ref cur_mod, _)) = self.module_scope {
-            if cur_mod == module {
-                return None;
-            }
+        if let Some((ref cur_mod, _)) = self.module_scope
+            && cur_mod == module
+        {
+            return None;
         }
         let pub_set = self.module_public_fns.get(module)?;
         // If it's public the normal path resolves it fine.
@@ -2418,7 +2418,7 @@ impl Compiler {
             self.warnings.push(CompileWarning {
                 message: format!(
                     "variable '{s}' shadows the builtin '{s}' module; \
-                     use a different name to access '{s}.* functions"
+                     use a different name to access '{s}.*' functions"
                 ),
                 span,
             });

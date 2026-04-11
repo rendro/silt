@@ -1745,9 +1745,18 @@ fn main() -> String {
 }
 "#,
     );
+    // Round 17 F23: tighten the sibling-looser `contains("hour") &&
+    // contains("out of range")` chain to the exact production prefix
+    // `"time: hour"` so a mutation collapsing several validation sites
+    // into a generic "time component out of range: hour=N" phrase no
+    // longer matches. The production format string lives in
+    // src/builtins/data.rs:231 (`field_as_u32`) as
+    // `"time: {name} {n} out of range for u32"`; with `name="hour"`
+    // this substring is stable and uniquely identifies the
+    // `extract_time` → `field_as_u32` validation path.
     assert!(
-        err.to_lowercase().contains("hour") && err.to_lowercase().contains("out of range"),
-        "expected hour-out-of-range error, got: {err}"
+        err.contains("time: hour") && err.contains("out of range for u32"),
+        "expected exact 'time: hour ... out of range for u32' prefix, got: {err}"
     );
 }
 
@@ -1764,9 +1773,15 @@ fn main() -> Int {
 }
 "#,
     );
+    // Round 17 F23: pin to the exact `"time.days_in_month: month"`
+    // prefix (src/builtins/data.rs:1535) so a mutation that rewrites
+    // the error to e.g. "time: month out of range" — which would
+    // still match the old 2-word AND chain — fails this lock.
     assert!(
-        err.to_lowercase().contains("month") && err.to_lowercase().contains("out of range"),
-        "expected month-out-of-range error, got: {err}"
+        err.contains("time.days_in_month: month")
+            && err.contains("out of range for u32"),
+        "expected exact 'time.days_in_month: month ... out of range for u32' \
+         prefix, got: {err}"
     );
 }
 
@@ -1783,9 +1798,17 @@ fn main() -> Bool {
 }
 "#,
     );
+    // Round 17 F23: pin to the exact `"time.is_leap_year: year"`
+    // prefix (src/builtins/data.rs:1550). A loose `contains("year")
+    // && contains("out of range")` chain matches the unrelated
+    // `extract_date` "time: year" message too, so a mutation that
+    // routes is_leap_year through extract_date would pass the old
+    // check silently.
     assert!(
-        err.to_lowercase().contains("year") && err.to_lowercase().contains("out of range"),
-        "expected year-out-of-range error, got: {err}"
+        err.contains("time.is_leap_year: year")
+            && err.contains("out of range for i32"),
+        "expected exact 'time.is_leap_year: year ... out of range for i32' \
+         prefix, got: {err}"
     );
 }
 

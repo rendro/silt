@@ -1310,3 +1310,253 @@ fn test_disasm_empty_file() {
         "expected script header in disasm output, got: {stdout}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT ROUND-17 F16 / F17 / F18 LOCK TESTS
+//
+// F16 — `silt run --watch` without a file used to hang silently in the
+// watch loop forever. Fix: dry-validate the underlying subcommand args
+// before entering the watch loop. These tests lock the non-hanging
+// behavior AND bound their own runtime so a regression cannot hang CI.
+//
+// F17 — `silt check` no-args banner used to drop `[--watch]`, so the
+// usage line drifted between the `--help` path and the "no args" path.
+// Fix: single source of truth via `check_usage_banner()`.
+//
+// F18 — `silt -v` used to error as "unknown command". UNIX convention
+// lets lowercase `-v` print version info. Fix: add `-v` as a synonym
+// for `--version` / `-V` in the dispatch arm.
+// ════════════════════════════════════════════════════════════════════
+
+/// Run `silt <args>` and return (exit_code, stdout, stderr), aborting
+/// the child after `wait` if it doesn't exit on its own. Used to guard
+/// tests for commands that could regress into an infinite loop (watch
+/// hangs); the surrounding test asserts the child DID exit on its own.
+///
+/// Returns `Err(())` if the child had to be killed by the timeout
+/// guard — this surfaces a watch-loop hang as a test failure instead
+/// of letting it block CI indefinitely.
+fn run_silt_with_timeout(
+    args: &[&str],
+    wait: std::time::Duration,
+) -> Result<(Option<i32>, String, String), String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    let mut child = silt_cmd()
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn silt: {e}"))?;
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Child has exited — drain pipes and return.
+                let mut out = String::new();
+                let mut err = String::new();
+                if let Some(mut s) = child.stdout.take() {
+                    let _ = s.read_to_string(&mut out);
+                }
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut err);
+                }
+                return Ok((status.code(), out, err));
+            }
+            Ok(None) => {
+                if start.elapsed() >= wait {
+                    // Child is still running past our budget — kill it
+                    // and report a hang. A passing fix never trips this.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "silt {:?} did not exit within {:?} — hang regression",
+                        args, wait
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(format!("try_wait failed: {e}")),
+        }
+    }
+}
+
+// ── F16: `silt run --watch` (no file) exits non-zero with usage ────
+
+#[test]
+fn test_run_watch_without_file_exits_non_zero_with_usage() {
+    // A passing fix returns within ~100 ms; 3 s is a generous guard
+    // that still fails loudly if the watcher re-enters the hang.
+    let wait = std::time::Duration::from_secs(3);
+    let result = run_silt_with_timeout(&["run", "--watch"], wait)
+        .expect("silt run --watch hung — regression of F16");
+
+    let (code, stdout, stderr) = result;
+    assert_ne!(
+        code,
+        Some(0),
+        "expected non-zero exit for `silt run --watch` with no file, got stdout: {stdout}, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("Usage: silt run"),
+        "expected 'Usage: silt run' banner in stderr, got stdout: {stdout}, stderr: {stderr}"
+    );
+    // Sanity: the watcher's "[watch] Watching for changes..." banner
+    // must NOT have been printed — we bailed out before entering the
+    // loop at all.
+    assert!(
+        !stderr.contains("[watch] Watching for changes"),
+        "watcher banner must not appear when watch loop was short-circuited, got stderr: {stderr}"
+    );
+}
+
+// ── F16: `silt check --watch` (no file) exits non-zero with usage ──
+
+#[test]
+fn test_check_watch_without_file_exits_non_zero_with_usage() {
+    let wait = std::time::Duration::from_secs(3);
+    let result = run_silt_with_timeout(&["check", "--watch"], wait)
+        .expect("silt check --watch hung — regression of F16");
+
+    let (code, stdout, stderr) = result;
+    assert_ne!(
+        code,
+        Some(0),
+        "expected non-zero exit for `silt check --watch` with no file, got stdout: {stdout}, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("Usage: silt check"),
+        "expected 'Usage: silt check' banner in stderr, got stdout: {stdout}, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("[watch] Watching for changes"),
+        "watcher banner must not appear when watch loop was short-circuited, got stderr: {stderr}"
+    );
+}
+
+// ── F16 bonus: `silt run --watch --help` prints help and exits 0 ───
+
+#[test]
+fn test_run_watch_help_exits_zero_with_help() {
+    // --help combined with --watch used to be treated the same as a
+    // plain `run --watch` (which hung). Fix: detect --help in the watch
+    // dispatcher and run the subcommand once so its help handler fires.
+    let wait = std::time::Duration::from_secs(3);
+    let result = run_silt_with_timeout(&["run", "--watch", "--help"], wait)
+        .expect("silt run --watch --help hung — regression of F16");
+
+    let (code, stdout, stderr) = result;
+    assert_eq!(
+        code,
+        Some(0),
+        "expected exit 0 for `silt run --watch --help`, got stdout: {stdout}, stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Usage: silt run"),
+        "expected 'Usage: silt run' in stdout, got stdout: {stdout}, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("[watch] Watching for changes"),
+        "watcher banner must not appear for --help, got stderr: {stderr}"
+    );
+}
+
+// ── F17: `silt check` no-args banner matches `silt check --help` ───
+
+#[test]
+fn test_silt_check_no_args_banner_matches_help() {
+    // Run `silt check` with no args — it should print the canonical
+    // usage banner on stderr and exit 1.
+    let no_args = silt_cmd()
+        .arg("check")
+        .output()
+        .expect("failed to run silt check");
+    assert!(
+        !no_args.status.success(),
+        "expected non-zero exit for `silt check` with no args"
+    );
+    let no_args_stderr = String::from_utf8_lossy(&no_args.stderr);
+    let no_args_usage_line = no_args_stderr
+        .lines()
+        .find(|l| l.starts_with("Usage:"))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            panic!("expected a 'Usage:' line in `silt check` stderr, got: {no_args_stderr}")
+        });
+
+    // Now run `silt check --help` — it should print the same canonical
+    // usage banner on stdout and exit 0.
+    let help = silt_cmd()
+        .arg("check")
+        .arg("--help")
+        .output()
+        .expect("failed to run silt check --help");
+    assert!(
+        help.status.success(),
+        "expected exit 0 for `silt check --help`, stderr: {}",
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let help_stdout = String::from_utf8_lossy(&help.stdout);
+    let help_usage_line = help_stdout
+        .lines()
+        .find(|l| l.starts_with("Usage:"))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            panic!("expected a 'Usage:' line in `silt check --help` stdout, got: {help_stdout}")
+        });
+
+    // The two banners must be byte-identical — regression-lock the
+    // single-source-of-truth design.
+    assert_eq!(
+        no_args_usage_line, help_usage_line,
+        "silt check no-args banner ({no_args_usage_line:?}) must match --help banner ({help_usage_line:?})"
+    );
+    // And both must still mention [--watch].
+    assert!(
+        no_args_usage_line.contains("[--watch]"),
+        "expected '[--watch]' in check no-args banner, got: {no_args_usage_line}"
+    );
+}
+
+// ── F18: `silt -v` prints version like `silt -V` / `silt --version` ─
+
+#[test]
+fn test_silt_lowercase_v_prints_version() {
+    let output = silt_cmd().arg("-v").output().expect("failed to run silt -v");
+    assert!(
+        output.status.success(),
+        "expected exit 0 for `silt -v`, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Pin against the cargo-injected package version so the assertion
+    // can't drift when we bump the version in Cargo.toml.
+    let expected = format!("silt {}", env!("CARGO_PKG_VERSION"));
+    assert!(
+        stdout.contains(&expected),
+        "expected '{expected}' in stdout for `silt -v`, got: {stdout}"
+    );
+
+    // And for symmetry, `silt -V` and `silt --version` must still
+    // print the same thing (guard against a copy/paste regression).
+    for flag in ["-V", "--version"] {
+        let other = silt_cmd()
+            .arg(flag)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run silt {flag}: {e}"));
+        assert!(
+            other.status.success(),
+            "expected exit 0 for `silt {flag}`, stderr: {}",
+            String::from_utf8_lossy(&other.stderr)
+        );
+        let other_stdout = String::from_utf8_lossy(&other.stdout);
+        assert!(
+            other_stdout.contains(&expected),
+            "expected '{expected}' in stdout for `silt {flag}`, got: {other_stdout}"
+        );
+    }
+}

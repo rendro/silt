@@ -2839,6 +2839,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2890,6 +2891,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2941,6 +2943,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -2992,6 +2995,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3043,6 +3047,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3094,6 +3099,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3145,6 +3151,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3196,6 +3203,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3247,6 +3255,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3298,6 +3307,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3349,6 +3359,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3400,6 +3411,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3451,6 +3463,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3502,6 +3515,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3553,6 +3567,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3604,6 +3619,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3655,6 +3671,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3706,6 +3723,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3757,6 +3775,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3808,6 +3827,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3859,6 +3879,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3910,6 +3931,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -3961,6 +3983,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4012,6 +4035,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4063,6 +4087,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4114,6 +4139,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4165,6 +4191,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4216,6 +4243,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4267,6 +4295,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4318,6 +4347,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4369,6 +4399,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4420,6 +4451,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4471,6 +4503,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4522,6 +4555,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4573,6 +4607,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4624,6 +4659,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4675,6 +4711,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4726,6 +4763,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4777,6 +4815,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4828,6 +4867,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4879,6 +4919,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4930,6 +4971,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -4981,6 +5023,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5032,6 +5075,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5083,6 +5127,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5134,6 +5179,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5185,6 +5231,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5236,6 +5283,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5287,6 +5335,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5338,6 +5387,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5389,6 +5439,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5440,6 +5491,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5491,6 +5543,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5542,6 +5595,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5593,6 +5647,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5644,6 +5699,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }
@@ -5695,6 +5751,7 @@ impl TypeChecker {
                             method_type: method_type.clone(),
                             span: dummy_span,
                             is_auto_derived: true,
+                            trait_name: None,
                         },
                     );
                 }

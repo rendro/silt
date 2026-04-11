@@ -67,11 +67,47 @@ struct Document {
 
 // ── Span ↔ LSP conversion ─────────────────────────────────────────
 
-fn span_to_position(span: &Span) -> Position {
-    Position::new(
-        span.line.saturating_sub(1) as u32,
-        span.col.saturating_sub(1) as u32,
-    )
+/// Convert a span to a 0-based LSP `Position`.
+///
+/// LSP positions count characters in **UTF-16 code units** (per the spec,
+/// and what nearly every client uses as the default encoding). The lexer
+/// increments `span.col` once per Unicode codepoint (src/lexer.rs:247),
+/// which is NOT the same as a UTF-16 unit count for characters outside
+/// the BMP (e.g. `😀` is 1 codepoint but 2 UTF-16 units).
+///
+/// To produce a correct position we walk the source from the start of
+/// the line containing `span.offset` up to `span.offset`, summing
+/// `ch.len_utf16()` for each character. This uses `span.offset` (a byte
+/// offset) as the source of truth rather than the potentially-mismatched
+/// codepoint `col`, which the lexer records but which the LSP protocol
+/// does not consume.
+fn span_to_position(span: &Span, source: &str) -> Position {
+    let line = span.line.saturating_sub(1) as u32;
+    let bytes = source.as_bytes();
+    let offset = span.offset.min(bytes.len());
+
+    // Find the byte offset of the start of the line that `offset` lives in.
+    // We scan backwards for the most recent '\n' before `offset`.
+    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+
+    // Walk from `line_start` to `offset`, accumulating UTF-16 code units.
+    // We must respect char boundaries: if `offset` lands mid-character
+    // (shouldn't happen for well-formed spans, but be defensive) we clamp
+    // at the boundary we reach just before it.
+    let mut character: u32 = 0;
+    let mut idx = line_start;
+    while idx < offset {
+        let rest = &source[idx..];
+        let Some(ch) = rest.chars().next() else { break };
+        let ch_len = ch.len_utf8();
+        if idx + ch_len > offset {
+            break;
+        }
+        character += ch.len_utf16() as u32;
+        idx += ch_len;
+    }
+
+    Position::new(line, character)
 }
 
 /// Return the UTF-16 code-unit length of a string (what LSP positions count).
@@ -171,7 +207,7 @@ fn token_len_at(source: &str, offset: usize) -> usize {
 /// hard-coding `end = start + 1`, so multi-character identifiers produce a
 /// correctly-sized range.
 fn span_to_range(span: &Span, source: &str) -> Range {
-    let start = span_to_position(span);
+    let start = span_to_position(span, source);
     let len = token_len_at(source, span.offset);
     let bytes = source.as_bytes();
     let end_col = if span.offset >= bytes.len() {
@@ -2606,26 +2642,157 @@ mod tests {
 
     #[test]
     fn test_span_to_position() {
+        // Line 3, col 5 in this source points at the 'e' in "else".
+        //
+        //   1: let\n      (bytes 0..4)
+        //   2: foo\n      (bytes 4..8)
+        //   3: else\n     (bytes 8..13)  — 'e' at byte 8 (col 1), '…' unused
+        //                                   index of 'e' of col 5 would be byte 12
+        //                                   but we want start-of-line col 5 = 'e'
+        // Simpler: use a clean ASCII source and put the 5th column on line 3.
+        let source = "let\nfoo\n    x = 1"; // line 3 col 5 is 'x' at byte 12.
         let span = Span {
             line: 3,
             col: 5,
-            offset: 0,
+            offset: 12,
         };
-        let pos = span_to_position(&span);
+        let pos = span_to_position(&span, source);
         assert_eq!(pos.line, 2); // 0-based
         assert_eq!(pos.character, 4); // 0-based
     }
 
     #[test]
     fn test_span_to_position_saturates() {
+        // An out-of-range span (line 0, offset 0) should not panic; it should
+        // yield a position at the very beginning of the document.
+        let source = "anything";
         let span = Span {
             line: 0,
             col: 0,
             offset: 0,
         };
-        let pos = span_to_position(&span);
+        let pos = span_to_position(&span, source);
         assert_eq!(pos.line, 0);
         assert_eq!(pos.character, 0);
+    }
+
+    // ── span_to_position UTF-16 correctness ───────────────────────
+
+    /// Astral-plane character (emoji) earlier on the SAME line should shift
+    /// subsequent `character` values by 2 UTF-16 code units per emoji, not
+    /// 1 (which is what a naive codepoint-based implementation would give).
+    #[test]
+    fn test_span_to_position_uses_utf16_for_astral_characters() {
+        // 😀 is U+1F600, 4 bytes UTF-8, 2 UTF-16 code units, 1 codepoint.
+        // Source: "😀x" — 'x' starts at byte 4.
+        let source = "😀x";
+        // The span for 'x' should be at line 1 (1-indexed), col 2 (1-indexed
+        // codepoint, matching what the lexer would produce), byte offset 4.
+        let span = Span {
+            line: 1,
+            col: 2,
+            offset: 4,
+        };
+        let pos = span_to_position(&span, source);
+        assert_eq!(pos.line, 0, "line should be 0-based");
+        // 😀 contributes 2 UTF-16 code units, so 'x' is at character 2,
+        // NOT character 1 (which is what the old codepoint-based helper
+        // would have returned: col=2 → character=1).
+        assert_eq!(
+            pos.character, 2,
+            "character must be UTF-16 code units, not codepoints"
+        );
+    }
+
+    /// A span on a line AFTER a line containing an emoji should NOT be
+    /// shifted — UTF-16 offsets reset per line, same as codepoint offsets.
+    /// This is a regression guard against an implementation that forgets
+    /// to reset the column counter at newlines.
+    #[test]
+    fn test_span_to_position_utf16_resets_per_line() {
+        // Line 1: "😀\n"  — bytes 0..5  (😀 = 4 bytes, \n = 1 byte)
+        // Line 2: "xy"    — bytes 5..7
+        let source = "😀\nxy";
+        // 'y' on line 2 at byte offset 6, codepoint col 2.
+        let span = Span {
+            line: 2,
+            col: 2,
+            offset: 6,
+        };
+        let pos = span_to_position(&span, source);
+        assert_eq!(pos.line, 1);
+        // On line 2, 'y' is just after 'x' — 1 UTF-16 unit from the start
+        // of the line. The emoji on line 1 must NOT bleed into line 2.
+        assert_eq!(pos.character, 1);
+    }
+
+    /// For pure-ASCII input the new helper must return the same Position
+    /// that the old codepoint-based implementation did — backwards compat.
+    #[test]
+    fn test_span_to_position_ascii_unchanged() {
+        let source = "hello\nworld\nagain";
+        // 'g' on line 3, codepoint col 3, byte offset 14.
+        let span = Span {
+            line: 3,
+            col: 3,
+            offset: 14,
+        };
+        let pos = span_to_position(&span, source);
+        assert_eq!(pos.line, 2);
+        assert_eq!(pos.character, 2);
+
+        // Also check a span on line 1 — col 1 should always be character 0.
+        let span1 = Span {
+            line: 1,
+            col: 1,
+            offset: 0,
+        };
+        let pos1 = span_to_position(&span1, source);
+        assert_eq!(pos1.line, 0);
+        assert_eq!(pos1.character, 0);
+
+        // 'l' (second one, offset 3) on line 1.
+        let span2 = Span {
+            line: 1,
+            col: 4,
+            offset: 3,
+        };
+        let pos2 = span_to_position(&span2, source);
+        assert_eq!(pos2.line, 0);
+        assert_eq!(pos2.character, 3);
+    }
+
+    /// An end-to-end flavour: `span_to_range` must also produce UTF-16
+    /// ranges when diagnostics live after an astral character. This
+    /// exercises the `make_diagnostic` → `span_to_range` → `span_to_position`
+    /// pipeline that LSP clients actually see. Uses TWO emojis so that the
+    /// buggy codepoint-based and the correct UTF-16-based implementations
+    /// disagree on the start column (one codepoint vs two UTF-16 units per
+    /// emoji → divergence grows linearly with the emoji count).
+    #[test]
+    fn test_span_to_range_uses_utf16_after_emoji() {
+        // Source: "😀😀bad" — each 😀 is 4 UTF-8 bytes, 1 codepoint,
+        // 2 UTF-16 code units. 'b' starts at byte 8.
+        //   Codepoint col of 'b' = 3 (lexer advances col by 1 per char).
+        //   Correct UTF-16 character = 4.
+        let source = "😀😀bad";
+        let span = Span {
+            line: 1,
+            col: 3,
+            offset: 8,
+        };
+        let range = span_to_range(&span, source);
+        // Start: two emojis × 2 UTF-16 units each = 4.
+        // Buggy implementation would return col-1 = 2, which DIFFERS from 4.
+        assert_eq!(
+            range.start.character, 4,
+            "range start must count UTF-16 units, not codepoints"
+        );
+        // Token "bad" is 3 UTF-16 units long, so end.character = 7.
+        assert_eq!(
+            range.end.character, 7,
+            "range end must extend by UTF-16 length of the token"
+        );
     }
 
     // ── has_unresolved_vars ───────────────────────────────────────
@@ -3048,7 +3215,13 @@ mod tests {
 
     #[test]
     fn test_span_to_range_empty_source() {
-        // An offset past end-of-source still yields a sane one-column range.
+        // A span referring to line 3 col 5 in an empty source is nonsensical,
+        // but the helper must not panic and must produce a one-column range.
+        // Under the UTF-16-correct implementation, the start column is walked
+        // from the source text — so for an empty source the character count
+        // is 0 (there are no characters to count); the line value still comes
+        // from span.line. The range has width 1 (token_len_at on an empty
+        // source returns 1 by contract).
         let span = Span {
             line: 3,
             col: 5,
@@ -3056,9 +3229,9 @@ mod tests {
         };
         let range = span_to_range(&span, "");
         assert_eq!(range.start.line, 2);
-        assert_eq!(range.start.character, 4);
+        assert_eq!(range.start.character, 0);
         assert_eq!(range.end.line, 2);
-        assert_eq!(range.end.character, 5);
+        assert_eq!(range.end.character, 1);
     }
 
     #[test]

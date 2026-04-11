@@ -233,19 +233,110 @@ fn field_as_u32(
     }
 }
 
+/// What kind of value is being formatted — determines which strftime
+/// specifiers are compatible with the receiver.
+#[derive(Debug, Clone, Copy)]
+enum StrftimeReceiver {
+    /// A `NaiveDate` — rejects any specifier that requires a time
+    /// component (`%H`, `%M`, `%S`, etc.) or timezone (`%z`, `%Z`).
+    Date,
+    /// A `NaiveDateTime` — has date + time, but no timezone, so
+    /// timezone specifiers (`%z`, `%Z`) still can't render.
+    DateTime,
+}
+
 /// Validate a chrono strftime pattern before calling `format()` on
 /// it. Chrono's `Display` impl for `DelayedFormat` writes to the
 /// formatter and calls `panic!("a Display implementation returned an
-/// error unexpectedly")` whenever the pattern contains an unknown
-/// specifier like `%Q`. That panic is caught by our
-/// `catch_builtin_panic` wrapper, but the resulting error message is
-/// opaque. Detect invalid items up front and surface a clean error.
-fn validate_strftime_pattern(fn_name: &str, pattern: &str) -> Result<(), VmError> {
-    use chrono::format::{Item, StrftimeItems};
-    if StrftimeItems::new(pattern).any(|item| matches!(item, Item::Error)) {
-        return Err(VmError::new(format!(
-            "{fn_name}: invalid format specifier in '{pattern}'"
-        )));
+/// error unexpectedly")` whenever the pattern contains:
+///   1. An unknown specifier like `%Q` (yields `Item::Error`), or
+///   2. A valid specifier that the receiver can't render — e.g.
+///      `%H` on a `NaiveDate` (no time component) or `%z` on a
+///      `NaiveDateTime` (naive = no TZ).
+///
+/// That panic is caught by our `catch_builtin_panic` wrapper, but the
+/// default panic hook still writes a 3-line "thread 'main' panicked"
+/// notice to stderr before the recovery. We classify each parsed
+/// `Item` against the receiver type and surface a clean error up
+/// front so no panic is ever raised.
+fn validate_strftime_pattern(
+    fn_name: &str,
+    pattern: &str,
+    receiver: StrftimeReceiver,
+) -> Result<(), VmError> {
+    use chrono::format::{Fixed, Item, Numeric, StrftimeItems};
+
+    for item in StrftimeItems::new(pattern) {
+        match item {
+            Item::Error => {
+                return Err(VmError::new(format!(
+                    "{fn_name}: invalid format specifier in '{pattern}'"
+                )));
+            }
+            Item::Numeric(ref n, _) => {
+                // Time-component numeric specifiers cannot render
+                // against a bare Date. Everything else (year, month,
+                // day, week, ordinal, etc.) is date-level and safe.
+                let is_time_only = matches!(
+                    n,
+                    Numeric::Hour
+                        | Numeric::Hour12
+                        | Numeric::Minute
+                        | Numeric::Second
+                        | Numeric::Nanosecond
+                        | Numeric::Timestamp
+                );
+                if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
+                    return Err(VmError::new(format!(
+                        "{fn_name}: time specifier in '{pattern}' is not \
+                         valid for a Date; use time.format with a DateTime instead"
+                    )));
+                }
+            }
+            Item::Fixed(ref fx) => {
+                // Time-only fixed specifiers.
+                let is_time_only = matches!(
+                    fx,
+                    Fixed::LowerAmPm
+                        | Fixed::UpperAmPm
+                        | Fixed::Nanosecond
+                        | Fixed::Nanosecond3
+                        | Fixed::Nanosecond6
+                        | Fixed::Nanosecond9
+                );
+                if is_time_only && matches!(receiver, StrftimeReceiver::Date) {
+                    return Err(VmError::new(format!(
+                        "{fn_name}: time specifier in '{pattern}' is not \
+                         valid for a Date; use time.format with a DateTime instead"
+                    )));
+                }
+                // Timezone specifiers: NaiveDate has no time AND no
+                // TZ; NaiveDateTime has no TZ. Reject for both.
+                let is_tz = matches!(
+                    fx,
+                    Fixed::TimezoneName
+                        | Fixed::TimezoneOffset
+                        | Fixed::TimezoneOffsetColon
+                        | Fixed::TimezoneOffsetDoubleColon
+                        | Fixed::TimezoneOffsetTripleColon
+                        | Fixed::TimezoneOffsetColonZ
+                        | Fixed::TimezoneOffsetZ
+                        | Fixed::RFC2822
+                        | Fixed::RFC3339
+                );
+                if is_tz {
+                    let what = match receiver {
+                        StrftimeReceiver::Date => "Date",
+                        StrftimeReceiver::DateTime => "naive DateTime",
+                    };
+                    return Err(VmError::new(format!(
+                        "{fn_name}: timezone specifier in '{pattern}' is not \
+                         valid for a {what}; silt DateTimes are naive (no TZ)"
+                    )));
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -1251,7 +1342,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::String(pattern) = &args[1] else {
                 return Err(VmError::new("time.format requires a String pattern".into()));
             };
-            validate_strftime_pattern("time.format", pattern)?;
+            validate_strftime_pattern("time.format", pattern, StrftimeReceiver::DateTime)?;
             Ok(Value::String(dt.format(pattern).to_string()))
         }
 
@@ -1267,7 +1358,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.format_date requires a String pattern".into(),
                 ));
             };
-            validate_strftime_pattern("time.format_date", pattern)?;
+            validate_strftime_pattern("time.format_date", pattern, StrftimeReceiver::Date)?;
             Ok(Value::String(d.format(pattern).to_string()))
         }
 

@@ -214,18 +214,19 @@ fn compile_file(path: &str) -> (Vec<Function>, String) {
     let has_parse_errors = !result.parse_errors.is_empty();
     let has_real_hard_errors = has_parse_errors || has_real_type_error;
 
-    for err in &result.parse_errors {
-        eprintln!("{err}");
-    }
-    for err in &reportable {
-        eprintln!("{err}");
-    }
-    for err in &result.compile_errors {
-        eprintln!("{err}");
-    }
-    for err in &result.compile_warnings {
-        eprintln!("{err}");
-    }
+    // F14 (audit round 17): print diagnostics with a blank line between
+    // consecutive errors so multi-error output doesn't form a solid wall
+    // of text. Matches rustc/gcc convention.
+    // Lock: tests/cli_test_rendering_tests.rs
+    // `test_multiple_errors_render_with_blank_separator`.
+    let all_errs: Vec<&SourceError> = result
+        .parse_errors
+        .iter()
+        .chain(reportable.iter().copied())
+        .chain(result.compile_errors.iter())
+        .chain(result.compile_warnings.iter())
+        .collect();
+    silt::errors::eprintln_errors_with_separator(&all_errs);
 
     // Exit gate: abort iff a real (non-suppressed) hard error exists.
     if has_real_hard_errors {
@@ -278,6 +279,14 @@ fn usage_text() -> String {
     out
 }
 
+/// Single source of truth for the `silt check` usage banner line.
+/// Both the `--help` path and the "no arguments given" path render
+/// from this so they can't drift apart. A regression test in
+/// tests/cli.rs asserts the two banners are byte-identical.
+fn check_usage_banner() -> &'static str {
+    "silt check [--format json] [--watch] <file.silt>"
+}
+
 /// Comma-separated list of Cargo features compiled into this binary.
 /// Shown in `silt --help` so users can tell at a glance whether the
 /// optional `repl`, `lsp`, and `watch` subcommands are available.
@@ -322,6 +331,86 @@ fn main() {
             .cloned()
             .collect();
 
+        // BEFORE entering the watcher, dry-validate the underlying subcommand
+        // so we don't spawn a watcher for a command that's going to fail
+        // immediately on every rerun. Two failure modes we catch up front:
+        //
+        //   1. `--help` / `-h` combined with `--watch` — the user wants
+        //      help, not a watcher. Run the subcommand once (which will
+        //      print help and exit 0) and return without watching.
+        //
+        //   2. A subcommand that requires a positional file arg is missing
+        //      one — print usage to stderr and exit 1 WITHOUT entering the
+        //      watch loop (which would otherwise hang silently forever,
+        //      because the initial rerun prints a 1-line usage banner and
+        //      the loop just sits there waiting for saves).
+        //
+        // Subcommands that take no file (repl, init, lsp, fmt with
+        // implicit recursion, etc.) are passed through untouched.
+        let wants_help = filtered.iter().any(|a| a == "--help" || a == "-h");
+        if wants_help {
+            // Run the subcommand once so its own help handler fires, then
+            // return without entering the watch loop.
+            let exe = std::env::current_exe().unwrap_or_else(|e| {
+                eprintln!("error: failed to get executable path: {e}");
+                process::exit(1);
+            });
+            let status = std::process::Command::new(&exe).args(&filtered).status();
+            match status {
+                Ok(s) => process::exit(s.code().unwrap_or(0)),
+                Err(e) => {
+                    eprintln!("error: failed to invoke subcommand for --help: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+
+        // Detect subcommands that require a positional file argument and
+        // bail out up front if it's missing. We only gate on the common
+        // case (first positional after the subcommand name is missing or
+        // is another flag); the subcommand's own validator handles the
+        // harder cases after the watcher reruns.
+        if let Some(sub) = filtered.first().map(|s| s.as_str()) {
+            let requires_file = matches!(sub, "run" | "check" | "disasm");
+            // `silt test` and `silt fmt` take an optional file / path, so
+            // they're NOT in the list above — `silt test --watch` alone is
+            // legitimate and means "watch the cwd and rerun auto-discovered
+            // tests".
+            if requires_file {
+                // Find the first positional (non-flag) arg after the
+                // subcommand name. Flags like `--format json` consume a
+                // value; the simple scan below is good enough because
+                // our value-taking flags all start with `--`.
+                let mut has_positional = false;
+                let mut i = 1;
+                while i < filtered.len() {
+                    let a = filtered[i].as_str();
+                    if a == "--format" {
+                        // Skip the flag and its value (if present).
+                        i += 2;
+                        continue;
+                    }
+                    if a.starts_with('-') {
+                        i += 1;
+                        continue;
+                    }
+                    has_positional = true;
+                    break;
+                }
+                if !has_positional {
+                    let banner = match sub {
+                        "run" => "Usage: silt run [--watch] <file.silt>",
+                        // Keep in sync with check_usage_banner().
+                        "check" => "Usage: silt check [--format json] [--watch] <file.silt>",
+                        "disasm" => "Usage: silt disasm <file.silt>",
+                        _ => unreachable!(),
+                    };
+                    eprintln!("{banner}");
+                    process::exit(1);
+                }
+            }
+        }
+
         let watch_dir = filtered
             .iter()
             .filter_map(|a| {
@@ -353,7 +442,10 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "--version" | "-V" => {
+        // `-v` is the lowercase long-form convention some UNIX tools accept
+        // for `--version`. silt has no verbose flag, so treating `-v` as a
+        // synonym for `--version` / `-V` is unambiguous here.
+        "--version" | "-V" | "-v" => {
             println!("silt {}", env!("CARGO_PKG_VERSION"));
             process::exit(0);
         }
@@ -493,7 +585,7 @@ fn main() {
                         process::exit(1);
                     }
                 } else if args[i] == "--help" || args[i] == "-h" {
-                    println!("Usage: silt check [--format json] [--watch] <file.silt>");
+                    println!("Usage: {}", check_usage_banner());
                     println!();
                     println!("Options:");
                     println!("  --format json   Emit diagnostics as JSON");
@@ -515,7 +607,7 @@ fn main() {
                 }
             }
             let Some(path) = file else {
-                eprintln!("Usage: silt check [--format json] <file.silt>");
+                eprintln!("Usage: {}", check_usage_banner());
                 process::exit(1);
             };
             check_file(&path, format);
@@ -1036,14 +1128,55 @@ fn vm_run_file(path: &str) {
                 eprintln!("\ncall stack:");
                 let head = 10;
                 let tail = 5;
+                // F13 (audit round 17): normalize frame paths so a
+                // cross-module call stack doesn't mix absolute and
+                // relative paths. Goal: every frame uses the same
+                // path style the user originally typed on the command
+                // line. If the user ran with an absolute path, render
+                // absolute; if they ran with a relative path, render
+                // relative to cwd. The `module_sources` lookup returns
+                // canonicalized absolute paths from the module loader,
+                // so we relativize them back to the cwd when the user
+                // path is relative.
+                //
+                // Lock: tests/cli_test_rendering_tests.rs
+                // `test_cross_module_call_stack_uses_consistent_path_style`.
+                let user_path_is_absolute = Path::new(path).is_absolute();
+                let cwd = std::env::current_dir().ok();
+                let normalize_path = |candidate: &Path| -> String {
+                    if user_path_is_absolute {
+                        // Everything should be absolute. If the
+                        // candidate is already absolute, keep it; if
+                        // it's relative, resolve it against cwd.
+                        if candidate.is_absolute() {
+                            candidate.display().to_string()
+                        } else if let Some(ref cwd) = cwd {
+                            cwd.join(candidate).display().to_string()
+                        } else {
+                            candidate.display().to_string()
+                        }
+                    } else {
+                        // User used a relative path. Strip the cwd
+                        // prefix from absolute candidates so every
+                        // frame renders relative to cwd.
+                        if let Some(ref cwd) = cwd {
+                            match candidate.strip_prefix(cwd) {
+                                Ok(rel) => rel.display().to_string(),
+                                Err(_) => candidate.display().to_string(),
+                            }
+                        } else {
+                            candidate.display().to_string()
+                        }
+                    }
+                };
                 let print_frame = |name: &str, frame_span: &silt::lexer::Span| {
                     // Each frame uses its own function's source file for
                     // file labels — this matters when the call crosses a
                     // module boundary.
-                    let frame_path: &str = module_sources
-                        .get(name)
-                        .map(|(p, _)| p.to_str().unwrap_or(path))
-                        .unwrap_or(path);
+                    let frame_path: String = match module_sources.get(name) {
+                        Some((p, _)) => normalize_path(p),
+                        None => normalize_path(Path::new(path)),
+                    };
                     if frame_span.line > 0 {
                         eprintln!(
                             "  -> {}  at {}:{}:{}",
@@ -1126,9 +1259,8 @@ fn check_file(path: &str, format: OutputFormat) {
     if format == OutputFormat::Json {
         print_json_errors(&errors);
     } else {
-        for err in &errors {
-            eprintln!("{err}");
-        }
+        // F14 (audit round 17): separate diagnostics with blank lines.
+        silt::errors::eprintln_errors_with_separator(&errors);
     }
 
     // A hard error is real only if it's a parse/compile error or a

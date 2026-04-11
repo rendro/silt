@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// GAP (round 17 F5): pick the singular or plural form of a word
+/// based on `n`. Used to render arity/field/binding counts in
+/// typechecker diagnostics without the awkward "1 argument(s)" that
+/// tooling and users had been complaining about.
+pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &'a str {
+    if n == 1 { singular } else { plural_form }
+}
+
 impl TypeChecker {
     /// B4 helper: does the enclosing function's active where-clause
     /// constraints cover `trait_name` for the type variable at the
@@ -326,9 +334,15 @@ impl TypeChecker {
         // scheme was over-general at pass 2) drop it silently; the
         // value is already concrete from the caller's perspective.
         let pending_where = std::mem::take(&mut self.pending_where_constraints);
-        for (tyvar, trait_name, callee_fn_name, span, active_snapshot, param_tyvars) in
-            pending_where
-        {
+        for pending in pending_where {
+            let PendingWhereConstraint {
+                tyvar,
+                trait_name,
+                callee_fn_name,
+                span,
+                active_snapshot,
+                param_tyvars,
+            } = pending;
             let resolved = self.apply(&Type::Var(tyvar));
             if matches!(resolved, Type::Error | Type::Never) {
                 continue;
@@ -565,11 +579,13 @@ impl TypeChecker {
                     && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
                 {
                     if sub_pats.len() != var_info.field_types.len() {
+                        let expected = var_info.field_types.len();
                         self.error(
                             format!(
-                                "constructor '{}' expects {} field(s), but pattern has {}",
+                                "constructor '{}' expects {} {}, but pattern has {}",
                                 name,
-                                var_info.field_types.len(),
+                                expected,
+                                plural(expected, "field", "fields"),
                                 sub_pats.len()
                             ),
                             span,
@@ -1651,10 +1667,12 @@ impl TypeChecker {
                                 // the first positional arg. Mirrors the
                                 // non-pipe Call branch below.
                                 if params.len() != all_arg_types.len() {
+                                    let expected = params.len();
                                     self.error(
                                         format!(
-                                            "function expects {} argument(s), got {}",
-                                            params.len(),
+                                            "function expects {} {}, got {}",
+                                            expected,
+                                            plural(expected, "argument", "arguments"),
                                             all_arg_types.len()
                                         ),
                                         span,
@@ -1699,14 +1717,16 @@ impl TypeChecker {
                                 // it at the top-level call site). We
                                 // re-check in `finalize_deferred_checks`.
                                 if let Type::Var(v) = resolved {
-                                    self.pending_where_constraints.push((
-                                        v,
-                                        *trait_name,
-                                        callee_fn_name,
-                                        span,
-                                        self.active_constraints.clone(),
-                                        self.current_fn_param_tyvars.clone(),
-                                    ));
+                                    self.pending_where_constraints.push(
+                                        PendingWhereConstraint {
+                                            tyvar: v,
+                                            trait_name: *trait_name,
+                                            callee_fn_name,
+                                            span,
+                                            active_snapshot: self.active_constraints.clone(),
+                                            param_tyvars: self.current_fn_param_tyvars.clone(),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -1726,10 +1746,12 @@ impl TypeChecker {
                             // must have arity 1. Piping into a multi-arg function
                             // without an explicit call forgets the remaining args.
                             if params.len() != 1 {
+                                let n = params.len();
                                 self.error(
                                     format!(
-                                        "cannot pipe into function taking {} argument(s); wrap in a call or use partial application",
-                                        params.len()
+                                        "cannot pipe into function taking {} {}; wrap in a call or use partial application",
+                                        n,
+                                        plural(n, "argument", "arguments")
                                     ),
                                     span,
                                 );
@@ -1895,10 +1917,12 @@ impl TypeChecker {
                             arg_types.len() == params.len()
                         };
                         if !arity_ok {
+                            let expected = params.len();
                             self.error(
                                 format!(
-                                    "function expects {} argument(s), got {}",
-                                    params.len(),
+                                    "function expects {} {}, got {}",
+                                    expected,
+                                    plural(expected, "argument", "arguments"),
                                     arg_types.len()
                                 ),
                                 span,
@@ -1942,14 +1966,15 @@ impl TypeChecker {
                         // arm for details; both sites push to the same
                         // pending list re-examined by finalize.
                         if let Type::Var(v) = resolved {
-                            self.pending_where_constraints.push((
-                                v,
-                                *trait_name,
-                                callee_fn_name,
-                                span,
-                                self.active_constraints.clone(),
-                                self.current_fn_param_tyvars.clone(),
-                            ));
+                            self.pending_where_constraints
+                                .push(PendingWhereConstraint {
+                                    tyvar: v,
+                                    trait_name: *trait_name,
+                                    callee_fn_name,
+                                    span,
+                                    active_snapshot: self.active_constraints.clone(),
+                                    param_tyvars: self.current_fn_param_tyvars.clone(),
+                                });
                         }
                     }
                 }
@@ -2257,11 +2282,14 @@ impl TypeChecker {
                     .collect();
                 if let Some(binding_types) = self.loop_binding_types.clone() {
                     if recur_count != binding_types.len() {
+                        let bindings_n = binding_types.len();
                         self.warning(
                             format!(
-                                "loop has {} binding(s), but recur supplies {} argument(s)",
-                                binding_types.len(),
-                                recur_count
+                                "loop has {} {}, but recur supplies {} {}",
+                                bindings_n,
+                                plural(bindings_n, "binding", "bindings"),
+                                recur_count,
+                                plural(recur_count, "argument", "arguments")
                             ),
                             span,
                         );
@@ -2446,10 +2474,12 @@ impl TypeChecker {
                         Type::Fun(params, ret) => {
                             self.unify(expected, ret, span);
                             if sub_pats.len() != params.len() {
+                                let expected = params.len();
                                 self.error(
                                     format!(
-                                        "constructor expects {} field(s), but pattern has {}",
-                                        params.len(),
+                                        "constructor expects {} {}, but pattern has {}",
+                                        expected,
+                                        plural(expected, "field", "fields"),
                                         sub_pats.len()
                                     ),
                                     span,
@@ -3223,7 +3253,7 @@ fn main() {
   0
 }
         "#,
-            "constructor 'Some' expects 1 field(s), but pattern has 2",
+            "constructor 'Some' expects 1 field, but pattern has 2",
         );
     }
 
@@ -3243,7 +3273,7 @@ fn main() {
   0
 }
         "#,
-            "constructor 'Some' expects 1 field(s), but pattern has 2",
+            "constructor 'Some' expects 1 field, but pattern has 2",
         );
     }
 }

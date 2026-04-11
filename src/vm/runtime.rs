@@ -22,6 +22,12 @@ pub(crate) struct CallFrame {
     pub(crate) base_slot: usize,
 }
 
+/// Upper bound on how many elided tail-call frames we retain per physical
+/// frame before the oldest entries are dropped from the ring buffer. Used
+/// by the VM's parallel `tco_elided` diagnostic log. See `Vm::push_frame`,
+/// `Vm::pop_frame`, and the `Op::TailCall` dispatcher.
+pub(crate) const TCO_ELIDED_CAP: usize = 32;
+
 // ── Suspended invocation (for yield inside invoke_callable) ─────
 
 /// Captures the frames and stack portion from an `invoke_callable` that was

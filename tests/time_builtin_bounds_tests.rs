@@ -205,35 +205,79 @@ fn main() -> Instant {
     );
 }
 
-/// Defence-in-depth L1 check for `time.to_datetime`.
+/// Load-bearing L1 lock for `time.to_datetime` (round 17 F20 upgrade).
 ///
-/// The `to_datetime` `+ offset` panic path is NOT reachable from Silt
-/// user code today: `Instant.epoch_ns` is an `i64`, so the combined
-/// `epoch_ns + i32::MAX-minute-offset` range stays well inside chrono's
-/// ±262143-year NaiveDateTime window (max reachable is about year 6348).
-/// We nevertheless run an extremal-input smoke test so that:
+/// Earlier rounds documented this test as a "structural guard, not a
+/// bug-specific lock": the `+ offset` panic path was thought to be
+/// unreachable from Silt user code because `Instant.epoch_ns` is an
+/// `i64` and so the combined epoch + offset stayed well inside
+/// chrono's ±262_143-year `NaiveDateTime` window.
 ///
-///  1. Any future widening of `Instant` (e.g. to i128) or chrono's
-///     NaiveDateTime representation will be caught by this test if the
-///     checked-add guard has been removed.
-///  2. An extremal input NEVER surfaces a chrono `expect("... overflowed")`
-///     string or a "builtin panicked" message — only clean `VmError`s
-///     or valid values. Reverting `checked_add_signed` back to `+` and
-///     then later widening Instant would silently re-introduce the
-///     panic; this test documents the invariant.
+/// Round 17 re-analysis showed that was wrong — `offset_min` is
+/// destructured from `Value::Int` which is an `i64`, not an `i32`.
+/// `chrono::Duration::try_minutes` accepts up to ≈1.5e14 minutes
+/// (≈292M years) before the `checked_mul(60)` inside it overflows, so
+/// a `150_000_000_000` minute offset (≈285_388 years) from a
+/// `epoch_ns: 0` base yields a `Duration` that, when added with the
+/// bare `+` operator, pushes `NaiveDateTime` past its 262_143-year
+/// max and triggers chrono's:
 ///
-/// Mutation note: since the panic path is unreachable from Silt today,
-/// this test ALSO passes when `checked_add_signed` is reverted to `+`.
-/// The B3 mutation verification for to_datetime (test 1) and the L1
-/// mutation verification for to_instant (test 5) together lock both
-/// fixes; this test is a structural guard, not a bug-specific lock.
+///     expect("`NaiveDateTime + TimeDelta` overflowed")
+///
+/// panic. The `checked_add_signed` fix in `src/builtins/data.rs`
+/// returns `None` for this case and surfaces a clean
+/// `"time.to_datetime: datetime + offset out of range"` VmError.
+///
+/// This test drives that exact offset and asserts:
+///  - the builtin returns a clean `VmError`, not an `Ok`,
+///  - the error message does NOT contain `"panicked"` or chrono's
+///    `"overflowed"` expect string, and
+///  - the error message IS tagged with `time.to_datetime`.
+///
+/// Mutation verification: reverting `.checked_add_signed(offset)` back
+/// to `+ offset` in src/builtins/data.rs would now make this test fail
+/// with a "builtin module 'time' panicked: `NaiveDateTime + TimeDelta`
+/// overflowed" VmError — caught by the `overflowed` negative
+/// assertion below.
 #[test]
 fn test_time_to_datetime_offset_causes_date_overflow_returns_clean_error() {
-    // Try large/small representable epoch_ns combined with the
-    // largest/smallest offsets. None of these should panic; all should
-    // either return a DateTime or a clean VmError. We stay a hair
-    // inside `i64::MAX`/`i64::MIN` because the Silt lexer rejects
-    // the full-range literals as "number too large".
+    // 150_000_000_000 minutes ≈ 285_388 years forward from 1970-01-01
+    // → year ≈ 287358, which exceeds chrono's 262143 max year.
+    // `Duration::try_minutes(150_000_000_000)` is valid (well under
+    // the ~1.5e14-minute try_minutes ceiling), so we proceed to the
+    // `checked_add_signed` / `+` call site — exactly the path the
+    // fix guards.
+    let err = run_err(
+        r#"
+import time
+fn main() -> Int {
+  let inst = Instant { epoch_ns: 0 }
+  let dt = time.to_datetime(inst, 150000000000)
+  dt.date.year
+}
+"#,
+    );
+    assert!(
+        err.contains("time.to_datetime"),
+        "error should be tagged with time.to_datetime, got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("out of range"),
+        "expected clean out-of-range error, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error should not mention 'panicked' (fix regression!): {err}"
+    );
+    assert!(
+        !err.to_lowercase().contains("overflowed"),
+        "error should not surface chrono's 'overflowed' expect message \
+         (fix regression!): {err}"
+    );
+
+    // Defence-in-depth extremal-input smoke test: the earlier probe
+    // matrix still has value as a fuzzer against future changes, so
+    // keep it — but now the primary assertion above is the real lock.
     let probes: &[(&str, i64, i64)] = &[
         (
             "near-max epoch_ns, i32::MAX offset",
@@ -298,4 +342,247 @@ fn main() -> Int {{
             }
         }
     }
+}
+
+// ── F19 locks: strftime pattern / receiver-type mismatch ───────────
+//
+// Round 17 finding: `validate_strftime_pattern` only rejected
+// `Item::Error` (truly bogus tokens like `%Q`). A valid specifier
+// whose semantics don't match the receiver type — `%H` on a
+// `NaiveDate` (no time component), or `%z` on a `NaiveDateTime`
+// (naive = no TZ) — still reached chrono's `format()` call, which
+// panics with "a Display implementation returned an error
+// unexpectedly". `catch_builtin_panic` converts that into a
+// `VmError`, BUT Rust's default panic hook still writes a 3-line
+// `thread 'main' panicked at ...` notice to stderr before the
+// recovery, leaking internal panic text to the user.
+//
+// The fix extends `validate_strftime_pattern` to classify each parsed
+// `Item::Numeric` / `Item::Fixed` variant against the receiver type
+// (`Date` vs `DateTime`) and reject incompatible specifiers up-front
+// with a clean `VmError`. Because the panic path is never reached,
+// stderr stays quiet.
+//
+// Each lock below has two assertions:
+//   1. Library-level: `run_err` returns a clean `VmError` whose
+//      message mentions "specifier" and names the receiver type.
+//      A regression that removes the up-front reject would leak
+//      chrono's "a Display implementation returned an error
+//      unexpectedly" panic message into the VmError.
+//   2. Subprocess-level: the silt binary run against the same
+//      program must not print "panicked at" to stderr. This catches
+//      any future regression where the panic escapes (even if the
+//      VmError looks clean) because the default hook still writes
+//      before `catch_builtin_panic` recovers.
+
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static F19_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn silt_bin() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_silt"))
+}
+
+fn f19_temp_silt_file(content: &str) -> PathBuf {
+    let n = F19_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join("silt_f19_strftime_tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("probe_{n}.silt"));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+/// Run the given silt source as a subprocess and assert that stderr
+/// never contains "panicked at". The subprocess exit code is
+/// ignored — runtime errors are expected. This is the real F19
+/// "no stderr panic leak" check.
+fn assert_subprocess_no_panic_leak(src: &str) {
+    let path = f19_temp_silt_file(src);
+    let output = silt_bin()
+        .arg(&path)
+        .output()
+        .expect("failed to spawn silt binary");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "silt subprocess leaked a Rust panic notice to stderr:\n{stderr}"
+    );
+    // Also guard against chrono's specific panic text surfacing via
+    // the panic message (even if the "thread 'main' panicked at"
+    // header ever gets suppressed, the body should not leak).
+    assert!(
+        !stderr.contains("a Display implementation returned an error"),
+        "silt subprocess leaked chrono's Display-impl panic text:\n{stderr}"
+    );
+}
+
+/// F19 lock #1: `time.format_date(d, "%H")` — a valid time-only
+/// specifier on a `NaiveDate` receiver.
+#[test]
+fn test_time_format_date_rejects_time_only_specifier() {
+    let src = r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%H")
+    Err(_) -> "date err"
+  }
+}
+"#;
+    let err = run_err(src);
+    assert!(
+        err.contains("time.format_date"),
+        "error should be tagged time.format_date, got: {err}"
+    );
+    assert!(
+        err.contains("specifier"),
+        "error should mention 'specifier', got: {err}"
+    );
+    assert!(
+        err.contains("Date"),
+        "error should name the 'Date' receiver type, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error leaked 'panicked' text — chrono format panic escaped: {err}"
+    );
+    assert!(
+        !err.contains("Display implementation"),
+        "error leaked chrono's Display-impl panic text: {err}"
+    );
+
+    // Subprocess check: no `thread 'main' panicked at ...` line in
+    // stderr. This is the canonical F19 stderr-leak lock.
+    assert_subprocess_no_panic_leak(src);
+}
+
+/// F19 lock #2: `time.format_date(d, "%z")` — a timezone specifier
+/// on a `NaiveDate` receiver. Date has neither a time nor a TZ.
+#[test]
+fn test_time_format_date_rejects_timezone_specifier() {
+    let src = r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%z")
+    Err(_) -> "date err"
+  }
+}
+"#;
+    let err = run_err(src);
+    assert!(
+        err.contains("time.format_date"),
+        "error should be tagged time.format_date, got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("timezone")
+            || err.to_lowercase().contains("time specifier"),
+        "error should mention 'timezone' or 'time specifier', got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error leaked 'panicked' text: {err}"
+    );
+    assert_subprocess_no_panic_leak(src);
+}
+
+/// F19 lock #3: `time.format(dt, "%z")` — timezone specifier on a
+/// `NaiveDateTime` receiver. Silt DateTimes are naive (no TZ).
+#[test]
+fn test_time_format_rejects_timezone_specifier_for_naive_datetime() {
+    let src = r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> match time.time(10, 30, 0) {
+      Ok(t) -> time.format(time.datetime(d, t), "%z")
+      Err(_) -> "time err"
+    }
+    Err(_) -> "date err"
+  }
+}
+"#;
+    let err = run_err(src);
+    assert!(
+        err.contains("time.format"),
+        "error should be tagged time.format, got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("timezone"),
+        "error should mention 'timezone', got: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("naive"),
+        "error should mention 'naive' (the receiver type), got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error leaked 'panicked' text: {err}"
+    );
+    assert_subprocess_no_panic_leak(src);
+}
+
+/// F19 positive control: `time.format_date(d, "%Y-%m-%d")` — a
+/// pure-date specifier on a Date receiver. Must still work.
+#[test]
+fn test_time_format_date_happy_path_still_works() {
+    let v = run(
+        r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%Y-%m-%d")
+    Err(_) -> "err"
+  }
+}
+"#,
+    );
+    assert_eq!(v, Value::String("2024-06-15".into()));
+}
+
+/// F19 positive control: `time.format(dt, "%H:%M:%S")` — time
+/// specifiers on a DateTime. Must still work (fix only rejects TZ
+/// specifiers on DateTime, not time specifiers).
+#[test]
+fn test_time_format_datetime_with_time_specifiers_still_works() {
+    let v = run(
+        r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> match time.time(10, 30, 45) {
+      Ok(t) -> time.format(time.datetime(d, t), "%H:%M:%S")
+      Err(_) -> "time err"
+    }
+    Err(_) -> "date err"
+  }
+}
+"#,
+    );
+    assert_eq!(v, Value::String("10:30:45".into()));
+}
+
+/// F19 positive control: previous round's `%Q` (bogus specifier)
+/// rejection is preserved by the new validator. A regression that
+/// narrowed the validator to only handle Fixed/Numeric and dropped
+/// the `Item::Error` arm would fail this test.
+#[test]
+fn test_time_format_still_rejects_bogus_specifier() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> String {
+  match time.date(2024, 6, 15) {
+    Ok(d) -> time.format_date(d, "%Q")
+    Err(_) -> "err"
+  }
+}
+"#,
+    );
+    assert!(
+        err.contains("invalid format specifier"),
+        "expected 'invalid format specifier' rejection for '%Q', got: {err}"
+    );
 }
