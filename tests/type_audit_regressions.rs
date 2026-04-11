@@ -676,3 +676,44 @@ fn main() { println(indirect(5)) }
     );
 }
 
+// ── Type::Fun Display matches parser `Fn(...)` surface ─────────────
+// The parser reads function-type annotations as `Fn(A, B) -> C` at
+// src/parser.rs:836. Display at src/types.rs:59 must emit the same
+// form so diagnostics round-trip against user-written annotations.
+// A mismatch like "expected Fn(Int) -> Int, got (Int) -> Int" was
+// confusing because the `(Int) -> Int` form visually collides with
+// silt's tuple-type syntax.
+
+#[test]
+fn test_fn_type_annotation_mismatch_renders_fn_prefix() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  let f: Fn(Int) -> Int = "hello"
+  println(f)
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("Fn(Int) -> Int")),
+        "expected 'Fn(Int) -> Int' in error message (matches parser surface), got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_fn_type_annotation_two_arg_renders_fn_prefix() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  let f: Fn(Int, String) -> Bool = 42
+  println(f)
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Fn(Int, String) -> Bool")),
+        "expected 'Fn(Int, String) -> Bool' in error message, got: {errs:?}"
+    );
+}
+

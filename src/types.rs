@@ -57,7 +57,12 @@ impl std::fmt::Display for Type {
             Type::Unit => write!(f, "()"),
             Type::Var(v) => write!(f, "?{v}"),
             Type::Fun(params, ret) => {
-                write!(f, "(")?;
+                // Match the parser's surface syntax `Fn(A, B) -> C` so
+                // diagnostics render fn types in the same form users
+                // wrote in annotations. Without the `Fn` prefix, the
+                // render `(A, B) -> C` visually collides with silt's
+                // tuple-type syntax `(A, B)`.
+                write!(f, "Fn(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -429,5 +434,45 @@ mod tests {
             ),
             "nested Set inside Map must be substituted"
         );
+    }
+
+    // ── Regression: Type::Fun Display matches parser `Fn(...)` surface ──
+    // The parser at src/parser.rs:838 reads function-type annotations as
+    // `Fn(A, B) -> C`. Without the `Fn` prefix in Display, diagnostics
+    // render fn types as `(A, B) -> C`, which visually collides with
+    // silt's tuple-type syntax `(A, B)` and doesn't match anything a
+    // user could write in an annotation.
+
+    #[test]
+    fn display_fun_uses_fn_prefix_multi_arg() {
+        let ty = Type::Fun(vec![Type::Int, Type::String], Box::new(Type::Int));
+        assert_eq!(format!("{ty}"), "Fn(Int, String) -> Int");
+    }
+
+    #[test]
+    fn display_fun_uses_fn_prefix_single_arg() {
+        let ty = Type::Fun(vec![Type::Int], Box::new(Type::Bool));
+        assert_eq!(format!("{ty}"), "Fn(Int) -> Bool");
+    }
+
+    #[test]
+    fn display_fun_distinguishes_tuple_arg_from_multi_arg() {
+        // `Fn((Int, String)) -> Int` is a 1-arg fn taking a tuple.
+        // `Fn(Int, String) -> Int` is a 2-arg fn. These must render
+        // distinctly so diagnostics don't conflate arity with tupling.
+        let tuple_arg = Type::Fun(
+            vec![Type::Tuple(vec![Type::Int, Type::String])],
+            Box::new(Type::Int),
+        );
+        let two_arg = Type::Fun(vec![Type::Int, Type::String], Box::new(Type::Int));
+        assert_eq!(format!("{tuple_arg}"), "Fn((Int, String)) -> Int");
+        assert_eq!(format!("{two_arg}"), "Fn(Int, String) -> Int");
+        assert_ne!(format!("{tuple_arg}"), format!("{two_arg}"));
+    }
+
+    #[test]
+    fn display_fun_zero_arg() {
+        let ty = Type::Fun(vec![], Box::new(Type::Unit));
+        assert_eq!(format!("{ty}"), "Fn() -> ()");
     }
 }

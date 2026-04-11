@@ -699,9 +699,17 @@ impl Vm {
                             return Err(e);
                         }
                         Err(e) => {
+                            // Capture the callback's span + call_stack BEFORE
+                            // truncating frames, otherwise the outer
+                            // enrich_error at Vm::run will see only the builtin
+                            // dispatch site and relocalize the error away from
+                            // the callback body where the real bug lives.
+                            // (Audit L2 callback-frame erasure — rounds 1-15
+                            // deferred, round 16 fix.)
+                            let enriched = self.enrich_error(e);
                             self.frames.truncate(saved_frame_count);
                             self.stack.truncate(func_slot);
-                            return Err(e);
+                            return Err(enriched);
                         }
                     }
                 }
@@ -790,9 +798,15 @@ impl Vm {
                     return Err(e);
                 }
                 Err(e) => {
+                    // Same fix as invoke_callable: enrich the error with the
+                    // callback's span + call_stack before truncating frames,
+                    // so the outer enrich_error at Vm::run doesn't relocalize
+                    // to the builtin dispatch site. (Audit L2 callback-frame
+                    // erasure — rounds 1-15 deferred, round 16 fix.)
+                    let enriched = self.enrich_error(e);
                     self.frames.truncate(saved_frame_count);
                     self.stack.truncate(func_slot);
-                    return Err(e);
+                    return Err(enriched);
                 }
             }
         }
