@@ -515,6 +515,18 @@ fn json_to_typed_value(
                 if let Some(i) = n.as_i64() {
                     Ok(Value::Int(i))
                 } else if let Some(f) = n.as_f64() {
+                    // Mirror the `float.to_int` range check (B7). A bare
+                    // `f as i64` would saturate to i64::MAX/MIN silently,
+                    // turning large JSON numbers like 1e100 into i64::MAX —
+                    // a data-corruption hazard. Reject values that aren't
+                    // finite or don't fit exactly in the i64 range.
+                    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+                    const I64_MAX_PLUS_ONE: f64 = 9223372036854775808.0; // exact
+                    if !f.is_finite() || !(I64_MIN_AS_F64..I64_MAX_PLUS_ONE).contains(&f) {
+                        return Err(VmError::new(format!(
+                            "json.parse({parent_type}): field '{field_name}': number {f} out of Int range"
+                        )));
+                    }
                     Ok(Value::Int(f as i64))
                 } else {
                     Err(VmError::new(format!(
@@ -994,7 +1006,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if !args.is_empty() {
                 return Err(VmError::new("time.now takes 0 arguments".into()));
             }
-            let epoch_ns = vm.epoch_ms()? * 1_000_000;
+            let epoch_ms = vm.epoch_ms()?;
+            let epoch_ns = epoch_ms.checked_mul(1_000_000).ok_or_else(|| {
+                VmError::new("time arithmetic overflow: time.now epoch_ms * 1_000_000".into())
+            })?;
             Ok(make_instant(epoch_ns))
         }
 
@@ -1219,7 +1234,24 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(days) = &args[1] else {
                 return Err(VmError::new("time.add_days requires Int days".into()));
             };
-            let result = d + chrono::Duration::days(*days);
+            // chrono::Duration::days panics when `days * 86_400_000` overflows
+            // i64 milliseconds (i.e. for inputs beyond roughly ±106_751_991 days).
+            // We reject such values up front so the panic can never escape
+            // the builtin. Further, `NaiveDate::checked_add_signed` returns
+            // None for out-of-range dates (chrono's valid range spans ±262_143
+            // years).  In both failure modes we produce a clean VmError.
+            const MAX_DAYS: i64 = 100_000_000; // safely below chrono's panic threshold
+            if days.unsigned_abs() > MAX_DAYS as u64 {
+                return Err(VmError::new(format!(
+                    "time arithmetic overflow: time.add_days days={days} out of range"
+                )));
+            }
+            let delta = chrono::Duration::days(*days);
+            let result = d.checked_add_signed(delta).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.add_days result out of range for {d} + {days} days"
+                ))
+            })?;
             Ok(make_date(result))
         }
 
@@ -1234,9 +1266,27 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.add_months requires Int months".into()));
             };
             let months = *months;
-            // Calculate target year and month
-            let total_months = d.year() as i64 * 12 + (d.month() as i64 - 1) + months;
-            let target_year = (total_months.div_euclid(12)) as i32;
+            // Calculate target year and month using checked arithmetic so
+            // extreme `months` inputs (e.g. i64::MAX) don't panic in debug
+            // builds or silently wrap in release builds.
+            let base_year = d.year() as i64;
+            let total_months = base_year
+                .checked_mul(12)
+                .and_then(|y| y.checked_add(d.month() as i64 - 1))
+                .and_then(|m| m.checked_add(months))
+                .ok_or_else(|| {
+                    VmError::new(format!(
+                        "time arithmetic overflow: time.add_months months={months} out of range"
+                    ))
+                })?;
+            let target_year_i64 = total_months.div_euclid(12);
+            // Cast to i32 only after verifying it fits.
+            if target_year_i64 < i32::MIN as i64 || target_year_i64 > i32::MAX as i64 {
+                return Err(VmError::new(format!(
+                    "time arithmetic overflow: time.add_months target year {target_year_i64} out of i32 range"
+                )));
+            }
+            let target_year = target_year_i64 as i32;
             let target_month = (total_months.rem_euclid(12) + 1) as u32;
             // Clamp day to last valid day of target month
             let max_day = days_in_month(target_year, target_month);
@@ -1258,7 +1308,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let epoch_ns = extract_instant(&args[0])?;
             let dur_ns = extract_duration(&args[1])?;
-            Ok(make_instant(epoch_ns + dur_ns))
+            let result = epoch_ns.checked_add(dur_ns).ok_or_else(|| {
+                VmError::new("time arithmetic overflow: time.add instant + duration".into())
+            })?;
+            Ok(make_instant(result))
         }
 
         "since" => {
@@ -1269,7 +1322,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             }
             let from_ns = extract_instant(&args[0])?;
             let to_ns = extract_instant(&args[1])?;
-            Ok(make_duration(to_ns - from_ns))
+            let result = to_ns.checked_sub(from_ns).ok_or_else(|| {
+                VmError::new("time arithmetic overflow: time.since to - from".into())
+            })?;
+            Ok(make_duration(result))
         }
 
         "hours" => {
@@ -1279,7 +1335,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("time.hours requires an Int".into()));
             };
-            Ok(make_duration(*n * 3_600_000_000_000))
+            let ns = n.checked_mul(3_600_000_000_000).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.hours({n}) exceeds i64 nanoseconds"
+                ))
+            })?;
+            Ok(make_duration(ns))
         }
 
         "minutes" => {
@@ -1289,7 +1350,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("time.minutes requires an Int".into()));
             };
-            Ok(make_duration(*n * 60_000_000_000))
+            let ns = n.checked_mul(60_000_000_000).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.minutes({n}) exceeds i64 nanoseconds"
+                ))
+            })?;
+            Ok(make_duration(ns))
         }
 
         "seconds" => {
@@ -1299,7 +1365,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("time.seconds requires an Int".into()));
             };
-            Ok(make_duration(*n * 1_000_000_000))
+            let ns = n.checked_mul(1_000_000_000).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.seconds({n}) exceeds i64 nanoseconds"
+                ))
+            })?;
+            Ok(make_duration(ns))
         }
 
         "ms" => {
@@ -1309,7 +1380,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("time.ms requires an Int".into()));
             };
-            Ok(make_duration(*n * 1_000_000))
+            let ns = n.checked_mul(1_000_000).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.ms({n}) exceeds i64 nanoseconds"
+                ))
+            })?;
+            Ok(make_duration(ns))
         }
 
         "weekday" => {

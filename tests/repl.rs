@@ -366,3 +366,54 @@ fn blank_lines_are_ignored() {
         out.stderr
     );
 }
+
+// ── 8. E2 regression: runtime error shows call stack ──────────────
+//
+// Previously the REPL's runtime-error path printed only the error site
+// via `SourceError` when a span was present, silently dropping the
+// `VmError::call_stack` that the VM populates. Users had no way to see
+// which function called which when an error happened deep inside a
+// declaration-level chain.
+//
+// Defining `fn g() { 1 / 0 }` and `fn f() { g() }` across two REPL
+// turns, then calling `f()`, must surface both `f` and `g` on stderr in
+// addition to the division-by-zero error itself.
+
+#[test]
+fn test_runtime_error_shows_call_stack() {
+    // Note: both call sites deliberately avoid tail position — otherwise
+    // the VM's tail-call optimisation collapses the frames and the user
+    // would never see `f` in the stack. `g() + 0` and `f() + 0` keep the
+    // call frames live so the enriched error carries the full chain.
+    let script = "\
+fn g() { 1 / 0 }
+fn f() { g() + 0 }
+f() + 0
+";
+    let out = run_session(script);
+    assert_has_banner(&out);
+    assert!(
+        out.success,
+        "repl should exit successfully despite runtime error, stderr: {}",
+        out.stderr
+    );
+    // The error message itself must be present (division by zero).
+    assert!(
+        out.stderr.contains("division by zero"),
+        "expected `division by zero` in stderr, got:\n{}",
+        out.stderr
+    );
+    // The call stack must name both g (the error site) and f (the caller).
+    // The exact formatting is intentionally loose — we want the names to
+    // appear on stderr in some frame line.
+    assert!(
+        out.stderr.contains("-> g"),
+        "expected `g` frame in call stack, got stderr:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("-> f"),
+        "expected `f` frame in call stack, got stderr:\n{}",
+        out.stderr
+    );
+}

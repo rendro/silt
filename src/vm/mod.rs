@@ -4,7 +4,7 @@
 
 mod arithmetic;
 mod dispatch;
-mod error;
+pub mod error;
 mod execute;
 mod runtime;
 

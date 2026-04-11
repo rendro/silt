@@ -1441,3 +1441,204 @@ fn main() {
         other => panic!("expected Some(i64::MAX) variant, got: {other:?}"),
     }
 }
+
+// ── Audit regression: time.* i64 arithmetic overflow (V2) ───────────
+//
+// Each test passes `i64::MAX` (or a small multiplier) to a `time.*`
+// builtin. Before the fix, these multiplied blindly with `*` which
+// panics in debug and wraps in release. The fix uses `checked_mul` /
+// `checked_add` and returns a clean `VmError` whose message contains
+// "overflow". None of these programs should panic.
+
+// Each of these tests asserts the *specific* "time arithmetic overflow"
+// prefix produced by the V2 checked-arith fix. Without the fix, V1's
+// catch_builtin_panic wrapper converts the raw debug-mode panic
+// ("attempt to multiply with overflow") into a VmError whose message
+// starts with "builtin module 'time' panicked:" — that message contains
+// the word "overflow" but not "time arithmetic overflow". Checking for
+// the specific prefix makes the test load-bearing against V2 alone.
+
+#[test]
+fn test_time_hours_i64_max_returns_clean_error() {
+    let err = run_err(
+        r#"
+import time
+fn main() = time.hours(9223372036854775807)
+"#,
+    );
+    assert!(
+        err.contains("time arithmetic overflow"),
+        "expected time.hours checked-arith error, got: {err}"
+    );
+}
+
+#[test]
+fn test_time_minutes_i64_max_returns_clean_error() {
+    let err = run_err(
+        r#"
+import time
+fn main() = time.minutes(9223372036854775807)
+"#,
+    );
+    assert!(
+        err.contains("time arithmetic overflow"),
+        "expected time.minutes checked-arith error, got: {err}"
+    );
+}
+
+#[test]
+fn test_time_seconds_i64_max_returns_clean_error() {
+    let err = run_err(
+        r#"
+import time
+fn main() = time.seconds(9223372036854775807)
+"#,
+    );
+    assert!(
+        err.contains("time arithmetic overflow"),
+        "expected time.seconds checked-arith error, got: {err}"
+    );
+}
+
+#[test]
+fn test_time_ms_i64_max_returns_clean_error() {
+    let err = run_err(
+        r#"
+import time
+fn main() = time.ms(9223372036854775807)
+"#,
+    );
+    assert!(
+        err.contains("time arithmetic overflow"),
+        "expected time.ms checked-arith error, got: {err}"
+    );
+}
+
+#[test]
+fn test_time_add_days_i64_max_returns_clean_error() {
+    // `chrono::Duration::days(i64::MAX)` panics at the multiplication
+    // inside chrono. The fix rejects inputs outside a safe range so
+    // the panic never fires. Without the fix, V1 catches the chrono
+    // panic and surfaces "builtin module 'time' panicked:
+    // TimeDelta::days out of bounds" — which does NOT contain our
+    // specific "time arithmetic overflow" prefix.
+    let err = run_err(
+        r#"
+import time
+fn main() {
+  match time.date(2024, 1, 1) {
+    Ok(d) -> time.add_days(d, 9223372036854775807)
+    Err(e) -> panic(e)
+  }
+}
+"#,
+    );
+    assert!(
+        err.contains("time arithmetic overflow"),
+        "expected time.add_days checked-arith error, got: {err}"
+    );
+}
+
+// ── Audit regression: json.parse out-of-range Int (V3) ──────────────
+
+#[test]
+fn test_json_parse_rejects_out_of_range_int() {
+    // A JSON number like `1e100` cannot fit in an i64. Before the fix,
+    // `f as i64` silently saturated to `i64::MAX`, corrupting parsed
+    // data. The fix mirrors `float.to_int`'s range check and wraps
+    // the offending parse as an `Err` variant containing "out of Int
+    // range" / "overflow". We match on the variant so the test fails
+    // loudly if the saturation bug returns (the pre-fix version would
+    // produce `Ok(Payload { n: 9223372036854775807 })`).
+    let result = run(
+        r#"
+import json
+type Payload { n: Int }
+fn main() = json.parse(Payload, """{"n": 1e100}""")
+"#,
+    );
+    match result {
+        Value::Variant(ref tag, ref payload) if tag == "Err" => {
+            assert_eq!(payload.len(), 1);
+            let msg = match &payload[0] {
+                Value::String(s) => s.clone(),
+                other => panic!("expected Err payload to be String, got: {other:?}"),
+            };
+            assert!(
+                msg.contains("out of Int range")
+                    || msg.contains("overflow")
+                    || msg.contains("out of"),
+                "expected out-of-range error, got: {msg}"
+            );
+        }
+        other => panic!(
+            "expected Err variant from json.parse on out-of-range number; saturation bug still present? got: {other:?}"
+        ),
+    }
+}
+
+// ── Audit regression: QuestionMark in spawned task (R1) ─────────────
+//
+// Locks R1: `?` inside a function body executed via `task.spawn` must
+// truncate the stack to the task's own `func_slot` on early return,
+// not to some outer scheduler-frame `base_slot`. Otherwise, the
+// returned value lands at the wrong stack index and `task.join`
+// observes corrupted state.
+//
+// A companion pair of tests already covers the `list.map` half of
+// this fix. This test covers the spawned-task half: it spawns a
+// closure whose body uses `?`, joins it, and checks the payload.
+
+#[test]
+fn test_question_mark_inside_spawned_task_does_not_corrupt_stack() {
+    // R1: when `?` hits Err/None inside a NESTED silt function called
+    // from within a spawned task body, the EarlyReturn path in the
+    // slice executor must truncate the task VM's stack to the popped
+    // frame's `func_slot` (= `finished_base - 1`), NOT to the parent
+    // frame's `base_slot`. Using the parent's base_slot wipes out any
+    // locals the parent had already pushed below the call site,
+    // corrupting subsequent stack reads.
+    //
+    // To surface the bug, the parent frame (`worker`) pushes several
+    // locals before calling the inner function `bad`, which returns
+    // via `?` on a `None`. After the EarlyReturn, `worker` must
+    // still read its saved locals correctly. The sum 111+222+333 is
+    // only preserved if the stack truncation uses `func_slot`, not
+    // `base_slot`.
+    //
+    // Verified load-bearing by substituting `self.current_frame()?
+    // .base_slot` for the `finished_base - 1` truncation target in
+    // both `execute` and `execute_slice`: the test then fails with
+    // `SetLocal slot out of range` inside `worker`.
+    let result = run(
+        r#"
+import task
+import option
+
+fn bad() -> Option(Int) {
+  let _x = None?
+  Some(0)
+}
+
+fn worker() -> Int {
+  let a = 111
+  let b = 222
+  let c = 333
+  match bad() {
+    Some(_) -> a + b + c
+    None -> a + b + c
+  }
+}
+
+fn main() -> Int {
+  let h = task.spawn(worker)
+  task.join(h)
+}
+"#,
+    );
+    assert_eq!(
+        result,
+        Value::Int(666),
+        "expected 111+222+333 = 666; any other value (or panic) means the spawned task's stack was truncated to the wrong offset after `?` early-return"
+    );
+}

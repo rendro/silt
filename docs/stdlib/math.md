@@ -239,7 +239,7 @@ Returns the sine of `x` (in radians).
 ```silt
 fn main() {
     println(math.sin(0.0))           -- 0.0
-    println(math.sin(math.pi / 2.0)) -- 1.0
+    println(math.sin(1.5707963))     -- 1.0 (pi/2)
 }
 ```
 
@@ -272,6 +272,6 @@ Returns the tangent of `x` (in radians).
 ```silt
 fn main() {
     println(math.tan(0.0))           -- 0.0
-    println(math.tan(math.pi / 4.0)) -- 1.0 (approximately)
+    println(math.tan(0.7853982))     -- 1.0 (approximately, pi/4)
 }
 ```

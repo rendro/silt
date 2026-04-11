@@ -18,7 +18,7 @@ This document has been split into per-module pages. See the **[Standard Library 
 | set | [set](stdlib/set.md) |
 | int / float | [int-float](stdlib/int-float.md) |
 | result / option | [result-option](stdlib/result-option.md) |
-| io / fs | [io-fs](stdlib/io-fs.md) |
+| io / fs / env | [io-fs](stdlib/io-fs.md) |
 | test | [test](stdlib/test.md) |
 | regex | [regex](stdlib/regex.md) |
 | json | [json](stdlib/json.md) |

@@ -1209,3 +1209,89 @@ fn test_document_symbols_lists_top_level_defs() {
 
     client.shutdown();
 }
+
+// ── E3: malformed params must yield an error response, not a hang ──
+//
+// Previously `extract_request` returned `Option<(id, params)>` and the
+// dispatcher silently dropped deserialize failures, causing compliant
+// LSP clients to hang waiting for a response that never arrived. The
+// fix restructures the helper to return `Err(Response)` and forwards
+// the response, with an `InvalidParams` error code.
+
+#[test]
+fn test_lsp_malformed_params_returns_error_response() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    // Send a textDocument/hover request whose `textDocument.uri` is an
+    // integer instead of a string. serde_json::from_value will fail to
+    // deserialize lsp_types::HoverParams, and the server must respond
+    // with an InvalidParams error (JSON-RPC code -32602) rather than
+    // dropping the request silently.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": 12345 },
+            "position": { "line": 0, "character": 0 }
+        }),
+    );
+
+    let resp = client.recv_response_for(id);
+    assert_eq!(
+        resp.get("id").and_then(|v| v.as_u64()),
+        Some(id),
+        "response must echo the request id, got: {resp}"
+    );
+    let error = resp
+        .get("error")
+        .unwrap_or_else(|| panic!("expected an error field on malformed-params response: {resp}"));
+    assert_eq!(
+        error.get("code").and_then(|v| v.as_i64()),
+        Some(-32602),
+        "expected JSON-RPC InvalidParams code -32602, got: {error}"
+    );
+
+    client.shutdown();
+}
+
+// ── E3: unknown methods must yield MethodNotFound ─────────────────
+//
+// The dispatcher previously had a `_ => {}` catch-all that silently
+// dropped unknown request methods, also causing client hangs. The fix
+// sends a MethodNotFound response for any request method we don't
+// recognize.
+
+#[test]
+fn test_lsp_unknown_method_returns_error_response() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    // Send a request with a method name we definitely don't handle.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/definitelyDoesNotExist",
+        json!({
+            "textDocument": { "uri": "file:///tmp/silt_lsp_unknown.silt" }
+        }),
+    );
+
+    let resp = client.recv_response_for(id);
+    assert_eq!(
+        resp.get("id").and_then(|v| v.as_u64()),
+        Some(id),
+        "response must echo the request id, got: {resp}"
+    );
+    let error = resp
+        .get("error")
+        .unwrap_or_else(|| panic!("expected an error field on unknown-method response: {resp}"));
+    assert_eq!(
+        error.get("code").and_then(|v| v.as_i64()),
+        Some(-32601),
+        "expected JSON-RPC MethodNotFound code -32601, got: {error}"
+    );
+
+    client.shutdown();
+}

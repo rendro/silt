@@ -811,10 +811,128 @@ fn find_silt_files(dir: &Path) -> Vec<String> {
     results
 }
 
+/// Build a map from bare top-level function name → (file_path, source text)
+/// for every module file that `main_path` transitively imports.
+///
+/// We scan `main_source` (and each imported module's source) for
+/// `import <name>` statements, resolve them relative to the main file's
+/// project root, and record each top-level `fn <name>` / `pub fn <name>`
+/// we find in the resulting module file.
+///
+/// This is a *best-effort* mapping used solely to improve runtime-error
+/// rendering when an error propagates out of an imported module. Name
+/// collisions between the main file and a module (both defining `foo`) or
+/// between two imported modules are resolved in favour of the FIRST entry
+/// encountered; the renderer falls back to the main file when there's no
+/// match, so it can never be worse than the previous behaviour.
+///
+/// See E1 in the audit: without this, runtime errors from module code
+/// were rendered against the main file's source and path, producing
+/// nonsensical `main.silt:1:<col>` pointers into whatever happened to be
+/// at line 1 of the main file.
+fn collect_module_function_sources(
+    main_path: &str,
+    main_source: &str,
+) -> std::collections::HashMap<String, (PathBuf, String)> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut out: HashMap<String, (PathBuf, String)> = HashMap::new();
+    let project_root: PathBuf = Path::new(main_path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(main_path).to_path_buf())
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
+    // BFS from main source: scan import statements, load each module file,
+    // repeat for transitive imports.
+    let mut queue: Vec<(String, String)> = vec![(main_path.to_string(), main_source.to_string())];
+    let mut seen: HashSet<String> = HashSet::new();
+    seen.insert(main_path.to_string());
+
+    while let Some((_cur_path, cur_source)) = queue.pop() {
+        for import_name in extract_imports(&cur_source) {
+            // Skip builtin modules — they're not file-backed.
+            if silt::module::is_builtin_module(&import_name) {
+                continue;
+            }
+            let file_path = project_root.join(format!("{import_name}.silt"));
+            let file_key = file_path.display().to_string();
+            if !seen.insert(file_key.clone()) {
+                continue;
+            }
+            let Ok(mod_source) = fs::read_to_string(&file_path) else {
+                continue;
+            };
+            // Record every `fn name` (or `pub fn name`) in this module.
+            for fn_name in extract_top_level_fn_names(&mod_source) {
+                out.entry(fn_name)
+                    .or_insert_with(|| (file_path.clone(), mod_source.clone()));
+            }
+            queue.push((file_key, mod_source));
+        }
+    }
+    out
+}
+
+/// Extract the bare module names referenced by `import <name>` statements
+/// in `source`. Supports both `import foo` and `import foo.{ Bar, baz }`
+/// forms — we just need the module name, not the item list.
+fn extract_imports(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw_line in source.lines() {
+        let line = raw_line.trim_start();
+        let Some(rest) = line.strip_prefix("import ") else {
+            continue;
+        };
+        // Module name runs to the first `.`, whitespace, `{`, or `as`.
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Extract the names of top-level `fn <name>` (optionally `pub fn`)
+/// declarations in `source`. This is a purely textual scan — we only
+/// need it to correlate a runtime frame's function name with a module
+/// file, so missing an edge case (e.g. an `fn` inside a multi-line
+/// comment) just means falling back to the main file for rendering.
+fn extract_top_level_fn_names(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw_line in source.lines() {
+        let line = raw_line.trim_start();
+        let rest = match line.strip_prefix("pub fn ") {
+            Some(r) => r,
+            None => match line.strip_prefix("fn ") {
+                Some(r) => r,
+                None => continue,
+            },
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// Run a file using the bytecode VM (default path).
 fn vm_run_file(path: &str) {
     silt::intern::reset();
     let (functions, source) = compile_file(path);
+
+    // Build a name → (module_file, source) map so runtime errors from
+    // imported modules are rendered against the correct file.  See
+    // `collect_module_function_sources` for the rationale.
+    let module_sources = collect_module_function_sources(path, &source);
 
     let Some(script) = functions.into_iter().next() else {
         eprintln!("{path}: internal error: empty function list");
@@ -826,7 +944,23 @@ fn vm_run_file(path: &str) {
     let mut vm = Vm::new();
     if let Err(e) = vm.run(script) {
         if let Some(span) = e.span {
-            let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+            // Determine which source text & file path to render against.
+            // Prefer the innermost non-synthetic frame's function name,
+            // falling back to the main file when the frame isn't from an
+            // imported module.
+            let innermost_fn_name: Option<&str> = e
+                .call_stack
+                .iter()
+                .find(|(n, _)| !n.starts_with('<'))
+                .map(|(n, _)| n.as_str());
+            let (err_source, err_path): (&str, &str) =
+                match innermost_fn_name.and_then(|n| module_sources.get(n)) {
+                    Some((module_path, module_source)) => {
+                        (module_source.as_str(), module_path.to_str().unwrap_or(path))
+                    }
+                    None => (source.as_str(), path),
+                };
+            let source_err = SourceError::runtime_at(&e.message, span, err_source, err_path);
             eprintln!("{source_err}");
             // Print call stack if there are user frames beyond the error site.
             // Drop synthetic entry-point frames (<script>, <call:...>) by name
@@ -846,13 +980,20 @@ fn vm_run_file(path: &str) {
                 let head = 10;
                 let tail = 5;
                 let print_frame = |name: &str, frame_span: &silt::lexer::Span| {
+                    // Each frame uses its own function's source file for
+                    // file labels — this matters when the call crosses a
+                    // module boundary.
+                    let frame_path: &str = module_sources
+                        .get(name)
+                        .map(|(p, _)| p.to_str().unwrap_or(path))
+                        .unwrap_or(path);
                     if frame_span.line > 0 {
                         eprintln!(
                             "  -> {}  at {}:{}:{}",
-                            name, path, frame_span.line, frame_span.col
+                            name, frame_path, frame_span.line, frame_span.col
                         );
                     } else {
-                        eprintln!("  -> {name}  at {path}:<unknown location>");
+                        eprintln!("  -> {name}  at {frame_path}:<unknown location>");
                     }
                 };
                 if meaningful.len() <= head + tail {
@@ -1025,13 +1166,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
+    // Count files that failed to lex / parse / type-check / compile.
+    // These are tracked separately from the per-test failure counter so
+    // that `X tests: Y passed, Z failed` still reflects what actually
+    // ran. Previously a single file compile error was booked as one
+    // "failed test", which was misleading — that file may have contained
+    // dozens of tests we couldn't even count.
+    let mut file_errors: usize = 0;
 
     for path in &paths {
         let source = match fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("error reading {path}: {e}");
-                failed += 1;
+                eprintln!("{path}: failed to read — {e}");
+                file_errors += 1;
                 continue;
             }
         };
@@ -1040,19 +1188,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             Ok(t) => t,
             Err(e) => {
                 let source_err = SourceError::from_lex_error(&e, &source, path.as_str());
-                eprintln!("{source_err}");
-                failed += 1;
+                eprintln!("{path}: failed to compile — {source_err}");
+                file_errors += 1;
                 continue;
             }
         };
 
         let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
         if !parse_errors.is_empty() {
+            eprintln!("{path}: failed to compile — parse errors:");
             for e in &parse_errors {
                 let source_err = SourceError::from_parse_error(e, &source, path.as_str());
                 eprintln!("{source_err}");
             }
-            failed += 1;
+            file_errors += 1;
             continue;
         }
 
@@ -1067,7 +1216,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             }
         }
         if has_type_error {
-            failed += 1;
+            eprintln!("{path}: failed to compile — type errors (see above)");
+            file_errors += 1;
             continue;
         }
 
@@ -1083,8 +1233,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             Ok(f) => f,
             Err(e) => {
                 let source_err = SourceError::from_compile_error(&e, &source, path);
-                eprintln!("{source_err}");
-                failed += 1;
+                eprintln!("{path}: failed to compile — {source_err}");
+                file_errors += 1;
                 continue;
             }
         };
@@ -1092,14 +1242,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // Run the setup script to register all globals in the VM
         let Some(first) = functions.into_iter().next() else {
             eprintln!("{path}: internal error: no functions compiled");
-            failed += 1;
+            file_errors += 1;
             continue;
         };
         let script = Arc::new(first);
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
             eprintln!("{path}: setup error: {e}");
-            failed += 1;
+            file_errors += 1;
             continue;
         }
 
@@ -1148,13 +1298,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     }
 
-    eprintln!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
-    if total == 0 {
+    if file_errors > 0 {
+        eprintln!(
+            "\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped ({file_errors} file{} failed to compile)",
+            if file_errors == 1 { "" } else { "s" }
+        );
+    } else {
+        eprintln!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
+    }
+    if total == 0 && file_errors == 0 {
         eprintln!(
             "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'"
         );
     }
-    if failed > 0 {
+    if failed > 0 || file_errors > 0 {
         process::exit(1);
     }
 }

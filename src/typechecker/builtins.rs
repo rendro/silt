@@ -451,45 +451,50 @@ impl TypeChecker {
 
         // ── json module ─────────────────────────────────────────────────
 
-        // json.parse: (T, String) -> Result(T, String)
-        // The first arg is a type descriptor; the same type flows into the Result.
+        // json.parse: (TypeOf(T), String) -> Result(T, String)
+        // The first arg is a type descriptor (represented as TypeOf(T) so
+        // that it cannot be confused with a value of the underlying type —
+        // T2 audit fix). The carried type flows into the Result.
         {
             let (a, av) = self.fresh_tv();
-            let result_ty = Type::Generic(intern("Result"), vec![a.clone(), Type::String]);
+            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
+            let result_ty = Type::Generic(intern("Result"), vec![a, Type::String]);
             env.define(
                 intern("json.parse"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
         }
 
-        // json.parse_list: (T, String) -> Result(List(T), String)
+        // json.parse_list: (TypeOf(T), String) -> Result(List(T), String)
         {
             let (a, av) = self.fresh_tv();
+            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
             let result_ty = Type::Generic(
                 intern("Result"),
-                vec![Type::List(Box::new(a.clone())), Type::String],
+                vec![Type::List(Box::new(a)), Type::String],
             );
             env.define(
                 intern("json.parse_list"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
         }
 
-        // json.parse_map: (V, String) -> Result(Map(String, V), String)
+        // json.parse_map: (TypeOf(V), String) -> Result(Map(String, V), String)
         {
             let (a, av) = self.fresh_tv();
+            let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
             let result_ty = Type::Generic(
                 intern("Result"),
                 vec![
-                    Type::Map(Box::new(Type::String), Box::new(a.clone())),
+                    Type::Map(Box::new(Type::String), Box::new(a)),
                     Type::String,
                 ],
             );
@@ -497,7 +502,7 @@ impl TypeChecker {
                 intern("json.parse_map"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![a, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
@@ -530,10 +535,14 @@ impl TypeChecker {
         }
 
         // ── Primitive type descriptors (for json.parse_map etc.) ──────
-        // These carry the actual type so json.parse can propagate it
-        // into the return type.
+        // These carry the actual type as a TypeOf(T) descriptor so
+        // json.parse can propagate it into the return type. They must
+        // NOT be registered as the underlying type itself — otherwise
+        // `Int * 2` would typecheck when `Int` is the bare descriptor
+        // (T2 audit fix: the runtime represents the value as
+        // `Value::PrimitiveDescriptor("Int")`, not `Value::Int(_)`).
         for name in &["Int", "Float", "String", "Bool"] {
-            let ty = match *name {
+            let inner = match *name {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
                 "String" => Type::String,
@@ -544,7 +553,7 @@ impl TypeChecker {
                 intern(name),
                 Scheme {
                     vars: vec![],
-                    ty,
+                    ty: Type::Generic(intern("TypeOf"), vec![inner]),
                     constraints: vec![],
                 },
             );

@@ -164,6 +164,22 @@ fn format_module_source_error(
     )
 }
 
+/// Validate that a computed `JumpBack` distance fits in the instruction's
+/// `u16` operand. Mirrors the check in [`Chunk::patch_jump`] for forward
+/// jumps — a loop body larger than 65_535 bytes of bytecode would wrap
+/// around and branch to garbage. Extracted into a free function so the
+/// bounds check can be unit-tested without wiring up an entire compile
+/// context.
+fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), CompileError> {
+    if jump_back_dist > u16::MAX as usize {
+        return Err(CompileError {
+            message: "loop body too large (exceeds 65535 bytes of bytecode)".to_string(),
+            span,
+        });
+    }
+    Ok(())
+}
+
 // ── Compiler ──────────────────────────────────────────────────────────
 
 pub struct Compiler {
@@ -1158,7 +1174,7 @@ impl Compiler {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op(Op::GetLocal, span);
                     self.current_chunk().emit_u16(slot, span);
-                } else if let Some(idx) = self.resolve_upvalue(*name)? {
+                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
@@ -1280,7 +1296,7 @@ impl Compiler {
                 // But only if the identifier is NOT a known local or upvalue.
                 if let ExprKind::Ident(name) = &expr.kind {
                     let is_local = self.resolve_local(*name).is_some()
-                        || self.resolve_upvalue(*name)?.is_some();
+                        || self.resolve_upvalue(*name, span)?.is_some();
                     if !is_local {
                         let name_str = resolve(*name);
                         // Gate: require import for builtin modules.
@@ -1631,6 +1647,10 @@ impl Compiler {
                 let current_offset = self.current_chunk().len();
                 // JumpBack operand is how far back to jump from after the operand.
                 let jump_back_dist = current_offset + 3 - loop_start; // +3 for opcode + u16
+                // Mirror `Chunk::patch_jump`: the operand is a `u16`, so a
+                // loop body larger than 65_535 bytes of bytecode would wrap
+                // and jump to a garbage offset. Reject it cleanly.
+                jumpback_fits_u16(jump_back_dist, span)?;
                 self.current_chunk().emit_op(Op::JumpBack, span);
                 self.current_chunk().emit_u16(jump_back_dist as u16, span);
             }
@@ -2067,18 +2087,19 @@ impl Compiler {
     /// If the variable is found as a local in an enclosing scope, it is captured
     /// as an upvalue (is_local = true). If the enclosing scope already has it as
     /// an upvalue, it is chained through (is_local = false, transitive capture).
-    fn resolve_upvalue(&mut self, name: Symbol) -> Result<Option<u8>, CompileError> {
+    fn resolve_upvalue(&mut self, name: Symbol, span: Span) -> Result<Option<u8>, CompileError> {
         let current_idx = self.contexts.len() - 1;
         if current_idx == 0 {
             return Ok(None); // Top-level script has no enclosing scope.
         }
-        self.resolve_upvalue_in(name, current_idx)
+        self.resolve_upvalue_in(name, current_idx, span)
     }
 
     fn resolve_upvalue_in(
         &mut self,
         name: Symbol,
         context_index: usize,
+        span: Span,
     ) -> Result<Option<u8>, CompileError> {
         if context_index == 0 {
             return Ok(None); // No more enclosing scopes.
@@ -2106,7 +2127,7 @@ impl Compiler {
                     message: format!(
                         "cannot capture local in slot {slot} as upvalue (max slot 255)"
                     ),
-                    span: Span::new(0, 0),
+                    span,
                 });
             } else {
                 slot as u8
@@ -2118,11 +2139,12 @@ impl Compiler {
                     is_local: true,
                     index,
                 },
-            )));
+                span,
+            )?));
         }
 
         // Not a local in the enclosing scope -- try recursively as an upvalue.
-        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx)? {
+        if let Some(parent_upvalue_idx) = self.resolve_upvalue_in(name, enclosing_idx, span)? {
             // The enclosing scope has it as an upvalue. Chain it.
             return Ok(Some(self.add_upvalue(
                 context_index,
@@ -2130,26 +2152,45 @@ impl Compiler {
                     is_local: false,
                     index: parent_upvalue_idx,
                 },
-            )));
+                span,
+            )?));
         }
 
         Ok(None)
     }
 
-    /// Add an upvalue descriptor to a context, deduplicating.
-    fn add_upvalue(&mut self, context_index: usize, desc: UpvalueDesc) -> u8 {
+    /// Add an upvalue descriptor to a context, deduplicating. Returns
+    /// `Err` if the context already holds the maximum of 256 upvalues;
+    /// the bytecode format addresses upvalues with a single byte so
+    /// anything beyond index 255 would truncate. Mirrors the sibling
+    /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255" path
+    /// so both hard limits surface as `CompileError` rather than panics.
+    fn add_upvalue(
+        &mut self,
+        context_index: usize,
+        desc: UpvalueDesc,
+        span: Span,
+    ) -> Result<u8, CompileError> {
         let ctx = &mut self.contexts[context_index];
         // Check if we already have this exact upvalue.
         for (i, existing) in ctx.upvalues.iter().enumerate() {
             if existing.is_local == desc.is_local && existing.index == desc.index {
-                return i as u8;
+                return Ok(i as u8);
             }
         }
         let index = ctx.upvalues.len();
-        assert!(index <= u8::MAX as usize, "too many upvalues");
+        if index > u8::MAX as usize {
+            return Err(CompileError {
+                message: format!(
+                    "too many upvalues: closure captures more than {} values (max)",
+                    u8::MAX as usize + 1
+                ),
+                span,
+            });
+        }
         ctx.upvalues.push(desc);
         ctx.function.upvalue_count = ctx.upvalues.len() as u8;
-        index as u8
+        Ok(index as u8)
     }
 }
 
@@ -3177,5 +3218,94 @@ fn f(expected, actual) {
         // Pin pattern uses Dup + GetLocal + Eq
         assert!(has_op(&f.chunk, Op::Dup));
         assert!(has_op(&f.chunk, Op::Eq));
+    }
+
+    // ── Audit regression: JumpBack operand bounds check (V4) ───────
+    //
+    // The `JumpBack` operand is a `u16`, so a loop body larger than
+    // 65_535 bytes of bytecode would wrap and branch to a garbage
+    // offset. `Chunk::patch_jump` already checks this for forward
+    // jumps; the matching `Recur` emitter used to cast blindly with
+    // `as u16`. The fix threads the distance through
+    // `jumpback_fits_u16`; this test exercises that helper directly so
+    // the bounds-check is locked without having to synthesize a
+    // >64KB loop body.
+    #[test]
+    fn test_jumpback_overflow_rejected() {
+        use crate::lexer::Span;
+
+        // A distance that exactly fits must pass.
+        assert!(super::jumpback_fits_u16(u16::MAX as usize, Span::new(0, 0)).is_ok());
+
+        // One beyond the limit must produce a CompileError and not a
+        // panic/wrap.
+        let err = super::jumpback_fits_u16(u16::MAX as usize + 1, Span::new(0, 0))
+            .expect_err("expected u16 overflow to be rejected");
+        assert!(
+            err.message.contains("loop body too large"),
+            "expected loop-body-too-large error, got: {}",
+            err.message
+        );
+
+        // Way beyond the limit also.
+        assert!(super::jumpback_fits_u16(usize::MAX, Span::new(0, 0)).is_err());
+    }
+
+    // ── Audit regression: add_upvalue >256 upvalues (V5) ────────────
+    //
+    // The bytecode addresses upvalues with a single byte (0..=255), so
+    // `add_upvalue` must reject the 257th capture instead of tripping
+    // an `assert!` — an assert panics the compiler thread, which is a
+    // denial-of-service for the host when compiling untrusted input.
+    // The fix turns the assert into a `CompileError`; this test
+    // exercises the bounds-check by pre-filling a compile context with
+    // 256 upvalues and verifying that the 257th attempt returns Err.
+    #[test]
+    fn test_add_upvalue_rejects_over_256() {
+        use crate::bytecode::UpvalueDesc;
+        use crate::lexer::Span;
+
+        let mut compiler = Compiler::new();
+        // Push an outer (script) context plus the function context we'll
+        // be adding upvalues into; `add_upvalue` expects `context_index`
+        // to be valid.
+        compiler
+            .contexts
+            .push(CompileContext::new("<script>".into(), 0));
+        compiler
+            .contexts
+            .push(CompileContext::new("inner".into(), 0));
+        let inner_idx = 1usize;
+
+        // Register exactly 256 distinct upvalues (indices 0..=255) as
+        // locals captured from the enclosing scope. These must all
+        // succeed.
+        for i in 0..=u8::MAX {
+            let desc = UpvalueDesc {
+                is_local: true,
+                index: i,
+            };
+            let result = compiler.add_upvalue(inner_idx, desc, Span::new(0, 0));
+            assert!(
+                result.is_ok(),
+                "upvalue {i} (of 256) should be accepted; got {result:?}"
+            );
+        }
+
+        // A 257th distinct upvalue must now be rejected — not panic.
+        // Use `is_local: false` so the dedup check in `add_upvalue`
+        // can't collapse it with an existing local-captured entry.
+        let overflowing = UpvalueDesc {
+            is_local: false,
+            index: 0,
+        };
+        let err = compiler
+            .add_upvalue(inner_idx, overflowing, Span::new(0, 0))
+            .expect_err("expected 257th upvalue to return CompileError");
+        assert!(
+            err.message.contains("too many upvalues"),
+            "expected too-many-upvalues error, got: {}",
+            err.message
+        );
     }
 }

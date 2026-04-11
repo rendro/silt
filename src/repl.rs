@@ -21,6 +21,7 @@ use crate::typechecker;
 use crate::typechecker::ReplTypeContext;
 use crate::value::Value;
 use crate::vm::Vm;
+use crate::vm::error::render_call_stack;
 
 /// Compute the path to the REPL history file.
 ///
@@ -100,6 +101,11 @@ impl Completer for SiltHelper {
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         // Find the word being completed (go back from cursor to whitespace/delimiter).
+        // IMPORTANT: `.` is deliberately NOT a word boundary here, so that
+        // typing `string.` keeps the full `string.` as the completion
+        // prefix and narrows candidates to `string.*` entries. Adding `.`
+        // to this set re-introduces the DX2 regression — see
+        // `test_repl_completion_filters_on_module_prefix`.
         let start = line[..pos]
             .rfind(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == '|')
             .map(|i| i + 1)
@@ -450,6 +456,14 @@ fn eval_declaration(
         if let Some(span) = e.span {
             let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
             eprintln!("{source_err}");
+            // Print the call stack for the non-synthetic frames. Frame line
+            // numbers come from the original REPL input buffer, so we label
+            // them `<declaration>` rather than print misleading positions.
+            for line in render_call_stack(&e.call_stack, |_name, _span| {
+                "<declaration>".to_string()
+            }) {
+                eprintln!("{line}");
+            }
         } else {
             eprintln!("{e}");
         }
@@ -667,6 +681,16 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                 );
                 let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
                 eprintln!("{source_err}");
+                // Print the filtered call stack. Frame line numbers come
+                // from the wrapped input and don't survive `adjust_span`
+                // for anything but the error site itself, so we print
+                // function names with a `<declaration>` label rather than
+                // misleading file positions.
+                for line in render_call_stack(&e.call_stack, |_name, _span| {
+                    "<declaration>".to_string()
+                }) {
+                    eprintln!("{line}");
+                }
             } else {
                 eprintln!("{e}");
             }
@@ -1071,5 +1095,66 @@ mod tests {
         assert_eq!(adjusted.line, 1);
         assert_eq!(adjusted.col, 3);
         assert_eq!(adjusted.offset, 2);
+    }
+
+    // ── DX2: completion filters on module prefix ──────────────────
+    //
+    // When the user types a module-qualified prefix like `string.` and
+    // hits Tab, the REPL must offer ONLY entries beginning with that
+    // module name — never entries from other modules. The key invariant
+    // is that `.` is NOT in the word-boundary set used by
+    // `SiltHelper::complete`, so the prefix stays `string.` and matches
+    // narrow to `string.*`.
+
+    #[test]
+    fn test_repl_completion_filters_on_module_prefix() {
+        use rustyline::Context;
+        use rustyline::completion::Completer;
+        use rustyline::history::DefaultHistory;
+
+        let names = Rc::new(RefCell::new(builtin_names()));
+        let helper = SiltHelper {
+            names: names.clone(),
+        };
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+
+        // Case 1: `string.` — bare module prefix with trailing dot.
+        let line = "string.";
+        let (_start, matches) = helper
+            .complete(line, line.len(), &ctx)
+            .expect("complete must not fail");
+        let replacements: Vec<String> = matches.iter().map(|p| p.replacement.clone()).collect();
+        assert!(
+            !replacements.is_empty(),
+            "expected at least one completion for `string.`, got none"
+        );
+        assert!(
+            replacements.iter().any(|r| r == "string.trim"),
+            "expected `string.trim` in completions for `string.`, got: {replacements:?}"
+        );
+        assert!(
+            replacements.iter().all(|r| r.starts_with("string.")),
+            "all completions for `string.` must begin with `string.`, got: {replacements:?}"
+        );
+        assert!(
+            !replacements.iter().any(|r| r.starts_with("list.")),
+            "completions for `string.` must NOT include `list.*`, got: {replacements:?}"
+        );
+
+        // Case 2: `string.tr` — narrower prefix; only tr-prefixed suffixes.
+        let line = "string.tr";
+        let (_start, matches) = helper
+            .complete(line, line.len(), &ctx)
+            .expect("complete must not fail");
+        let replacements: Vec<String> = matches.iter().map(|p| p.replacement.clone()).collect();
+        assert!(
+            replacements.iter().any(|r| r == "string.trim"),
+            "expected `string.trim` in completions for `string.tr`, got: {replacements:?}"
+        );
+        assert!(
+            replacements.iter().all(|r| r.starts_with("string.tr")),
+            "all completions for `string.tr` must begin with `string.tr`, got: {replacements:?}"
+        );
     }
 }

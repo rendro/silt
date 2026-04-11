@@ -47,8 +47,8 @@ Returns a debug-style string representation of any value, using silt syntax
 
 ```silt
 fn main() {
-    let s = io.inspect([1, "hello", true])
-    println(s)  -- [1, "hello", true]
+    let s = io.inspect((1, "hello", true))
+    println(s)  -- (1, "hello", true)
 }
 ```
 

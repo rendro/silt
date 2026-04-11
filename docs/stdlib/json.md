@@ -66,9 +66,10 @@ type Event {
     date: Date,
 }
 
-fn main() {
+fn main() -> Result(Unit, String) {
     let e = json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""")?
     println(e.date |> time.weekday)  -- Friday
+    Ok(())
 }
 ```
 

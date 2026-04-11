@@ -374,7 +374,26 @@ impl TypeChecker {
                     }
                 }
             }
-            (Type::Record(n1, _), Type::Generic(n2, a2)) if n1 == n2 && a2.is_empty() => {}
+            (Type::Record(n1, _), Type::Generic(n2, a2)) if n1 == n2 && a2.is_empty() => {
+                // Only allow bare `Generic(name, [])` to match a Record if
+                // the record is actually parameterless. For parameterized
+                // records the Generic side must carry type args — otherwise
+                // silently accepting it would let distinct uses pollute
+                // the shared template TyVars (T1 audit fix).
+                let expected = self
+                    .record_param_var_ids
+                    .get(n1)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                if expected != 0 {
+                    self.error(
+                        format!(
+                            "type argument count mismatch for {n1}: expected {expected}, got 0"
+                        ),
+                        span,
+                    );
+                }
+            }
             (Type::Generic(n1, a1), Type::Record(n2, f2)) if n1 == n2 && !a1.is_empty() => {
                 if let (Some(rec_info), Some(param_var_ids)) = (
                     self.records.get(n2).cloned(),
@@ -390,7 +409,22 @@ impl TypeChecker {
                     }
                 }
             }
-            (Type::Generic(n1, a1), Type::Record(n2, _)) if n1 == n2 && a1.is_empty() => {}
+            (Type::Generic(n1, a1), Type::Record(n2, _)) if n1 == n2 && a1.is_empty() => {
+                // Mirror image of the Record/Generic arm above.
+                let expected = self
+                    .record_param_var_ids
+                    .get(n2)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                if expected != 0 {
+                    self.error(
+                        format!(
+                            "type argument count mismatch for {n2}: expected {expected}, got 0"
+                        ),
+                        span,
+                    );
+                }
+            }
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
@@ -1161,18 +1195,48 @@ impl TypeChecker {
                 );
 
                 // Register the record type name as a value so it can be
-                // passed to json.parse: `json.parse(Employee, str)`
-                // The type is the record type itself, so json.parse can
-                // propagate it into the return type.
+                // passed to json.parse: `json.parse(Employee, str)`.
+                // The value is a TYPE DESCRIPTOR at runtime (represented
+                // as `Value::RecordDescriptor(name)`), so its type must
+                // be `TypeOf(Employee)` rather than `Employee` itself —
+                // otherwise the typechecker would let users write things
+                // like `Employee.field` or use the descriptor as an
+                // instance (T2 audit fix; mirrors primitive descriptors).
+                //
+                // For parameterized records (`type Box(a) { ... }`),
+                // fresh type vars are generated for each param so
+                // `json.parse(Box, ...)` can unify with a monomorphic
+                // instance at the call site.
                 let record_ty = Type::Record(td.name, field_types);
-                env.define(
-                    td.name,
+                let scheme = if td.params.is_empty() {
                     Scheme {
                         vars: vec![],
-                        ty: record_ty,
+                        ty: Type::Generic(intern("TypeOf"), vec![record_ty]),
                         constraints: vec![],
-                    },
-                );
+                    }
+                } else {
+                    // Re-use the param TyVars that parameterize the
+                    // record's fields so the descriptor type is
+                    // `forall a. TypeOf(Box(a))` — generalizing makes
+                    // each call instantiate its own fresh vars.
+                    let var_ids: Vec<TyVar> = td
+                        .params
+                        .iter()
+                        .map(|p| match &param_vars[p] {
+                            Type::Var(v) => *v,
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    let args: Vec<Type> =
+                        td.params.iter().map(|p| param_vars[p].clone()).collect();
+                    let generic_record = Type::Generic(td.name, args);
+                    Scheme {
+                        vars: var_ids,
+                        ty: Type::Generic(intern("TypeOf"), vec![generic_record]),
+                        constraints: vec![],
+                    }
+                };
+                env.define(td.name, scheme);
             }
         }
 
@@ -1269,8 +1333,28 @@ impl TypeChecker {
                             param_vars.insert(*name, tv.clone());
                             tv
                         } else {
-                            // Uppercase: a record or enum type with no params
-                            Type::Generic(*name, vec![])
+                            // Uppercase: a record or enum type. If the type
+                            // is parameterized and the user wrote it bare
+                            // (no type args), instantiate a fresh type
+                            // variable for each parameter so distinct uses
+                            // don't cross-pollute through the shared
+                            // template TyVars (T1 audit fix). This mirrors
+                            // the List/Map/Set/Channel special-case paths
+                            // above and the fresh-var pattern in
+                            // check_pattern for Pattern::Record.
+                            let arity = self
+                                .record_param_var_ids
+                                .get(name)
+                                .map(|v| v.len())
+                                .or_else(|| self.enums.get(name).map(|e| e.params.len()))
+                                .unwrap_or(0);
+                            if arity == 0 {
+                                Type::Generic(*name, vec![])
+                            } else {
+                                let args: Vec<Type> =
+                                    (0..arity).map(|_| self.fresh_var()).collect();
+                                Type::Generic(*name, args)
+                            }
                         }
                     }
                 }

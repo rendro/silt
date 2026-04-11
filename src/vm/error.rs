@@ -65,3 +65,47 @@ impl std::fmt::Display for VmError {
 }
 
 impl std::error::Error for VmError {}
+
+/// Render a filtered view of a call stack as human-readable lines, applying
+/// the same head/tail truncation used by `silt run`.  Synthetic frames
+/// (`<script>`, `<call:...>`) are dropped.  Each returned line is already
+/// prefixed with "  -> " and has no trailing newline.
+///
+/// `format_frame` turns a (name, span) pair into its location string —
+/// callers pass the exact formatting they want (e.g. `file:line:col` for
+/// `silt run`, `<declaration>` for REPL frames whose line numbers would
+/// be misleading after span adjustment).
+///
+/// Returns an empty vec when the filtered stack is too short to be
+/// informative (a single-frame stack would just restate the error site).
+pub fn render_call_stack<F>(call_stack: &[(String, Span)], mut format_frame: F) -> Vec<String>
+where
+    F: FnMut(&str, &Span) -> String,
+{
+    let meaningful: Vec<&(String, Span)> = call_stack
+        .iter()
+        .filter(|(name, _)| !name.starts_with('<'))
+        .collect();
+    let any_real_span = meaningful.iter().any(|(_, s)| s.line > 0);
+    if meaningful.len() < 2 || !any_real_span {
+        return Vec::new();
+    }
+    let head = 10;
+    let tail = 5;
+    let mut out = Vec::new();
+    if meaningful.len() <= head + tail {
+        for (name, span) in &meaningful {
+            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+        }
+    } else {
+        for (name, span) in &meaningful[..head] {
+            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+        }
+        let omitted = meaningful.len() - head - tail;
+        out.push(format!("  ... ({omitted} more frames)"));
+        for (name, span) in &meaningful[meaningful.len() - tail..] {
+            out.push(format!("  -> {}  at {}", name, format_frame(name, span)));
+        }
+    }
+    out
+}

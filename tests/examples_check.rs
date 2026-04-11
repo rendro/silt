@@ -217,31 +217,16 @@ fn docs_do_not_claim_drifting_example_count() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Regression test for a GAP audit finding: the `http.serve` example in
-/// `docs/stdlib/http.md` was not self-contained (referenced `User`,
-/// `json.parse`, `string.split`, and `list.filter` without importing them
-/// or defining `User`). A reader could not copy the example into a file
-/// and have it type-check.
-///
-/// This test extracts every ```silt code block from `docs/stdlib/http.md`
-/// that looks like a complete program (contains `fn main`), writes it to
-/// a temp file, and runs `silt check` on it. If any block fails to
-/// type-check, the test fails — which locks in the convergent decision
-/// that every runnable block in the HTTP stdlib doc must stand alone.
-#[test]
-fn http_stdlib_doc_examples_type_check() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest_dir.join("docs").join("stdlib").join("http.md");
-    let body = std::fs::read_to_string(&doc_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
-
-    // Hand-roll a tiny fenced-code-block extractor: open on ```silt, close on
-    // the next line that starts with ```. We avoid pulling in a markdown dep.
+/// Extracts every ```silt fenced block from a markdown file. Returns a
+/// vector of `(opener_line_number_1indexed, block_source)` tuples. The
+/// opener line is the line of the ```silt fence (not the first content
+/// line), so error messages point at something a user can search for.
+fn extract_silt_blocks(body: &str) -> Vec<(usize, String)> {
     let mut blocks: Vec<(usize, String)> = Vec::new();
     let mut lines = body.lines().enumerate();
     while let Some((idx, line)) = lines.next() {
         if line.trim_start().starts_with("```silt") {
-            let start_line = idx + 2; // 1-indexed, first content line
+            let opener_line = idx + 1; // 1-indexed line of the ```silt fence
             let mut buf = String::new();
             for (_, content) in lines.by_ref() {
                 if content.trim_start().starts_with("```") {
@@ -250,54 +235,107 @@ fn http_stdlib_doc_examples_type_check() {
                 buf.push_str(content);
                 buf.push('\n');
             }
-            blocks.push((start_line, buf));
+            blocks.push((opener_line, buf));
         }
     }
-    assert!(
-        !blocks.is_empty(),
-        "expected at least one ```silt code block in {}",
-        doc_path.display()
-    );
+    blocks
+}
 
-    // Only full programs (containing `fn main`) are expected to type-check
-    // standalone. Snippet blocks (e.g. type signatures, REPL-style one-liners)
-    // are intentionally skipped.
-    let runnable: Vec<&(usize, String)> = blocks
-        .iter()
-        .filter(|(_, src)| src.contains("fn main"))
-        .collect();
+/// Regression test for GAP audit findings D1+D2: every ```silt fenced
+/// block in the documentation that contains `fn main` must type-check
+/// cleanly via `silt check`. Supersedes the old http-only walker by
+/// covering `README.md` and every `.md` file under `docs/` recursively.
+///
+/// This locks in the convergent decision that every runnable code block
+/// shipped in user-facing docs must be copy-paste-able: a reader should
+/// be able to select the block, save it to a `.silt` file, and have the
+/// type checker accept it without edits.
+///
+/// Snippet blocks (type signatures, REPL-style one-liners, partial
+/// programs without a `fn main`) are intentionally skipped — those are
+/// fragments, not complete programs.
+#[test]
+fn all_doc_fn_main_blocks_type_check() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Collect targets: README.md plus every .md file under docs/ (recursive).
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
     assert!(
-        !runnable.is_empty(),
-        "expected at least one runnable ```silt block (containing `fn main`) in {}",
-        doc_path.display()
+        !targets.is_empty(),
+        "expected at least one markdown target (README.md or docs/**/*.md)"
     );
 
     let tmp_dir =
-        std::env::temp_dir().join(format!("silt_http_doc_check_{}", std::process::id()));
+        std::env::temp_dir().join(format!("silt_all_doc_check_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
     let mut failures: Vec<String> = Vec::new();
-    for (block_idx, (start_line, src)) in runnable.iter().enumerate() {
-        let file = tmp_dir.join(format!("block_{block_idx}.silt"));
-        std::fs::write(&file, src).expect("write temp silt file");
-        let output = silt_cmd()
-            .arg("check")
-            .arg(&file)
-            .output()
-            .expect("failed to spawn silt");
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            failures.push(format!(
-                "{}:{} (block #{block_idx}): exit={:?}\nstdout:\n{}\nstderr:\n{}",
-                doc_path.display(),
-                start_line,
-                output.status.code(),
-                stdout,
-                stderr
-            ));
+    let mut runnable_block_count = 0usize;
+
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+        let blocks = extract_silt_blocks(&body);
+
+        for (opener_line, src) in blocks {
+            // Only full programs (containing `fn main`) are expected to
+            // type-check standalone. Snippet blocks are skipped.
+            if !src.contains("fn main") {
+                continue;
+            }
+            runnable_block_count += 1;
+
+            let file_stem = doc_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("doc");
+            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
+            std::fs::write(&file, &src).expect("write temp silt file");
+
+            let output = silt_cmd()
+                .arg("check")
+                .arg(&file)
+                .output()
+                .expect("failed to spawn silt");
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                failures.push(format!(
+                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    output.status.code(),
+                    stdout,
+                    stderr
+                ));
+            }
         }
     }
+
+    assert!(
+        runnable_block_count > 0,
+        "expected at least one runnable ```silt block (containing `fn main`) across all docs"
+    );
 
     // Best-effort cleanup; leave artifacts on failure for debugging.
     if failures.is_empty() {
@@ -306,7 +344,7 @@ fn http_stdlib_doc_examples_type_check() {
 
     assert!(
         failures.is_empty(),
-        "silt check failed for {} ```silt block(s) in docs/stdlib/http.md:\n\n{}",
+        "silt check failed for {} ```silt block(s) across docs/ and README.md:\n\n{}",
         failures.len(),
         failures.join("\n---\n")
     );

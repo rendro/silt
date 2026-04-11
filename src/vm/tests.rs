@@ -2786,3 +2786,61 @@ fn test_regex_cache_eviction_correctness() {
         ]))
     );
 }
+
+// ── Audit regression: builtin panic is caught (V1) ───────────────────
+
+#[test]
+fn test_builtin_panic_converted_to_vm_error() {
+    // Locks V1: panics inside builtin modules must be caught by
+    // `catch_builtin_panic` and converted to a clean `VmError`. A
+    // panicking builtin would otherwise tear down the current scheduler
+    // worker thread, stalling every other task on that worker.
+    //
+    // We exercise this by routing through a `#[cfg(test)]`-only
+    // "__test_panic_builtin" arm in `dispatch_builtin` that always
+    // panics. If the wrapper is removed, this test unwinds and fails
+    // the whole test process; with the wrapper, it returns a VmError
+    // naming the module and the panic payload.
+    let mut vm = Vm::new();
+    let err = vm
+        .dispatch_builtin("__test_panic_builtin.boom", &[])
+        .expect_err("expected VmError from panicking builtin");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("builtin module") && msg.contains("panicked"),
+        "expected wrapper message, got: {msg}"
+    );
+    assert!(
+        msg.contains("synthetic builtin panic for test"),
+        "expected panic payload to be preserved, got: {msg}"
+    );
+}
+
+// ── Audit regression: MakeClosure constant must be a VmClosure (R3) ──
+
+#[test]
+fn test_make_closure_rejects_non_closure_constant() {
+    // Locks R3: if the compiler (or a buggy FFI caller) emits
+    // `Op::MakeClosure` pointing at a constant that is NOT a
+    // `Value::VmClosure`, the VM must return a clean `VmError` rather
+    // than silently producing garbage. Mirrors
+    // `test_tail_call_rejects_arity_mismatch` — bypass the compiler and
+    // hand-craft a function that emits the bad MakeClosure.
+    let script = make_function(|chunk| {
+        // Constant is a plain Int, not a VmClosure.
+        let bad_const_idx = chunk.add_constant(Value::Int(42)).unwrap();
+        chunk.emit_op(Op::MakeClosure, span());
+        chunk.emit_u16(bad_const_idx, span());
+        chunk.emit_u8(0, span()); // zero upvalues, keep it simple
+        chunk.emit_op(Op::Return, span());
+    });
+    let mut vm = Vm::new();
+    let err = vm
+        .run(script)
+        .expect_err("expected MakeClosure to reject non-VmClosure constant");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("MakeClosure") && msg.contains("not a VmClosure"),
+        "expected MakeClosure guard error, got: {msg}"
+    );
+}

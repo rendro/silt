@@ -128,10 +128,11 @@ time.datetime(date: Date, time: Time) -> DateTime
 Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are already validated.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let d = time.date(2024, 6, 15)?
     let t = time.time(9, 30, 0)?
     println(time.datetime(d, t))  -- 2024-06-15T09:30:00
+    Ok(())
 }
 ```
 
@@ -164,10 +165,11 @@ time.to_instant(datetime: DateTime, offset_minutes: Int) -> Instant
 Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
     let instant = time.to_instant(dt, 0)
     println(instant.epoch_ns)
+    Ok(())
 }
 ```
 
@@ -213,10 +215,11 @@ time.format(datetime: DateTime, pattern: String) -> String
 Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
     println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
     -- Wednesday, December 25, 2024 at 18:00
+    Ok(())
 }
 ```
 
@@ -230,9 +233,10 @@ time.format_date(date: Date, pattern: String) -> String
 Formats a `Date` using strftime patterns.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let d = time.date(2024, 6, 15)?
     println(d |> time.format_date("%d/%m/%Y"))  -- 15/06/2024
+    Ok(())
 }
 ```
 
@@ -278,10 +282,11 @@ time.add_days(date: Date, days: Int) -> Date
 Adds (or subtracts, if negative) days from a date.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let d = time.date(2024, 1, 1)?
     println(d |> time.add_days(90))   -- 2024-03-31
     println(d |> time.add_days(-1))   -- 2023-12-31
+    Ok(())
 }
 ```
 
@@ -295,10 +300,11 @@ time.add_months(date: Date, months: Int) -> Date
 Adds (or subtracts) months from a date. Clamps to the last valid day of the target month.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let d = time.date(2024, 1, 31)?
     println(d |> time.add_months(1))   -- 2024-02-29 (leap year, clamped)
     println(d |> time.add_months(2))   -- 2024-03-31
+    Ok(())
 }
 ```
 
@@ -389,10 +395,11 @@ time.days_between(from: Date, to: Date) -> Int
 Returns the signed number of days between two dates.
 
 ```silt
-fn main() {
+fn main() -> Result(Unit, String) {
     let a = time.date(2024, 1, 1)?
     let b = time.date(2024, 12, 31)?
     println(time.days_between(a, b))  -- 365
+    Ok(())
 }
 ```
 

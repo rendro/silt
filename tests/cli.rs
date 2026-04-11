@@ -739,3 +739,138 @@ fn test_thing() {
         "expected 'looks like a test file' hint in stderr, got: {stderr}"
     );
 }
+
+// ── E1: runtime errors from imported modules render with module source ──
+//
+// Before the fix, a runtime error inside `foo.silt` (imported by
+// `main.silt`) was rendered as `main.silt:<line>:<col>` using the main
+// file's source text for the snippet, because `Function` carried no
+// source_file identity and `vm_run_file` always passed the main source
+// to `SourceError::runtime_at`. Users got a nonsensical pointer into
+// the main file at a line that might not even exist.
+
+#[test]
+fn test_runtime_error_from_module_shows_module_source() {
+    // Fresh project dir so imports resolve cleanly relative to main.silt.
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_e1_module_err_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    // foo.silt: a public function with a division-by-zero panic.
+    // Using `g() + 0` in f so neither frame gets TCO-collapsed.
+    let foo = dir.join("foo.silt");
+    fs::write(&foo, "pub fn bad() {\n  1 / 0\n}\n").unwrap();
+
+    // main.silt: imports foo and calls foo.bad from main.
+    let main = dir.join("main.silt");
+    fs::write(
+        &main,
+        "import foo\n\nfn main() {\n  foo.bad()\n}\n",
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg(&main)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit from module runtime error"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // The error must be rendered against foo.silt — both the file label
+    // and the snippet line must come from foo.silt, not main.silt. We
+    // assert on a substring rather than the exact path so the test
+    // survives changes to how the error renderer formats paths.
+    assert!(
+        stderr.contains("foo.silt"),
+        "expected `foo.silt` in stderr (the file the error actually came from), got:\n{stderr}"
+    );
+    // The snippet in the rendered error should contain the offending
+    // code from foo.silt, NOT main.silt. `1 / 0` is the body line we
+    // placed in foo.silt.
+    assert!(
+        stderr.contains("1 / 0"),
+        "expected source snippet `1 / 0` (from foo.silt) in stderr, got:\n{stderr}"
+    );
+    // And the error message itself must mention division by zero.
+    assert!(
+        stderr.contains("division by zero"),
+        "expected `division by zero` in stderr, got:\n{stderr}"
+    );
+}
+
+// ── 20. DX1: silt test reports file errors separately from test counts ──
+//
+// Previously a single lex/parse/compile failure was booked as one "failed
+// test", which under-reports how much of the suite actually ran.  The fix
+// tracks file-level errors separately and prints them in the summary.
+
+#[test]
+fn test_silt_test_reports_file_errors_separately_from_test_counts() {
+    // Build a fresh directory containing one good test file (two passing
+    // tests) and one file that fails to parse.
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_dx1_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+    let good = dir.join("good_test.silt");
+    fs::write(
+        &good,
+        r#"import test
+
+fn test_one() {
+  test.assert_eq(1, 1)
+}
+
+fn test_two() {
+  test.assert_eq(2, 2)
+}
+"#,
+    )
+    .unwrap();
+    let bad = dir.join("broken_test.silt");
+    fs::write(&bad, "fn test_broken( {\n").unwrap();
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // A file-level parse failure must NOT be booked against a real test
+    // count. Two tests from good_test.silt must still show up as passed.
+    assert!(
+        combined.contains("2 passed"),
+        "expected '2 passed' despite the broken file, got:\n{combined}"
+    );
+    // The summary must explicitly report the file failure separately.
+    assert!(
+        combined.contains("1 file failed to compile"),
+        "expected '1 file failed to compile' in summary, got:\n{combined}"
+    );
+    // And the broken file should get a `failed to compile` diagnostic.
+    assert!(
+        combined.contains("failed to compile"),
+        "expected 'failed to compile' diagnostic on the broken file, got:\n{combined}"
+    );
+    // Exit code must remain non-zero so CI still fails.
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit when a test file fails to compile, stdout: {stdout}\nstderr: {stderr}"
+    );
+    // And crucially, the failed test count must NOT be inflated: the
+    // summary should NOT claim any test failed (that would conflate
+    // file errors with real test failures).
+    assert!(
+        combined.contains("0 failed"),
+        "expected '0 failed' (file errors are tracked separately), got:\n{combined}"
+    );
+}

@@ -1,9 +1,9 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::Lexer;
+use crate::lexer::{Lexer, Span};
 use crate::parser::Parser;
 
 const INDENT: &str = "  ";
@@ -13,6 +13,206 @@ thread_local! {
     /// `format_triple_string` to copy multi-line `"""..."""` content
     /// verbatim instead of reflowing it.
     static CURRENT_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
+
+    /// Shared comment delivery state for the declaration currently being
+    /// formatted. Tracks every standalone and trailing comment that lives
+    /// inside the declaration's source range along with which ones have
+    /// already been emitted. All of the formatter functions that emit a
+    /// nested block (match arm bodies, loop/lambda/block bodies, bare
+    /// block expressions, match-as-RHS) read from and update this state
+    /// as they walk the AST in source order. Using a single shared state
+    /// — rather than per-decl comment slices that were only plumbed to
+    /// the outermost fn body — ensures that comments whose source lines
+    /// land inside nested constructs are emitted at the correct nested
+    /// position instead of being hoisted to the enclosing fn body.
+    static FMT_STATE: RefCell<Option<FmtState>> = const { RefCell::new(None) };
+}
+
+/// Formatter state for comment delivery during a single declaration's
+/// formatting.
+struct FmtState {
+    /// All standalone comments for the currently-formatting declaration,
+    /// sorted by source line.
+    comments: Vec<Comment>,
+    /// Parallel flags indicating which entries in `comments` have already
+    /// been emitted somewhere in the output.
+    consumed: Vec<bool>,
+    /// Map from source line to trailing comment text (the raw `-- ...`).
+    trailing_map: HashMap<usize, String>,
+    /// Source lines whose trailing comment has already been emitted.
+    trailing_consumed: HashSet<usize>,
+    /// Raw source lines (access via line_idx = line - 1), used for
+    /// computing block end lines on demand.
+    source_lines: Vec<String>,
+}
+
+impl FmtState {
+    fn new(comments: Vec<Comment>, trailing_map: HashMap<usize, String>, source: &str) -> Self {
+        let consumed = vec![false; comments.len()];
+        let source_lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
+        Self {
+            comments,
+            consumed,
+            trailing_map,
+            trailing_consumed: HashSet::new(),
+            source_lines,
+        }
+    }
+}
+
+/// Run `f` with a fresh `FmtState`. The previous state (if any) is
+/// restored afterwards, so sibling decls see independent comment state.
+fn with_fmt_state<R>(
+    comments: Vec<Comment>,
+    trailing: HashMap<usize, String>,
+    source: &str,
+    f: impl FnOnce() -> R,
+) -> R {
+    let state = FmtState::new(comments, trailing, source);
+    let prev = FMT_STATE.with(|cell| cell.replace(Some(state)));
+    let result = f();
+    FMT_STATE.with(|cell| {
+        *cell.borrow_mut() = prev;
+    });
+    result
+}
+
+/// Take the trailing comment attached to `line`, marking it consumed so
+/// it is not also emitted later. Returns the raw comment text (including
+/// the `-- ` prefix) or `None`.
+fn take_trailing_for_line(line: usize) -> Option<String> {
+    FMT_STATE.with(|cell| {
+        let mut borrowed = cell.borrow_mut();
+        let state = borrowed.as_mut()?;
+        if state.trailing_consumed.contains(&line) {
+            return None;
+        }
+        let text = state.trailing_map.get(&line).cloned()?;
+        state.trailing_consumed.insert(line);
+        Some(text)
+    })
+}
+
+/// Consume and return every unconsumed standalone comment whose source
+/// line is strictly less than `before_line`, in source order.
+fn take_comments_before(before_line: usize) -> Vec<Comment> {
+    FMT_STATE.with(|cell| {
+        let mut borrowed = cell.borrow_mut();
+        let Some(state) = borrowed.as_mut() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for i in 0..state.comments.len() {
+            if state.consumed[i] {
+                continue;
+            }
+            if state.comments[i].line < before_line {
+                state.consumed[i] = true;
+                out.push(state.comments[i].clone());
+            }
+        }
+        out
+    })
+}
+
+/// Consume and return every unconsumed standalone comment whose source
+/// line is strictly greater than `after_line` AND strictly less than
+/// `before_line`. Used at the close of a nested block to drain any
+/// comments that sit between the last inner statement's line and the
+/// block's closing brace so they stay inside the block.
+fn take_comments_between(after_line: usize, before_line: usize) -> Vec<Comment> {
+    FMT_STATE.with(|cell| {
+        let mut borrowed = cell.borrow_mut();
+        let Some(state) = borrowed.as_mut() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for i in 0..state.comments.len() {
+            if state.consumed[i] {
+                continue;
+            }
+            let line = state.comments[i].line;
+            if line > after_line && line < before_line {
+                state.consumed[i] = true;
+                out.push(state.comments[i].clone());
+            }
+        }
+        out
+    })
+}
+
+/// Compute the 1-based line of the closing `}` for a block whose
+/// opening `{` is at `span`. Mirrors the scan logic in
+/// `resolve_decl_end_lines` but operates on a single block span.
+/// Returns `span.line` as a safe fallback when the scan cannot find a
+/// matching brace.
+fn compute_block_end_line(span: Span) -> usize {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return span.line;
+        };
+        let source_lines = &state.source_lines;
+        if span.line == 0 || span.line > source_lines.len() {
+            return span.line;
+        }
+        let start_idx = span.line - 1;
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut in_string = false;
+        let mut interp_depths: Vec<i32> = Vec::new();
+        for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
+            let mut chars = line.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if in_string {
+                    if ch == '\\' {
+                        chars.next();
+                    } else if ch == '"' {
+                        in_string = false;
+                    } else if ch == '{' {
+                        interp_depths.push(0);
+                        in_string = false;
+                    }
+                } else if ch == '"' {
+                    in_string = true;
+                } else if ch == '-' && chars.peek() == Some(&'-') {
+                    break; // line comment
+                } else if ch == '{' {
+                    if let Some(d) = interp_depths.last_mut() {
+                        *d += 1;
+                    } else {
+                        depth += 1;
+                        found_open = true;
+                    }
+                } else if ch == '}' {
+                    if let Some(d) = interp_depths.last_mut() {
+                        if *d == 0 {
+                            interp_depths.pop();
+                            in_string = true;
+                        } else {
+                            *d -= 1;
+                        }
+                    } else {
+                        depth -= 1;
+                    }
+                }
+            }
+            if found_open && depth == 0 {
+                return line_idx + 1;
+            }
+        }
+        span.line
+    })
+}
+
+/// Render a list of standalone comments at the given indent depth, one
+/// per line, separated by `\n`.
+fn render_comments(comments: &[Comment], depth: usize) -> String {
+    comments
+        .iter()
+        .map(|c| format!("{}{}", indent(depth), c.text.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn with_current_source<R>(source: &str, f: impl FnOnce() -> R) -> R {
@@ -566,20 +766,20 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
 
     // Partition comments into:
     // - top-level buckets (between declarations)
-    // - body comments (inside a declaration's body)
+    // - body comments (inside a declaration's body), delivered later via
+    //   the thread-local `FmtState` during decl formatting.
     let n = program.decls.len();
-    let mut buckets: Vec<Vec<&Comment>> = vec![Vec::new(); n + 1];
-    // body_comments[i] holds comments inside decl[i]'s body
-    let mut body_comments: Vec<Vec<&Comment>> = vec![Vec::new(); n];
+    let mut buckets: Vec<Vec<Comment>> = vec![Vec::new(); n + 1];
+    let mut body_comments: Vec<Vec<Comment>> = vec![Vec::new(); n];
 
-    for comment in &comments {
+    for comment in comments.iter().cloned() {
         // A comment is inside decl[i]'s body if its line is strictly between
         // the decl's start line and its end line (inclusive of end line, since
         // a comment before the closing `}` is still inside).
         let mut is_body = false;
         for i in 0..n {
             if comment.line > decl_lines[i] && comment.line <= decl_end_lines[i] {
-                body_comments[i].push(comment);
+                body_comments[i].push(comment.clone());
                 is_body = true;
                 break;
             }
@@ -589,7 +789,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
             let mut placed = false;
             for (i, &dline) in decl_lines.iter().enumerate() {
                 if comment.line < dline {
-                    buckets[i].push(comment);
+                    buckets[i].push(comment.clone());
                     placed = true;
                     break;
                 }
@@ -605,11 +805,21 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     let mut import_pairs: Vec<(String, String)> = Vec::new(); // (comments, import)
     let mut has_imports = false;
 
+    // Format each decl under its own `FmtState` populated with the body
+    // comments that belong to that decl. Scoping the comment state to the
+    // decl ensures comments inside nested blocks (match arms, loops,
+    // lambdas, block expressions) are emitted at the correct nested
+    // position instead of being hoisted to the enclosing fn body.
     let formatted_decls: Vec<String> = program
         .decls
         .iter()
         .enumerate()
-        .map(|(i, d)| format_decl_with_comments(d, 0, &body_comments[i], &trailing_map))
+        .map(|(i, d)| {
+            let decl_body_comments = body_comments[i].clone();
+            with_fmt_state(decl_body_comments, trailing_map.clone(), source, || {
+                format_decl_with_comments(d, 0)
+            })
+        })
         .collect();
 
     // Collect and sort import strings; track which decl indices are imports.
@@ -696,19 +906,12 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     result
 }
 
-fn format_decl_with_comments(
-    decl: &Decl,
-    depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
-) -> String {
+fn format_decl_with_comments(decl: &Decl, depth: usize) -> String {
     match decl {
-        Decl::Fn(f) => format_fn_with_comments(f, depth, body_comments, trailing_map),
+        Decl::Fn(f) => format_fn_with_comments(f, depth),
         Decl::Type(t) => format_type(t, depth),
-        Decl::Trait(t) => format_trait_with_comments(t, depth, body_comments, trailing_map),
-        Decl::TraitImpl(t) => {
-            format_trait_impl_with_comments(t, depth, body_comments, trailing_map)
-        }
+        Decl::Trait(t) => format_trait_with_comments(t, depth),
+        Decl::TraitImpl(t) => format_trait_impl_with_comments(t, depth),
         Decl::Import(i, _) => format_import(i, depth),
         Decl::Let {
             pattern,
@@ -726,8 +929,7 @@ fn format_decl_with_comments(
                 String::new()
             };
             let val = format_expr(value, depth);
-            let trailing = trailing_map
-                .get(&span.line)
+            let trailing = take_trailing_for_line(span.line)
                 .map(|c| format!(" {c}"))
                 .unwrap_or_default();
             format!("{indent}{pub_prefix}let {pat}{ty_str} = {val}{trailing}")
@@ -739,12 +941,7 @@ fn indent(depth: usize) -> String {
     INDENT.repeat(depth)
 }
 
-fn format_fn_with_comments(
-    f: &FnDecl,
-    depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
-) -> String {
+fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     let prefix = indent(depth);
     let pub_prefix = if f.is_pub { "pub " } else { "" };
     let params = f
@@ -782,18 +979,17 @@ fn format_fn_with_comments(
 
     // Check if body is a simple expression (single-expression function using =)
     if is_simple_body(&f.body) {
-        let trailing = trailing_map
-            .get(&f.span.line)
+        let body_str = format_expr(&f.body, depth);
+        let trailing = take_trailing_for_line(f.span.line)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
         return format!(
-            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {}{trailing}",
+            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} = {body_str}{trailing}",
             f.name,
-            format_expr(&f.body, depth)
         );
     }
 
-    let body = format_body_with_comments(&f.body, depth, body_comments, trailing_map);
+    let body = format_body(&f.body, depth);
     format!(
         "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause} {body}",
         f.name
@@ -814,40 +1010,30 @@ fn format_param(p: &Param) -> String {
     }
 }
 
+/// Format a body expression (fn body, match arm body, loop body, lambda
+/// body, bare block expression, block RHS of `let`/`when`/`match`). Uses
+/// the thread-local `FmtState` to emit any standalone comments whose
+/// source lines fall inside this block at the correct nested position,
+/// and inline trailing comments from the source.
 fn format_body(expr: &Expr, depth: usize) -> String {
-    format_body_with_comments(expr, depth, &[], &HashMap::new())
-}
-
-fn format_body_with_comments(
-    expr: &Expr,
-    depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
-) -> String {
     match &expr.kind {
         ExprKind::Block(stmts) => {
+            let open_line = expr.span.line;
+            let close_line = compute_block_end_line(expr.span);
             if stmts.is_empty() {
-                if body_comments.is_empty() {
+                // Drain comments that sit strictly between `{` and `}`.
+                let inner = take_comments_between(open_line, close_line);
+                if inner.is_empty() {
                     "{}".to_string()
                 } else {
-                    // Emit comments inside an otherwise empty block
-                    let comment_strs: Vec<String> = body_comments
-                        .iter()
-                        .map(|c| format!("{}{}", indent(depth + 1), c.text.trim()))
-                        .collect();
-                    format!("{{\n{}\n{}}}", comment_strs.join("\n"), indent(depth))
+                    format!(
+                        "{{\n{}\n{}}}",
+                        render_comments(&inner, depth + 1),
+                        indent(depth)
+                    )
                 }
-            } else if body_comments.is_empty() && trailing_map.is_empty() {
-                let inner = stmts
-                    .iter()
-                    .map(|s| format_stmt(s, depth + 1))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("{{\n{inner}\n{}}}", indent(depth))
             } else {
-                // Interleave comments with statements based on line numbers.
-                let inner =
-                    format_stmts_with_comments(stmts, depth + 1, body_comments, trailing_map);
+                let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
                 format!("{{\n{inner}\n{}}}", indent(depth))
             }
         }
@@ -860,52 +1046,121 @@ fn format_body_with_comments(
     }
 }
 
-/// Format a list of statements with interleaved comments.
-///
-/// Comments are placed before the first statement whose source line is greater
-/// than the comment's line. Comments after all statements go at the end.
+/// Format a list of statements with interleaved comments, drawing from
+/// the thread-local `FmtState`. `block_close_line` is the 1-based line
+/// of the `}` closing the enclosing block, used to drain any comments
+/// that sit between the last statement and the close brace so they are
+/// emitted inside the block rather than hoisted to the enclosing scope.
 fn format_stmts_with_comments(
     stmts: &[Stmt],
     depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
+    block_close_line: usize,
 ) -> String {
     let mut result = Vec::new();
-    let mut comment_idx = 0;
 
+    let mut last_stmt_line = 0usize;
     for stmt in stmts {
         let stmt_line = stmt_start_line(stmt);
 
-        // Emit any comments that come before this statement
-        while comment_idx < body_comments.len() && body_comments[comment_idx].line < stmt_line {
-            result.push(format!(
-                "{}{}",
-                indent(depth),
-                body_comments[comment_idx].text.trim()
-            ));
-            comment_idx += 1;
+        // Emit any unconsumed standalone comments whose source line is
+        // before this statement. The consumption flags ensure we don't
+        // re-emit comments that were already consumed by a nested block
+        // during a previous iteration.
+        let pre = take_comments_before(stmt_line);
+        for c in &pre {
+            result.push(format!("{}{}", indent(depth), c.text.trim()));
         }
 
         let mut formatted = format_stmt(stmt, depth);
-        // Append trailing comment from the original source line, if any.
-        if let Some(tc) = trailing_map.get(&stmt_line) {
+        if let Some(tc) = take_trailing_for_line(stmt_line) {
             formatted.push(' ');
-            formatted.push_str(tc);
+            formatted.push_str(&tc);
         }
         result.push(formatted);
+        last_stmt_line = stmt_line;
     }
 
-    // Emit any remaining comments after the last statement
-    while comment_idx < body_comments.len() {
-        result.push(format!(
-            "{}{}",
-            indent(depth),
-            body_comments[comment_idx].text.trim()
-        ));
-        comment_idx += 1;
+    // Emit any remaining comments that sit between the last statement's
+    // source line and the closing brace of the enclosing block.
+    let tail = take_comments_between(last_stmt_line, block_close_line);
+    for c in &tail {
+        result.push(format!("{}{}", indent(depth), c.text.trim()));
     }
 
     result.join("\n")
+}
+
+/// Given the source lines, find the 1-based line number of the first
+/// occurrence of `ident` as a whole word, starting at `search_from`
+/// (1-based) and stopping before `search_until` (1-based exclusive).
+/// Returns `None` if not found. Used to map variant/field/method
+/// identifiers (which don't carry their own spans) back to source
+/// lines so trailing comments can be looked up correctly.
+fn find_ident_line(ident: &str, search_from: usize, search_until: usize) -> Option<usize> {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let state = borrowed.as_ref()?;
+        let lines = &state.source_lines;
+        let start = search_from.saturating_sub(1);
+        let end = search_until.saturating_sub(1).min(lines.len());
+        for (idx, raw) in lines.iter().enumerate().skip(start).take(end.saturating_sub(start)) {
+            if line_contains_word(raw, ident) {
+                return Some(idx + 1);
+            }
+        }
+        None
+    })
+}
+
+/// True if `line` contains `ident` as a whole-word token (preceded and
+/// followed by a non-identifier character or start/end of line, and not
+/// inside a string literal or line comment).
+fn line_contains_word(line: &str, ident: &str) -> bool {
+    let bytes = line.as_bytes();
+    let needle = ident.as_bytes();
+    if needle.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    let mut in_string = false;
+    while i + needle.len() <= bytes.len() {
+        let ch = bytes[i] as char;
+        if in_string {
+            if ch == '\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        // Line comment: stop searching this line.
+        if ch == '-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            return false;
+        }
+        // Check whole-word match.
+        if &bytes[i..i + needle.len()] == needle {
+            let before_ok = i == 0 || !is_ident_char(bytes[i - 1] as char);
+            let after_ok = i + needle.len() == bytes.len()
+                || !is_ident_char(bytes[i + needle.len()] as char);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 fn format_type(t: &TypeDecl, depth: usize) -> String {
@@ -918,120 +1173,139 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
         format!("({})", param_strs.join(", "))
     };
 
+    // Resolve the closing `}` of this type body so we can look up the
+    // trailing comments attached to each variant/field line.
+    let close_line = compute_block_end_line(t.span);
+
     match &t.body {
         TypeBody::Enum(variants) => {
-            let vars: Vec<String> = variants
-                .iter()
-                .map(|v| {
-                    if v.fields.is_empty() {
-                        format!("{}{}", indent(depth + 1), v.name)
-                    } else {
-                        let fields: Vec<String> = v.fields.iter().map(format_type_expr).collect();
-                        format!("{}{}({})", indent(depth + 1), v.name, fields.join(", "))
-                    }
-                })
-                .collect();
+            // Map each variant to its source line so we can fetch any
+            // trailing comment the user wrote on that line. The scan
+            // starts just after the type's opening line and walks forward
+            // in order, which matches how the parser produced the
+            // variants list.
+            let mut cursor = t.span.line + 1;
+            let mut lines: Vec<String> = Vec::with_capacity(variants.len());
+            let last_idx = variants.len().saturating_sub(1);
+            for (i, v) in variants.iter().enumerate() {
+                let name = resolve(v.name);
+                let src_line = find_ident_line(&name, cursor, close_line);
+                if let Some(l) = src_line {
+                    cursor = l + 1;
+                }
+                let head = if v.fields.is_empty() {
+                    format!("{}{}", indent(depth + 1), v.name)
+                } else {
+                    let fields: Vec<String> = v.fields.iter().map(format_type_expr).collect();
+                    format!("{}{}({})", indent(depth + 1), v.name, fields.join(", "))
+                };
+                // Original enum formatting omits the trailing comma on
+                // the last variant. Preserve that behavior unless the
+                // last variant has an attached trailing comment, in
+                // which case we need a comma to separate `entry ,-- c`.
+                let trailing = src_line.and_then(take_trailing_for_line);
+                let needs_comma = i < last_idx || trailing.is_some();
+                let comma = if needs_comma { "," } else { "" };
+                let tail = match trailing {
+                    Some(tc) => format!("{head}{comma} {tc}"),
+                    None => format!("{head}{comma}"),
+                };
+                lines.push(tail);
+            }
             format!(
                 "{prefix}{pub_prefix}type {}{params} {{\n{}\n{prefix}}}",
                 t.name,
-                vars.join(",\n")
+                lines.join("\n")
             )
         }
         TypeBody::Record(fields) => {
-            let field_strs: Vec<String> = fields
-                .iter()
-                .map(|f| {
-                    format!(
-                        "{}{}: {}",
-                        indent(depth + 1),
-                        f.name,
-                        format_type_expr(&f.ty)
-                    )
-                })
-                .collect();
+            let mut cursor = t.span.line + 1;
+            let mut lines: Vec<String> = Vec::with_capacity(fields.len());
+            for f in fields {
+                let name = resolve(f.name);
+                let src_line = find_ident_line(&name, cursor, close_line);
+                if let Some(l) = src_line {
+                    cursor = l + 1;
+                }
+                let head = format!(
+                    "{}{}: {}",
+                    indent(depth + 1),
+                    f.name,
+                    format_type_expr(&f.ty)
+                );
+                let trailing = src_line.and_then(take_trailing_for_line);
+                // Record fields always receive a trailing comma so the
+                // syntax is uniform whether or not a trailing comment
+                // follows.
+                let tail = match trailing {
+                    Some(tc) => format!("{head}, {tc}"),
+                    None => format!("{head},"),
+                };
+                lines.push(tail);
+            }
             format!(
-                "{prefix}{pub_prefix}type {}{params} {{\n{},\n{prefix}}}",
+                "{prefix}{pub_prefix}type {}{params} {{\n{}\n{prefix}}}",
                 t.name,
-                field_strs.join(",\n")
+                lines.join("\n")
             )
         }
     }
 }
 
-fn format_trait_with_comments(
-    t: &TraitDecl,
-    depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
-) -> String {
+fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
-        .into_iter()
-        .zip(t.methods.iter())
-        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc, trailing_map))
-        .collect();
-    format!(
-        "{prefix}trait {} {{\n{}\n{prefix}}}",
-        t.name,
-        methods.join("\n\n")
-    )
+    let close_line = compute_block_end_line(t.span);
+    let body = format_trait_methods(&t.methods, depth + 1, close_line);
+    format!("{prefix}trait {} {{\n{}\n{prefix}}}", t.name, body)
 }
 
-fn format_trait_impl_with_comments(
-    t: &TraitImpl,
-    depth: usize,
-    body_comments: &[&Comment],
-    trailing_map: &HashMap<usize, String>,
-) -> String {
+fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     let prefix = indent(depth);
-    let methods: Vec<String> = partition_method_comments(&t.methods, body_comments)
-        .into_iter()
-        .zip(t.methods.iter())
-        .map(|(mc, m)| format_fn_with_comments(m, depth + 1, &mc, trailing_map))
-        .collect();
+    let close_line = compute_block_end_line(t.span);
+    let body = format_trait_methods(&t.methods, depth + 1, close_line);
     format!(
         "{prefix}trait {} for {} {{\n{}\n{prefix}}}",
-        t.trait_name,
-        t.target_type,
-        methods.join("\n\n")
+        t.trait_name, t.target_type, body
     )
 }
 
-/// Partition body comments among methods based on their line numbers.
-/// Returns a Vec of Vec<&Comment>, one per method.
-fn partition_method_comments<'a>(
-    methods: &[FnDecl],
-    body_comments: &[&'a Comment],
-) -> Vec<Vec<&'a Comment>> {
-    if methods.is_empty() || body_comments.is_empty() {
-        return vec![Vec::new(); methods.len()];
-    }
-
-    let method_lines: Vec<usize> = methods.iter().map(|m| m.span.line).collect();
-    let mut result: Vec<Vec<&'a Comment>> = vec![Vec::new(); methods.len()];
-
-    for comment in body_comments {
-        // Find which method this comment belongs to: the last method
-        // whose start line is <= the comment's line.
-        let mut assigned = false;
-        for i in (0..methods.len()).rev() {
-            if comment.line >= method_lines[i] {
-                result[i].push(comment);
-                assigned = true;
-                break;
-            }
+/// Format a list of trait/trait-impl methods with interleaved standalone
+/// separator comments drawn from the thread-local `FmtState`.
+///
+/// - Comments before the first method become leading comments on the
+///   first method.
+/// - Comments strictly between two methods (i.e. on lines between the
+///   previous method's last source line and the next method's start
+///   line) are emitted as standalone separator lines.
+/// - Any remaining comments before the closing `}` are emitted after
+///   the last method and before the `}`.
+fn format_trait_methods(methods: &[FnDecl], depth: usize, close_line: usize) -> String {
+    let mut out = String::new();
+    for (i, m) in methods.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n\n");
         }
-        if !assigned {
-            // Comment before first method — skip (it's a structural comment
-            // inside the trait block but before any methods).
-            // For now, attach to the first method.
-            if !methods.is_empty() {
-                result[0].push(comment);
-            }
+        // Emit any comments that come before this method's `fn` line.
+        let pre = take_comments_before(m.span.line);
+        for c in &pre {
+            out.push_str(&indent(depth));
+            out.push_str(c.text.trim());
+            out.push('\n');
         }
+        out.push_str(&format_fn_with_comments(m, depth));
     }
-
-    result
+    // Drain any remaining comments between the last method and the `}`.
+    let last_line = methods
+        .last()
+        .map(|m| compute_block_end_line(m.span))
+        .unwrap_or(0);
+    let tail = take_comments_between(last_line, close_line);
+    for c in &tail {
+        out.push('\n');
+        out.push_str(&indent(depth));
+        out.push_str(c.text.trim());
+    }
+    out
 }
 
 fn format_import(i: &ImportTarget, depth: usize) -> String {
@@ -1098,7 +1372,112 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     {
         return raw;
     }
+    // Block expressions (including the body of a nested `let x = { ... }`,
+    // a match arm body, a loop body, a lambda body, or a bare block RHS)
+    // must go through `format_body`, which consults the thread-local
+    // `FmtState` to emit interleaved comments at the correct nested
+    // position. The other `format_expr_inner` arms already recurse
+    // through `format_expr` for their sub-expressions, so nested blocks
+    // inside e.g. a call or a match arm's body will reach this branch.
+    if matches!(expr.kind, ExprKind::Block(_)) {
+        return format_body(expr, depth);
+    }
+    // Match expressions may also own a standalone range of lines with
+    // comments in between their arms, so route them through a
+    // dedicated helper that knows to consult `FmtState`.
+    if matches!(expr.kind, ExprKind::Match { .. }) {
+        return format_match_expr(expr, depth);
+    }
+    // Pipe chains may carry per-stage trailing comments that need to
+    // be emitted next to the originating stage.
+    if matches!(expr.kind, ExprKind::Pipe(..)) {
+        return format_pipe_chain_expr(expr, depth);
+    }
     format_expr_inner(&expr.kind, depth)
+}
+
+/// Format a pipe chain expression, preserving any trailing comments
+/// attached to individual pipe stages.
+fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
+    let mut stages: Vec<&Expr> = Vec::new();
+    collect_pipe_stages_expr(expr, &mut stages);
+    if stages.is_empty() {
+        return String::new();
+    }
+    let first = format_expr(stages[0], depth);
+    let mut result = first;
+    // Trailing comment on the first stage's source line.
+    if let Some(tc) = take_trailing_for_line(stages[0].span.line) {
+        result.push(' ');
+        result.push_str(&tc);
+    }
+    for stage in &stages[1..] {
+        result.push('\n');
+        result.push_str(&indent(depth));
+        result.push_str("|> ");
+        result.push_str(&format_expr(stage, depth));
+        if let Some(tc) = take_trailing_for_line(stage.span.line) {
+            result.push(' ');
+            result.push_str(&tc);
+        }
+    }
+    result
+}
+
+/// Like `collect_pipe_stages` but walks the `Expr` wrapper so callers
+/// get span information for each stage.
+fn collect_pipe_stages_expr<'a>(expr: &'a Expr, stages: &mut Vec<&'a Expr>) {
+    if let ExprKind::Pipe(left, right) = &expr.kind {
+        collect_pipe_stages_expr(left, stages);
+        stages.push(right);
+    } else {
+        stages.push(expr);
+    }
+}
+
+/// Format an `ExprKind::Match` with state-aware comment delivery for
+/// each arm. Standalone comments that fall between arms are emitted as
+/// separator lines before the relevant arm; trailing comments sharing
+/// an arm's source line are inlined after the arm.
+fn format_match_expr(expr: &Expr, depth: usize) -> String {
+    let ExprKind::Match { expr: scrutinee, arms } = &expr.kind else {
+        unreachable!()
+    };
+    let close_line = compute_block_end_line(expr.span);
+    let header = match scrutinee {
+        Some(s) => format!("match {} ", format_expr(s, depth)),
+        None => "match ".to_string(),
+    };
+    let guardless = scrutinee.is_none();
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut last_arm_line = 0usize;
+    for arm in arms.iter() {
+        let arm_line = arm.body.span.line;
+        // Standalone comments before this arm become leading comment lines.
+        let pre = take_comments_before(arm_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let mut arm_str = format_match_arm(arm, depth + 1, guardless);
+        if let Some(tc) = take_trailing_for_line(arm_line) {
+            arm_str.push(' ');
+            arm_str.push_str(&tc);
+        }
+        lines.push(arm_str);
+        last_arm_line = arm_line;
+    }
+    // Drain comments between the last arm and the closing `}` of the match.
+    let tail = take_comments_between(last_arm_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+
+    format!(
+        "{header}{{\n{}\n{}}}",
+        lines.join("\n"),
+        indent(depth)
+    )
 }
 
 fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
@@ -1189,21 +1568,12 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             }
         }
 
-        ExprKind::Pipe(_left, _right) => {
-            // Collect all pipe stages
-            let mut stages = Vec::new();
-            collect_pipe_stages(kind, &mut stages);
-            let first = format_expr_inner(stages[0], depth);
-            let rest: Vec<String> = stages[1..]
-                .iter()
-                .map(|s| format!("{}|> {}", indent(depth), format_expr_inner(s, depth)))
-                .collect();
-            let mut result = first;
-            for r in rest {
-                result.push('\n');
-                result.push_str(&r);
-            }
-            result
+        ExprKind::Pipe(..) => {
+            // Unreachable: `format_expr` intercepts `Pipe` expressions
+            // and delegates to `format_pipe_chain_expr`, which walks
+            // the AST at the `Expr` level so it can look up trailing
+            // comments per stage via their spans.
+            unreachable!("pipe should be handled by format_pipe_chain_expr")
         }
 
         ExprKind::Range(start, end) => {
@@ -1337,15 +1707,6 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
     }
 }
 
-fn collect_pipe_stages<'a>(kind: &'a ExprKind, stages: &mut Vec<&'a ExprKind>) {
-    if let ExprKind::Pipe(left, right) = kind {
-        collect_pipe_stages(&left.kind, stages);
-        stages.push(&right.kind);
-    } else {
-        stages.push(kind);
-    }
-}
-
 fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
     if let ExprKind::Lambda { params, body } = &expr.kind {
         let param_strs: Vec<String> = params.iter().map(format_param).collect();
@@ -1356,10 +1717,14 @@ fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
             {
                 return format!("{{ {params_str} -> {} }}", format_expr(inner, depth));
             }
-            let inner: Vec<String> = stmts.iter().map(|s| format_stmt(s, depth + 1)).collect();
+            // Multi-statement trailing closure. Use the state-aware
+            // statement formatter so any comments inside the closure's
+            // body block are emitted at the correct nested position.
+            let close_line = compute_block_end_line(body.span);
+            let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
             return format!(
                 "{{ {params_str} ->\n{}\n{}}}",
-                inner.join("\n"),
+                inner,
                 indent(depth)
             );
         }
@@ -2735,5 +3100,443 @@ import a
             result.is_none(),
             "nested block comment containing -- should not be extracted, got: {result:?}"
         );
+    }
+
+    // ── F1: comments inside nested blocks must stay inside them ────
+    //
+    // Each of the five BROKEN repros from the audit gets its own
+    // regression test. Every assertion uses `assert_eq!` on the full
+    // expected output OR byte-offset ordering — never a bare
+    // `.contains()` — so a regression that hoists a nested-block
+    // comment to the end of the enclosing fn body will be caught.
+
+    #[test]
+    fn test_comment_inside_match_arm_block_stays_nested() {
+        // F1 repro 1: comment inside a match arm's block body.
+        let source = "fn main() {\n  let x = 5\n  match x {\n    1 -> {\n      -- comment in match arm\n      println(\"one\")\n    }\n    _ -> println(\"other\")\n  }\n}\n";
+        let result = format(source).unwrap();
+        // The comment must appear BEFORE the closing `}` of the match
+        // arm, which itself is before the closing `}` of main.
+        let comment_pos = result
+            .find("-- comment in match arm")
+            .expect("comment should survive formatting");
+        let println_one_pos = result
+            .find("println(\"one\")")
+            .expect("arm body should survive formatting");
+        let println_other_pos = result
+            .find("println(\"other\")")
+            .expect("second arm should survive formatting");
+        assert!(
+            comment_pos < println_one_pos,
+            "comment must precede its sibling statement, got: {result}"
+        );
+        assert!(
+            println_one_pos < println_other_pos,
+            "first arm must precede second arm, got: {result}"
+        );
+        // The closing `}` of main is the very last `}` in the output.
+        let main_close = result.rfind('}').unwrap();
+        assert!(
+            comment_pos < main_close,
+            "comment must not be hoisted past the closing brace of main, got: {result}"
+        );
+        // Verify idempotency so the fixed behavior doesn't regress on
+        // a second formatting pass.
+        let twice = format(&result).unwrap();
+        assert_eq!(result, twice, "formatter must be idempotent, got:\n{twice}");
+    }
+
+    #[test]
+    fn test_comment_inside_loop_body_stays_nested() {
+        // F1 repro 2: comment inside a loop body.
+        let source = "fn main() {\n  loop i = 0 {\n    -- loop body comment\n    match i < 3 {\n      true -> loop(i + 1)\n      false -> ()\n    }\n  }\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- loop body comment")
+            .expect("comment should survive formatting");
+        let match_pos = result
+            .find("match ")
+            .expect("match should survive formatting");
+        assert!(
+            comment_pos < match_pos,
+            "comment must precede its sibling match statement inside the loop body, got: {result}"
+        );
+        // The comment must not appear after the very last `}` of main.
+        let last_brace = result.rfind('}').unwrap();
+        assert!(
+            comment_pos < last_brace,
+            "comment must stay inside the loop body, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_comment_inside_lambda_body_stays_nested() {
+        // F1 repro 3: comment inside a lambda body.
+        let source = "fn main() {\n  let f = fn(x) {\n    -- inside lambda\n    x + 1\n  }\n  println(f(3))\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- inside lambda")
+            .expect("comment should survive formatting");
+        let body_expr_pos = result
+            .find("x + 1")
+            .expect("lambda body should survive formatting");
+        let println_pos = result
+            .find("println(f(3))")
+            .expect("outer statement should survive formatting");
+        assert!(
+            comment_pos < body_expr_pos,
+            "comment must precede `x + 1` inside the lambda, got: {result}"
+        );
+        assert!(
+            body_expr_pos < println_pos,
+            "lambda body must come before the println call, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_comment_inside_bare_block_expression_stays_nested() {
+        // F1 repro 4: comment inside a bare block expression RHS of a let.
+        let source = "fn foo() {\n  let x = {\n    -- inside block expr\n    42\n  }\n  x\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- inside block expr")
+            .expect("comment should survive formatting");
+        let value_pos = result
+            .find("\n    42\n")
+            .or_else(|| result.find("42"))
+            .expect("block value should survive formatting");
+        assert!(
+            comment_pos < value_pos,
+            "comment must precede the block's value, got: {result}"
+        );
+        // The `x` on its own line should come after the block.
+        let x_pos = result
+            .rfind("\n  x\n")
+            .expect("trailing `x` statement should survive formatting");
+        assert!(
+            value_pos < x_pos,
+            "block value must come before the trailing `x`, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_comment_inside_match_as_rhs_stays_nested() {
+        // F1 repro 5: comment inside a match arm block when the
+        // match itself is the RHS of a `let`.
+        let source = "fn main() {\n  let x = match true {\n    true -> {\n      -- nested in assignment\n      42\n    }\n    false -> 0\n  }\n  println(x)\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- nested in assignment")
+            .expect("comment should survive formatting");
+        let value_pos = result
+            .find("42")
+            .expect("arm body value should survive formatting");
+        let println_pos = result
+            .find("println(x)")
+            .expect("outer println should survive formatting");
+        assert!(
+            comment_pos < value_pos,
+            "comment must precede `42` inside the nested match arm body, got: {result}"
+        );
+        assert!(
+            value_pos < println_pos,
+            "arm body must come before the println call, got: {result}"
+        );
+    }
+
+    // ── F2: trailing comments on nested constructs are preserved ────
+
+    #[test]
+    fn test_trailing_comment_on_enum_variant() {
+        // F2 repro 1: trailing comment on an enum variant.
+        let source = "type Shape {\n  Circle(Float)  -- a round one\n  Square(Int)\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- a round one")
+            .expect("enum variant trailing comment should be preserved");
+        let circle_pos = result
+            .find("Circle(Float)")
+            .expect("Circle variant should survive");
+        let square_pos = result
+            .find("Square(Int)")
+            .expect("Square variant should survive");
+        assert!(
+            circle_pos < comment_pos,
+            "trailing comment must follow `Circle(Float)`, got: {result}"
+        );
+        assert!(
+            comment_pos < square_pos,
+            "trailing comment must precede the next variant `Square(Int)`, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_on_record_fields() {
+        // F2 repro 2: trailing comments on record fields.
+        let source = "type Point {\n  x: Int,  -- horizontal\n  y: Int,  -- vertical\n}\n";
+        let result = format(source).unwrap();
+        let horiz_pos = result
+            .find("-- horizontal")
+            .expect("first record field trailing comment should be preserved");
+        let vert_pos = result
+            .find("-- vertical")
+            .expect("second record field trailing comment should be preserved");
+        let x_pos = result.find("x: Int").expect("x field should survive");
+        let y_pos = result.find("y: Int").expect("y field should survive");
+        assert!(x_pos < horiz_pos, "`-- horizontal` must follow `x: Int`, got: {result}");
+        assert!(horiz_pos < y_pos, "`-- horizontal` must precede `y: Int`, got: {result}");
+        assert!(y_pos < vert_pos, "`-- vertical` must follow `y: Int`, got: {result}");
+    }
+
+    #[test]
+    fn test_trailing_comment_on_match_arm() {
+        // F2 repro 3: trailing comment on a match arm.
+        let source = "fn main() {\n  match 1 {\n    1 -> 1 -- trailing in arm\n    _ -> 0\n  }\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- trailing in arm")
+            .expect("match arm trailing comment should be preserved");
+        let arm_1_pos = result
+            .find("1 -> 1")
+            .expect("first arm should survive");
+        let arm_wildcard_pos = result
+            .find("_ -> 0")
+            .expect("second arm should survive");
+        assert!(
+            arm_1_pos < comment_pos,
+            "trailing comment must follow `1 -> 1`, got: {result}"
+        );
+        assert!(
+            comment_pos < arm_wildcard_pos,
+            "trailing comment must precede the next arm `_ -> 0`, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_trailing_comment_on_pipe_step() {
+        // F2 repro 4: trailing comment on a pipe step.
+        let source = "import list\nfn main() {\n  [1, 2, 3]\n    |> list.map { x -> x * 2 }  -- double each\n    |> list.sum()\n}\n";
+        let result = format(source).unwrap();
+        let comment_pos = result
+            .find("-- double each")
+            .expect("pipe step trailing comment should be preserved");
+        let map_pos = result
+            .find("list.map")
+            .expect("list.map step should survive");
+        let sum_pos = result
+            .find("list.sum")
+            .expect("list.sum step should survive");
+        assert!(
+            map_pos < comment_pos,
+            "trailing comment must follow `list.map`, got: {result}"
+        );
+        assert!(
+            comment_pos < sum_pos,
+            "trailing comment must precede the next pipe stage `list.sum`, got: {result}"
+        );
+    }
+
+    // ── F3: trait and trait-impl separator comments are preserved ───
+
+    #[test]
+    fn test_trait_abstract_method_preceding_comment() {
+        // F3 repro 1: comment before an abstract trait method must
+        // stay attached to the method (not absorbed elsewhere).
+        let source = "trait Show {\n  -- render this value\n  fn show(self) -> String\n  fn debug(self) -> String  -- low-level\n}\n";
+        let result = format(source).unwrap();
+        let render_pos = result
+            .find("-- render this value")
+            .expect("leading comment on abstract method should be preserved");
+        let show_pos = result.find("fn show").expect("show signature should survive");
+        let low_level_pos = result
+            .find("-- low-level")
+            .expect("trailing comment on abstract method should be preserved");
+        let debug_pos = result.find("fn debug").expect("debug signature should survive");
+        assert!(
+            render_pos < show_pos,
+            "`-- render this value` must precede `fn show`, got: {result}"
+        );
+        assert!(
+            show_pos < debug_pos,
+            "`fn show` must precede `fn debug`, got: {result}"
+        );
+        assert!(
+            debug_pos < low_level_pos,
+            "`-- low-level` must follow `fn debug`, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_trait_separator_comment_between_block_body_methods() {
+        // F3 repro 2: separator comment between two block-body methods
+        // must stay between the methods, not get absorbed into the
+        // previous method's body above its closing brace.
+        let source = "trait Show {\n  fn one(self) -> Int { 1 }\n  -- separator comment\n  fn two(self) -> Int { 2 }\n}\n";
+        let result = format(source).unwrap();
+        let separator_pos = result
+            .find("-- separator comment")
+            .expect("separator comment should be preserved");
+        let one_pos = result.find("fn one").expect("fn one should survive");
+        let two_pos = result.find("fn two").expect("fn two should survive");
+        // The separator must come between the two methods, not
+        // inside either body.
+        assert!(
+            one_pos < separator_pos,
+            "separator comment must follow `fn one`, got: {result}"
+        );
+        assert!(
+            separator_pos < two_pos,
+            "separator comment must precede `fn two`, got: {result}"
+        );
+        // Additionally, the separator must NOT appear between
+        // `fn one(self) -> Int {` and its `1 }` — that would mean the
+        // comment was absorbed into one's body.
+        //
+        // The fn one body contains `1`. The separator should come AFTER
+        // the byte offset of that `1` (plus the closing `}` of one).
+        let body_1_pos = result
+            .find("1 }")
+            .or_else(|| result.find("{ 1 }"))
+            .or_else(|| result.find("1\n  }"))
+            .expect("fn one body should survive");
+        assert!(
+            body_1_pos < separator_pos,
+            "separator comment was absorbed into fn one's body, got: {result}"
+        );
+    }
+
+    // ── R2: lock B4 brace-counting behavior against string literals,
+    //        line comments, and string interpolation. Every branch of
+    //        the `resolve_decl_end_lines` scanner must be exercised.
+
+    #[test]
+    fn test_format_brace_counting_skips_string_literals() {
+        // A `}` inside a plain string literal must not terminate the
+        // brace-counting scan early in `resolve_decl_end_lines`. To
+        // prove the string-tracking logic is required, we place a
+        // body comment AFTER the line that contains the fake `}`;
+        // a naive scan would compute a too-short `decl_end_line`,
+        // which would re-classify the comment as a top-level comment
+        // and emit it outside the fn body.
+        let source = "fn main() {\n  let s = \"text with } closing brace\"\n  -- body comment after string\n  println(s)\n}\n";
+        let result = format(source).unwrap();
+        let s_pos = result.find("let s =").expect("let statement should survive");
+        let comment_pos = result
+            .find("-- body comment after string")
+            .expect("body comment should survive formatting");
+        let println_pos = result
+            .find("println(s)")
+            .expect("println call should survive");
+        assert!(
+            s_pos < comment_pos,
+            "comment must follow `let s =`, got: {result}"
+        );
+        assert!(
+            comment_pos < println_pos,
+            "comment must precede `println(s)`, got: {result}"
+        );
+        // And the comment must be INSIDE the function body, not after
+        // the closing brace of main.
+        let final_brace = result.rfind('}').unwrap();
+        assert!(
+            comment_pos < final_brace,
+            "body comment must stay inside main's body (not hoisted past `}}`), got: {result}"
+        );
+        let twice = format(&result).unwrap();
+        assert_eq!(result, twice, "formatter must be idempotent, got:\n{twice}");
+    }
+
+    #[test]
+    fn test_format_brace_counting_skips_line_comments() {
+        // A `}` inside a `--` line comment must not terminate the
+        // brace-counting scan early. A body comment is placed AFTER
+        // the line containing the commented-out `}` so any regression
+        // that lets `}` inside a line comment decrement depth will
+        // misclassify the after-comment.
+        let source = "fn main() {\n  let x = 1\n  -- stray } brace in comment\n  -- after-comment\n  let y = 2\n  x + y\n}\n";
+        let result = format(source).unwrap();
+        let x_pos = result.find("let x = 1").expect("let x should survive");
+        let stray_pos = result
+            .find("-- stray } brace in comment")
+            .expect("first comment should survive");
+        let after_pos = result
+            .find("-- after-comment")
+            .expect("second comment should survive");
+        let y_pos = result.find("let y = 2").expect("let y should survive");
+        let sum_pos = result.find("x + y").expect("x + y should survive");
+        assert!(
+            x_pos < stray_pos,
+            "stray comment must follow `let x = 1`, got: {result}"
+        );
+        assert!(
+            stray_pos < after_pos,
+            "after-comment must follow stray comment, got: {result}"
+        );
+        assert!(
+            after_pos < y_pos,
+            "after-comment must precede `let y = 2`, got: {result}"
+        );
+        assert!(y_pos < sum_pos, "`let y = 2` must precede `x + y`, got: {result}");
+        let final_brace = result.rfind('}').unwrap();
+        assert!(
+            after_pos < final_brace,
+            "after-comment must stay inside main's body, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_brace_counting_tracks_interpolation() {
+        // `{` and `}` inside a string interpolation like
+        // `"hello {name}, count={1 + 2}"` must not unbalance the
+        // brace counter in `resolve_decl_end_lines`. A body comment
+        // is placed after the interpolated string so any regression
+        // that mis-tracks the interpolation will hoist the comment
+        // outside the fn body.
+        let source = "fn main() {\n  let name = \"world\"\n  let msg = \"hello {name}, count={1 + 2}\"\n  -- body comment after interpolation\n  println(msg)\n}\n";
+        let result = format(source).unwrap();
+        let name_pos = result.find("let name").expect("let name should survive");
+        let msg_pos = result.find("let msg").expect("let msg should survive");
+        let comment_pos = result
+            .find("-- body comment after interpolation")
+            .expect("body comment should survive");
+        let println_pos = result.find("println(msg)").expect("println should survive");
+        assert!(
+            name_pos < msg_pos,
+            "let name must precede let msg, got: {result}"
+        );
+        assert!(
+            msg_pos < comment_pos,
+            "comment must follow `let msg`, got: {result}"
+        );
+        assert!(
+            comment_pos < println_pos,
+            "comment must precede println, got: {result}"
+        );
+        let final_brace = result.rfind('}').unwrap();
+        assert!(
+            comment_pos < final_brace,
+            "body comment must stay inside main's body, got: {result}"
+        );
+        let twice = format(&result).unwrap();
+        assert_eq!(result, twice, "formatter must be idempotent, got:\n{twice}");
+    }
+
+    // ── LATENT R4: strengthen the two weak `.contains()` tests ──────
+
+    #[test]
+    fn test_format_string_interpolation_exact_output() {
+        // Replacement for the previous `.contains("{name}")` assertion.
+        let source = r#"fn greet(name) = "hello {name}"
+"#;
+        let result = format(source).unwrap();
+        assert_eq!(result, "fn greet(name) = \"hello {name}\"\n");
+    }
+
+    #[test]
+    fn test_format_question_mark_exact_output() {
+        // Replacement for the previous `.contains("x?")` assertion.
+        let source = "fn try_it(x) = x?\n";
+        let result = format(source).unwrap();
+        assert_eq!(result, "fn try_it(x) = x?\n");
     }
 }

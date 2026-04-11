@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
     PublishDiagnostics,
@@ -296,51 +296,64 @@ impl Server {
     // ── Requests ───────────────────────────────────────────────────
 
     fn handle_request(&mut self, req: Request) {
-        match req.method.as_str() {
-            HoverRequest::METHOD => {
-                if let Some((id, params)) = extract_request::<HoverRequest>(req) {
+        let resp = match req.method.as_str() {
+            HoverRequest::METHOD => match extract_request::<HoverRequest>(req) {
+                Ok((id, params)) => {
                     let result = self.hover(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
-            }
-            GotoDefinition::METHOD => {
-                if let Some((id, params)) = extract_request::<GotoDefinition>(req) {
+                Err(resp) => resp,
+            },
+            GotoDefinition::METHOD => match extract_request::<GotoDefinition>(req) {
+                Ok((id, params)) => {
                     let result = self.goto_definition(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
-            }
-            Formatting::METHOD => {
-                if let Some((id, params)) = extract_request::<Formatting>(req) {
+                Err(resp) => resp,
+            },
+            Formatting::METHOD => match extract_request::<Formatting>(req) {
+                Ok((id, params)) => {
                     let result = self.format(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
-            }
-            Completion::METHOD => {
-                if let Some((id, params)) = extract_request::<Completion>(req) {
+                Err(resp) => resp,
+            },
+            Completion::METHOD => match extract_request::<Completion>(req) {
+                Ok((id, params)) => {
                     let result = self.completion(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
-            }
-            SignatureHelpRequest::METHOD => {
-                if let Some((id, params)) = extract_request::<SignatureHelpRequest>(req) {
+                Err(resp) => resp,
+            },
+            SignatureHelpRequest::METHOD => match extract_request::<SignatureHelpRequest>(req) {
+                Ok((id, params)) => {
                     let result = self.signature_help(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
-            }
-            DocumentSymbolRequest::METHOD => {
-                if let Some((id, params)) = extract_request::<DocumentSymbolRequest>(req) {
+                Err(resp) => resp,
+            },
+            DocumentSymbolRequest::METHOD => match extract_request::<DocumentSymbolRequest>(req) {
+                Ok((id, params)) => {
                     let result = self.document_symbols(params);
-                    let resp = Response::new_ok(id, result);
-                    self.connection.sender.send(Message::Response(resp)).ok();
+                    Response::new_ok(id, result)
                 }
+                Err(resp) => resp,
+            },
+            _ => {
+                // Unknown request method.  We must reply with
+                // MethodNotFound so the client doesn't hang waiting for a
+                // response that will never arrive.  Requests always carry an
+                // id — notifications have no id and are routed to
+                // `handle_notification`, so we don't risk replying to one.
+                let method = req.method.clone();
+                Response::new_err(
+                    req.id,
+                    ErrorCode::MethodNotFound as i32,
+                    format!("method not found: {method}"),
+                )
             }
-            _ => {}
-        }
+        };
+        self.connection.sender.send(Message::Response(resp)).ok();
     }
 
     // ── Document analysis ──────────────────────────────────────────
@@ -2457,8 +2470,33 @@ fn builtins() -> Vec<(String, CompletionItemKind)> {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-fn extract_request<R: lsp_types::request::Request>(req: Request) -> Option<(RequestId, R::Params)> {
-    req.extract::<R::Params>(R::METHOD).ok()
+/// Attempt to extract a typed parameter set from `req` for method `R`.
+///
+/// Returns `Ok((id, params))` on success.  On deserialize failure returns
+/// `Err(Response)` already populated with the original request id and an
+/// `InvalidParams` error, so the caller can send it back without having to
+/// remember the id — `req.extract` consumes the request by value and we'd
+/// otherwise lose it.  Previously this helper returned `Option<(id, params)>`
+/// and the dispatcher silently dropped deserialize failures, leaving clients
+/// waiting for a response that never arrives.
+fn extract_request<R: lsp_types::request::Request>(
+    req: Request,
+) -> Result<(RequestId, R::Params), Response> {
+    // Capture the id before we consume `req`; `Request::extract` moves the
+    // value and the JsonError variant of ExtractError does not preserve the
+    // id. RequestId is Clone-able, so this is cheap.
+    let id = req.id.clone();
+    match req.extract::<R::Params>(R::METHOD) {
+        Ok((id, params)) => Ok((id, params)),
+        Err(err) => {
+            let message = format!("invalid params for {}: {err}", R::METHOD);
+            Err(Response::new_err(
+                id,
+                ErrorCode::InvalidParams as i32,
+                message,
+            ))
+        }
+    }
 }
 
 // ── Entry point ────────────────────────────────────────────────────

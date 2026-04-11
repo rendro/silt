@@ -257,7 +257,7 @@ impl Compiler {
                 if let Some(slot) = self.resolve_local(*name) {
                     self.current_chunk().emit_op(Op::GetLocal, span);
                     self.current_chunk().emit_u16(slot, span);
-                } else if let Some(idx) = self.resolve_upvalue(*name)? {
+                } else if let Some(idx) = self.resolve_upvalue(*name, span)? {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {

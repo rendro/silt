@@ -2117,6 +2117,210 @@ fn test_parse_unclosed_call_args_points_at_opener() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION T1: bare parameterized record names in fn signatures
+// ════════════════════════════════════════════════════════════════════
+//
+// Before the fix, writing `fn grab(b: Box) -> Int { b.value }` for a
+// parameterized record `type Box(a) { value: a }` typechecked cleanly.
+// The bare `Box` resolved to `Type::Generic("Box", [])` — the empty-arg
+// unification arms silently accepted this, and field access on the
+// parameterized record fell through a zip-of-empty substitution that
+// returned the SHARED template TyVar, polluting it globally across
+// uses. Two functions grabbing different field types would then
+// cross-pollinate and one would fail with a spurious error.
+
+#[test]
+fn test_bare_parameterized_record_in_fn_signature_rejected() {
+    // `Box` is parameterized with one type variable, but the parameter
+    // annotation `b: Box` omits the type argument. The typechecker must
+    // reject this (or at minimum force the body to be consistent with
+    // the declared return type). Either way the program below must NOT
+    // typecheck: `b.value` has the record's param type, not `Int`.
+    //
+    // The live REPL repro from the audit agent:
+    //   type Box(a) { value: a }
+    //   fn grab(b: Box) -> Int { b.value }
+    //   grab(Box { value: "hi" })   -- runtime returns "hi" from Int-decl fn
+    let errs = type_errors(
+        r#"
+type Box(a) { value: a }
+fn grab(b: Box) -> Int { b.value }
+fn main() {
+  let _ = grab(Box { value: "hi" })
+}
+"#,
+    );
+    assert!(
+        !errs.is_empty(),
+        "expected at least one type error, got none"
+    );
+    // Accept either the arity-mismatch phrasing or a downstream
+    // type mismatch — both lock the bug. The original symptom is
+    // that a String flows into an Int-declared slot.
+    assert!(
+        errs.iter().any(|e| e.contains("Box")
+            || e.contains("Int")
+            || e.contains("String")
+            || e.contains("type argument count mismatch")),
+        "expected error about Box/Int/String arity, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_record_template_var_not_polluted_across_fns() {
+    // Two functions that each pin the record's type parameter to a
+    // different concrete type must both typecheck cleanly. Before the
+    // fix, the first function mutated the shared template TyVar of
+    // the record's field type, and the second function then saw a
+    // concrete `Int` where it expected a polymorphic var, failing with
+    // `expected String, got Int`. This test uses explicit type args
+    // (`Box(Int)` and `Box(String)`) — the form that always should
+    // have worked and that locks in "no cross-function pollution".
+    assert_no_type_errors(
+        r#"
+type Box(a) { value: a }
+fn grab_int(b: Box(Int)) -> Int { b.value }
+fn grab_str(b: Box(String)) -> String { b.value }
+fn main() {
+  let _ = grab_int(Box { value: 1 })
+  let _ = grab_str(Box { value: "hi" })
+}
+"#,
+    );
+}
+
+#[test]
+fn test_bare_parameterized_record_body_uses_are_independent() {
+    // The audit's second repro:
+    //
+    //     type Box(a) { value: a }
+    //     fn grab_int(b: Box) -> Int { b.value }
+    //     fn grab_str(b: Box) -> String { b.value }
+    //
+    // Before the fix, this program FAILED TYPECHECK with the spurious
+    // "expected String, got Int" — the first function mutated the
+    // shared template TyVar of `Box.value` to `Int`, and the second
+    // function then saw `Int` in its body where it expected `String`.
+    //
+    // After the fix (T1), bare `Box` in the parameter annotation
+    // instantiates a fresh type variable for each parameterized use,
+    // so the two bodies are independent: each fn monomorphizes its
+    // own fresh `a`, `grab_int` pins it to `Int` and returns, then
+    // `grab_str` pins its OWN fresh `a` to `String`. Both typecheck
+    // cleanly. This test locks that.
+    assert_no_type_errors(
+        r#"
+type Box(a) { value: a }
+fn grab_int(b: Box) -> Int { b.value }
+fn grab_str(b: Box) -> String { b.value }
+fn main() {
+  ()
+}
+"#,
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION T2: primitive type descriptors must not be values
+// ════════════════════════════════════════════════════════════════════
+//
+// Before the fix, `Int`, `Float`, `String`, `Bool` were registered
+// in the type environment as their underlying type (Int, Float, etc.).
+// The runtime represents these as `Value::PrimitiveDescriptor("Int")`,
+// not `Value::Int(_)`, so `Int * 2` passed typecheck but crashed at
+// runtime with "cannot apply '*' to PrimitiveDescriptor and Int".
+// The fix wraps them in `TypeOf(T)` so the typechecker catches the
+// misuse.
+
+#[test]
+fn test_bare_int_descriptor_cannot_be_used_in_arithmetic() {
+    // `double(Int)` must fail typecheck: `Int` is a type descriptor
+    // (TypeOf(Int)), not a value of type Int. Before the fix this
+    // passed typecheck and crashed at runtime with
+    // `cannot apply '*' to PrimitiveDescriptor and Int`.
+    let errs = type_errors(
+        r#"
+fn double(n: Int) -> Int { n * 2 }
+fn main() {
+  let _ = double(Int)
+}
+"#,
+    );
+    assert!(
+        !errs.is_empty(),
+        "expected a type error when passing the `Int` descriptor as a value, got none"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("TypeOf") || e.contains("Int")),
+        "expected error mentioning TypeOf or Int mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_json_parse_still_accepts_primitive_descriptors() {
+    // Passing `Int` to `json.parse` must continue to typecheck: the
+    // descriptor value has type `TypeOf(Int)`, and json.parse's
+    // signature is `forall a. (TypeOf(a), String) -> Result(a, String)`.
+    assert_no_type_errors(
+        r#"
+import json
+fn main() {
+  let r = json.parse(Int, "42")
+  match r {
+    Ok(n) -> {
+      let _: Int = n
+    }
+    Err(_) -> ()
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn test_descriptor_in_list_rejected() {
+    // A heterogeneous list `[1, 2, Int]` must fail typecheck cleanly:
+    // the element type is `Int` for the first two, but `TypeOf(Int)`
+    // for the descriptor. Before the fix this would pass and produce
+    // garbage at runtime.
+    let errs = type_errors(
+        r#"
+fn main() {
+  let _ = [1, 2, Int]
+}
+"#,
+    );
+    assert!(
+        !errs.is_empty(),
+        "expected a type error for [1, 2, Int], got none"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION T3: task.join Handle(a) is nominally typed
+// ════════════════════════════════════════════════════════════════════
+//
+// Locks the fix from commit 59f7f58: task.spawn/join/cancel all share
+// a nominal `Handle(a)` type so that `let s: String = task.join(h)`
+// for an `h : Handle(Int)` must fail typecheck with `expected String,
+// got Int`.
+
+#[test]
+fn test_task_join_handle_type_is_nominal() {
+    assert_type_error(
+        r#"
+import task
+fn main() {
+  let h = task.spawn(fn() { 42 })
+  let s: String = task.join(h)
+  println(s)
+}
+"#,
+        "expected String",
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
 // AUDIT REGRESSION: value restriction on top-level let bindings (3a4edd6 B2)
 // ════════════════════════════════════════════════════════════════════
 

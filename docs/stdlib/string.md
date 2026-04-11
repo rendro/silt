@@ -307,7 +307,7 @@ Returns the length of the string in bytes (UTF-8 encoding). See also
 ```silt
 fn main() {
     println(string.byte_length("hello"))  -- 5
-    println(string.byte_length("cafe\u0301"))   -- 5 (e\u0301 is 2 bytes)
+    println(string.byte_length("café"))   -- 5 (é is 2 bytes in UTF-8)
 }
 ```
 
@@ -324,7 +324,7 @@ you need the size in bytes.
 ```silt
 fn main() {
     println(string.length("hello"))  -- 5
-    println(string.length("cafe\u0301"))   -- 4
+    println(string.length("café"))   -- 4 (4 characters, 5 bytes)
 }
 ```
 
