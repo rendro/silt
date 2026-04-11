@@ -405,7 +405,10 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     None => Ok(Value::Variant("None".into(), Vec::new())),
                 },
                 Value::Range(lo, hi) => {
-                    let i = lo + idx as i64;
+                    let i = match lo.checked_add(idx as i64) {
+                        Some(i) => i,
+                        None => return Ok(Value::Variant("None".into(), Vec::new())),
+                    };
                     if i <= *hi {
                         Ok(Value::Variant("Some".into(), vec![Value::Int(i)]))
                     } else {

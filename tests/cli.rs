@@ -533,6 +533,30 @@ fn test_disasm_help_flag() {
     }
 }
 
+// Regression: `silt lsp --help` / `-h` must print usage and exit 0
+// without booting the language server (which would hang on stdio).
+#[cfg(feature = "lsp")]
+#[test]
+fn test_lsp_help_flag() {
+    for flag in ["--help", "-h"] {
+        let output = silt_cmd()
+            .arg("lsp")
+            .arg(flag)
+            .output()
+            .expect("failed to run silt");
+        assert!(
+            output.status.success(),
+            "silt lsp {flag}: expected exit 0, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("Usage") || stdout.contains("language server"),
+            "silt lsp {flag}: expected usage text, got: {stdout}"
+        );
+    }
+}
+
 // ── 16. silt test passes a simple test file (G3) ──────────────────
 
 #[test]

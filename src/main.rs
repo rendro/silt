@@ -526,6 +526,22 @@ fn main() {
         }
         #[cfg(feature = "lsp")]
         "lsp" => {
+            for arg in &args[2..] {
+                if arg == "--help" || arg == "-h" {
+                    println!("Usage: silt lsp");
+                    println!();
+                    println!(
+                        "Start the silt language server. Communicates over stdio using the"
+                    );
+                    println!(
+                        "Language Server Protocol — invoked automatically by editor extensions"
+                    );
+                    println!(
+                        "(VS Code, Vim/Neovim, etc.). Not typically run directly from a terminal."
+                    );
+                    process::exit(0);
+                }
+            }
             silt::lsp::run();
         }
         #[cfg(not(feature = "lsp"))]

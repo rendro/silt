@@ -1399,3 +1399,45 @@ fn main() {
         "expected graceful overflow error, got: {err}"
     );
 }
+
+#[test]
+fn test_list_get_range_overflow_returns_none() {
+    // Audit regression: list.get on a Range must use checked arithmetic
+    // when computing `lo + idx`. Before the fix, a large `lo` combined
+    // with an `idx` that would push past i64::MAX panicked with
+    // "attempt to add with overflow" in debug builds. The fix returns
+    // the `None` variant — consistent with how out-of-bounds access is
+    // reported for in-range indices.
+    let result = run(r#"
+import list
+fn main() {
+  let r = 9223372036854775000..9223372036854775807
+  list.get(r, 1000)
+}
+"#);
+    match result {
+        Value::Variant(ref tag, ref payload) if tag == "None" && payload.is_empty() => {}
+        other => panic!("expected None variant, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_list_get_range_boundary_at_i64_max_returns_some() {
+    // Boundary companion to the overflow test: when `lo + idx` lands
+    // exactly on `hi == i64::MAX`, the result should be Some(i64::MAX).
+    // This guards against an off-by-one in the checked_add fix.
+    let result = run(r#"
+import list
+fn main() {
+  let r = 9223372036854775800..9223372036854775807
+  list.get(r, 7)
+}
+"#);
+    match result {
+        Value::Variant(ref tag, ref payload) if tag == "Some" => {
+            assert_eq!(payload.len(), 1, "Some variant should carry one value");
+            assert_eq!(payload[0], Value::Int(i64::MAX));
+        }
+        other => panic!("expected Some(i64::MAX) variant, got: {other:?}"),
+    }
+}

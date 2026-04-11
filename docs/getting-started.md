@@ -34,7 +34,7 @@ silt run main.silt
 
 `silt init` creates a starter `main.silt`. `silt run` executes it. That's the whole loop.
 
-See `examples/` in the repository for 40+ runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
+See `examples/` in the repository for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
 ## 1. Bindings
 

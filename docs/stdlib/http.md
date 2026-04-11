@@ -117,14 +117,16 @@ without crashing. The handler receives a `Request` and must return a
 Use pattern matching on `(req.method, segments)` for routing:
 
 ```silt
+import http
+import json
+
+type User { id: Int, name: String }
+
 fn main() {
   println("Listening on :8080")
 
   http.serve(8080, fn(req) {
-    let parts = string.split(req.path, "/")
-      |> list.filter { s -> !string.is_empty(s) }
-
-    match (req.method, parts) {
+    match (req.method, http.segments(req.path)) {
       (GET, []) ->
         Response { status: 200, body: "Hello!", headers: #{} }
 
