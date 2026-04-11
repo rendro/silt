@@ -44,6 +44,88 @@ trait Monoid for Int {
 }
 ```
 
+## Parameterized Implementation Targets
+
+An impl on a parameterized record or enum can bind the target's type
+parameters directly in the impl header. Lowercase names in the target's
+argument list are fresh type variables scoped to every method in the impl:
+
+```silt
+type Box(T) { Box(T) }
+
+trait Wrap {
+  fn unwrap(self) -> Int
+}
+
+trait Wrap for Box(a) {
+  fn unwrap(self) -> Int {
+    match self {
+      Box(inner) -> 1
+    }
+  }
+}
+```
+
+The `a` in `Box(a)` is a fresh type variable. Every method in the impl
+sees the same `a`, so `fn get(self) -> a` and `fn put(self, x: a)` in the
+same impl refer to the same variable. At call sites, `a` monomorphises per
+use — a single `trait Wrap for Box(a)` impl handles both `Box(42)` and
+`Box("hello")` without separate declarations.
+
+Rules:
+
+- **Only lowercase binders.** `trait X for Box(Int)` is a parse error —
+  silt has no specialization.
+- **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
+- **Arity must match the target.** `trait X for Box(a, b)` on the 1-param
+  `Box(T)` is a type error.
+- **The bare form still works.** `trait X for Box { ... }` is equivalent
+  to `trait X for Box(_)` — useful when the method bodies never observe
+  the element type.
+
+### Recursive trait dispatch on the inner type
+
+To call a trait method on an impl-bound type variable, declare the
+constraint on the **method signature** using a `where` clause. Impl-level
+`where` clauses are not supported today; method-level is:
+
+```silt
+type Box(T) { Box(T) }
+
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Greet for Int {
+  fn greet(self) -> String { "int-greet" }
+}
+
+trait Greet for Box(a) {
+  fn greet(self) -> String where a: Greet {
+    match self {
+      Box(inner) -> inner.greet()
+    }
+  }
+}
+
+Box(5).greet()   -- "int-greet"
+```
+
+Field access on a type-var field in a record works the same way:
+
+```silt
+type Cell(T) { value: T }
+
+trait Peek { fn peek(self) -> Int }
+trait Peek for Int { fn peek(self) -> Int { self } }
+
+trait Peek for Cell(a) {
+  fn peek(self) -> Int where a: Peek {
+    self.value.peek()
+  }
+}
+```
+
 ## Built-in Traits
 
 | Trait     | Purpose                          |

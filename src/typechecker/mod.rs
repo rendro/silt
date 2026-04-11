@@ -1787,11 +1787,89 @@ impl TypeChecker {
         // to use when reporting missing-method diagnostics.
         self.trait_impl_spans.insert(impl_key, ti.span);
 
-        let self_type = Self::type_from_name(ti.target_type);
+        // Build the impl-level parameter map. For a parameterized target
+        // like `trait X for Box(a)`, each lowercase binder in
+        // `target_param_names` becomes a fresh type variable that is
+        // shared across every method in the impl — so `fn get(self) -> a`
+        // and `fn put(self, x: a)` in the same impl refer to the SAME
+        // type variable, mirroring the fn-signature convention.
+        let mut impl_param_map: HashMap<Symbol, Type> = HashMap::new();
+        for &param_name in &ti.target_param_names {
+            impl_param_map.insert(param_name, self.fresh_var());
+        }
+
+        // Construct the self_type. Three cases:
+        //   1. Bare-target form (`trait X for Int`): target_type_args is
+        //      empty. Fall through to the primitive-or-Generic(name, [])
+        //      path via type_from_name — preserves round-13+ behaviour.
+        //   2. Parameterized user type (`trait X for Box(a)`): resolve
+        //      each arg through impl_param_map. Arity enforced against
+        //      the record's param_var_ids or the enum's declared params.
+        //   3. Built-in parameterized form (`trait X for List(a)`):
+        //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
+        //      already; reuse it.
+        let self_type = if ti.target_type_args.is_empty() {
+            Self::type_from_name(ti.target_type)
+        } else {
+            // Arity check for user-declared record/enum targets.
+            let expected_arity = self
+                .record_param_var_ids
+                .get(&ti.target_type)
+                .map(|v| v.len())
+                .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()));
+            if let Some(expected) = expected_arity
+                && expected != ti.target_type_args.len()
+            {
+                let kind = if self.records.contains_key(&ti.target_type) {
+                    "record"
+                } else {
+                    "enum"
+                };
+                self.error(
+                    format!(
+                        "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
+                        resolve(ti.target_type),
+                        ti.target_type_args.len()
+                    ),
+                    ti.span,
+                );
+            }
+            // Resolve through a dedicated Generic form so the head symbol
+            // is preserved alongside the impl-level tyvar args.
+            let resolved_args: Vec<Type> = ti
+                .target_type_args
+                .iter()
+                .map(|arg_te| self.resolve_type_expr(arg_te, &mut impl_param_map))
+                .collect();
+            let name_str = resolve(ti.target_type);
+            match name_str.as_str() {
+                "List" if resolved_args.len() == 1 => {
+                    Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                }
+                "Set" if resolved_args.len() == 1 => {
+                    Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
+                }
+                "Channel" if resolved_args.len() == 1 => {
+                    Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
+                }
+                "Map" if resolved_args.len() == 2 => {
+                    let mut iter = resolved_args.into_iter();
+                    Type::Map(
+                        Box::new(iter.next().unwrap()),
+                        Box::new(iter.next().unwrap()),
+                    )
+                }
+                _ => Type::Generic(ti.target_type, resolved_args),
+            }
+        };
 
         let self_sym = intern("self");
         for method in &ti.methods {
-            let mut param_map = HashMap::new();
+            // Seed the method's param_map with both the impl-level target
+            // tyvars AND the Self alias, so the method signature and body
+            // see `a` as a concrete TyVar and `self` / `Self` resolve to
+            // the parameterized self_type.
+            let mut param_map = impl_param_map.clone();
             param_map.insert(intern("Self"), self_type.clone());
             let mut param_types = Vec::new();
             for (i, param) in method.params.iter().enumerate() {

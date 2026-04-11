@@ -283,7 +283,25 @@ pub struct TraitDecl {
 #[derive(Debug, Clone)]
 pub struct TraitImpl {
     pub trait_name: Symbol,
+    /// Head symbol of the impl target. For `trait X for Box(a)` this is
+    /// `Box`; for the bare-target form `trait X for Int` it is `Int`.
+    /// Kept as a Symbol so method_table keys, qualified-name emission in
+    /// the compiler, and coherence checks can reference the impl by head
+    /// name without having to inspect the type arguments.
     pub target_type: Symbol,
+    /// Type arguments on the target, if any. `trait X for Box(a)` yields
+    /// `[TypeExpr::Named("a")]`; the bare `trait X for Int` yields `[]`.
+    /// Each lowercase `Named` entry binds a fresh type variable in the
+    /// impl's methods' signatures and bodies via param_map; the lowercase
+    /// convention matches fn-signature polymorphism elsewhere in silt.
+    pub target_type_args: Vec<TypeExpr>,
+    /// Lowercase type-variable names extracted from `target_type_args`
+    /// (deduplicated, in source order). Populated by the parser during
+    /// impl-header parsing. The typechecker pre-seeds each method's
+    /// param_map with fresh TyVars keyed on these names so method bodies
+    /// see `a` as a concrete (but polymorphic) tyvar instead of a lexical
+    /// ident. Empty for the bare-target form.
+    pub target_param_names: Vec<Symbol>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }

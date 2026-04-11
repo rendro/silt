@@ -788,9 +788,67 @@ impl Parser {
                 span,
             }))
         } else {
-            // Must be `for Type { ... }`
+            // Must be `for Type { ... }`  or  `for Type(params...) { ... }`
             self.expect(&Token::Ident(intern::intern("for")))?;
-            let (target, _) = self.expect_ident()?;
+            let target_span = self.span();
+            let target_te = self.parse_type_expr()?;
+
+            // Accept only `Named(head)` or `Generic(head, args)` as the
+            // impl target. Reject tuple/fn/Unit targets — those have no
+            // stable "head symbol" for method_table keying or for the
+            // compiler's `TypeName.method_name` qualified-name form.
+            let (target, target_type_args) = match target_te {
+                TypeExpr::Named(sym) => (sym, Vec::new()),
+                TypeExpr::Generic(sym, args) => (sym, args),
+                _ => {
+                    return Err(ParseError {
+                        message: "trait impl target must be a named type (e.g. `Box` or `Box(a)`)"
+                            .to_string(),
+                        span: target_span,
+                    });
+                }
+            };
+
+            // Extract lowercase type-var binders from the target args.
+            // Enforce two rules:
+            //   1. Every arg must be a lowercase `Named` ident (impl
+            //      target arguments must be type variables — silt has no
+            //      specialization, so `trait X for Box(Int)` is rejected).
+            //   2. Binders must be distinct (no `Pair(a, a)` shadowing).
+            let mut target_param_names: Vec<Symbol> = Vec::new();
+            for arg in &target_type_args {
+                let TypeExpr::Named(arg_sym) = arg else {
+                    return Err(ParseError {
+                        message: "impl target arguments must be lowercase type variables; \
+                                  silt has no trait specialization"
+                            .to_string(),
+                        span: target_span,
+                    });
+                };
+                let arg_str = intern::resolve(*arg_sym);
+                let first_char = arg_str.chars().next().unwrap_or('A');
+                if !first_char.is_lowercase() {
+                    return Err(ParseError {
+                        message: format!(
+                            "impl target argument '{arg_str}' must be a lowercase type variable; \
+                             silt has no trait specialization"
+                        ),
+                        span: target_span,
+                    });
+                }
+                if target_param_names.contains(arg_sym) {
+                    return Err(ParseError {
+                        message: format!(
+                            "duplicate type variable '{arg_str}' in impl target; \
+                             each binder must be distinct"
+                        ),
+                        span: target_span,
+                    });
+                }
+                target_param_names.push(*arg_sym);
+            }
+
+            self.skip_nl();
             self.expect(&Token::LBrace)?;
             let mut methods = Vec::new();
             self.skip_nl();
@@ -802,6 +860,8 @@ impl Parser {
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_name: name,
                 target_type: target,
+                target_type_args,
+                target_param_names,
                 methods,
                 span,
             }))

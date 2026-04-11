@@ -2216,9 +2216,24 @@ fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
     let prefix = indent(depth);
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
+    // Render parameterized target as `Head(a, b, ...)`, bare target as
+    // just `Head`. Reuses format_type_expr so nested tuple/fn/generic
+    // targets (unreachable today per parser rules but cheap future-proof)
+    // all render consistently with the rest of the formatter's type path.
+    let target = if t.target_type_args.is_empty() {
+        t.target_type.to_string()
+    } else {
+        let args = t
+            .target_type_args
+            .iter()
+            .map(format_type_expr)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{}({args})", t.target_type)
+    };
     format!(
-        "{prefix}trait {} for {} {{\n{}\n{prefix}}}",
-        t.trait_name, t.target_type, body
+        "{prefix}trait {} for {target} {{\n{}\n{prefix}}}",
+        t.trait_name, body
     )
 }
 
