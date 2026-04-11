@@ -304,8 +304,8 @@ Joins a list of strings with a separator between each pair.
 ```silt
 import string
 fn main() {
-    let result = string.join(["a", "b", "c"], ", ")
-    println(result)  -- "a, b, c"
+    let joined = string.join(["a", "b", "c"], ", ")
+    println(joined)  -- "a, b, c"
 }
 ```
 

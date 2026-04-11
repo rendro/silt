@@ -7,7 +7,7 @@ description: "Install silt, write your first program, and tour the language thro
 
 # Getting Started
 
-Silt is a statically-typed, expression-based language with 14 keywords, full immutability, and CSP-style concurrency. Pattern matching is the only way to branch. Types are inferred. Errors are values.
+Silt is a statically-typed, expression-based language with a small, fixed keyword set, full immutability, and CSP-style concurrency. Pattern matching is the only way to branch. Types are inferred. Errors are values.
 
 This guide walks you through the essentials. For the complete reference, see the [Language Guide](language-guide.md).
 
@@ -184,6 +184,7 @@ silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
+silt init                  -- create a new main.silt
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly
 ```

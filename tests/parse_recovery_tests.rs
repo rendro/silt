@@ -277,13 +277,13 @@ fn main() {
     assert!(!parse_msgs.is_empty(), "expected parse error");
 
     // The `let v: Int = "hi"` must still produce a type mismatch.
-    let has_mismatch = type_msgs.iter().any(|m| {
-        m.contains("mismatch")
-            || (m.contains("Int") && m.contains("String"))
-            || (m.contains("Int") && m.contains("hi"))
-    });
+    // The exact phrase originates from src/typechecker/mod.rs:464
+    // (Typechecker::unify _ arm) — `type mismatch: expected Int, got String`.
+    let has_mismatch = type_msgs
+        .iter()
+        .any(|m| m.contains("type mismatch: expected Int, got String"));
     assert!(
         has_mismatch,
-        "expected real type error to still fire, got: {type_msgs:?}"
+        "expected exact type-mismatch phrase from typechecker/mod.rs:464, got: {type_msgs:?}"
     );
 }

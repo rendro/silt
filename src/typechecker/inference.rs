@@ -279,25 +279,71 @@ impl TypeChecker {
             Pattern::Bool(_) => {}
             Pattern::StringLit(..) => {}
             Pattern::Tuple(pats) => {
-                let resolved = self.apply(ty);
-                match &resolved {
-                    Type::Tuple(elems) => {
+                // BROKEN (round 15): bind_pattern Pattern::Tuple used to
+                // silently fall through to fresh vars when the scrutinee
+                // wasn't already a tuple, letting `let (a, b) = 42` slip
+                // past the type checker and blow up at runtime. Build the
+                // expected tuple shape up front and either unify against
+                // the scrutinee (general mismatch) or emit a dedicated
+                // arity error whose wording reads from the pattern's
+                // perspective ("expected 3, got 2"). The two message
+                // orderings differ because unify's tuple-tuple arm puts
+                // the first arg as "expected", while its fallback
+                // general-mismatch arm puts the second arg as "expected".
+                let resolved_pre = self.apply(ty);
+                if let Type::Tuple(scrutinee_elems) = &resolved_pre {
+                    if scrutinee_elems.len() == pats.len() {
+                        let elems = scrutinee_elems.clone();
                         for (p, t) in pats.iter().zip(elems.iter()) {
                             self.bind_pattern(p, t, env, span);
                         }
-                    }
-                    _ => {
-                        // Create fresh vars for each sub-pattern
+                    } else {
+                        // Arity mismatch — emit the pattern-centric error
+                        // directly so the message reads "expected <N>, got
+                        // <M>" from the pattern's point of view.
+                        self.error(
+                            format!(
+                                "tuple length mismatch: expected {}, got {}",
+                                pats.len(),
+                                scrutinee_elems.len()
+                            ),
+                            span,
+                        );
                         for p in pats {
                             let tv = self.fresh_var();
                             self.bind_pattern(p, &tv, env, span);
+                        }
+                    }
+                } else {
+                    // Non-tuple scrutinee (or an unresolved var). Unify
+                    // against a fresh tuple shape so a) Var scrutinees get
+                    // the correct tuple type, and b) concrete non-tuple
+                    // scrutinees produce "expected (..), got <type>".
+                    let shape_elems: Vec<Type> =
+                        pats.iter().map(|_| self.fresh_var()).collect();
+                    let shape = Type::Tuple(shape_elems.clone());
+                    self.unify(ty, &shape, span);
+                    // After unify, if the scrutinee unified into a tuple
+                    // (via a fresh var), recurse properly; otherwise fall
+                    // back to the shape vars.
+                    let resolved_post = self.apply(ty);
+                    match &resolved_post {
+                        Type::Tuple(elems) if elems.len() == pats.len() => {
+                            let elems = elems.clone();
+                            for (p, t) in pats.iter().zip(elems.iter()) {
+                                self.bind_pattern(p, t, env, span);
+                            }
+                        }
+                        _ => {
+                            for (p, t) in pats.iter().zip(shape_elems.iter()) {
+                                self.bind_pattern(p, t, env, span);
+                            }
                         }
                     }
                 }
             }
             Pattern::Constructor(name, sub_pats) => {
                 // Look up the constructor to find inner types
-                let resolved = self.apply(ty);
                 if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
                     && let Some(enum_info) = self.enums.get(&enum_name).cloned()
                     && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
@@ -313,12 +359,19 @@ impl TypeChecker {
                             span,
                         );
                     }
-                    // For parameterized types we need to figure out type args
-                    // from the outer type and substitute them in
-                    let type_args = match &resolved {
-                        Type::Generic(_, args) => args.clone(),
+                    // BROKEN (round 15): unify the scrutinee against
+                    // `Generic(enum_name, fresh args)` BEFORE recursing,
+                    // so `let Ok(x) = 42` is caught at typecheck rather
+                    // than deferred to a runtime `DestructVariant` crash.
+                    // Try to reuse existing type args if the scrutinee is
+                    // already a Generic of the right enum.
+                    let resolved_pre = self.apply(ty);
+                    let type_args: Vec<Type> = match &resolved_pre {
+                        Type::Generic(n, args) if *n == enum_name => args.clone(),
                         _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
                     };
+                    let enum_shape = Type::Generic(enum_name, type_args.clone());
+                    self.unify(ty, &enum_shape, span);
                     for (i, sp) in sub_pats.iter().enumerate() {
                         if i < var_info.field_types.len() {
                             let field_ty = substitute_enum_params(
@@ -395,7 +448,76 @@ impl TypeChecker {
                 }
                 let resolved = self.apply(&resolved);
 
+                // R1 (round 15): when the scrutinee's type surfaces as
+                // `Type::Generic(name, args)` and `name` names a declared
+                // record (common for records passed through fn boundaries
+                // — `resolve_type_expr` maps user record annotations to
+                // `Type::Generic`), instantiate the record's field
+                // templates and bind sub-patterns directly. The named
+                // pattern case — `let Pair { a, b } = p` — has already
+                // computed these fields in `pattern_record`; prefer those
+                // so the declared and inferred instantiations stay linked.
+                let generic_record_fields: Option<(Symbol, Vec<(Symbol, Type)>)> =
+                    if let Type::Generic(type_name, type_args) = &resolved
+                        && let Some(rec_info) = self.records.get(type_name).cloned()
+                    {
+                        let fields = if let Some((pname, pfields)) = &pattern_record
+                            && *pname == *type_name
+                        {
+                            pfields.clone()
+                        } else if let Some(param_var_ids) =
+                            self.record_param_var_ids.get(type_name).cloned()
+                        {
+                            let mapping: HashMap<TyVar, Type> = if type_args.len()
+                                == param_var_ids.len()
+                            {
+                                param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect()
+                            } else {
+                                param_var_ids
+                                    .iter()
+                                    .map(|&v| (v, self.fresh_var()))
+                                    .collect()
+                            };
+                            rec_info
+                                .fields
+                                .iter()
+                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                                .collect()
+                        } else {
+                            rec_info.fields.clone()
+                        };
+                        Some((*type_name, fields))
+                    } else {
+                        None
+                    };
+
                 if let Type::Record(rec_name, field_types) = &resolved {
+                    for (field_name, sub_pat) in fields {
+                        if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
+                            if let Some(sp) = sub_pat {
+                                self.bind_pattern(sp, ft, env, span);
+                            } else {
+                                env.define(*field_name, Scheme::mono(ft.clone()));
+                            }
+                        } else {
+                            self.error(
+                                format!("record '{rec_name}' has no field '{field_name}'"),
+                                span,
+                            );
+                            if let Some(sp) = sub_pat {
+                                let tv = self.fresh_var();
+                                self.bind_pattern(sp, &tv, env, span);
+                            } else {
+                                let tv = self.fresh_var();
+                                env.define(*field_name, Scheme::mono(tv));
+                            }
+                        }
+                    }
+                } else if let Some((rec_name, field_types)) = generic_record_fields {
                     for (field_name, sub_pat) in fields {
                         if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {

@@ -199,6 +199,59 @@ fn docs_do_not_claim_drifting_example_count() {
         None
     }
 
+    // Secondary matcher for bare `<digits> keyword(s)` patterns (no `+`
+    // suffix). This closes the round-15 L4 gap: the getting-started and
+    // bindings-and-functions docs used to say "14 keywords" which is
+    // currently accurate but drifts whenever a keyword is added or
+    // removed. The standing user direction is to remove drift-prone counts
+    // entirely rather than re-correct them. We check the plural and
+    // singular forms for both `keyword` and — just in case — `stdlib
+    // function`.
+    fn find_bare_keyword_count(haystack: &str) -> Option<String> {
+        const BARE_NOUNS: &[&str] = &["keyword", "keywords"];
+        for noun in BARE_NOUNS {
+            for (idx, _) in haystack.match_indices(noun) {
+                // Right-side word boundary check.
+                let tail = &haystack.as_bytes()[idx + noun.len()..];
+                if let Some(&b) = tail.first() {
+                    if b.is_ascii_alphanumeric() || b == b'_' {
+                        continue;
+                    }
+                }
+                // Walk backwards over one or more spaces, then digits.
+                let prefix = &haystack.as_bytes()[..idx];
+                let mut i = prefix.len();
+                let mut saw_space = false;
+                while i > 0 && (prefix[i - 1] == b' ' || prefix[i - 1] == b'\t') {
+                    saw_space = true;
+                    i -= 1;
+                }
+                if !saw_space {
+                    continue;
+                }
+                let mut digit_count = 0;
+                while i > 0 && prefix[i - 1].is_ascii_digit() {
+                    digit_count += 1;
+                    i -= 1;
+                }
+                if digit_count == 0 {
+                    continue;
+                }
+                // The char before the digits must not be alphanumeric
+                // (avoids matching `v14 keywords` or `1.14 keywords`).
+                if i > 0 {
+                    let b = prefix[i - 1];
+                    if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' {
+                        continue;
+                    }
+                }
+                let snippet_end = idx + noun.len();
+                return Some(haystack[i..snippet_end].to_string());
+            }
+        }
+        None
+    }
+
     let mut failures: Vec<String> = Vec::new();
     for path in &targets {
         let body = std::fs::read_to_string(path)
@@ -208,6 +261,18 @@ fn docs_do_not_claim_drifting_example_count() {
                 "{} contains a drift-prone `<digits>+ <noun>` count: `{}`. \
                  Per prior audit fix the convergent decision is to omit the \
                  count entirely so it cannot drift from reality.",
+                path.display(),
+                hit
+            ));
+        }
+        if let Some(hit) = find_bare_keyword_count(&body) {
+            failures.push(format!(
+                "{} contains a drift-prone bare `<digits> keyword(s)` count: \
+                 `{}`. Per the round-15 L4 audit fix, the convergent \
+                 decision is to drop the count and enumerate the keywords \
+                 (or use descriptive phrasing like 'a small, fixed keyword \
+                 set') so the doc cannot drift when a keyword is added or \
+                 removed.",
                 path.display(),
                 hit
             ));
@@ -675,5 +740,464 @@ fn disasm_wording_consistent_across_main_readme_getting_started() {
         "docs/getting-started.md disasm description drifted from \
          src/main.rs (expected lowercase 'show bytecode disassembly' \
          to match the surrounding '-- <verb phrase>' format)"
+    );
+}
+
+/// Regression test for round 15 BROKEN finding: `docs/language/testing.md`
+/// shipped a ```silt block that declared `fn test_string_length` calling
+/// `string.length("hello")` but only had `import test` at the top. The
+/// block compiled under `all_doc_fn_main_blocks_compile` only because that
+/// walker skips blocks with no `fn main`, so the missing `import string`
+/// slipped through. A user copy-pasting the block and running `silt test`
+/// on it would see `module 'string' is not imported`.
+///
+/// This walker closes the gap: every ```silt fence in README + docs/**/*.md
+/// that declares a `fn test_*` or `fn skip_test_*` is treated as a testable
+/// file, written to a `*.test.silt` temp file, and driven through
+/// `silt test`. The whole point of a test doc block is to be copy-paste
+/// runnable under `silt test`; if it isn't, the doc is broken. This is the
+/// regression lock for the fixed `testing.md` block and will catch any new
+/// doc test block that forgets an import (or otherwise fails to run).
+#[test]
+fn all_doc_fn_test_blocks_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Collect targets: README.md plus every .md file under docs/ (recursive).
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+    assert!(
+        !targets.is_empty(),
+        "expected at least one markdown target (README.md or docs/**/*.md)"
+    );
+
+    // Hand-rolled scanner for `fn test_<ident>` / `fn skip_test_<ident>`
+    // declarations, so we don't need a regex dependency. Returns true iff
+    // the block contains at least one declaration that `silt test` would
+    // pick up as a runnable (or intentionally skipped) test.
+    fn block_has_test_fn(src: &str) -> bool {
+        for line in src.lines() {
+            let trimmed = line.trim_start();
+            let rest = match trimmed.strip_prefix("fn ") {
+                Some(r) => r,
+                None => continue,
+            };
+            let rest = rest.strip_prefix("skip_test_").or_else(|| rest.strip_prefix("test_"));
+            if let Some(after) = rest {
+                // The char right after must look like an identifier continuation
+                // so we don't match `fn test` as a bare-word false positive.
+                if let Some(c) = after.chars().next() {
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    let tmp_dir = std::env::temp_dir()
+        .join(format!("silt_all_doc_test_blocks_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut testable_block_count = 0usize;
+
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+        let blocks = extract_silt_blocks(&body);
+
+        for (opener_line, src) in blocks {
+            if !block_has_test_fn(&src) {
+                continue;
+            }
+            testable_block_count += 1;
+
+            // `silt test`'s auto-discovery path only picks up files that end
+            // in `_test.silt` or `.test.silt`. Writing the temp file with
+            // the `.test.silt` suffix keeps things consistent even when we
+            // pass the filename explicitly, and makes the temp artifact
+            // self-describing for any debugging on failure.
+            let file_stem = doc_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("doc");
+            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.test.silt"));
+            std::fs::write(&file, &src).expect("write temp silt test file");
+
+            let output = silt_cmd()
+                .arg("test")
+                .arg(&file)
+                .output()
+                .expect("failed to spawn silt");
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                failures.push(format!(
+                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\nstderr:\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    output.status.code(),
+                    stdout,
+                    stderr
+                ));
+            }
+        }
+    }
+
+    assert!(
+        testable_block_count > 0,
+        "expected at least one testable ```silt block (declaring `fn test_*` \
+         or `fn skip_test_*`) across all docs — did the testing doc move?"
+    );
+
+    // Best-effort cleanup; leave artifacts on failure for debugging.
+    if failures.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "silt test failed for {} ```silt block(s) declaring `fn test_*` or \
+         `fn skip_test_*` across docs/ and README.md. These blocks must be \
+         copy-paste runnable under `silt test` — almost always this means a \
+         block forgot an `import <module>` line at the top:\n\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}
+
+/// Targeted regression lock for round 15 BROKEN finding:
+/// `docs/stdlib/int-float.md` used to claim that `float.to_int` "Accepts both
+/// `Float` and `ExtFloat`", but the typechecker signature in
+/// `src/typechecker/builtins.rs` is `(Float) -> Int` only. Passing the result
+/// of `1.0 / 2.0` (an `ExtFloat`) to `float.to_int` fails `silt check` with
+/// `type mismatch: expected Float, got ExtFloat`. The convergent fix was to
+/// strike the false clause from the description, not to widen the signature.
+///
+/// This test asserts the false phrase stays gone, in both its plain-text and
+/// backticked forms. If someone re-adds the claim, this test fails loudly.
+#[test]
+fn int_float_doc_does_not_claim_float_to_int_accepts_extfloat() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc_path = manifest_dir
+        .join("docs")
+        .join("stdlib")
+        .join("int-float.md");
+    let body = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+
+    assert!(
+        !body.contains("Accepts both Float and ExtFloat"),
+        "{}: reintroduced the false claim that `float.to_int` accepts \
+         `ExtFloat`. The typechecker signature is `(Float) -> Int` only \
+         (see src/typechecker/builtins.rs). Strike the clause or widen the \
+         signature first; don't let the doc lie.",
+        doc_path.display()
+    );
+    assert!(
+        !body.contains("Accepts both `Float` and `ExtFloat`"),
+        "{}: reintroduced the false claim that `float.to_int` accepts \
+         `ExtFloat` (backticked form). The typechecker signature is \
+         `(Float) -> Int` only (see src/typechecker/builtins.rs). Strike \
+         the clause or widen the signature first; don't let the doc lie.",
+        doc_path.display()
+    );
+}
+
+/// Regression lock for round 15 GAP finding G7: `docs/stdlib/int-float.md`
+/// used to document only the 2-arg form of `float.to_string`, contradicting
+/// the runtime which accepts both 1-arg (shortest round-trippable) and
+/// 2-arg (fixed decimal places) forms — see `src/builtins/numeric.rs`
+/// around line 160 and the comment in `src/typechecker/builtins.rs` around
+/// line 1462. `docs/language/modules.md` additionally claimed
+/// "takes two arguments -- no overloading" which is now actively false.
+///
+/// This test pins:
+///   (a) int-float.md documents BOTH the 1-arg and 2-arg signatures
+///   (b) modules.md no longer claims "no overloading" for float.to_string
+#[test]
+fn test_float_to_string_doc_documents_both_overloads() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let int_float = manifest_dir.join("docs").join("stdlib").join("int-float.md");
+    let modules = manifest_dir.join("docs").join("language").join("modules.md");
+
+    let int_float_body = std::fs::read_to_string(&int_float)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", int_float.display(), e));
+    let modules_body = std::fs::read_to_string(&modules)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", modules.display(), e));
+
+    // (a) int-float.md must document the 1-arg form.
+    assert!(
+        int_float_body.contains("float.to_string(f: Float) -> String"),
+        "{}: missing 1-arg signature `float.to_string(f: Float) -> String`. \
+         The runtime (src/builtins/numeric.rs) supports both the 1-arg \
+         (shortest round-trippable) and 2-arg (fixed decimal places) \
+         forms; the doc must list both so users know the 1-arg form is \
+         real.",
+        int_float.display()
+    );
+    // (a) int-float.md must also document the 2-arg form.
+    assert!(
+        int_float_body.contains("float.to_string(f: Float, decimals: Int) -> String"),
+        "{}: missing 2-arg signature \
+         `float.to_string(f: Float, decimals: Int) -> String`. Both \
+         overloads must be documented.",
+        int_float.display()
+    );
+
+    // (b) modules.md must no longer claim "no overloading" for float.to_string.
+    // The original phrasing was `takes **two arguments** -- no overloading`.
+    // Reject any resurrection of that claim.
+    assert!(
+        !modules_body.contains("no overloading"),
+        "{}: reintroduced the false 'no overloading' claim for \
+         float.to_string. The runtime and typechecker both accept the \
+         1-arg shortest-round-trippable form; the doc must not claim \
+         otherwise.",
+        modules.display()
+    );
+    assert!(
+        !modules_body.contains("takes **two arguments**"),
+        "{}: reintroduced the outdated 'takes two arguments' phrasing \
+         for float.to_string — the 1-arg form is supported at runtime.",
+        modules.display()
+    );
+}
+
+/// Regression lock for round 15 GAP finding G8: 27 ```silt fenced blocks
+/// across `docs/stdlib/*.md` declared `let result = ...` in a `fn main`
+/// block, which shadows the builtin `result` module and causes the
+/// compiler to emit `warning[compile]: variable 'result' shadows the
+/// builtin 'result' module`. A user copy-pasting any of those blocks
+/// would see the warning even though nothing in the example was broken.
+///
+/// `all_doc_fn_main_blocks_compile` only checked for hard errors; this
+/// walker extends that contract by failing if ANY `warning[` line
+/// appears in the `silt check` stderr for a doc block's `fn main`.
+/// Reverting a single block to `let result = ...` makes this walker
+/// fail with a precise file path + opener line + the warning text.
+#[test]
+fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Collect targets: README.md plus every .md file under docs/ (recursive).
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+    assert!(
+        !targets.is_empty(),
+        "expected at least one markdown target (README.md or docs/**/*.md)"
+    );
+
+    let tmp_dir = std::env::temp_dir()
+        .join(format!("silt_doc_warnings_walker_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+        let blocks = extract_silt_blocks(&body);
+
+        for (opener_line, src) in blocks {
+            if !src.contains("fn main") {
+                continue;
+            }
+            checked += 1;
+
+            let file_stem = doc_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("doc");
+            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
+            std::fs::write(&file, &src).expect("write temp silt file");
+
+            let output = silt_cmd()
+                .arg("check")
+                .arg(&file)
+                .output()
+                .expect("failed to spawn silt");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Look for any `warning[` line — the compiler emits
+            // `warning[compile]: ...` / `warning[type]: ...` etc.
+            let warn_lines: Vec<&str> = stderr
+                .lines()
+                .filter(|l| l.contains("warning["))
+                .collect();
+            if !warn_lines.is_empty() {
+                failures.push(format!(
+                    "{}:{} (```silt fence): emitted compile warning(s):\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    warn_lines.join("\n")
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "expected at least one runnable ```silt block (containing `fn main`) \
+         across all docs"
+    );
+
+    if failures.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "doc ```silt blocks must emit no compile warnings under `silt check`. \
+         {} block(s) failed. A copy-paste runnable example should never \
+         surface a warning to the user. The common cause is `let result = \
+         ...` shadowing the builtin `result` module — rename the binding \
+         to something else.\n\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}
+
+/// Regression lock for round 15 GAP finding G9: the Tooling block in
+/// `docs/getting-started.md` used to list 10 subcommands (run, run -w,
+/// check, check --format, test, fmt, fmt --check, repl, lsp, disasm) but
+/// omitted `silt init`, even though `silt init` is the very first
+/// command the same file tells the user to run in the "Your first
+/// program" section and is listed both in `src/main.rs` help output and
+/// README.md.
+///
+/// This test extracts the set of subcommands from `silt --help` output
+/// (the authoritative list in src/main.rs) and asserts that every one of
+/// them appears in the Tooling block of getting-started.md. If a new
+/// subcommand is added to src/main.rs without updating this doc, the
+/// walker fails with a precise pointer at the missing command.
+#[test]
+fn test_getting_started_tooling_block_matches_main_help() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let gs_path = manifest_dir.join("docs").join("getting-started.md");
+    let gs_body = std::fs::read_to_string(&gs_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", gs_path.display(), e));
+
+    // Extract the Tooling block. It's a ```sh fenced block immediately
+    // after a `## Tooling` heading. We look for the heading, then the
+    // next ```sh fence, then collect until the closing fence.
+    let tooling_idx = gs_body
+        .find("## Tooling")
+        .expect("docs/getting-started.md is missing a '## Tooling' heading");
+    let rest = &gs_body[tooling_idx..];
+    let sh_open = rest
+        .find("```sh")
+        .expect("docs/getting-started.md Tooling section lacks a ```sh block");
+    let body_after_open = &rest[sh_open + "```sh".len()..];
+    let sh_close = body_after_open
+        .find("```")
+        .expect("docs/getting-started.md Tooling ```sh block is unterminated");
+    let tooling_block = &body_after_open[..sh_close];
+
+    // Run the silt binary with `--help` to get the authoritative list.
+    let help_output = silt_cmd()
+        .arg("--help")
+        .output()
+        .expect("failed to spawn silt --help");
+    assert!(
+        help_output.status.success(),
+        "silt --help exited non-zero: {:?}",
+        help_output.status.code()
+    );
+    let help_text = String::from_utf8_lossy(&help_output.stdout).to_string()
+        + &String::from_utf8_lossy(&help_output.stderr);
+
+    // Pull out every `silt <subcommand>` entry from the help output.
+    // The help lines look like `  silt run [--watch] <file.silt>    Run a program`.
+    // We only keep the first identifier-ish token after `silt ` (so
+    // `silt run`, `silt check`, ..., `silt init`, ...).
+    let mut required_subcommands: Vec<String> = Vec::new();
+    for line in help_text.lines() {
+        let trimmed = line.trim_start();
+        let rest = match trimmed.strip_prefix("silt ") {
+            Some(r) => r,
+            None => continue,
+        };
+        let sub: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic() || *c == '_')
+            .collect();
+        if sub.is_empty() {
+            continue;
+        }
+        // Skip the literal `help` subcommand (per convention in other
+        // tests that compare against --help output).
+        if sub == "help" {
+            continue;
+        }
+        if !required_subcommands.contains(&sub) {
+            required_subcommands.push(sub);
+        }
+    }
+
+    assert!(
+        !required_subcommands.is_empty(),
+        "could not extract any `silt <subcommand>` entries from `silt \
+         --help` output — has the help format changed?\n\n{}",
+        help_text
+    );
+
+    // Assert every required subcommand appears in the Tooling block.
+    let mut missing: Vec<String> = Vec::new();
+    for sub in &required_subcommands {
+        let needle = format!("silt {}", sub);
+        if !tooling_block.contains(&needle) {
+            missing.push(sub.clone());
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "{}: Tooling block is missing subcommand(s) {:?} that appear in \
+         `silt --help` (authoritative list from src/main.rs). Add a line \
+         for each missing subcommand so the doc stays in sync.\n\nTooling \
+         block:\n{}\n\nHelp output:\n{}",
+        gs_path.display(),
+        missing,
+        tooling_block,
+        help_text
     );
 }

@@ -666,13 +666,149 @@ fn main() {
 }
         "#,
     );
+    // `mymod.genuinely_missing` is not a known private fn, so the visibility
+    // check in src/compiler/mod.rs passes through; the emitted GetGlobal for
+    // `mymod.genuinely_missing` fails at runtime with the exact phrase from
+    // src/vm/execute.rs:1126.
     assert!(
-        err.to_lowercase().contains("undefined")
-            || err.to_lowercase().contains("not found"),
-        "unknown names must still surface as an undefined/not-found error, got: {err}"
+        err.contains("undefined global: mymod.genuinely_missing"),
+        "unknown module-qualified names must surface the VM's undefined-global error, got: {err}"
     );
     assert!(
         !err.contains("but is not `pub`"),
         "visibility error must not fire for a name that doesn't exist at all, got: {err}"
+    );
+}
+
+// ── G3 (round 15): module parse errors must include a source snippet ──
+//
+// Before the fix, `format_module_source_error` in src/compiler/mod.rs
+// flattened the inner (module-file) parse error into a single-line
+// message "module 'bad': parse error at bad.silt:3:1 — ..." and the
+// outer renderer's caret landed at the `import bad` line in main.silt.
+// Users had no way to see where the actual parse error was inside the
+// imported module. The fix reproduces the offending source line from
+// the module file plus a caret marker inline in the error message.
+//
+// Mutation reasoning: reverting the `format_module_source_error` body
+// back to the flat one-line format would make this test fail because
+// (a) the `-->` marker pointing at the module file wouldn't appear in
+// the message, and (b) the actual line of module source would not be
+// rendered.
+#[test]
+fn test_module_parse_error_renders_with_module_source_snippet() {
+    let dir = tempdir();
+    // A deliberately broken module: unclosed `(` in a function
+    // declaration. The parse error will surface inside bad.silt at
+    // the `}` on line 4, not at the outer `import bad` line.
+    let bad_src = "pub fn hello(x,\n  y,\n  z\n}\n";
+    fs::write(dir.join("bad.silt"), bad_src).expect("failed to write bad.silt");
+
+    let main_src = r#"
+import bad
+
+fn main() {
+  bad.hello(1, 2, 3)
+}
+"#;
+    let tokens = Lexer::new(main_src).tokenize().expect("main lex error");
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .expect("main parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    let err_msg = match compiler.compile_program(&program) {
+        Ok(_) => panic!("expected compile error from broken module"),
+        Err(e) => e.message,
+    };
+
+    // The flattened summary header must still name the module by file
+    // path and describe the error kind so a caret-free terminal still
+    // gets the original information.
+    assert!(
+        err_msg.contains("bad.silt"),
+        "error must name the broken module file, got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("parse error"),
+        "error must describe the error kind as parse error, got:\n{err_msg}"
+    );
+
+    // The inline snippet must include an arrow line pointing at the
+    // module file (not the main file), so the user can distinguish the
+    // inner error location from the outer import site.
+    assert!(
+        err_msg.contains("-->") && err_msg.contains("bad.silt:"),
+        "error message must include a `--> bad.silt:LINE:COL` location, got:\n{err_msg}"
+    );
+
+    // The actual offending line from the module source must be
+    // reproduced. The broken module's line 4 is the lone `}` — pick a
+    // marker unique to the module content to detect it robustly.
+    assert!(
+        err_msg.contains("pub fn hello(x,")
+            || err_msg.contains("y,")
+            || err_msg.contains("z")
+            || err_msg.contains("}"),
+        "error must quote a line from bad.silt so the user sees the broken \
+         source, got:\n{err_msg}"
+    );
+
+    // The caret glyph must appear inside the message body to mark the
+    // offending column. This is what differentiates the fix from the
+    // previous flat-string rendering.
+    assert!(
+        err_msg.contains("^"),
+        "error must include a caret marker pointing at the parse failure, \
+         got:\n{err_msg}"
+    );
+}
+
+/// Companion test: a *lex* error inside an imported module must also
+/// render a module-source snippet. format_module_source_error is the
+/// single code path for both the `lex error` and `parse error` kinds,
+/// so this locks the shared helper against a regression that only
+/// touches one of the two callers.
+#[test]
+fn test_module_lex_error_renders_with_module_source_snippet() {
+    let dir = tempdir();
+    // An illegal character `@` that the lexer rejects — not a parser
+    // failure. Must still produce a snippet with caret.
+    let bad_src = "pub fn hi() = 1\n@@@\npub fn bye() = 2\n";
+    fs::write(dir.join("badlex.silt"), bad_src).expect("failed to write badlex.silt");
+
+    let main_src = r#"
+import badlex
+
+fn main() {
+  badlex.hi()
+}
+"#;
+    let tokens = Lexer::new(main_src).tokenize().expect("main lex error");
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .expect("main parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    let err_msg = match compiler.compile_program(&program) {
+        Ok(_) => panic!("expected compile error from broken module"),
+        Err(e) => e.message,
+    };
+
+    assert!(
+        err_msg.contains("badlex.silt"),
+        "error must name the broken module file, got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("lex error"),
+        "error must describe the error kind as lex error, got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("-->") && err_msg.contains("badlex.silt:"),
+        "error must include a `--> badlex.silt:LINE:COL` location, got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("^"),
+        "error must include a caret marker, got:\n{err_msg}"
     );
 }

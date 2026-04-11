@@ -273,8 +273,8 @@ while waiting, allowing other tasks to run.
 import task
 fn main() {
     let h = task.spawn(fn() { 1 + 2 })
-    let result = task.join(h)
-    println(result)  -- 3
+    let sum = task.join(h)
+    println(sum)  -- 3
 }
 ```
 
@@ -296,7 +296,7 @@ fn main() {
         println("running in a task")
         42
     })
-    let result = task.join(h)
-    println(result)  -- 42
+    let answer = task.join(h)
+    println(answer)  -- 42
 }
 ```

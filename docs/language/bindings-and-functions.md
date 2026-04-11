@@ -8,9 +8,9 @@ order: 1
 
 ## Philosophy
 
-### 14 Keywords
+### Keywords
 
-Silt has exactly 14 keywords:
+Silt has a small, fixed keyword set. The full keyword list is:
 
 ```
 as  else  fn  import  let  loop  match  mod

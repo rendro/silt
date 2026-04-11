@@ -146,8 +146,8 @@ Use `else` to narrow:
 ```silt
 import math
 fn main() {
-    let result = math.exp(1.0) else 0.0
-    println(result)  -- 2.718281828459045
+    let e_val = math.exp(1.0) else 0.0
+    println(e_val)  -- 2.718281828459045
 }
 ```
 
@@ -164,8 +164,8 @@ Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
 ```silt
 import math
 fn main() {
-    let result = math.log(math.e) else 0.0
-    println(result)  -- 1.0
+    let ln_e = math.log(math.e) else 0.0
+    println(ln_e)  -- 1.0
 }
 ```
 
@@ -182,8 +182,8 @@ Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
 ```silt
 import math
 fn main() {
-    let result = math.log10(100.0) else 0.0
-    println(result)  -- 2.0
+    let log_100 = math.log10(100.0) else 0.0
+    println(log_100)  -- 2.0
 }
 ```
 
@@ -217,8 +217,8 @@ Infinity for large results. Use `else` to narrow:
 ```silt
 import math
 fn main() {
-    let result = math.pow(2.0, 10.0) else 0.0
-    println(result)  -- 1024.0
+    let two_to_ten = math.pow(2.0, 10.0) else 0.0
+    println(two_to_ten)  -- 1024.0
 }
 ```
 
@@ -269,8 +269,8 @@ to narrow:
 ```silt
 import math
 fn main() {
-    let result = math.sqrt(4.0) else 0.0
-    println(result)  -- 2.0
+    let root = math.sqrt(4.0) else 0.0
+    println(root)  -- 2.0
 }
 ```
 

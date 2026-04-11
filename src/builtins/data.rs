@@ -1140,8 +1140,15 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(offset_min) = &args[1] else {
                 return Err(VmError::new("time.to_datetime requires Int offset".into()));
             };
-            let epoch_secs = epoch_ns / 1_000_000_000;
-            let nano_remainder = (epoch_ns % 1_000_000_000) as u32;
+            // Rust `i64 % i64` carries the sign of the dividend, so for
+            // negative `epoch_ns` whose magnitude isn't a multiple of 1e9
+            // the remainder is negative; casting to `u32` wraps it to a
+            // huge value and chrono then rejects the instant. Use
+            // div_euclid/rem_euclid so the remainder is always in
+            // `[0, 1_000_000_000)` and seconds round toward negative
+            // infinity, which matches chrono's own expectations.
+            let epoch_secs = epoch_ns.div_euclid(1_000_000_000);
+            let nano_remainder = epoch_ns.rem_euclid(1_000_000_000) as u32;
             let utc_dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
                 .ok_or_else(|| VmError::new("instant out of range".into()))?
                 .naive_utc();
@@ -1154,7 +1161,19 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.to_datetime: offset {offset_min} minutes out of range"
                 ))
             })?;
-            let local_dt = utc_dt + offset;
+            // Even a valid chrono::Duration can still push the naive
+            // datetime past chrono's ±262143-year range; `NaiveDateTime
+            // + Duration` panics on overflow, so use the checked form.
+            // (In practice `Instant.epoch_ns` is an i64, so the combined
+            // epoch-ns + i32-minute-offset input cannot reach chrono's
+            // ±262143-year boundary from Silt user code — we keep the
+            // check as defence in depth against future Instant
+            // widenings or chrono internal assumption changes.)
+            let local_dt = utc_dt.checked_add_signed(offset).ok_or_else(|| {
+                VmError::new(
+                    "time.to_datetime: datetime + offset out of range".into(),
+                )
+            })?;
             Ok(make_datetime(local_dt))
         }
 
@@ -1173,7 +1192,15 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.to_instant: offset {offset_min} minutes out of range"
                 ))
             })?;
-            let utc_dt = dt - offset;
+            // `NaiveDateTime - Duration` panics on overflow (chrono's
+            // valid range is ±262143 years). Use the checked form so a
+            // pathological offset/datetime combination surfaces as a
+            // clean VmError.
+            let utc_dt = dt.checked_sub_signed(offset).ok_or_else(|| {
+                VmError::new(
+                    "time.to_instant: datetime - offset out of range".into(),
+                )
+            })?;
             let epoch_ns = utc_dt
                 .and_utc()
                 .timestamp_nanos_opt()
@@ -1188,8 +1215,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             }
             let epoch_ns = extract_instant(&args[0])?;
-            let epoch_secs = epoch_ns / 1_000_000_000;
-            let nano_remainder = (epoch_ns % 1_000_000_000) as u32;
+            // See `to_datetime` above: signed `%` on negative epoch_ns
+            // yields a negative remainder, which `as u32` wraps into a
+            // huge value and chrono then rejects. div_euclid/rem_euclid
+            // keep the remainder in `[0, 1_000_000_000)` unconditionally.
+            let epoch_secs = epoch_ns.div_euclid(1_000_000_000);
+            let nano_remainder = epoch_ns.rem_euclid(1_000_000_000) as u32;
             let dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
                 .ok_or_else(|| VmError::new("instant out of range".into()))?
                 .naive_utc();

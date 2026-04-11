@@ -155,46 +155,84 @@ fn callback_args_for(kind: BuiltinIterKind, acc: &BuiltinAcc, item: &Value) -> V
 }
 
 /// Apply a callback result to the accumulator for the given builtin kind.
-/// Returns `ControlFlow::Short(val)` to short-circuit the iteration.
+/// Returns `Ok(ControlFlow::Short(val))` to short-circuit the iteration, or
+/// `Err(VmError)` to abort iteration cleanly (e.g. on accumulator overflow).
 fn apply_callback_result(
     kind: BuiltinIterKind,
     acc: &mut BuiltinAcc,
     item: Value,
     result: Value,
-) -> ControlFlow {
+) -> Result<ControlFlow, VmError> {
     match kind {
         BuiltinIterKind::ListMap | BuiltinIterKind::SetMap => {
             if let BuiltinAcc::List(v) = acc {
                 v.push(result);
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFilter | BuiltinIterKind::SetFilter => {
             let keep = value_is_truthy(&result);
             if keep && let BuiltinAcc::List(v) = acc {
                 v.push(item);
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListEach | BuiltinIterKind::SetEach | BuiltinIterKind::MapEach => {
             let _ = result;
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFlatMap => {
             if let BuiltinAcc::List(v) = acc {
                 match result {
-                    Value::List(inner) => v.extend(inner.iter().cloned()),
+                    Value::List(inner) => {
+                        // Guard against accumulated overflow even for list
+                        // results: the cap applies to the final list size.
+                        let projected =
+                            (v.len() as u128).saturating_add(inner.len() as u128);
+                        if projected > MAX_RANGE_MATERIALIZE as u128 {
+                            return Err(VmError::new(format!(
+                                "list.flat_map: accumulated result exceeds maximum list length of {} elements",
+                                MAX_RANGE_MATERIALIZE
+                            )));
+                        }
+                        v.extend(inner.iter().cloned());
+                    }
                     Value::Range(lo, hi) => {
-                        // Best-effort materialization; caller has already
-                        // checked range limits where applicable.
-                        for i in lo..=hi {
-                            v.push(Value::Int(i));
+                        // Check that this single callback's range fits the
+                        // cap before materializing it, and then check that
+                        // adding it to the existing accumulator won't
+                        // exceed the cap either. Without this, a callback
+                        // returning `0..i64::MAX` would OOM the process.
+                        let range_len = checked_range_len(lo, hi).map_err(|m| {
+                            VmError::new(format!("list.flat_map: {m}"))
+                        })?;
+                        let projected =
+                            (v.len() as u128).saturating_add(range_len as u128);
+                        if projected > MAX_RANGE_MATERIALIZE as u128 {
+                            return Err(VmError::new(format!(
+                                "list.flat_map: accumulated result exceeds maximum list length of {} elements",
+                                MAX_RANGE_MATERIALIZE
+                            )));
+                        }
+                        if lo <= hi {
+                            v.reserve(range_len);
+                            for i in lo..=hi {
+                                v.push(Value::Int(i));
+                            }
                         }
                     }
-                    other => v.push(other),
+                    other => {
+                        if v.len() >= MAX_RANGE_MATERIALIZE {
+                            return Err(VmError::new(format!(
+                                "list.flat_map: accumulated result exceeds maximum list length of {} elements",
+                                MAX_RANGE_MATERIALIZE
+                            )));
+                        }
+                        v.push(other);
+                    }
                 }
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFilterMap => {
             if let BuiltinAcc::List(v) = acc {
@@ -206,59 +244,62 @@ fn apply_callback_result(
                     other => v.push(other),
                 }
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFind => {
             if value_is_truthy(&result) {
-                return ControlFlow::Short(Value::Variant("Some".into(), vec![item]));
+                return Ok(ControlFlow::Short(Value::Variant(
+                    "Some".into(),
+                    vec![item],
+                )));
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListAny => {
             if value_is_truthy(&result) {
-                return ControlFlow::Short(Value::Bool(true));
+                return Ok(ControlFlow::Short(Value::Bool(true)));
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListAll => {
             if !value_is_truthy(&result) {
-                return ControlFlow::Short(Value::Bool(false));
+                return Ok(ControlFlow::Short(Value::Bool(false)));
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListSortBy => {
             if let BuiltinAcc::SortPairs(v) = acc {
                 v.push((result, item));
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListGroupBy => {
             if let BuiltinAcc::Groups(m) = acc {
                 m.entry(result).or_default().push(item);
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFold | BuiltinIterKind::SetFold => {
             if let BuiltinAcc::Fold(v) = acc {
                 *v = result;
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::ListFoldUntil => match result {
             Value::Variant(ref tag, ref fields) if tag == "Continue" && fields.len() == 1 => {
                 if let BuiltinAcc::Fold(v) = acc {
                     *v = fields[0].clone();
                 }
-                ControlFlow::Continue
+                Ok(ControlFlow::Continue)
             }
             Value::Variant(ref tag, ref fields) if tag == "Stop" && fields.len() == 1 => {
-                ControlFlow::Short(fields[0].clone())
+                Ok(ControlFlow::Short(fields[0].clone()))
             }
             other => {
                 if let BuiltinAcc::Fold(v) = acc {
                     *v = other;
                 }
-                ControlFlow::Continue
+                Ok(ControlFlow::Continue)
             }
         },
         BuiltinIterKind::MapFilter => {
@@ -269,7 +310,7 @@ fn apply_callback_result(
             {
                 m.insert(parts[0].clone(), parts[1].clone());
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
         BuiltinIterKind::MapMap => {
             // Callback must return a (key, value) tuple.
@@ -286,13 +327,13 @@ fn apply_callback_result(
                     // a Variant that the caller will catch post-iteration.
                     // But we can't return an error from here, so we stash an
                     // error marker by inserting a sentinel and short-circuit.
-                    return ControlFlow::Short(Value::Variant(
+                    return Ok(ControlFlow::Short(Value::Variant(
                         "__MapMapTypeError__".into(),
                         Vec::new(),
-                    ));
+                    )));
                 }
             }
-            ControlFlow::Continue
+            Ok(ControlFlow::Continue)
         }
     }
 }
@@ -857,7 +898,7 @@ impl Vm {
             // its result to the accumulator and advance the index.
             if index < items.len() {
                 let item = items[index].clone();
-                match apply_callback_result(kind, &mut acc, item, callback_result) {
+                match apply_callback_result(kind, &mut acc, item, callback_result)? {
                     ControlFlow::Continue => index += 1,
                     ControlFlow::Short(val) => {
                         return Ok(val);
@@ -880,7 +921,7 @@ impl Vm {
             let cb_args = callback_args_for(kind, &acc, &item);
             let invoke_result = self.invoke_callable(&callback, &cb_args);
             match invoke_result {
-                Ok(v) => match apply_callback_result(kind, &mut acc, item, v) {
+                Ok(v) => match apply_callback_result(kind, &mut acc, item, v)? {
                     ControlFlow::Continue => index += 1,
                     ControlFlow::Short(val) => return Ok(val),
                 },

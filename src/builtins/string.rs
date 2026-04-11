@@ -253,6 +253,11 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "string.pad_left: negative index {width_val}"
                 )));
             }
+            if width_val as u128 > MAX_RANGE_MATERIALIZE as u128 {
+                return Err(VmError::new(format!(
+                    "string.pad_left: width {width_val} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
+                )));
+            }
             let width = width_val as usize;
             let pad_char = pad.chars().next().unwrap_or(' ');
             if s.chars().count() >= width {
@@ -279,6 +284,11 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             if width_val < 0 {
                 return Err(VmError::new(format!(
                     "string.pad_right: negative index {width_val}"
+                )));
+            }
+            if width_val as u128 > MAX_RANGE_MATERIALIZE as u128 {
+                return Err(VmError::new(format!(
+                    "string.pad_right: width {width_val} exceeds maximum of {MAX_RANGE_MATERIALIZE}"
                 )));
             }
             let width = width_val as usize;

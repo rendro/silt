@@ -58,8 +58,8 @@ first `false`.
 ```silt
 import list
 fn main() {
-    let result = list.all([2, 4, 6]) { x -> x % 2 == 0 }
-    println(result)  -- true
+    let all_even = list.all([2, 4, 6]) { x -> x % 2 == 0 }
+    println(all_even)  -- true
 }
 ```
 
@@ -76,8 +76,8 @@ the first `true`.
 ```silt
 import list
 fn main() {
-    let result = list.any([1, 3, 4]) { x -> x % 2 == 0 }
-    println(result)  -- true
+    let has_even = list.any([1, 3, 4]) { x -> x % 2 == 0 }
+    println(has_even)  -- true
 }
 ```
 
@@ -110,8 +110,8 @@ Concatenates two lists into a single list.
 ```silt
 import list
 fn main() {
-    let result = list.concat([1, 2], [3, 4])
-    println(result)  -- [1, 2, 3, 4]
+    let joined = list.concat([1, 2], [3, 4])
+    println(joined)  -- [1, 2, 3, 4]
 }
 ```
 
@@ -145,8 +145,8 @@ empty list. Negative `n` is a runtime error.
 ```silt
 import list
 fn main() {
-    let result = list.drop([1, 2, 3, 4, 5], 2)
-    println(result)  -- [3, 4, 5]
+    let tail = list.drop([1, 2, 3, 4, 5], 2)
+    println(tail)  -- [3, 4, 5]
 }
 ```
 
@@ -239,8 +239,8 @@ Returns `Some(element)` for the first element where `f` returns `true`, or
 ```silt
 import list
 fn main() {
-    let result = list.find([1, 2, 3, 4]) { x -> x > 2 }
-    println(result)  -- Some(3)
+    let first_gt_2 = list.find([1, 2, 3, 4]) { x -> x > 2 }
+    println(first_gt_2)  -- Some(3)
 }
 ```
 
@@ -256,8 +256,8 @@ Maps each element to a list, then flattens the results into a single list.
 ```silt
 import list
 fn main() {
-    let result = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
-    println(result)  -- [1, 10, 2, 20, 3, 30]
+    let expanded = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
+    println(expanded)  -- [1, 10, 2, 20, 3, 30]
 }
 ```
 
@@ -273,8 +273,8 @@ Flattens one level of nesting. Non-list elements are kept as-is.
 ```silt
 import list
 fn main() {
-    let result = list.flatten([[1, 2], [3], [4, 5]])
-    println(result)  -- [1, 2, 3, 4, 5]
+    let flat = list.flatten([[1, 2], [3], [4, 5]])
+    println(flat)  -- [1, 2, 3, 4, 5]
 }
 ```
 
@@ -310,14 +310,14 @@ Like `fold`, but the callback returns `Continue(acc)` to keep going or
 import list
 fn main() {
     -- Sum until we exceed 5
-    let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+    let partial_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
         let next = acc + x
         match {
             next > 5 -> Stop(acc)
             _ -> Continue(next)
         }
     }
-    println(result)  -- 3
+    println(partial_sum)  -- 3
 }
 ```
 

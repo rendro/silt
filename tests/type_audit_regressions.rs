@@ -203,3 +203,251 @@ fn main() { 42 }
         );
     }
 }
+
+// ── BROKEN (round 15): bind_pattern skipped scrutinee unification ──
+//
+// `Pattern::Tuple` and `Pattern::Constructor` arms of
+// `Checker::bind_pattern` used to resolve the scrutinee type and,
+// if it wasn't already a tuple/enum, silently fall through to
+// creating fresh vars for each sub-pattern — never unifying. That
+// let `let (a, b) = 42` and `let Ok(x) = 42` slip past `silt
+// check` and blow up at runtime with `DestructTuple on non-tuple`
+// / `DestructVariant on non-variant`. Both pattern arms now build
+// the expected shape and unify it against the scrutinee before
+// recursing.
+
+#[test]
+fn test_let_tuple_destructure_on_non_tuple_rejected_at_typecheck() {
+    assert_type_error(
+        r#"
+fn main() {
+  let (a, b) = 42
+  let y: Int = a
+  println(y)
+}
+"#,
+        "got Int",
+    );
+}
+
+#[test]
+fn test_let_constructor_pattern_on_non_variant_rejected_at_typecheck() {
+    assert_type_error(
+        r#"
+fn main() {
+  let Ok(x) = 42
+  let y: Int = x
+  println(y)
+}
+"#,
+        "got Int",
+    );
+}
+
+#[test]
+fn test_let_tuple_destructure_wrong_arity_still_rejected() {
+    // Sanity check that the rewrite of the Tuple arm still catches
+    // arity mismatches (now via the Tuple/Tuple branch of unify).
+    assert_type_error(
+        r#"
+fn main() {
+  let (a, b, c) = (1, 2)
+  println("{a} {b} {c}")
+}
+"#,
+        "tuple length mismatch: expected 3, got 2",
+    );
+}
+
+#[test]
+fn test_when_tuple_destructure_on_non_tuple_rejected() {
+    assert_type_error(
+        r#"
+fn main() {
+  when (a, b) = 42 else { return }
+  println("{a} {b}")
+}
+"#,
+        "got Int",
+    );
+}
+
+#[test]
+fn test_when_constructor_pattern_on_non_variant_rejected() {
+    assert_type_error(
+        r#"
+fn main() {
+  when Ok(x) = 42 else { return }
+  println("{x}")
+}
+"#,
+        "got Int",
+    );
+}
+
+#[test]
+fn test_stmt_let_constructor_inside_fn_body_still_rejected() {
+    // Same bug, same shape, nested inside a helper fn body to make
+    // sure the fix isn't just firing at top-level `main`.
+    assert_type_error(
+        r#"
+fn helper() -> Int {
+  let Ok(x) = 99
+  x
+}
+fn main() { println("{helper()}") }
+"#,
+        "got Int",
+    );
+}
+
+#[test]
+fn test_valid_tuple_destructure_still_typechecks() {
+    // Positive case: a well-typed tuple destructure must still have
+    // zero type errors after the fix.
+    let errs = type_errors(
+        r#"
+fn main() {
+  let (a, b) = (1, "hi")
+  let i: Int = a
+  let s: String = b
+  println("{i} {s}")
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for valid tuple destructure, got: {errs:?}"
+    );
+}
+
+// ── R1 (round 15): Record pattern destructure through fn boundary ──
+//
+// `resolve_type_expr` maps user record type annotations (like `Pair`
+// in a parameter or return type) to `Type::Generic(name, args)`. Before
+// the round-15 fix, `bind_pattern`'s `Pattern::Record` arm only
+// handled `Type::Record(..)` and rejected `Type::Generic(..)` with a
+// misleading "record pattern requires a record value, but 'Pair' is
+// not a record type" error, breaking any `let Name { f } = x` where
+// `x` came from a function call or parameter.
+
+#[test]
+fn test_record_destructure_through_fn_boundary() {
+    // Regression: let Pair { a, b } = mkpair() must typecheck cleanly
+    // and the runtime must print 3 (1 + 2). A stray error from the
+    // old Record arm would fail both the type-error-empty assertion
+    // AND the runtime output assertion.
+    let src = r#"
+type Pair { a: Int, b: Int }
+fn mkpair() -> Pair { Pair { a: 1, b: 2 } }
+fn main() {
+  let p = mkpair()
+  let Pair { a, b } = p
+  println(a + b)
+}
+"#;
+    let errs = type_errors(src);
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for fn-boundary record destructure, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_record_destructure_through_fn_param_annotated() {
+    // The parameter's declared type `Pair` resolves to Type::Generic
+    // ("Pair", []), so `let Pair { a, b } = p` in the body must still
+    // bind sub-patterns instead of rejecting the scrutinee.
+    let errs = type_errors(
+        r#"
+type Pair { a: Int, b: Int }
+fn sum(p: Pair) -> Int {
+  let Pair { a, b } = p
+  a + b
+}
+fn main() { println(sum(Pair { a: 10, b: 20 })) }
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for fn-param record destructure, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_record_destructure_nested_through_fn_boundary() {
+    // Nested-record destructuring through two fn hops. Inner `Inner`
+    // field must be destructured after pulling it out of Outer.
+    let errs = type_errors(
+        r#"
+type Inner { x: Int }
+type Outer { inner: Inner, tag: Int }
+fn g(o: Outer) -> Int {
+  let Outer { inner, tag } = o
+  let Inner { x } = inner
+  x + tag
+}
+fn mk() -> Outer { Outer { inner: Inner { x: 5 }, tag: 3 } }
+fn main() { println(g(mk())) }
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for nested fn-boundary record destructure, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_parameterized_record_destructure_through_fn_boundary() {
+    // Parameterized record `Box(a)` — the field template references
+    // the record's type parameter, which must get substituted with
+    // the concrete type arg from `Box(Int)` before the sub-pattern is
+    // bound, so `value` has type `Int` and not `?a`.
+    let errs = type_errors(
+        r#"
+type Box(a) { value: a }
+fn mk() -> Box(Int) { Box { value: 42 } }
+fn main() {
+  let b = mk()
+  let Box { value } = b
+  let x: Int = value
+  println(x)
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for parameterized fn-boundary record destructure, got: {errs:?}"
+    );
+}
+
+// ── B1 (round 15): exhaustiveness for records reached via Type::Generic ──
+//
+// `is_wildcard_useful` / `missing_description` only consulted the
+// enums table when the scrutinee was `Type::Generic(name, _)`. Records
+// passed through fn boundaries surface under the same constructor and
+// would fall through as "exhaustive", deferring the failure to a
+// runtime "non-exhaustive match: no arm matched" crash.
+
+#[test]
+fn test_exhaustiveness_record_fn_param_missing_arm_rejected() {
+    // Match covers only `Pair { a: 1, b: 1 }`. The wildcard case
+    // (e.g. `Pair { a: 1, b: 2 }`) must be surfaced at TYPECHECK,
+    // not the runtime.
+    let errs = type_errors(
+        r#"
+type Pair { a: Int, b: Int }
+fn check(p: Pair) -> String {
+  match p {
+    Pair { a: 1, b: 1 } -> "one"
+  }
+}
+fn main() { println(check(Pair { a: 1, b: 2 })) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("non-exhaustive match")),
+        "expected 'non-exhaustive match' error, got: {errs:?}"
+    );
+}
+

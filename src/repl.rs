@@ -184,6 +184,12 @@ pub fn run_repl() {
                             continue;
                         }
                         "" => continue,
+                        other if other.starts_with(':') && !other.starts_with("::") => {
+                            eprintln!(
+                                "unknown REPL command '{other}'; type :help for the list"
+                            );
+                            continue;
+                        }
                         _ => {}
                     }
                 }

@@ -138,7 +138,7 @@ impl TypeChecker {
                 self.is_useful(matrix, &true_pat, ty, depth + 1)
                     || self.is_useful(matrix, &false_pat, ty, depth + 1)
             }
-            Type::Generic(name, _) => {
+            Type::Generic(name, type_args) => {
                 if let Some(enum_info) = self.enums.get(name).cloned() {
                     for variant in &enum_info.variants {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
@@ -150,6 +150,36 @@ impl TypeChecker {
                         }
                     }
                     false
+                } else if let Some(rec_info) = self.records.get(name).cloned() {
+                    // B1 (round 15): records surface as `Type::Generic(name, args)`
+                    // at function boundaries because `resolve_type_expr` maps the
+                    // user's record annotation through `TypeExpr::Generic`. When
+                    // reached here we must instantiate the record's field
+                    // templates (substituting the type args) and delegate to
+                    // `is_record_useful`, matching the `Type::Record` arm below.
+                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.record_param_var_ids.get(name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> = if type_args.len()
+                            == param_var_ids.len()
+                        {
+                            param_var_ids
+                                .iter()
+                                .zip(type_args.iter())
+                                .map(|(&v, t)| (v, t.clone()))
+                                .collect()
+                        } else {
+                            HashMap::new()
+                        };
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
+                    self.is_record_useful(matrix, *name, &fields, depth)
                 } else {
                     false
                 }
@@ -712,7 +742,7 @@ impl TypeChecker {
                     format!("missing {}", missing.join(", "))
                 }
             }
-            Type::Generic(name, _) => {
+            Type::Generic(name, type_args) => {
                 if let Some(enum_info) = self.enums.get(name).cloned() {
                     let mut missing = Vec::new();
                     for variant in &enum_info.variants {
@@ -729,6 +759,33 @@ impl TypeChecker {
                     } else {
                         format!("missing variant(s) {}", missing.join(", "))
                     }
+                } else if let Some(rec_info) = self.records.get(name).cloned() {
+                    // B1 (round 15): mirror the enum branch for records
+                    // reached via `Type::Generic` at fn boundaries.
+                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.record_param_var_ids.get(name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> = if type_args.len()
+                            == param_var_ids.len()
+                        {
+                            param_var_ids
+                                .iter()
+                                .zip(type_args.iter())
+                                .map(|(&v, t)| (v, t.clone()))
+                                .collect()
+                        } else {
+                            HashMap::new()
+                        };
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
+                    let record_ty = Type::Record(*name, fields);
+                    self.missing_description(patterns, &record_ty)
                 } else {
                     "not all patterns are covered".into()
                 }

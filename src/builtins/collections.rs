@@ -481,7 +481,16 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     Ok(Value::List(Arc::new(xs[..n].to_vec())))
                 }
                 Value::Range(lo, hi) => {
+                    // Short-circuit zero count: without this, `lo.checked_add(0)
+                    // .and_then(|v| v.checked_sub(1))` returns `None` when
+                    // `lo == i64::MIN` because `i64::MIN - 1` underflows, and
+                    // the old fallback returned the full range instead of an
+                    // empty list. Taking zero elements must always yield an
+                    // empty result regardless of `lo`.
                     let count = n_val;
+                    if count == 0 {
+                        return Ok(Value::List(Arc::new(Vec::new())));
+                    }
                     let new_hi = match lo.checked_add(count).and_then(|v| v.checked_sub(1)) {
                         Some(v) => v.min(*hi),
                         None => *hi,

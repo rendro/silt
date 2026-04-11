@@ -138,30 +138,81 @@ impl fmt::Display for CompileError {
 }
 
 /// Render a lex/parse error that happened inside an imported module into a
-/// human-readable CompileError message. The message embeds a `file:line:col`
-/// prefix plus a source snippet and caret pointing at the offending location
-/// in the *module* file (not the main file), so the outer error reporter can
-/// show the user where the bug is even though it only has the main file's
-/// source for its own snippet rendering.
-/// Format a cross-module error as a single-line summary suitable for
-/// embedding in an outer `CompileError.message`. The outer `SourceError`
-/// Display impl already renders the import site's caret and snippet, so
-/// we deliberately avoid duplicating the inner file's source-line context
-/// here — older versions of this helper did that and the result was the
-/// inner snippet being printed twice (L7).
+/// human-readable `CompileError.message`. The resulting string embeds:
+///
+///   1. A `module '<name>': <kind> at <file>:<line>:<col> — <inner_msg>` header.
+///   2. A source snippet from the *module* file with a caret pointing at
+///      the offending token, formatted to resemble the outer
+///      `SourceError::Display` snippet style (`  --> file:line:col` +
+///      line gutter + `^` caret).
+///
+/// The outer `SourceError::Display` impl will still render its own snippet
+/// against the *main* file at the `import` statement — that's the
+/// surrounding context the user expects. What was broken before (G3) is
+/// that the user had no visibility into where the actual parse/lex error
+/// was inside the imported module: the caret-free "module 'bad': parse
+/// error at bad.silt:3:1" line left the user guessing. Now the module
+/// source line is reproduced directly in the error message, so the final
+/// rendered stderr contains both the outer caret (at `import bad`) and
+/// the inner caret (at the real parse error inside bad.silt).
 fn format_module_source_error(
     module_name: &str,
     file_path: &str,
-    _source: &str,
+    source: &str,
     kind: &str,
     inner_message: &str,
     span: Span,
 ) -> String {
-    format!(
+    let mut out = format!(
         "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
         line = span.line,
         col = span.col,
-    )
+    );
+
+    // Pull the offending source line from the module file so the reader
+    // can see exactly where the caret points. If the span.line is 0 or
+    // past the end of the file we silently skip the snippet — there's
+    // nothing sensible to render.
+    if span.line > 0
+        && let Some(src_line) = source.lines().nth(span.line - 1)
+    {
+        // Width of the line-number gutter for alignment. Matches the
+        // convention in src/errors.rs::SourceError::Display.
+        let line_num = span.line;
+        let gutter_width = {
+            // floor(log10(line_num)) + 1 — inlined to avoid pulling
+            // in the private helper from src/errors.rs.
+            let mut w = 1;
+            let mut n = line_num;
+            while n >= 10 {
+                n /= 10;
+                w += 1;
+            }
+            w
+        };
+        let gutter_blank: String = " ".repeat(gutter_width);
+        let col = if span.col > 0 { span.col - 1 } else { 0 };
+        // Preserve tabs so the caret lines up with the actual char.
+        let caret_spacing: String = src_line
+            .chars()
+            .take(col)
+            .map(|ch| if ch == '\t' { '\t' } else { ' ' })
+            .collect();
+
+        out.push_str(&format!(
+            "\n --> {file_path}:{line}:{col}",
+            file_path = file_path,
+            line = line_num,
+            col = span.col,
+        ));
+        out.push_str(&format!("\n {gutter_blank} |"));
+        out.push_str(&format!("\n {line_num} | {src_line}"));
+        out.push_str(&format!(
+            "\n {gutter_blank} | {caret_spacing}^ {inner_message}"
+        ));
+    }
+
+    out
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's
@@ -1637,6 +1688,23 @@ impl Compiler {
             }
 
             ExprKind::List(elems) => {
+                // The MakeList / MakeMap / MakeSet opcodes encode their
+                // element count in a u16 operand. Anything larger would
+                // silently wrap and the VM would `truncate` the stack by a
+                // completely wrong number, leaving orphaned values that
+                // corrupt every subsequent operation (B2). Reject oversized
+                // literals at compile time with a clear error — the same
+                // shape as the `u8`-bounded tuple/record checks above.
+                if elems.len() > u16::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "list literal too large: {} elements (max {})",
+                            elems.len(),
+                            u16::MAX
+                        ),
+                        span,
+                    });
+                }
                 let has_spread = elems.iter().any(|e| matches!(e, ListElem::Spread(_)));
                 if !has_spread {
                     // Fast path: no spreads, just compile all singles
@@ -1651,20 +1719,35 @@ impl Compiler {
                 } else {
                     // Spread path: group consecutive singles into segments,
                     // compile each spread, and ListConcat them together.
+                    // `single_count` is a u16 and could wrap on >65535
+                    // consecutive singles between spreads even when the
+                    // outer `elems.len()` bound above catches the overall
+                    // literal. Use a usize accumulator and check the bound
+                    // on every increment.
                     let mut have_accumulated = false;
-                    let mut single_count: u16 = 0;
+                    let mut single_count: usize = 0;
 
                     for elem in elems {
                         match elem {
                             ListElem::Single(e) => {
                                 self.compile_expr(e)?;
                                 single_count += 1;
+                                if single_count > u16::MAX as usize {
+                                    return Err(CompileError {
+                                        message: format!(
+                                            "list literal too large: more than {} consecutive \
+                                             singleton elements between spreads",
+                                            u16::MAX
+                                        ),
+                                        span,
+                                    });
+                                }
                             }
                             ListElem::Spread(e) => {
                                 // Flush any pending singles as a MakeList
                                 if single_count > 0 {
                                     self.current_chunk().emit_op(Op::MakeList, span);
-                                    self.current_chunk().emit_u16(single_count, span);
+                                    self.current_chunk().emit_u16(single_count as u16, span);
                                     if have_accumulated {
                                         self.current_chunk().emit_op(Op::ListConcat, span);
                                     }
@@ -1684,7 +1767,7 @@ impl Compiler {
                     // Flush any trailing singles
                     if single_count > 0 {
                         self.current_chunk().emit_op(Op::MakeList, span);
-                        self.current_chunk().emit_u16(single_count, span);
+                        self.current_chunk().emit_u16(single_count as u16, span);
                         if have_accumulated {
                             self.current_chunk().emit_op(Op::ListConcat, span);
                         }
@@ -1697,6 +1780,19 @@ impl Compiler {
             }
 
             ExprKind::Map(pairs) => {
+                // MakeMap pair count is emitted as u16 — reject oversized
+                // literals at compile time so the VM never sees a wrapped
+                // count. See the B2 comment on the list path above.
+                if pairs.len() > u16::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "map literal too large: {} pairs (max {})",
+                            pairs.len(),
+                            u16::MAX
+                        ),
+                        span,
+                    });
+                }
                 for (k, v) in pairs {
                     self.compile_expr(k)?;
                     self.compile_expr(v)?;
@@ -1707,6 +1803,18 @@ impl Compiler {
             }
 
             ExprKind::SetLit(elems) => {
+                // MakeSet count is emitted as u16 — reject oversized
+                // literals at compile time (B2).
+                if elems.len() > u16::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "set literal too large: {} elements (max {})",
+                            elems.len(),
+                            u16::MAX
+                        ),
+                        span,
+                    });
+                }
                 for elem in elems {
                     self.compile_expr(elem)?;
                 }

@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{Lexer, Span};
-use crate::parser::Parser;
+use crate::lexer::{LexError, Lexer, Span};
+use crate::parser::{ParseError, Parser};
 
 const INDENT: &str = "  ";
 
@@ -1096,13 +1097,34 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
 
 // ── Public entry point ──────────────────────────────────────────────
 
-pub fn format(source: &str) -> Result<String, String> {
-    let tokens = Lexer::new(source)
-        .tokenize()
-        .map_err(|e| format!("lex error: {e}"))?;
+/// A lex or parse failure surfaced from the formatter. Callers can
+/// downcast via the enum to render a proper source-line snippet through
+/// `SourceError::from_lex_error` / `from_parse_error`. The `Display`
+/// impl preserves the old bare `"lex error: ..."` / `"parse error: ..."`
+/// shape so existing test-helper callers that just format the error
+/// keep working.
+#[derive(Debug)]
+pub enum FmtError {
+    Lex(LexError),
+    Parse(ParseError),
+}
+
+impl fmt::Display for FmtError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FmtError::Lex(e) => write!(f, "lex error: {e}"),
+            FmtError::Parse(e) => write!(f, "parse error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for FmtError {}
+
+pub fn format(source: &str) -> Result<String, FmtError> {
+    let tokens = Lexer::new(source).tokenize().map_err(FmtError::Lex)?;
     let program = Parser::new(tokens)
         .parse_program()
-        .map_err(|e| format!("parse error: {e}"))?;
+        .map_err(FmtError::Parse)?;
     Ok(with_current_source(source, || {
         format_program_with_comments(&program, source)
     }))

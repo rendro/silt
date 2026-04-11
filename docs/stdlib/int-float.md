@@ -151,7 +151,8 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `parse` | `(String) -> Result(Float, String)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
-| `to_string` | `(Float, Int) -> String` | Format with decimal places |
+| `to_string` | `(Float) -> String` | Shortest round-trippable representation |
+| `to_string` | `(Float, Int) -> String` | Format with fixed decimal places |
 | **Constants** | | |
 | `float.max_value` | `Float` | Maximum finite value (`1.7976931348623157e+308`) |
 | `float.min_value` | `Float` | Minimum finite value (`-1.7976931348623157e+308`) |
@@ -288,8 +289,8 @@ fn main() {
 float.to_int(f: Float) -> Int
 ```
 
-Truncates toward zero, converting to an integer. Accepts both `Float` and
-`ExtFloat`. Returns a runtime error if the value is NaN or Infinity.
+Truncates toward zero, converting to an integer. Returns a runtime error if
+the value is NaN or Infinity.
 
 ```silt
 import float
@@ -303,15 +304,27 @@ fn main() {
 ## `float.to_string`
 
 ```
+float.to_string(f: Float) -> String
 float.to_string(f: Float, decimals: Int) -> String
 ```
 
-Formats a float as a string with exactly `decimals` decimal places. The
-`decimals` argument is required and must be non-negative.
+Converts a float to its string representation. Accepts both `Float` and
+`ExtFloat` values at runtime.
+
+- **One-argument form:** returns the shortest round-trippable
+  representation. Whole-number floats always include a decimal point
+  (`3.0` rather than `3`) so the result parses back as a float.
+- **Two-argument form:** formats with exactly `decimals` decimal
+  places. `decimals` must be a non-negative `Int`.
 
 ```silt
 import float
 fn main() {
+    -- 1-arg form: shortest round-trippable
+    println(float.to_string(3.14159))     -- "3.14159"
+    println(float.to_string(42.0))        -- "42.0"
+
+    -- 2-arg form: fixed decimal places
     println(float.to_string(3.14159, 2))  -- "3.14"
     println(float.to_string(42.0, 0))     -- "42"
 }

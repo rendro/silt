@@ -35,6 +35,7 @@ Within a test file, functions are recognized by their name prefix:
 
 ```silt
 import test
+import string
 
 fn test_addition() {
     test.assert_eq(1 + 1, 2)

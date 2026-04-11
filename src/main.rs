@@ -29,7 +29,11 @@ struct CompilePipelineResult {
     parse_errors: Vec<SourceError>,
     /// Type errors and warnings.
     type_errors: Vec<SourceError>,
-    /// Whether any hard error (parse or type) was encountered.
+    /// Whether any hard error (parse or type) was encountered. Callers
+    /// typically recompute the "real" hard-error flag after filtering
+    /// suppressible warnings (see `reportable_type_errors`), so this is
+    /// kept for completeness / future callers but not currently read.
+    #[allow(dead_code)]
     has_hard_errors: bool,
     /// Compiled functions — `None` if hard errors prevented compilation.
     functions: Option<Vec<Function>>,
@@ -161,17 +165,6 @@ fn run_compile_pipeline(
     }
 }
 
-/// All diagnostics from a `CompilePipelineResult`, in order.
-fn all_diagnostics(result: &CompilePipelineResult) -> Vec<&SourceError> {
-    result
-        .parse_errors
-        .iter()
-        .chain(result.type_errors.iter())
-        .chain(result.compile_errors.iter())
-        .chain(result.compile_warnings.iter())
-        .collect()
-}
-
 /// Return the type-checker diagnostics that should still be reported for `result`
 /// after dropping noise that the compiler will resolve.
 ///
@@ -275,7 +268,7 @@ fn usage_text() -> String {
     out.push('\n');
     out.push_str("  silt check [--watch] <file.silt>  Type-check without running\n");
     out.push_str("  silt test [--watch] [path]        Run test functions\n");
-    out.push_str("  silt fmt [--check] [files...]       Format source code\n");
+    out.push_str("  silt fmt [--check] [files...]     Format source code\n");
     out.push_str("  silt repl                         Interactive REPL  [feature: repl]\n");
     out.push_str("  silt init                         Create a new main.silt\n");
     out.push_str("  silt lsp                          Start the language server  [feature: lsp]\n");
@@ -704,9 +697,26 @@ fn init_project() {
 
 fn format_file(path: &str) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|e| format!("error reading {path}: {e}"))?;
-    let formatted = silt::formatter::format(&source).map_err(|e| format!("{path}: {e}"))?;
+    let formatted =
+        silt::formatter::format(&source).map_err(|e| render_fmt_error(&e, &source, path))?;
     fs::write(path, formatted).map_err(|e| format!("error writing {path}: {e}"))?;
     Ok(())
+}
+
+/// Render a formatter lex/parse failure as a structured `SourceError` with
+/// the source-line snippet and caret. Without this, `silt fmt` would
+/// surface the bare `ParseError::Display` string (just `[line:col] msg`)
+/// and users would lose the context they get from `silt run` /
+/// `silt check` on the same file.
+fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -> String {
+    match err {
+        silt::formatter::FmtError::Lex(e) => {
+            format!("{}", SourceError::from_lex_error(e, source, path))
+        }
+        silt::formatter::FmtError::Parse(e) => {
+            format!("{}", SourceError::from_parse_error(e, source, path))
+        }
+    }
 }
 
 /// Check if a file is already formatted. Returns true if it is, false otherwise.
@@ -729,7 +739,7 @@ fn check_format(path: &str) -> bool {
             }
         }
         Err(e) => {
-            eprintln!("{path}: {e}");
+            eprintln!("{path}: {}", render_fmt_error(&e, &source, path));
             false
         }
     }
@@ -1091,9 +1101,27 @@ fn disasm_file(path: &str) {
 
 fn check_file(path: &str, format: OutputFormat) {
     silt::intern::reset();
-    let result = run_compile_pipeline(path, true, true);
+    // `silt check` must match `silt run` diagnostics exactly, minus
+    // execution. That means (a) running the compile step so the compiler
+    // surfaces real module-resolution errors, and (b) filtering out the
+    // type checker's "unknown module" warnings — which the compiler
+    // resolves later — so we don't cry wolf on every valid file-backed
+    // import. Previously this path skipped compile entirely AND emitted
+    // every warning, which produced spurious "unknown module" warnings
+    // on programs that `silt run` handles cleanly.
+    let result = run_compile_pipeline(path, false, true);
 
-    let errors: Vec<&SourceError> = all_diagnostics(&result);
+    // Filter per-entry: drop the "unknown module" warnings the compiler
+    // will resolve, but keep every other diagnostic so real errors still
+    // surface. See `reportable_type_errors` for the rationale.
+    let reportable_types = reportable_type_errors(&result);
+    let errors: Vec<&SourceError> = result
+        .parse_errors
+        .iter()
+        .chain(reportable_types.iter().copied())
+        .chain(result.compile_errors.iter())
+        .chain(result.compile_warnings.iter())
+        .collect();
 
     if format == OutputFormat::Json {
         print_json_errors(&errors);
@@ -1103,7 +1131,16 @@ fn check_file(path: &str, format: OutputFormat) {
         }
     }
 
-    if result.has_hard_errors {
+    // A hard error is real only if it's a parse/compile error or a
+    // non-suppressed type error with severity Error — same gate as
+    // `compile_file`. We deliberately do NOT rely on
+    // `result.has_hard_errors`, which counts the suppressed warnings'
+    // peers but we re-check here for clarity.
+    let has_real_type_error = reportable_types.iter().any(|e| !e.is_warning);
+    let has_real_hard_errors = !result.parse_errors.is_empty()
+        || !result.compile_errors.is_empty()
+        || has_real_type_error;
+    if has_real_hard_errors {
         process::exit(1);
     }
 }
@@ -1253,10 +1290,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
 
         // Type-check before compiling so type errors fail the test.
+        // Drop "unknown module" warnings for imports the compiler resolves
+        // later (see `reportable_type_errors` / `is_unknown_module_warning`):
+        // every test file that imports a sibling module would otherwise
+        // flood test output with a spurious warning even on clean runs.
+        // Matches `silt run`'s behavior exactly. Real missing modules are
+        // still caught by the compiler's own "cannot load module" error
+        // in the block below.
         let type_errors = typechecker::check(&mut program);
         let mut has_type_error = false;
         for te in &type_errors {
             let source_err = SourceError::from_type_error(te, &source, path);
+            if is_unknown_module_warning(&source_err) {
+                continue;
+            }
             eprintln!("{source_err}");
             if te.severity == typechecker::Severity::Error {
                 has_type_error = true;
@@ -1295,7 +1342,34 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let script = Arc::new(first);
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
-            eprintln!("{path}: setup error: {e}");
+            // Mirror `silt run`: if the error has a span, render it with a
+            // source snippet + caret via SourceError::runtime_at, and
+            // append the call stack when there are meaningful frames
+            // beyond the error site itself. Falling back to the bare
+            // VmError::Display only when no span info is available.
+            if let Some(span) = e.span {
+                let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+                eprintln!("{path}: setup error:");
+                eprintln!("{source_err}");
+                let stack_lines = silt::vm::error::render_call_stack(
+                    &e.call_stack,
+                    |_name, frame_span| {
+                        if frame_span.line > 0 {
+                            format!("{}:{}:{}", path, frame_span.line, frame_span.col)
+                        } else {
+                            format!("{path}:<unknown location>")
+                        }
+                    },
+                );
+                if !stack_lines.is_empty() {
+                    eprintln!("\ncall stack:");
+                    for line in stack_lines {
+                        eprintln!("{line}");
+                    }
+                }
+            } else {
+                eprintln!("{path}: setup error: {e}");
+            }
             file_errors += 1;
             continue;
         }
@@ -1334,6 +1408,32 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                 let source_err =
                                     SourceError::runtime_at(&e.message, span, &source, path);
                                 eprintln!("    {source_err}");
+                                // Mirror `silt run`: render a call stack
+                                // when the error crosses ≥2 meaningful
+                                // frames. Without this, a test that fails
+                                // deep inside a helper chain only prints
+                                // the innermost site, leaving the user
+                                // without any trail back to the test
+                                // function that invoked it.
+                                let stack_lines = silt::vm::error::render_call_stack(
+                                    &e.call_stack,
+                                    |_name, frame_span| {
+                                        if frame_span.line > 0 {
+                                            format!(
+                                                "{}:{}:{}",
+                                                path, frame_span.line, frame_span.col
+                                            )
+                                        } else {
+                                            format!("{path}:<unknown location>")
+                                        }
+                                    },
+                                );
+                                if !stack_lines.is_empty() {
+                                    eprintln!("\n    call stack:");
+                                    for line in stack_lines {
+                                        eprintln!("    {line}");
+                                    }
+                                }
                             } else {
                                 eprintln!("    Error: {e}");
                             }
@@ -1345,13 +1445,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     }
 
+    let test_word = if total == 1 { "test" } else { "tests" };
     if file_errors > 0 {
         eprintln!(
-            "\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped ({file_errors} file{} failed to compile)",
+            "\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped ({file_errors} file{} failed to compile)",
             if file_errors == 1 { "" } else { "s" }
         );
     } else {
-        eprintln!("\n{total} tests: {passed} passed, {failed} failed, {skipped} skipped");
+        eprintln!("\n{total} {test_word}: {passed} passed, {failed} failed, {skipped} skipped");
     }
     if total == 0 && file_errors == 0 {
         eprintln!(

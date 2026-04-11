@@ -246,12 +246,17 @@ fn parse_error_does_not_kill_session() {
         "repl should exit successfully despite parse error, stderr: {}",
         out.stderr
     );
-    // The parse error is reported on stderr…
+    // The parse error is reported on stderr. Pin the diagnostic kind
+    // *and* its canonical message so a regression that swaps this for a
+    // different error kind (or a different parse message) is caught.
     assert!(
-        out.stderr.contains("error")
-            || out.stderr.contains("expected")
-            || out.stderr.contains("parse"),
-        "expected a parse-error diagnostic on stderr, got:\n{}",
+        out.stderr.contains("error[parse]"),
+        "expected `error[parse]` in stderr, got:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("expected expression"),
+        "expected `expected expression` in parse diagnostic, got:\n{}",
         out.stderr
     );
     // …and the *next* input still evaluated: `2 + 3 == 5`.
@@ -277,10 +282,19 @@ fn type_error_does_not_kill_session() {
         "repl should exit successfully despite type error, stderr: {}",
         out.stderr
     );
-    // Diagnostic on stderr.
+    // Diagnostic on stderr. Pin the `type` kind specifically so a
+    // regression that turns this into a parse error (or unrelated
+    // stderr chatter) is caught rather than masked by a non-empty
+    // stderr check.
     assert!(
-        !out.stderr.trim().is_empty(),
-        "expected a diagnostic on stderr for type error, got empty stderr"
+        out.stderr.contains("error[type]"),
+        "expected `error[type]` diagnostic on stderr, got:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("type mismatch"),
+        "expected `type mismatch` in type diagnostic, got:\n{}",
+        out.stderr
     );
     // Follow-up input evaluated.
     assert!(
@@ -519,6 +533,55 @@ c()
     assert!(
         out.stderr.contains("-> c"),
         "expected `c` frame in call stack, got stderr:\n{}",
+        out.stderr
+    );
+}
+
+// ── 10. LATENT: unknown `:commands` produce a helpful message ──────
+//
+// Regression: previously only `:quit`/`:q`/`:help`/`:h` were recognised;
+// any other line starting with `:` (e.g. `:exit`, `:clear`, `:reset`)
+// fell through to the parser and produced a misleading
+// `expected expression, found :` diagnostic. The REPL now catches
+// unknown `:commands` up-front and prints a hint pointing at `:help`.
+
+#[test]
+fn test_repl_unknown_command_prints_helpful_message() {
+    // `:exit` is a plausible guess from users coming from other REPLs.
+    // The fix should intercept it before the parser ever sees it and
+    // tell the user that `:help` lists the real commands. We then send
+    // `:quit` (which `run_session` appends anyway) so the session exits
+    // cleanly.
+    let out = run_session(":exit\n");
+    assert_has_banner(&out);
+    assert!(
+        out.success,
+        "repl should still exit successfully after an unknown :command, stderr: {}",
+        out.stderr
+    );
+
+    // The helpful message itself — both halves are load-bearing:
+    //   * "unknown REPL command" pins the new catch-all branch
+    //   * "type :help" is the hint that tells users where to go next
+    // Reverting the catch-all would leave the parser to emit
+    // `expected expression, found :` instead, which this assertion
+    // would not match.
+    assert!(
+        out.stderr.contains("unknown REPL command"),
+        "expected `unknown REPL command` in stderr for `:exit`, got:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("type :help"),
+        "expected `type :help` hint in stderr for `:exit`, got:\n{}",
+        out.stderr
+    );
+    // And critically: the parser must not have tried to parse `:exit`.
+    // The old behaviour produced `expected expression` from the parser;
+    // the new behaviour must not.
+    assert!(
+        !out.stderr.contains("expected expression"),
+        "unknown :command must not fall through to the parser, got stderr:\n{}",
         out.stderr
     );
 }

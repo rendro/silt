@@ -59,8 +59,8 @@ Returns elements that are in `a` but not in `b`.
 ```silt
 import set
 fn main() {
-    let result = set.difference(#[1, 2, 3], #[2, 3, 4])
-    println(set.to_list(result))  -- [1]
+    let diff = set.difference(#[1, 2, 3], #[2, 3, 4])
+    println(set.to_list(diff))  -- [1]
 }
 ```
 
@@ -160,8 +160,8 @@ Returns elements that are in both `a` and `b`.
 ```silt
 import set
 fn main() {
-    let result = set.intersection(#[1, 2, 3], #[2, 3, 4])
-    println(set.to_list(result))  -- [2, 3]
+    let common = set.intersection(#[1, 2, 3], #[2, 3, 4])
+    println(set.to_list(common))  -- [2, 3]
 }
 ```
 
@@ -211,8 +211,8 @@ smaller if `f` maps distinct elements to the same value.
 ```silt
 import set
 fn main() {
-    let result = set.map(#[1, 2, 3]) { x -> x * 10 }
-    println(set.to_list(result))  -- [10, 20, 30]
+    let scaled = set.map(#[1, 2, 3]) { x -> x * 10 }
+    println(set.to_list(scaled))  -- [10, 20, 30]
 }
 ```
 
@@ -280,7 +280,7 @@ Returns a set containing all elements from both `a` and `b`.
 ```silt
 import set
 fn main() {
-    let result = set.union(#[1, 2], #[2, 3])
-    println(set.to_list(result))  -- [1, 2, 3]
+    let combined = set.union(#[1, 2], #[2, 3])
+    println(set.to_list(combined))  -- [1, 2, 3]
 }
 ```

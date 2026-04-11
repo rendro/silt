@@ -196,10 +196,22 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.to_string: decimals must be non-negative".into(),
                 ));
             }
+            // Rust's `{:.prec$}` formatter backs precision with a u16 and
+            // panics with "Formatting argument out of range" for any value
+            // above `u16::MAX` (65535). `catch_builtin_panic` would turn
+            // that panic into a VmError, but std's panic handler still
+            // prints a noisy `thread 'main' panicked at ...` line to
+            // stderr, and the surfaced message is opaque to silt users.
+            // Reject out-of-range precision up front with a clean error.
+            let prec = u16::try_from(*decimals).map_err(|_| {
+                VmError::new(format!(
+                    "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
+                ))
+            })?;
             Ok(Value::String(format!(
                 "{:.prec$}",
                 f,
-                prec = *decimals as usize
+                prec = prec as usize
             )))
         }
         "to_int" => {

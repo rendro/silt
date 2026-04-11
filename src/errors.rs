@@ -41,11 +41,12 @@ pub struct SourceError {
 
 impl SourceError {
     pub fn from_lex_error(err: &LexError, source: &str, file: impl Into<String>) -> Self {
-        let source_line = get_source_line(source, err.span.line);
+        let span = clamp_span_to_source(err.span, source);
+        let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Lex,
             message: err.message.clone(),
-            span: err.span,
+            span,
             source_line,
             file: Some(file.into()),
             is_warning: false,
@@ -53,11 +54,12 @@ impl SourceError {
     }
 
     pub fn from_parse_error(err: &ParseError, source: &str, file: impl Into<String>) -> Self {
-        let source_line = get_source_line(source, err.span.line);
+        let span = clamp_span_to_source(err.span, source);
+        let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Parse,
             message: err.message.clone(),
-            span: err.span,
+            span,
             source_line,
             file: Some(file.into()),
             is_warning: false,
@@ -142,6 +144,31 @@ fn get_source_line(source: &str, line: usize) -> Option<String> {
         return None;
     }
     source.lines().nth(line - 1).map(|s| s.to_string())
+}
+
+/// Clamp a span that points past the end of `source` back onto the last
+/// real line. Parse/lex errors on unexpected EOF typically produce a span
+/// pointing at the line *after* the final newline (or one column past the
+/// last char), which renders with the `-->` locator but no source snippet
+/// since `line - 1` is out of bounds. When that happens, we return a new
+/// span pointing at the end of the last real line so the caret lands at
+/// the visual "end of file" instead of disappearing. Mirrors the
+/// adjustment done by `repl.rs::adjust_span` for the REPL path.
+fn clamp_span_to_source(span: Span, source: &str) -> Span {
+    if span.line == 0 {
+        return span;
+    }
+    let line_count = source.lines().count();
+    if line_count == 0 {
+        return span;
+    }
+    if span.line <= line_count {
+        return span;
+    }
+    // Past EOF — clamp onto the last real line, caret just after its last char.
+    let last_line = source.lines().last().unwrap_or("");
+    let last_col = last_line.chars().count().saturating_add(1);
+    Span::with_offset(line_count, last_col, span.offset)
 }
 
 /// Check whether stderr is a terminal (for ANSI color support).

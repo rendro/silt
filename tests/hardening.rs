@@ -1718,8 +1718,13 @@ fn main() -> String {
 }
 "#,
     );
+    // Same production phrase as above — `time.weekday` also routes
+    // through `extract_date` → `field_as_i32` in
+    // src/builtins/data.rs:215, so the emitted error is
+    // `time: year <N> out of range for i32`. Pin both halves so a
+    // drift to e.g. "year value is too big" fails loudly.
     assert!(
-        err2.to_lowercase().contains("year"),
+        err2.contains("time: year") && err2.contains("out of range for i32"),
         "expected year-out-of-range error from weekday, got: {err2}"
     );
 }

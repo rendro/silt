@@ -54,7 +54,10 @@ files needed):
 
 - `float.round`, `float.ceil`, `float.floor` return **`Float`**, not `Int`.
   Use `float.to_int` to convert after rounding.
-- `float.to_string(f, decimals)` takes **two arguments** -- no overloading.
+- `float.to_string` is overloaded: the 1-arg form `float.to_string(f)` returns
+  the shortest round-trippable representation, while the 2-arg form
+  `float.to_string(f, decimals)` formats with a fixed decimal count. Both
+  accept `Float` and `ExtFloat` values.
 - `string.is_empty(s)` checks for zero-length strings.
 - Character classification: `string.is_alpha`, `string.is_digit`,
   `string.is_upper`, `string.is_lower`, `string.is_alnum`,

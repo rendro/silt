@@ -177,13 +177,13 @@ returns `None`.
 ```silt
 import option
 fn main() {
-    let result = Some(42) |> option.flat_map { n ->
+    let chained = Some(42) |> option.flat_map { n ->
         match {
             n > 0 -> Some(n * 2)
             _ -> None
         }
     }
-    println(result)  -- Some(84)
+    println(chained)  -- Some(84)
 }
 ```
 
@@ -233,8 +233,8 @@ If `opt` is `Some(v)`, returns `Some(f(v))`. If `opt` is `None`, returns `None`.
 ```silt
 import option
 fn main() {
-    let result = Some(21) |> option.map { n -> n * 2 }
-    println(result)  -- Some(42)
+    let doubled = Some(21) |> option.map { n -> n * 2 }
+    println(doubled)  -- Some(42)
 }
 ```
 

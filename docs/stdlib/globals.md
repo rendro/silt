@@ -180,13 +180,13 @@ accumulator result.
 ```silt
 import list
 fn main() {
-    let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
+    let capped_sum = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
         match {
             acc + x > 6 -> Stop(acc)
             _ -> Continue(acc + x)
         }
     }
-    println(result)  -- 6
+    println(capped_sum)  -- 6
 }
 ```
 

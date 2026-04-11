@@ -126,9 +126,16 @@ fn test_run_parse_error() {
     assert!(!output.status.success(), "expected non-zero exit code");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Pin the exact parser diagnostic for `fn { }`. The `error[parse]`
+    // header comes from the CLI renderer; the specific phrase
+    // "expected identifier, found {" is emitted by
+    // src/parser.rs:115 when parsing a function's name slot.
+    // A bare `contains("error")` would also match type / runtime /
+    // CLI errors, masking drift to the wrong error kind.
     assert!(
-        stderr.contains("error"),
-        "expected parse error in stderr, got: {stderr}"
+        stderr.contains("error[parse]")
+            && stderr.contains("expected identifier, found {"),
+        "expected parse-phase identifier error in stderr, got: {stderr}"
     );
 }
 

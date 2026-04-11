@@ -76,8 +76,8 @@ Returns `Some(matched_text)` for the first match, or `None`.
 ```silt
 import regex
 fn main() {
-    let result = regex.find("\\d+", "abc 123 def")
-    println(result)  -- Some("123")
+    let first = regex.find("\\d+", "abc 123 def")
+    println(first)  -- Some("123")
 }
 ```
 
@@ -127,8 +127,8 @@ Replaces the first match with the replacement string.
 ```silt
 import regex
 fn main() {
-    let result = regex.replace("\\d+", "abc 123 def 456", "NUM")
-    println(result)  -- "abc NUM def 456"
+    let replaced = regex.replace("\\d+", "abc 123 def 456", "NUM")
+    println(replaced)  -- "abc NUM def 456"
 }
 ```
 
@@ -144,8 +144,8 @@ Replaces all matches with the replacement string.
 ```silt
 import regex
 fn main() {
-    let result = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
-    println(result)  -- "abc NUM def NUM"
+    let scrubbed = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
+    println(scrubbed)  -- "abc NUM def NUM"
 }
 ```
 
@@ -165,10 +165,10 @@ import result
 
 import regex
 fn main() {
-    let result = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
+    let doubled = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
         int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })
     }
-    -- "a2 b44 c666"
+    println(doubled)  -- "a2 b44 c666"
 }
 ```
 
