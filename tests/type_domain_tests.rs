@@ -162,8 +162,8 @@ fn main() {
     );
     assert!(
         errs.iter()
-            .any(|e| e.contains("z") || e.contains("unknown")),
-        "expected an unknown-field error, got: {errs:?}"
+            .any(|e| e.contains("record Point has no field or method 'z'")),
+        "expected an unknown-field error on 'z', got: {errs:?}"
     );
 }
 

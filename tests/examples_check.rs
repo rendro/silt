@@ -628,3 +628,52 @@ fn io_fs_frontmatter_title_matches_stdlib_index() {
         );
     }
 }
+
+/// Regression lock for the LATENT audit: the `silt disasm` command description
+/// used to drift across three sources. `src/main.rs` is the authoritative
+/// `--help` text and says "Show bytecode disassembly"; README.md used
+/// "Inspect compiled bytecode" and docs/getting-started.md used
+/// "inspect compiled bytecode". This test keeps all three in sync.
+///
+/// README.md uses sentence-case entries with no leading `--`, so it must
+/// contain the exact sentence-case phrase. docs/getting-started.md uses
+/// lowercase entries prefixed with `-- `, so it must contain the lowercase
+/// phrase. Reverting either doc to the old "inspect compiled bytecode"
+/// wording — or changing the authoritative phrasing in src/main.rs without
+/// updating the docs — will make this test fail.
+#[test]
+fn disasm_wording_consistent_across_main_readme_getting_started() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let main_rs = std::fs::read_to_string(manifest_dir.join("src").join("main.rs"))
+        .expect("read src/main.rs");
+    let readme =
+        std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");
+    let getting_started = std::fs::read_to_string(
+        manifest_dir.join("docs").join("getting-started.md"),
+    )
+    .expect("read docs/getting-started.md");
+
+    // Authoritative wording comes from src/main.rs --help text.
+    assert!(
+        main_rs.contains("Show bytecode disassembly"),
+        "src/main.rs no longer contains the authoritative disasm description \
+         'Show bytecode disassembly'; update this test and the docs to match"
+    );
+
+    // README.md uses sentence-case help entries (e.g. "Run a program"),
+    // so it must carry the exact sentence-case phrase.
+    assert!(
+        readme.contains("Show bytecode disassembly"),
+        "README.md disasm description drifted from src/main.rs \
+         ('Show bytecode disassembly')"
+    );
+
+    // docs/getting-started.md uses lowercase `-- <verb phrase>` entries
+    // (e.g. "-- run a program"), so it must carry the lowercase phrase.
+    assert!(
+        getting_started.contains("show bytecode disassembly"),
+        "docs/getting-started.md disasm description drifted from \
+         src/main.rs (expected lowercase 'show bytecode disassembly' \
+         to match the surrounding '-- <verb phrase>' format)"
+    );
+}

@@ -860,9 +860,10 @@ fn main() {
 }
     "#,
     );
+    // Production message from src/vm/task.rs join-site wrapping.
     assert!(
-        err.contains("division") || err.contains("zero"),
-        "expected division error, got: {err}"
+        err.contains("joined task failed: division by zero"),
+        "expected division-by-zero from joined task, got: {err}"
     );
 }
 
@@ -1564,11 +1565,11 @@ fn main() = json.parse(Payload, """{"n": 1e100}""")
                 Value::String(s) => s.clone(),
                 other => panic!("expected Err payload to be String, got: {other:?}"),
             };
+            // Production message from src/builtins/json.rs number-parse path.
             assert!(
-                msg.contains("out of Int range")
-                    || msg.contains("overflow")
-                    || msg.contains("out of"),
-                "expected out-of-range error, got: {msg}"
+                msg.contains("json.parse(Payload): field 'n'")
+                    && msg.contains("out of Int range"),
+                "expected clean out-of-range error, got: {msg}"
             );
         }
         other => panic!(
@@ -1701,9 +1702,9 @@ fn main() -> String {
 }
 "#,
     );
+    // Production message from src/builtins/time.rs extract_date.
     assert!(
-        err.to_lowercase().contains("year")
-            && (err.to_lowercase().contains("out of range") || err.contains("i32")),
+        err.contains("time: year") && err.contains("out of range for i32"),
         "expected year-out-of-range error, got: {err}"
     );
 
@@ -1797,8 +1798,9 @@ fn test_compile_rejects_256_parameter_fn() {
     }
     let src = format!("fn big({params}) -> Int {{ 0 }}\nfn main() -> Int {{ 0 }}\n");
     let err = run_err(&src);
+    // Production message from src/compiler/function.rs parameter-count check.
     assert!(
-        err.contains("255") || err.to_lowercase().contains("parameter"),
+        err.contains("function 'big' has 256 parameters; silt functions are limited to 255"),
         "expected 255-parameter limit error, got: {err}"
     );
 
@@ -1830,8 +1832,9 @@ fn test_compile_rejects_256_argument_call() {
     }
     let src = format!("fn f() -> Int {{ 0 }}\nfn main() -> Int {{ f({args}) }}\n");
     let err = run_err(&src);
+    // Production message from src/compiler/expr.rs call argument-count check.
     assert!(
-        err.contains("255") || err.to_lowercase().contains("argument"),
+        err.contains("call has 256 arguments; silt calls are limited to 255"),
         "expected 255-argument limit error, got: {err}"
     );
 }

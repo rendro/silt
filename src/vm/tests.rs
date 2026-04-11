@@ -2570,9 +2570,11 @@ fn test_scheduler_task_failure_propagates() {
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let err = vm.run(script).unwrap_err();
+    // Production message from src/vm/task.rs: the join-site wraps the
+    // inner VmError as "joined task failed: <inner>".
     assert!(
-        err.message.contains("division by zero") || err.message.contains("joined task failed"),
-        "expected division error, got: {}",
+        err.message == "joined task failed: division by zero",
+        "expected exact join-site division error, got: {}",
         err.message
     );
 }

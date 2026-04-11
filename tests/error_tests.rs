@@ -120,12 +120,11 @@ fn test_lex_unterminated_string() {
 
 #[test]
 fn test_lex_unterminated_string_with_newline_content() {
+    // Asserts exact lexer message from src/lexer.rs scan_string
+    // ("unterminated string"). A newline in a string literal is legal
+    // content; the lexer only errors at EOF with no closing `"`.
     let err = lex_err("\"hello\nworld");
-    // The lexer should catch this as unterminated or handle newlines
-    assert!(
-        err.contains("unterminated") || err.contains("string"),
-        "got: {err}"
-    );
+    assert_eq!(err, "unterminated string", "got: {err}");
 }
 
 #[test]
@@ -209,20 +208,24 @@ fn test_lex_unterminated_escape_at_eof() {
 
 #[test]
 fn test_parse_missing_closing_paren() {
+    // Asserts exact parser message from src/parser.rs delim_unclosed_err_no_comma
+    // ("expected ')' to close parenthesized expression starting at line N, found }").
     let errs = parse_errors("fn main() { (1 + 2 }");
     assert!(
-        errs.iter()
-            .any(|e| e.contains("expected") || e.contains(")")),
+        errs.iter().any(|e| e
+            .contains("expected ')' to close parenthesized expression starting at line 1, found }")),
         "got: {errs:?}"
     );
 }
 
 #[test]
 fn test_parse_missing_closing_bracket() {
+    // Asserts exact parser message from src/parser.rs delim_unclosed_err
+    // ("expected ']' or ',' to continue list literal starting at line N, found }").
     let errs = parse_errors("fn main() { [1, 2, 3 }");
     assert!(
-        errs.iter()
-            .any(|e| e.contains("expected") || e.contains("]")),
+        errs.iter().any(|e| e
+            .contains("expected ']' or ',' to continue list literal starting at line 1, found }")),
         "got: {errs:?}"
     );
 }
@@ -235,10 +238,12 @@ fn test_parse_missing_closing_brace() {
 
 #[test]
 fn test_parse_let_without_value() {
+    // Asserts exact parser message from src/parser.rs expect() — after
+    // `parse_pattern` consumes `x`, the parser expects `=` and the next
+    // token is `}`, yielding "expected =, found }".
     let errs = parse_errors("fn main() { let x }");
     assert!(
-        errs.iter()
-            .any(|e| e.contains("expected") || e.contains("=")),
+        errs.iter().any(|e| e.contains("expected =, found }")),
         "got: {errs:?}"
     );
 }
@@ -256,6 +261,9 @@ fn test_parse_fn_missing_body() {
 
 #[test]
 fn test_parse_match_missing_arrow() {
+    // Asserts exact parser message from src/parser.rs parse_match_arm
+    // — after parsing the pattern `1`, the parser expects `->` but sees
+    // the string literal, yielding `expected ->, found "hello"`.
     let errs = parse_errors(
         r#"
 fn main() {
@@ -266,8 +274,7 @@ fn main() {
     "#,
     );
     assert!(
-        errs.iter()
-            .any(|e| e.contains("->") || e.contains("expected")),
+        errs.iter().any(|e| e.contains("expected ->, found \"hello\"")),
         "got: {errs:?}"
     );
 }
@@ -307,12 +314,13 @@ fn test_parse_trailing_operator() {
 
 #[test]
 fn test_parse_empty_match() {
-    // The parser accepts empty match bodies as valid syntax.
-    // At runtime, an empty match produces a "non-exhaustive match" error.
-    let err = run_err("fn main() { match 42 { } }");
-    assert!(
-        err.contains("non-exhaustive") || err.contains("no arm matched"),
-        "empty match should fail at runtime, got: {err}"
+    // Round 14: empty match is now rejected at typecheck time by the
+    // exhaustiveness analysis. Asserts exact diagnostic
+    // "non-exhaustive match: not all patterns are covered" from
+    // src/typechecker/exhaustiveness.rs missing_description.
+    assert_type_error(
+        "fn main() { match 42 { } }",
+        "non-exhaustive match: not all patterns are covered",
     );
 }
 
@@ -365,33 +373,20 @@ fn main() { foo(true) }
 
 #[test]
 fn test_type_arithmetic_on_string() {
-    // String + Int should be a type error (unless caught at runtime)
-    // Check if the typechecker catches it
-    let errs = type_errors(
+    // Asserts exact typechecker message from src/typechecker — String
+    // subtracted from Int fails with
+    // "type mismatch: operator requires numeric types, got String".
+    // (The old version had a dead `run_err` fallback branch because the
+    // typechecker always catches this case.)
+    assert_type_error(
         r#"
 fn main() {
   let x: String = "hello"
   x - 1
 }
     "#,
+        "type mismatch: operator requires numeric types, got String",
     );
-    // This may or may not be caught by the typechecker; it's OK if it's a runtime error
-    // Just ensure it doesn't silently succeed at both levels
-    if errs.is_empty() {
-        // If typechecker doesn't catch it, runtime should
-        let runtime_err = run_err(
-            r#"
-fn main() {
-  let x = "hello"
-  x - 1
-}
-        "#,
-        );
-        assert!(
-            runtime_err.contains("cannot apply") || runtime_err.contains("unsupported"),
-            "got: {runtime_err}"
-        );
-    }
 }
 
 #[test]
@@ -635,9 +630,11 @@ fn test_runtime_string_minus_string() {
 
 #[test]
 fn test_runtime_string_multiply() {
+    // Asserts exact VM message from src/vm/arithmetic.rs binary op dispatch
+    // ("cannot apply '*' to String and Int").
     let err = run_err(r#"fn main() { "hello" * 3 }"#);
     assert!(
-        err.contains("cannot apply") || err.contains("cannot mix"),
+        err.contains("cannot apply '*' to String and Int"),
         "got: {err}"
     );
 }
@@ -795,11 +792,10 @@ fn main() { regex.is_match("[invalid(", "test") }
 
 #[test]
 fn test_runtime_range_non_integer() {
+    // Asserts exact VM message from src/vm/execute.rs range construction
+    // ("range requires two integers").
     let err = run_err(r#"fn main() { 1.0..5.0 }"#);
-    assert!(
-        err.contains("range requires two integers") || err.contains("integer"),
-        "got: {err}"
-    );
+    assert!(err.contains("range requires two integers"), "got: {err}");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -941,21 +937,12 @@ fn main() { foo() }
     );
 }
 
-#[test]
-fn test_runtime_record_update_on_non_record() {
-    let err = run_err(
-        r#"
-fn main() {
-  let x = 42
-  x.{ y: 1 }
-}
-    "#,
-    );
-    assert!(
-        err.contains("non-record") || err.contains("record update") || err.contains("cannot"),
-        "got: {err}"
-    );
-}
+// `test_runtime_record_update_on_non_record` removed in round 14:
+// round 13 moved this check to compile time, so the runtime-only check
+// (via `run_err`, which silently swallows typechecker errors in its
+// helper) no longer exercises a distinct code path. The compile-time
+// lock is `test_record_update_unknown_field_on_non_record_rejected_at_typecheck`
+// in tests/type_audit_regressions.rs.
 
 #[test]
 fn test_runtime_field_access_on_int() {
@@ -1099,13 +1086,16 @@ fn main() { abs(-42) }
 
 #[test]
 fn test_runtime_undefined_global() {
+    // Asserts exact VM message from src/vm/execute.rs GetGlobal handler
+    // ("undefined global: nonexistent_function"). Locks the lowercase
+    // spelling so a capitalized fallback elsewhere cannot satisfy it.
     let err = run_err(
         r#"
 fn main() { nonexistent_function() }
     "#,
     );
     assert!(
-        err.contains("undefined") || err.contains("Undefined"),
+        err.contains("undefined global: nonexistent_function"),
         "got: {err}"
     );
 }
@@ -1206,15 +1196,12 @@ fn main() {
   }
 }
     "#;
-    // Either a type error (non-exhaustive) or runtime error
-    let type_errs = type_errors(input);
-    if type_errs.is_empty() {
-        let err = run_err(input);
-        assert!(
-            err.contains("match") || err.contains("no matching"),
-            "got: {err}"
-        );
-    }
+    // Asserts exact typechecker non-exhaustiveness diagnostic from
+    // src/typechecker/exhaustiveness.rs. The typechecker now catches
+    // the missing-tuple-pattern at compile time, so the previous
+    // runtime branch (with a weak `match || no matching` OR chain) was
+    // dead code.
+    assert_type_error(input, "non-exhaustive match: not all patterns are covered");
 }
 
 #[test]
@@ -1365,7 +1352,9 @@ fn main() {
 
 #[test]
 fn test_pipe_into_wrong_arity() {
-    // Piping a value into a function that takes 0 args
+    // Piping a value into a function that takes 0 args — asserts exact
+    // VM message from src/vm/execute.rs function-call arity check
+    // ("function 'no_args' expects 0 arguments, got 1").
     let err = run_err(
         r#"
 fn no_args() = 42
@@ -1373,7 +1362,7 @@ fn main() { 1 |> no_args() }
     "#,
     );
     assert!(
-        err.contains("argument") || err.contains("arity") || err.contains("expects"),
+        err.contains("function 'no_args' expects 0 arguments, got 1"),
         "got: {err}"
     );
 }
@@ -1499,8 +1488,10 @@ fn test_parse_excessive_nesting() {
 
     assert!(result.is_err(), "should fail with nesting error");
     let err = result.unwrap_err();
+    // Asserts exact parser message from src/parser.rs
+    // ("expression nesting exceeds maximum depth").
     assert!(
-        err.message.contains("nesting") || err.message.contains("depth"),
+        err.message.contains("expression nesting exceeds maximum depth"),
         "got: {}",
         err.message
     );
@@ -1576,6 +1567,8 @@ fn main() {
 
 #[test]
 fn test_runtime_channel_send_wrong_arg_count() {
+    // Asserts exact builtin arity message from src/builtins/channel.rs
+    // ("channel.send takes 2 arguments (channel, value)").
     let err = run_err(
         r#"
 import channel
@@ -1586,7 +1579,7 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("argument") || err.contains("takes"),
+        err.contains("channel.send takes 2 arguments (channel, value)"),
         "got: {err}"
     );
 }
@@ -1627,6 +1620,8 @@ fn main() {
 
 #[test]
 fn test_runtime_task_spawn_non_callable() {
+    // Asserts exact builtin message from src/builtins/task.rs
+    // ("task.spawn requires a function argument").
     let err = run_err(
         r#"
 import task
@@ -1636,7 +1631,7 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("callable") || err.contains("function") || err.contains("closure"),
+        err.contains("task.spawn requires a function argument"),
         "got: {err}"
     );
 }
@@ -1712,25 +1707,27 @@ fn main() { check(0) }
 
 #[test]
 fn test_import_nonexistent_builtin_item() {
-    // Importing a non-existent item from a builtin module
+    // Asserts exact VM message from src/vm/execute.rs GetGlobal handler.
+    // The `import list.{ nonexistent_function }` statement registers an
+    // alias pointing at `list.nonexistent_function`, but that global was
+    // never defined, so runtime resolution fails with
+    // "undefined global: list.nonexistent_function".
     let err = run_err(
         r#"
 import list.{ nonexistent_function }
 fn main() { nonexistent_function([1, 2]) }
     "#,
     );
-    // Should produce an error about the missing item
     assert!(
-        err.contains("not found")
-            || err.contains("no public item")
-            || err.contains("Undefined")
-            || err.contains("undefined"),
+        err.contains("undefined global: list.nonexistent_function"),
         "got: {err}"
     );
 }
 
 #[test]
 fn test_runtime_call_wrong_arity() {
+    // Asserts exact VM message from src/vm/execute.rs function-call arity
+    // check ("function 'add' expects 2 arguments, got 3").
     let err = run_err(
         r#"
 fn add(a, b) = a + b
@@ -1738,7 +1735,7 @@ fn main() { add(1, 2, 3) }
     "#,
     );
     assert!(
-        err.contains("argument") || err.contains("arity") || err.contains("expects"),
+        err.contains("function 'add' expects 2 arguments, got 3"),
         "got: {err}"
     );
 }
@@ -1767,6 +1764,8 @@ fn main() {
 
 #[test]
 fn test_runtime_list_map_wrong_arity() {
+    // Asserts exact builtin arity message from src/builtins/list.rs
+    // ("list.map takes 2 arguments (list, fn)").
     let err = run_err(
         r#"
 import list
@@ -1774,7 +1773,7 @@ fn main() { list.map([1, 2]) }
     "#,
     );
     assert!(
-        err.contains("argument") || err.contains("takes") || err.contains("expects"),
+        err.contains("list.map takes 2 arguments (list, fn)"),
         "got: {err}"
     );
 }
@@ -1797,16 +1796,15 @@ fn main() { string.split(42, ",") }
 
 #[test]
 fn test_runtime_map_get_wrong_arity() {
+    // Asserts exact builtin arity message from src/builtins/map.rs
+    // ("map.get takes 2 arguments").
     let err = run_err(
         r#"
 import map
 fn main() { map.get(#{"a": 1}) }
     "#,
     );
-    assert!(
-        err.contains("argument") || err.contains("takes"),
-        "got: {err}"
-    );
+    assert!(err.contains("map.get takes 2 arguments"), "got: {err}");
 }
 
 #[test]
@@ -1824,6 +1822,8 @@ fn main() { io.read_file("/tmp/silt_nonexistent_file_12345.txt") }
 
 #[test]
 fn test_runtime_regex_wrong_arity() {
+    // Asserts exact builtin arity message from src/builtins/regex.rs
+    // ("regex.is_match takes 2 arguments (pattern, text)").
     let err = run_err(
         r#"
 import regex
@@ -1831,7 +1831,7 @@ fn main() { regex.is_match("[a-z]+") }
     "#,
     );
     assert!(
-        err.contains("argument") || err.contains("takes"),
+        err.contains("regex.is_match takes 2 arguments (pattern, text)"),
         "got: {err}"
     );
 }
@@ -1925,14 +1925,19 @@ fn main() {
 
 #[test]
 fn test_unresolved_type_variable_error() {
+    // Asserts the exact diagnostic from the typechecker when a binding
+    // has an unresolved polymorphic return type and is never used to
+    // pin the type: "could not fully determine the type of this
+    // expression; consider adding a type annotation".
     let input = r#"
 fn default() -> a { panic("no value") }
 fn main() { let x = default() }
 "#;
     let errs = type_errors(input);
     assert!(
-        errs.iter()
-            .any(|e| e.contains("could not") || e.contains("type annotation")),
+        errs.iter().any(|e| e.contains(
+            "could not fully determine the type of this expression; consider adding a type annotation"
+        )),
         "expected unresolved type variable error, got: {errs:?}"
     );
 }
@@ -2177,15 +2182,17 @@ fn main() {
         !errs.is_empty(),
         "expected at least one type error, got none"
     );
-    // Accept either the arity-mismatch phrasing or a downstream
-    // type mismatch — both lock the bug. The original symptom is
-    // that a String flows into an Int-declared slot.
+    // Asserts the exact downstream type-mismatch produced when the bare
+    // `Box` parameter annotation instantiates a fresh type variable
+    // that `b.value` then constrains to Int (from the declared return
+    // type), while the caller passes a `String`. The fix from round 13
+    // must produce this exact diagnostic; a loose substring like
+    // "Box" or "Int" would silently pass even if the diagnostic
+    // regressed to an unrelated message.
     assert!(
-        errs.iter().any(|e| e.contains("Box")
-            || e.contains("Int")
-            || e.contains("String")
-            || e.contains("type argument count mismatch")),
-        "expected error about Box/Int/String arity, got: {errs:?}"
+        errs.iter()
+            .any(|e| e.contains("type mismatch: expected Int, got String")),
+        "expected \"type mismatch: expected Int, got String\", got: {errs:?}"
     );
 }
 
@@ -2273,9 +2280,13 @@ fn main() {
         !errs.is_empty(),
         "expected a type error when passing the `Int` descriptor as a value, got none"
     );
+    // Asserts the exact typechecker phrase "expected Int, got TypeOf(Int)";
+    // previously the OR chain's second branch `contains("Int")` was so
+    // broad that almost any diagnostic mentioning the type would pass.
     assert!(
-        errs.iter().any(|e| e.contains("TypeOf") || e.contains("Int")),
-        "expected error mentioning TypeOf or Int mismatch, got: {errs:?}"
+        errs.iter()
+            .any(|e| e.contains("expected Int, got TypeOf(Int)")),
+        "expected mismatch between Int and TypeOf(Int), got: {errs:?}"
     );
 }
 

@@ -136,10 +136,17 @@ fn main() {
 }
 "#,
     );
+    // Both diagnostics fire: one for the undefined record type, one for the
+    // record-pattern-on-non-record mismatch. Assert both exact phrases.
     assert!(
         errs.iter()
-            .any(|e| e.contains("undefined record type") || e.contains("record pattern")),
-        "expected 'undefined record type' or 'record pattern' error, got: {errs:?}"
+            .any(|e| e.contains("undefined record type 'NotDeclared' in pattern")),
+        "expected undefined-record-type-'NotDeclared' diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e
+            .contains("record pattern requires a record value, but 'Int' is not a record type")),
+        "expected record-pattern-on-non-record diagnostic, got: {errs:?}"
     );
 }
 

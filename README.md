@@ -180,7 +180,7 @@ silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init                  Create a new main.silt
 silt lsp                   Start the language server
-silt disasm <file.silt>    Inspect compiled bytecode
+silt disasm <file.silt>    Show bytecode disassembly
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.

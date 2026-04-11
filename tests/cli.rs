@@ -102,9 +102,12 @@ fn test_run_nonexistent_file() {
     assert!(!output.status.success(), "expected non-zero exit code");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // silt's CLI wraps the OS error: "error reading <path>: <os-msg>".
+    // The os-msg ("No such file or directory") is platform-dependent, but
+    // the "error reading" prefix is silt's and stable.
     assert!(
-        stderr.contains("error reading") || stderr.contains("No such file"),
-        "expected file-not-found error in stderr, got: {stderr}"
+        stderr.contains("error reading /tmp/nonexistent_silt_file_99999.silt"),
+        "expected silt's 'error reading <path>' wrapper in stderr, got: {stderr}"
     );
 }
 
@@ -455,10 +458,19 @@ fn test_disasm_valid_file() {
         !stdout.trim().is_empty(),
         "expected non-empty disassembly output"
     );
-    // Disassembly should contain bytecode-like content
+    // Disassembly should contain bytecode-like content. The exact format is
+    // stable and produced by src/debug.rs.
     assert!(
-        stdout.contains("==") || stdout.contains("Constant") || stdout.contains("Return"),
-        "expected bytecode disassembly markers, got: {stdout}"
+        stdout.contains("== <script> (arity=0, upvalues=0) =="),
+        "expected script header in disasm output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("== main (arity=0, upvalues=0) =="),
+        "expected main header in disasm output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Return"),
+        "expected Return opcode in disasm output, got: {stdout}"
     );
 }
 
@@ -550,9 +562,14 @@ fn test_lsp_help_flag() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
+        // Production message from src/main.rs lsp subcommand help.
         assert!(
-            stdout.contains("Usage") || stdout.contains("language server"),
-            "silt lsp {flag}: expected usage text, got: {stdout}"
+            stdout.contains("Usage: silt lsp"),
+            "silt lsp {flag}: expected 'Usage: silt lsp' in help output, got: {stdout}"
+        );
+        assert!(
+            stdout.contains("Start the silt language server"),
+            "silt lsp {flag}: expected description line, got: {stdout}"
         );
     }
 }
@@ -701,9 +718,16 @@ fn test_fails() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
+    // Production summary format from src/cli/test.rs: "N tests: A passed,
+    // B failed, C skipped". We expect exactly "1 failed" and the per-case
+    // "FAIL" marker.
     assert!(
-        combined.contains("1 failed") || combined.contains("FAIL"),
-        "expected failure report in output, got stdout: {stdout}\nstderr: {stderr}"
+        combined.contains("1 failed"),
+        "expected '1 failed' in test summary, got stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        combined.contains("FAIL "),
+        "expected per-test 'FAIL ' marker, got stdout: {stdout}\nstderr: {stderr}"
     );
 }
 

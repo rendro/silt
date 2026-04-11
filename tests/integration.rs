@@ -1798,9 +1798,10 @@ fn main() {
 }
     "#,
     );
+    // Production message from src/vm/run.rs ListConcat error.
     assert!(
-        err.contains("not a list") || err.contains("ListConcat"),
-        "expected list error, got: {err}"
+        err.contains("ListConcat: right operand is not a list or range"),
+        "expected list spread error, got: {err}"
     );
 }
 
@@ -4285,7 +4286,7 @@ fn main() {
     );
     assert!(err.contains("1 + 0"), "error should contain context: {err}");
     assert!(
-        err.contains("1 != 2") || err.contains("!= 2"),
+        err.contains("assertion failed: 1 + 0: 1 != 2"),
         "error should show values: {err}"
     );
 }
@@ -8336,7 +8337,7 @@ fn main() { a }
     "#,
     );
     assert!(
-        err.contains("unsupported pattern") || err.contains("top-level"),
+        err.contains("unsupported pattern in top-level let"),
         "expected top-level let pattern error, got: {err}"
     );
 }

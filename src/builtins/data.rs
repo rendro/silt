@@ -1605,7 +1605,14 @@ fn extract_http_response(
         )));
     }
     let status = match fields.get("status") {
-        Some(Value::Int(n)) => *n as u16,
+        Some(Value::Int(n)) => match u16::try_from(*n) {
+            Ok(s) => s,
+            Err(_) => {
+                return Err(VmError::new(format!(
+                    "Response.status out of range: {n} is not a valid HTTP status (0..=65535)"
+                )));
+            }
+        },
         _ => return Err(VmError::new("Response.status must be an Int".into())),
     };
     let body = match fields.get("body") {
@@ -2053,5 +2060,59 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         }
 
         _ => Err(VmError::new(format!("unknown http function: {name}"))),
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod http_response_tests {
+    use super::*;
+
+    fn make_response(status: i64) -> Value {
+        let mut fields: BTreeMap<String, Value> = BTreeMap::new();
+        fields.insert("status".to_string(), Value::Int(status));
+        fields.insert("body".to_string(), Value::String(String::new()));
+        fields.insert(
+            "headers".to_string(),
+            Value::Map(Arc::new(BTreeMap::new())),
+        );
+        Value::Record("Response".to_string(), Arc::new(fields))
+    }
+
+    #[test]
+    fn test_response_status_out_of_u16_range_rejected() {
+        let val = make_response(99999);
+        let err = extract_http_response(&val).unwrap_err();
+        assert!(
+            err.message.contains("out of range") && err.message.contains("99999"),
+            "expected 'out of range' error mentioning 99999, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_response_status_negative_rejected() {
+        let val = make_response(-1);
+        let err = extract_http_response(&val).unwrap_err();
+        assert!(
+            err.message.contains("out of range"),
+            "expected out-of-range error for negative status, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_response_status_at_u16_max_ok() {
+        let val = make_response(65535);
+        let result = extract_http_response(&val);
+        assert!(result.is_ok(), "status 65535 should be accepted");
+        assert_eq!(result.unwrap().0, 65535);
+    }
+
+    #[test]
+    fn test_response_status_zero_ok() {
+        let val = make_response(0);
+        let result = extract_http_response(&val);
+        assert!(result.is_ok(), "status 0 should be accepted");
+        assert_eq!(result.unwrap().0, 0);
     }
 }
