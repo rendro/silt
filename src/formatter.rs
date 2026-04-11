@@ -2505,6 +2505,10 @@ fn main() {
 
     #[test]
     fn test_comment_inside_fn_body() {
+        // Regression lock for e78d6d9 "Preserve comments inside function bodies".
+        // Must verify POSITION, not just presence — a bug that moves the comment
+        // outside the fn body (e.g. to after the closing brace) would still
+        // make a .contains() check pass.
         let source = r#"fn main() {
   -- setup variables
   let x = 42
@@ -2512,14 +2516,26 @@ fn main() {
 }
 "#;
         let result = format(source).unwrap();
+        let expected = "fn main() {\n  -- setup variables\n  let x = 42\n  x\n}\n";
+        assert_eq!(
+            result, expected,
+            "comment must remain between `{{` and `let x`, got: {result}"
+        );
+        // Extra defensive check: the comment must appear before the closing
+        // brace of main, not after it.
+        let comment_pos = result.find("-- setup variables").unwrap();
+        let close_pos = result.find("\n}").unwrap();
         assert!(
-            result.contains("-- setup variables"),
-            "comment inside fn body should be preserved, got: {result}"
+            comment_pos < close_pos,
+            "body comment was hoisted outside fn body, got: {result}"
         );
     }
 
     #[test]
     fn test_multiple_comments_inside_fn_body() {
+        // Regression lock for e78d6d9 — must verify each comment stays at its
+        // original position relative to the statements, not just that they
+        // survive somewhere in the output.
         let source = r#"fn main() {
   -- first comment
   let x = 1
@@ -2529,18 +2545,23 @@ fn main() {
 }
 "#;
         let result = format(source).unwrap();
-        assert!(
-            result.contains("-- first comment"),
-            "first body comment should be preserved, got: {result}"
+        let expected = "fn main() {\n  -- first comment\n  let x = 1\n  -- second comment\n  let y = 2\n  x + y\n}\n";
+        assert_eq!(
+            result, expected,
+            "body comments must interleave with statements, got: {result}"
         );
-        assert!(
-            result.contains("-- second comment"),
-            "second body comment should be preserved, got: {result}"
-        );
+        // Defensive: neither comment may appear after the closing brace.
+        let close_pos = result.find("\n}").unwrap();
+        assert!(result.find("-- first comment").unwrap() < close_pos);
+        assert!(result.find("-- second comment").unwrap() < close_pos);
     }
 
     #[test]
     fn test_body_comment_and_between_comment() {
+        // Regression lock for e78d6d9 — the "inside foo" comment must stay
+        // inside the foo body, and the "between functions" comment must stay
+        // between the two decls (not collapse into foo's body or be hoisted
+        // to the end of the file).
         let source = r#"fn foo() {
   -- inside foo
   let x = 1
@@ -2551,13 +2572,23 @@ fn main() {
 fn bar() = 2
 "#;
         let result = format(source).unwrap();
+        // foo's closing brace must come after "inside foo" and before
+        // "between functions".
+        let inside_pos = result.find("-- inside foo").unwrap();
+        let foo_close = result.find("}\n").unwrap();
+        let between_pos = result.find("-- between functions").unwrap();
+        let bar_pos = result.find("fn bar").unwrap();
         assert!(
-            result.contains("-- inside foo"),
-            "body comment should be preserved, got: {result}"
+            inside_pos < foo_close,
+            "inside-foo comment was hoisted out of foo, got: {result}"
         );
         assert!(
-            result.contains("-- between functions"),
-            "between-decl comment should be preserved, got: {result}"
+            foo_close < between_pos,
+            "between comment fell inside foo, got: {result}"
+        );
+        assert!(
+            between_pos < bar_pos,
+            "between comment was hoisted past bar, got: {result}"
         );
     }
 
@@ -2601,15 +2632,19 @@ fn bar() = 2
 
     #[test]
     fn test_comment_after_last_stmt_in_body() {
+        // Regression lock: the comment immediately before the closing brace
+        // must stay inside the fn body, not be hoisted after the `}`.
         let source = r#"fn main() {
   let x = 42
   -- trailing body comment
 }
 "#;
         let result = format(source).unwrap();
+        let comment_pos = result.find("-- trailing body comment").unwrap();
+        let close_pos = result.find("\n}").unwrap();
         assert!(
-            result.contains("-- trailing body comment"),
-            "trailing body comment should be preserved, got: {result}"
+            comment_pos < close_pos,
+            "trailing body comment was hoisted outside fn body, got: {result}"
         );
     }
 
