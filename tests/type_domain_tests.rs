@@ -40,10 +40,16 @@ fn add(a: Bool, b: Bool) -> Bool { a + b }
 fn main() { let _ = add(true, false) }
 "#;
     let errs = type_errors(src);
+    // Lock the exact production error that the inference pass emits for
+    // an invalid `+` operand:
+    //   "operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'"
+    // The previous OR chain was catastrophically broad: `.contains("Int")`
+    // matched most type errors, so a bug that rejected Bool + Bool for
+    // the WRONG reason would silently still pass.
     assert!(
-        errs.iter()
-            .any(|e| e.contains("'+'") || e.contains("Bool") || e.contains("Int")),
-        "expected type-domain rejection for Bool + Bool, got: {errs:?}"
+        errs.iter().any(|e| e
+            .contains("operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'")),
+        "expected operator '+' Bool-domain rejection, got: {errs:?}"
     );
 }
 

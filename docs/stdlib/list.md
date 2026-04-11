@@ -56,6 +56,7 @@ Returns `true` if `f` returns `true` for every element. Short-circuits on the
 first `false`.
 
 ```silt
+import list
 fn main() {
     let result = list.all([2, 4, 6]) { x -> x % 2 == 0 }
     println(result)  -- true
@@ -73,6 +74,7 @@ Returns `true` if `f` returns `true` for at least one element. Short-circuits on
 the first `true`.
 
 ```silt
+import list
 fn main() {
     let result = list.any([1, 3, 4]) { x -> x % 2 == 0 }
     println(result)  -- true
@@ -89,6 +91,7 @@ list.append(xs: List(a), elem: a) -> List(a)
 Returns a new list with `elem` added at the end.
 
 ```silt
+import list
 fn main() {
     let xs = [1, 2, 3] |> list.append(4)
     println(xs)  -- [1, 2, 3, 4]
@@ -105,6 +108,7 @@ list.concat(xs: List(a), ys: List(a)) -> List(a)
 Concatenates two lists into a single list.
 
 ```silt
+import list
 fn main() {
     let result = list.concat([1, 2], [3, 4])
     println(result)  -- [1, 2, 3, 4]
@@ -121,6 +125,7 @@ list.contains(xs: List(a), elem: a) -> Bool
 Returns `true` if `elem` is in the list (by value equality).
 
 ```silt
+import list
 fn main() {
     println(list.contains([1, 2, 3], 2))  -- true
     println(list.contains([1, 2, 3], 5))  -- false
@@ -138,6 +143,7 @@ Returns the list without its first `n` elements. If `n >= length`, returns an
 empty list. Negative `n` is a runtime error.
 
 ```silt
+import list
 fn main() {
     let result = list.drop([1, 2, 3, 4, 5], 2)
     println(result)  -- [3, 4, 5]
@@ -154,6 +160,7 @@ list.each(xs: List(a), f: (a) -> ()) -> ()
 Calls `f` for every element in the list. Used for side effects. Returns unit.
 
 ```silt
+import list
 fn main() {
     [1, 2, 3] |> list.each { x -> println(x) }
 }
@@ -169,6 +176,7 @@ list.enumerate(xs: List(a)) -> List((Int, a))
 Returns a list of `(index, element)` tuples, with indices starting at 0.
 
 ```silt
+import list
 fn main() {
     let pairs = list.enumerate(["a", "b", "c"])
     -- [(0, "a"), (1, "b"), (2, "c")]
@@ -186,6 +194,7 @@ list.filter(xs: List(a), f: (a) -> Bool) -> List(a)
 Returns a list containing only the elements for which `f` returns `true`.
 
 ```silt
+import list
 fn main() {
     let evens = [1, 2, 3, 4, 5] |> list.filter { x -> x % 2 == 0 }
     println(evens)  -- [2, 4]
@@ -205,6 +214,7 @@ discards `None` results. Combines filtering and mapping in one pass.
 ```silt
 import int
 
+import list
 fn main() {
     let results = ["1", "abc", "3"] |> list.filter_map { s ->
         match int.parse(s) {
@@ -227,6 +237,7 @@ Returns `Some(element)` for the first element where `f` returns `true`, or
 `None` if no match is found.
 
 ```silt
+import list
 fn main() {
     let result = list.find([1, 2, 3, 4]) { x -> x > 2 }
     println(result)  -- Some(3)
@@ -243,6 +254,7 @@ list.flat_map(xs: List(a), f: (a) -> List(b)) -> List(b)
 Maps each element to a list, then flattens the results into a single list.
 
 ```silt
+import list
 fn main() {
     let result = [1, 2, 3] |> list.flat_map { x -> [x, x * 10] }
     println(result)  -- [1, 10, 2, 20, 3, 30]
@@ -259,6 +271,7 @@ list.flatten(xs: List(List(a))) -> List(a)
 Flattens one level of nesting. Non-list elements are kept as-is.
 
 ```silt
+import list
 fn main() {
     let result = list.flatten([[1, 2], [3], [4, 5]])
     println(result)  -- [1, 2, 3, 4, 5]
@@ -276,6 +289,7 @@ Reduces a list to a single value. Starts with `init`, then calls `f(acc, elem)`
 for each element.
 
 ```silt
+import list
 fn main() {
     let sum = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
     println(sum)  -- 6
@@ -293,6 +307,7 @@ Like `fold`, but the callback returns `Continue(acc)` to keep going or
 `Stop(value)` to terminate early.
 
 ```silt
+import list
 fn main() {
     -- Sum until we exceed 5
     let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
@@ -317,6 +332,7 @@ Returns `Some(element)` at the given index, or `None` if out of bounds.
 Negative indices are a runtime error -- use `list.last` for end access.
 
 ```silt
+import list
 fn main() {
     let xs = [10, 20, 30]
     println(list.get(xs, 1))   -- Some(20)
@@ -336,6 +352,7 @@ Groups elements by the result of applying `f`. Returns a map from keys to lists
 of elements that produced that key.
 
 ```silt
+import list
 fn main() {
     let groups = [1, 2, 3, 4, 5, 6] |> list.group_by { x -> x % 2 }
     -- #{0: [2, 4, 6], 1: [1, 3, 5]}
@@ -352,6 +369,7 @@ list.head(xs: List(a)) -> Option(a)
 Returns `Some(first_element)` or `None` if the list is empty.
 
 ```silt
+import list
 fn main() {
     println(list.head([1, 2, 3]))  -- Some(1)
     println(list.head([]))         -- None
@@ -368,6 +386,7 @@ list.last(xs: List(a)) -> Option(a)
 Returns `Some(last_element)` or `None` if the list is empty.
 
 ```silt
+import list
 fn main() {
     println(list.last([1, 2, 3]))  -- Some(3)
     println(list.last([]))         -- None
@@ -384,6 +403,7 @@ list.length(xs: List(a)) -> Int
 Returns the number of elements in the list.
 
 ```silt
+import list
 fn main() {
     println(list.length([1, 2, 3]))  -- 3
     println(list.length([]))         -- 0
@@ -400,6 +420,7 @@ list.map(xs: List(a), f: (a) -> b) -> List(b)
 Returns a new list with `f` applied to each element.
 
 ```silt
+import list
 fn main() {
     let doubled = [1, 2, 3] |> list.map { x -> x * 2 }
     println(doubled)  -- [2, 4, 6]
@@ -416,6 +437,7 @@ list.prepend(xs: List(a), elem: a) -> List(a)
 Returns a new list with `elem` added at the front.
 
 ```silt
+import list
 fn main() {
     let xs = [2, 3] |> list.prepend(1)
     println(xs)  -- [1, 2, 3]
@@ -432,6 +454,7 @@ list.reverse(xs: List(a)) -> List(a)
 Returns a new list with elements in reverse order.
 
 ```silt
+import list
 fn main() {
     println(list.reverse([1, 2, 3]))  -- [3, 2, 1]
 }
@@ -448,6 +471,7 @@ Returns a new list with the element at `index` replaced by `value`. Panics if
 the index is out of bounds. Negative indices are a runtime error.
 
 ```silt
+import list
 fn main() {
     let xs = list.set([10, 20, 30], 1, 99)
     println(xs)  -- [10, 99, 30]
@@ -464,6 +488,7 @@ list.sort(xs: List(a)) -> List(a)
 Returns a new list sorted in natural (ascending) order.
 
 ```silt
+import list
 fn main() {
     println(list.sort([3, 1, 2]))  -- [1, 2, 3]
 }
@@ -480,6 +505,8 @@ Returns a new list sorted by the result of applying the key function to each
 element.
 
 ```silt
+import list
+import string
 fn main() {
     let words = ["banana", "fig", "apple"]
     let sorted = words |> list.sort_by { w -> string.length(w) }
@@ -498,6 +525,7 @@ Returns all elements except the first. Returns an empty list if the input is
 empty.
 
 ```silt
+import list
 fn main() {
     println(list.tail([1, 2, 3]))  -- [2, 3]
     println(list.tail([]))         -- []
@@ -515,6 +543,7 @@ Returns the first `n` elements. If `n >= length`, returns the whole list.
 Negative `n` is a runtime error.
 
 ```silt
+import list
 fn main() {
     println(list.take([1, 2, 3, 4, 5], 3))  -- [1, 2, 3]
 }
@@ -531,6 +560,7 @@ Builds a list from a seed value. The function returns `Some((element, next_seed)
 to emit an element and continue, or `None` to stop.
 
 ```silt
+import list
 fn main() {
     let countdown = list.unfold(5) { n ->
         match {
@@ -552,6 +582,7 @@ list.unique(xs: List(a)) -> List(a)
 Removes duplicate elements, preserving the order of first occurrences.
 
 ```silt
+import list
 fn main() {
     println(list.unique([1, 2, 1, 3, 2]))  -- [1, 2, 3]
 }
@@ -567,6 +598,7 @@ list.zip(xs: List(a), ys: List(b)) -> List((a, b))
 Pairs up elements from two lists. Stops at the shorter list.
 
 ```silt
+import list
 fn main() {
     let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
     println(pairs)  -- [(1, "a"), (2, "b"), (3, "c")]

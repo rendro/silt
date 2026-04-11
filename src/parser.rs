@@ -29,6 +29,13 @@ pub struct Parser {
     in_match_scrutinee: bool,
     errors: Vec<ParseError>,
     depth: usize,
+    /// Depth guard for recovery-stub generation. When recovery fires inside
+    /// an already-stubbed declaration (e.g., two back-to-back malformed
+    /// `fn` declarations where the second is encountered while still
+    /// recovering from the first), we must not recursively emit another
+    /// stub and call ourselves again. Incremented on entry to the recovery
+    /// path, checked on re-entry.
+    in_fn_recovery: bool,
 }
 
 impl Parser {
@@ -39,6 +46,7 @@ impl Parser {
             in_match_scrutinee: false,
             errors: Vec::new(),
             depth: 0,
+            in_fn_recovery: false,
         }
     }
 
@@ -200,10 +208,68 @@ impl Parser {
 
     /// Like `parse_program`, but recovers from errors and continues parsing.
     /// Returns the (possibly partial) program and all collected parse errors.
+    ///
+    /// When a malformed `fn` declaration is encountered, the parser uses
+    /// `parse_fn_decl_recovering` to salvage whatever header prefix (name,
+    /// params, return type) was parsed cleanly and emits a recovery-stub
+    /// `FnDecl`. Downstream passes (typechecker) treat recovery stubs as
+    /// a source of "trusted signature, unchecked body" so that later
+    /// references to the stubbed name do not cascade into "undefined
+    /// variable" errors (Option B).
     pub fn parse_program_recovering(&mut self) -> (Program, Vec<ParseError>) {
         let mut decls = Vec::new();
         self.skip_nl();
         while !self.at(&Token::Eof) {
+            // Special-case `fn` and `pub fn` declarations so we can salvage
+            // partial state on failure.
+            if self.at(&Token::Fn) {
+                match self.parse_fn_decl_recovering() {
+                    Ok((decl, None)) => decls.push(Decl::Fn(decl)),
+                    Ok((stub, Some(err))) => {
+                        self.errors.push(err);
+                        decls.push(Decl::Fn(stub));
+                        self.synchronize();
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.synchronize();
+                    }
+                }
+                self.skip_nl();
+                continue;
+            }
+            if self.at(&Token::Pub) {
+                // Look ahead: if this is `pub fn`, use the recovery path.
+                let saved = self.save();
+                let pub_span = self.span();
+                self.advance();
+                self.skip_nl();
+                if self.at(&Token::Fn) {
+                    match self.parse_fn_decl_recovering() {
+                        Ok((mut decl, None)) => {
+                            decl.is_pub = true;
+                            decl.span = pub_span;
+                            decls.push(Decl::Fn(decl));
+                        }
+                        Ok((mut stub, Some(err))) => {
+                            stub.is_pub = true;
+                            stub.span = pub_span;
+                            self.errors.push(err);
+                            decls.push(Decl::Fn(stub));
+                            self.synchronize();
+                        }
+                        Err(e) => {
+                            self.errors.push(e);
+                            self.synchronize();
+                        }
+                    }
+                    self.skip_nl();
+                    continue;
+                }
+                // Not `pub fn`: restore and fall through to normal decl parsing.
+                self.restore(saved);
+            }
+
             match self.parse_decl() {
                 Ok(decl) => decls.push(decl),
                 Err(e) => {
@@ -350,7 +416,187 @@ impl Parser {
             body,
             is_pub: false,
             span,
+            is_recovery_stub: false,
         })
+    }
+
+    /// Recovery-aware fn declaration parser used by `parse_program_recovering`.
+    ///
+    /// Tries to parse a function declaration; on error, attempts to salvage
+    /// whatever header prefix was parsed (name, params, return type) and
+    /// synthesizes a recovery-stub `FnDecl` whose body is an empty block.
+    ///
+    /// Returns:
+    ///   * `Ok((fn_decl, None))` — normal parse succeeded.
+    ///   * `Ok((stub_fn, Some(err)))` — parse failed after the name was
+    ///     seen; `stub_fn.is_recovery_stub == true`. Caller should push the
+    ///     error and then `synchronize()`.
+    ///   * `Err(err)` — parse failed before a name was parsed, so no stub
+    ///     can be synthesized. Caller should push the error and
+    ///     synchronize.
+    ///
+    /// Implements the depth guard: if we're already inside recovery, no
+    /// new stubs are emitted for nested failures.
+    fn parse_fn_decl_recovering(&mut self) -> Result<(FnDecl, Option<ParseError>)> {
+        // Depth guard: if we somehow re-entered during recovery (e.g. the
+        // salvage path tried to keep parsing and hit another fn), bail to
+        // the non-recovering path so the caller can handle it.
+        if self.in_fn_recovery {
+            return Ok((self.parse_fn_decl()?, None));
+        }
+
+        let span = self.span();
+        // `fn` keyword is mandatory. If this errors, we have nothing to
+        // salvage.
+        self.expect(&Token::Fn)?;
+
+        // Name is mandatory. If the user wrote `fn (` with no name,
+        // we skip stub creation: no call sites can match an unnamed stub.
+        let name = match self.expect_ident() {
+            Ok((n, _)) => n,
+            Err(e) => return Err(e),
+        };
+
+        // From here on: errors can produce a stub.
+        self.in_fn_recovery = true;
+        let result = self.parse_fn_decl_tail(name, span);
+        self.in_fn_recovery = false;
+
+        match result {
+            Ok(decl) => Ok((decl, None)),
+            Err((stub, err)) => Ok((stub, Some(err))),
+        }
+    }
+
+    /// Parse the tail of a function declaration (after `fn name`), with
+    /// partial salvage on errors. On success, returns a complete FnDecl.
+    /// On failure, returns `(stub_fn_decl, parse_error)`.
+    fn parse_fn_decl_tail(
+        &mut self,
+        name: Symbol,
+        span: Span,
+    ) -> std::result::Result<FnDecl, (FnDecl, ParseError)> {
+        // Try to parse params. On failure, emit a stub with empty params.
+        let params = match self.parse_fn_params() {
+            Ok(p) => p,
+            Err(e) => {
+                return Err((self.make_recovery_stub(name, Vec::new(), None, span), e));
+            }
+        };
+
+        // Try return type annotation.
+        let return_type = if self.peek_skip_nl() == &Token::Arrow {
+            self.advance();
+            match self.parse_type_expr() {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    return Err((
+                        self.make_recovery_stub(name, params, None, span),
+                        e,
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Try where clauses.
+        let where_clauses = if self.peek_skip_nl() == &Token::Where {
+            self.advance();
+            let mut clauses = Vec::new();
+            let result: Result<()> = (|| {
+                loop {
+                    self.skip_nl();
+                    let (type_param, _) = self.expect_ident()?;
+                    self.expect(&Token::Colon)?;
+                    let (trait_name, _) = self.expect_ident()?;
+                    clauses.push((type_param, trait_name));
+                    while self.at(&Token::Plus) {
+                        self.advance();
+                        let (trait_name, _) = self.expect_ident()?;
+                        clauses.push((type_param, trait_name));
+                    }
+                    self.skip_nl();
+                    if self.at(&Token::Comma) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                return Err((
+                    self.make_recovery_stub(name, params, return_type, span),
+                    e,
+                ));
+            }
+            clauses
+        } else {
+            Vec::new()
+        };
+
+        self.skip_nl();
+        // Body. On failure, emit a stub that preserves the header.
+        let body = if self.at(&Token::Eq) {
+            self.advance();
+            self.skip_nl();
+            match self.parse_expr() {
+                Ok(e) => e,
+                Err(err) => {
+                    return Err((
+                        self.make_recovery_stub(name, params, return_type, span),
+                        err,
+                    ));
+                }
+            }
+        } else if self.at(&Token::LBrace) {
+            match self.parse_block() {
+                Ok(b) => b,
+                Err(err) => {
+                    return Err((
+                        self.make_recovery_stub(name, params, return_type, span),
+                        err,
+                    ));
+                }
+            }
+        } else {
+            // Abstract method — no body.
+            Expr::new(ExprKind::Unit, span)
+        };
+
+        Ok(FnDecl {
+            name,
+            params,
+            return_type,
+            where_clauses,
+            body,
+            is_pub: false,
+            span,
+            is_recovery_stub: false,
+        })
+    }
+
+    /// Build a recovery-stub `FnDecl` with an empty body. The body is a
+    /// block containing no statements; the typechecker treats these as
+    /// having `Type::Never`-style semantics (no body errors emitted).
+    fn make_recovery_stub(
+        &self,
+        name: Symbol,
+        params: Vec<Param>,
+        return_type: Option<TypeExpr>,
+        span: Span,
+    ) -> FnDecl {
+        FnDecl {
+            name,
+            params,
+            return_type,
+            where_clauses: Vec::new(),
+            body: Expr::new(ExprKind::Block(Vec::new()), span),
+            is_pub: false,
+            span,
+            is_recovery_stub: true,
+        }
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {

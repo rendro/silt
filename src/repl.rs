@@ -454,8 +454,20 @@ fn eval_declaration(
     let script = Arc::new(script);
     if let Err(e) = vm.run(script) {
         if let Some(span) = e.span {
-            let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
-            eprintln!("{source_err}");
+            // Declarations are compiled un-wrapped, so the span is already
+            // in `input` coordinates — no `adjust_span` needed. But if the
+            // span doesn't fit this entry's source it must have come from
+            // a chunk compiled in a *previous* REPL entry (e.g. a `let`
+            // initializer that calls a prior `fn`). Render the primary
+            // location as `<declaration>` in that case, matching the
+            // call-stack frame treatment below.
+            if span_fits_input(span, input) {
+                let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
+                eprintln!("{source_err}");
+            } else {
+                eprintln!("error[runtime]: {}", e.message);
+                eprintln!(" --> <declaration>");
+            }
             // Print the call stack for the non-synthetic frames. Frame line
             // numbers come from the original REPL input buffer, so we label
             // them `<declaration>` rather than print misleading positions.
@@ -679,8 +691,22 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                     input_byte_len,
                     last_line_cols,
                 );
-                let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
-                eprintln!("{source_err}");
+                // If the adjusted span doesn't land on a real character in
+                // the current entry's source, it belongs to a chunk that
+                // was compiled in an earlier REPL entry (e.g. a `fn a() = 1/0`
+                // called from a later `c()`). Printing a caret against
+                // *this* entry's text would point into phantom whitespace,
+                // so we label the primary location `<declaration>` —
+                // matching the treatment the call-stack frames below
+                // already apply to prior-entry frames.
+                if span_fits_input(adjusted, input) {
+                    let source_err =
+                        SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
+                    eprintln!("{source_err}");
+                } else {
+                    eprintln!("error[runtime]: {}", e.message);
+                    eprintln!(" --> <declaration>");
+                }
                 // Print the filtered call stack. Frame line numbers come
                 // from the wrapped input and don't survive `adjust_span`
                 // for anything but the error site itself, so we print
@@ -696,6 +722,30 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
             }
         }
     }
+}
+
+/// Test whether `span` points at a real (line, column) position inside
+/// `input`. Used to detect runtime-error spans that came from a chunk
+/// compiled in a *previous* REPL entry: such spans will have line/col
+/// pairs that don't correspond to any character of the current entry's
+/// source, because each REPL entry is lexed in its own coordinate space
+/// starting from line 1 column 1.
+///
+/// A span "fits" when:
+///   - its line is 1-based and exists in `input`, AND
+///   - its column is 1-based and lies within (or one past the end of)
+///     that line's character count — one past end is valid because it
+///     corresponds to the position right after the last character, e.g.
+///     a trailing expected-token caret.
+fn span_fits_input(span: Span, input: &str) -> bool {
+    if span.line == 0 || span.col == 0 {
+        return false;
+    }
+    let Some(line_text) = input.lines().nth(span.line - 1) else {
+        return false;
+    };
+    let line_chars = line_text.chars().count();
+    span.col <= line_chars + 1
 }
 
 /// Adjust a span from `wrapped` coordinates to `input` coordinates.

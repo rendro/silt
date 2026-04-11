@@ -33,6 +33,8 @@ Returns capture groups from the first match, or `None` if no match. The full
 match is at index 0, followed by numbered groups.
 
 ```silt
+import regex
+import list
 fn main() {
     match regex.captures("(\\w+)@(\\w+)", "user@host") {
         Some(groups) -> {
@@ -55,6 +57,7 @@ Returns capture groups for every match. Each inner list has the full match at
 index 0 followed by numbered groups.
 
 ```silt
+import regex
 fn main() {
     let results = regex.captures_all("(\\d+)-(\\d+)", "1-2 and 3-4")
     -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
@@ -71,6 +74,7 @@ regex.find(pattern: String, text: String) -> Option(String)
 Returns `Some(matched_text)` for the first match, or `None`.
 
 ```silt
+import regex
 fn main() {
     let result = regex.find("\\d+", "abc 123 def")
     println(result)  -- Some("123")
@@ -87,6 +91,7 @@ regex.find_all(pattern: String, text: String) -> List(String)
 Returns all non-overlapping matches as a list of strings.
 
 ```silt
+import regex
 fn main() {
     let nums = regex.find_all("\\d+", "a1 b22 c333")
     println(nums)  -- ["1", "22", "333"]
@@ -103,6 +108,7 @@ regex.is_match(pattern: String, text: String) -> Bool
 Returns `true` if the pattern matches anywhere in the text.
 
 ```silt
+import regex
 fn main() {
     println(regex.is_match("^\\d+$", "123"))    -- true
     println(regex.is_match("^\\d+$", "abc"))    -- false
@@ -119,6 +125,7 @@ regex.replace(pattern: String, text: String, replacement: String) -> String
 Replaces the first match with the replacement string.
 
 ```silt
+import regex
 fn main() {
     let result = regex.replace("\\d+", "abc 123 def 456", "NUM")
     println(result)  -- "abc NUM def 456"
@@ -135,6 +142,7 @@ regex.replace_all(pattern: String, text: String, replacement: String) -> String
 Replaces all matches with the replacement string.
 
 ```silt
+import regex
 fn main() {
     let result = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
     println(result)  -- "abc NUM def NUM"
@@ -155,6 +163,7 @@ return a string.
 import int
 import result
 
+import regex
 fn main() {
     let result = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
         int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })
@@ -173,6 +182,7 @@ regex.split(pattern: String, text: String) -> List(String)
 Splits the text on every occurrence of the pattern.
 
 ```silt
+import regex
 fn main() {
     let parts = regex.split("\\s+", "hello   world   silt")
     println(parts)  -- ["hello", "world", "silt"]

@@ -975,3 +975,133 @@ fn test_silt_test_help_mentions_filename_pattern() {
         );
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION: `silt test <dir> --filter <needle>` with zero
+// surviving files must exit 0 with a specific "no matching test files
+// found" message, rather than treating the empty filter result as a
+// failure. Locks the fix in src/main.rs:1131-1166.
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_silt_test_filter_empty_result_exits_zero_with_message() {
+    // Dedicated directory so this test cannot collide with sibling tests
+    // that share the shared `silt_cli_tests` tempdir.
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_cli_filter_empty_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // A real, valid `_test.silt` file containing one test function.
+    // The filter below must NOT match this function's name.
+    let test_file = dir.join("foo_test.silt");
+    fs::write(&test_file, "fn test_a() { }\nfn main() { }\n").unwrap();
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(dir.to_str().unwrap())
+        .arg("--filter")
+        .arg("xyz_nonexistent_filter")
+        .output()
+        .expect("failed to run silt");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "expected exit 0 for empty --filter result, stdout: {stdout}, stderr: {stderr}"
+    );
+    // Lock the exact "no matching test files found" string from main.rs
+    // so a regression that treats an empty filter result as a fatal
+    // error — or changes the message beyond recognition — is caught.
+    assert!(
+        stdout.contains("no matching test files found"),
+        "expected 'no matching test files found' in stdout, got: {stdout}"
+    );
+
+    // Clean up.
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ── Module runtime error with name collision renders correct file ──
+//
+// When a module and the main file both define `fn run()` (or any other
+// colliding top-level name), the runtime-error renderer must NOT blame
+// the module's source — the bare-name map in `collect_module_function_sources`
+// cannot disambiguate, so the renderer must fall back to the main file's
+// source instead. Without the fix, a `y / 0` in main's `run()` was rendered
+// at `mod1.silt:5:3` with mod1's snippet line, producing a completely
+// nonsensical error pointer.
+
+#[test]
+fn test_module_runtime_error_with_name_collision_renders_correct_file() {
+    // Fresh project dir so imports resolve cleanly relative to main.silt.
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_module_err_collision_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // mod1.silt defines its own `pub fn run()` — the NAME collides with
+    // main's `fn run()` below.  Line 5 is `let z = 99`, which must NEVER
+    // appear in the rendered error snippet.
+    let mod1 = dir.join("mod1.silt");
+    fs::write(
+        &mod1,
+        "pub fn run() {\n  \"this is completely unrelated\"\n  42\n  1 * 2\n  let z = 99\n}\n",
+    )
+    .unwrap();
+
+    // main.silt imports mod1 and defines its OWN `fn run()` whose line 5
+    // is `y / 0`. The runtime error fires here, in main.silt.
+    let main = dir.join("main.silt");
+    fs::write(
+        &main,
+        "import mod1\n\nfn run() {\n  let y = 5\n  y / 0\n}\n\nfn main() { run() }\n",
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg(&main)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit from runtime error"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Error message must mention division by zero.
+    assert!(
+        stderr.contains("division by zero"),
+        "expected `division by zero` in stderr, got:\n{stderr}"
+    );
+    // Error must be rendered against main.silt — the actual origin file.
+    assert!(
+        stderr.contains("main.silt"),
+        "expected `main.silt` in stderr (the real origin of the error), got:\n{stderr}"
+    );
+    // Error must NOT be blamed on mod1.silt.  That's the exact bug we're
+    // locking down: bare-name collisions caused the renderer to resolve
+    // to the first-seen module that happens to define a function with the
+    // same name.
+    assert!(
+        !stderr.contains("mod1.silt"),
+        "did not expect `mod1.silt` in stderr (collision should fall back to main), got:\n{stderr}"
+    );
+    // Snippet must show the OFFENDING line from main.silt, not mod1.silt.
+    assert!(
+        stderr.contains("y / 0"),
+        "expected snippet `y / 0` (from main.silt) in stderr, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("let z = 99"),
+        "did not expect mod1.silt's `let z = 99` snippet in stderr, got:\n{stderr}"
+    );
+
+    // Clean up.
+    let _ = fs::remove_dir_all(&dir);
+}

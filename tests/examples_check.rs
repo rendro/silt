@@ -349,3 +349,282 @@ fn all_doc_fn_main_blocks_type_check() {
         failures.join("\n---\n")
     );
 }
+
+/// Stronger sibling of `all_doc_fn_main_blocks_type_check` that also drives
+/// the compile phase (lex → parse → typecheck → compile) on every
+/// `fn main` block in README + docs/**/*.md.
+///
+/// Why: `silt check` only runs the type checker, which globally
+/// preregisters every stdlib function, so doc examples pass the type check
+/// even when they forget the matching `import <module>` line at the top.
+/// Real users run `silt run`, which fails with
+/// `module 'X' is not imported`. The compile phase (which `silt run`
+/// always runs) catches that missing-import error deterministically
+/// without having to execute the VM, which is important because some
+/// doc examples are interactive (io.stdin.read_line), networked
+/// (http.get/serve), or long-running (time.sleep, channel.recv).
+///
+/// This test drives the compile phase directly via the silt library API
+/// so it never runs user code. Removing an `import` line from any doc
+/// block that uses that module must make this test fail — that's the
+/// lock we need so README/docs never silently drift away from runnable.
+#[test]
+fn all_doc_fn_main_blocks_compile() {
+    use silt::compiler::Compiler;
+    use silt::lexer::Lexer;
+    use silt::parser::Parser;
+    use silt::typechecker;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Collect targets: README.md plus every .md file under docs/ (recursive).
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+    assert!(
+        !targets.is_empty(),
+        "expected at least one markdown target (README.md or docs/**/*.md)"
+    );
+
+    // Give the compiler a stable project root for any `import "./foo"`
+    // relative imports that might appear in doc blocks. None of the
+    // current doc blocks use file-based imports, but we set a real
+    // directory so the compiler never trips on a missing root.
+    let project_root = manifest_dir.to_path_buf();
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut runnable_block_count = 0usize;
+
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+        let blocks = extract_silt_blocks(&body);
+
+        for (opener_line, src) in blocks {
+            // Only full programs (containing `fn main`) are expected to
+            // compile standalone. Snippet blocks are skipped.
+            if !src.contains("fn main") {
+                continue;
+            }
+            runnable_block_count += 1;
+
+            // Reset the interner per block so one block's interned
+            // strings can't leak into another's diagnostics.
+            silt::intern::reset();
+
+            // Drive the pipeline: lex → parse → typecheck → compile.
+            // We deliberately stop after compile (no VM run) so
+            // interactive / networked / long-running examples are safe.
+            let tokens = match Lexer::new(&src).tokenize() {
+                Ok(t) => t,
+                Err(e) => {
+                    failures.push(format!(
+                        "{}:{} (```silt fence): lex error: {:?}",
+                        doc_path.display(),
+                        opener_line,
+                        e
+                    ));
+                    continue;
+                }
+            };
+
+            let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+            if !parse_errors.is_empty() {
+                failures.push(format!(
+                    "{}:{} (```silt fence): parse errors: {:?}",
+                    doc_path.display(),
+                    opener_line,
+                    parse_errors
+                ));
+                continue;
+            }
+
+            // Typecheck (informational — hard type errors get reported
+            // below alongside any compile error so the user sees
+            // everything at once).
+            let type_errors = typechecker::check(&mut program);
+            let hard_type_errors: Vec<_> = type_errors
+                .iter()
+                .filter(|e| e.severity == typechecker::Severity::Error)
+                .collect();
+
+            // Compile. This is where the missing-import error surfaces.
+            let mut compiler = Compiler::with_project_root(project_root.clone());
+            match compiler.compile_program(&program) {
+                Ok(_) => {
+                    if !hard_type_errors.is_empty() {
+                        failures.push(format!(
+                            "{}:{} (```silt fence): type errors: {:?}",
+                            doc_path.display(),
+                            opener_line,
+                            hard_type_errors
+                        ));
+                    }
+                }
+                Err(e) => {
+                    failures.push(format!(
+                        "{}:{} (```silt fence): compile error: {}",
+                        doc_path.display(),
+                        opener_line,
+                        e.message
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        runnable_block_count > 0,
+        "expected at least one runnable ```silt block (containing `fn main`) across all docs"
+    );
+
+    assert!(
+        failures.is_empty(),
+        "compile phase failed for {} ```silt block(s) across docs/ and README.md. \
+         This almost always means a doc example forgot to `import <module>` \
+         at the top of its `fn main` block. Fix by adding the missing imports \
+         in the markdown source:\n\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
+}
+
+/// Regression lock for the GAP audit: `docs/language/bindings-and-functions.md`
+/// used to claim "only 7 names" always available in the global namespace,
+/// but the type-checker actually preregisters 11 (the 7 original prelude
+/// names plus the 4 primitive type descriptors `Int`/`Float`/`String`/`Bool`
+/// used by `json.parse_map` and other type-directed APIs). The convergent
+/// fix from prior audit rounds is to drop the numeric count entirely and
+/// just list every name — so this test asserts (a) the outdated "only 7"
+/// phrasing is gone and (b) every preregistered always-available name is
+/// mentioned by the doc. If a future commit adds another always-available
+/// name to `src/typechecker/builtins.rs` without updating this doc, the
+/// test will fail with a clear pointer.
+#[test]
+fn bindings_and_functions_globals_list_matches_reality() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc_path = manifest_dir
+        .join("docs")
+        .join("language")
+        .join("bindings-and-functions.md");
+    let body = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+
+    // (a) The old "only 7 names" claim (or any "N names that are always
+    //     available" phrasing with a count) must not come back. Any
+    //     numeric count here is drift-prone; use a stable list instead.
+    assert!(
+        !body.contains("only 7 names"),
+        "{}: the outdated 'only 7 names' phrasing came back. The global \
+         namespace actually has 11 always-available names (7 prelude + 4 \
+         type descriptors). Replace the count with a stable list of names.",
+        doc_path.display()
+    );
+    // Lightweight guard against a resurrected "<digits> names that are
+    // always available" pattern. Hand-rolled to avoid pulling in regex.
+    let lower = body.to_ascii_lowercase();
+    if let Some(pos) = lower.find(" names that are always available") {
+        // Walk backwards over digits immediately before the match.
+        let prefix = &lower.as_bytes()[..pos];
+        let mut i = prefix.len();
+        while i > 0 && prefix[i - 1] == b' ' {
+            i -= 1;
+        }
+        let mut had_digit = false;
+        while i > 0 && prefix[i - 1].is_ascii_digit() {
+            had_digit = true;
+            i -= 1;
+        }
+        assert!(
+            !had_digit,
+            "{}: contains a drift-prone '<digits> names that are always \
+             available' count. Drop the count; list the names instead.",
+            doc_path.display()
+        );
+    }
+
+    // (b) Every always-available name must be mentioned somewhere in the
+    //     file. This matches the set registered by
+    //     `src/typechecker/builtins.rs` (the prelude + `Int`/`Float`/
+    //     `String`/`Bool` primitive type descriptors).
+    let required = [
+        "print", "println", "panic", "Ok", "Err", "Some", "None", "Int", "Float", "String",
+        "Bool",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !body.contains(name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{}: missing always-available name(s): {:?}. These are registered \
+         in src/typechecker/builtins.rs and must appear in the bindings \
+         doc's 'always available' list.",
+        doc_path.display(),
+        missing
+    );
+}
+
+/// Regression lock for the LATENT audit: `docs/stdlib/io-fs.md`'s frontmatter
+/// `title:` used to say "io / fs" even though the file also documents
+/// `env.*` and both `docs/stdlib/index.md` and `docs/stdlib-reference.md`
+/// already refer to it as "io / fs / env". This test guarantees the three
+/// labels stay in sync.
+#[test]
+fn io_fs_frontmatter_title_matches_stdlib_index() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let io_fs_path = manifest_dir.join("docs").join("stdlib").join("io-fs.md");
+    let body = std::fs::read_to_string(&io_fs_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", io_fs_path.display(), e));
+
+    // The frontmatter `title:` must be "io / fs / env".
+    assert!(
+        body.contains("title: \"io / fs / env\""),
+        "{}: frontmatter title must be `io / fs / env` to match the stdlib \
+         index entries and the file's actual env coverage, but got:\n{}",
+        io_fs_path.display(),
+        body.lines().take(6).collect::<Vec<_>>().join("\n")
+    );
+
+    // And the stdlib index/reference must still label it consistently.
+    let index_path = manifest_dir.join("docs").join("stdlib").join("index.md");
+    let index_body = std::fs::read_to_string(&index_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", index_path.display(), e));
+    assert!(
+        index_body.contains("io / fs / env"),
+        "{}: expected a reference to `io / fs / env` so the frontmatter \
+         title and index label stay in sync",
+        index_path.display()
+    );
+
+    let reference_path = manifest_dir.join("docs").join("stdlib-reference.md");
+    if reference_path.is_file() {
+        let reference_body = std::fs::read_to_string(&reference_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", reference_path.display(), e));
+        assert!(
+            reference_body.contains("io / fs / env"),
+            "{}: expected a reference to `io / fs / env` so the frontmatter \
+             title and stdlib-reference label stay in sync",
+            reference_path.display()
+        );
+    }
+}

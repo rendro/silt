@@ -64,6 +64,7 @@ time.now() -> Instant
 Returns the current UTC time as nanoseconds since the Unix epoch (1970-01-01T00:00:00Z).
 
 ```silt
+import time
 fn main() {
     let t = time.now()
     println(t.epoch_ns)  -- 1775501213453369259
@@ -80,6 +81,7 @@ time.today() -> Date
 Returns the current date in the system's local timezone.
 
 ```silt
+import time
 fn main() {
     println(time.today())  -- 2026-04-06
 }
@@ -95,6 +97,7 @@ time.date(year: Int, month: Int, day: Int) -> Result(Date, String)
 Creates a validated `Date`. Returns `Err` for invalid dates.
 
 ```silt
+import time
 fn main() {
     println(time.date(2024, 3, 15))   -- Ok(2024-03-15)
     println(time.date(2024, 2, 29))   -- Ok(2024-02-29) — leap year
@@ -112,6 +115,7 @@ time.time(hour: Int, min: Int, sec: Int) -> Result(Time, String)
 Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
 
 ```silt
+import time
 fn main() {
     println(time.time(14, 30, 0))  -- Ok(14:30:00)
     println(time.time(25, 0, 0))   -- Err(invalid time: 25:0:0)
@@ -128,6 +132,7 @@ time.datetime(date: Date, time: Time) -> DateTime
 Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are already validated.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let d = time.date(2024, 6, 15)?
     let t = time.time(9, 30, 0)?
@@ -146,6 +151,7 @@ time.to_datetime(instant: Instant, offset_minutes: Int) -> DateTime
 Converts an `Instant` to a `DateTime` by applying a UTC offset in minutes.
 
 ```silt
+import time
 fn main() {
     let now = time.now()
     let tokyo = now |> time.to_datetime(540)    -- UTC+9:00
@@ -165,6 +171,7 @@ time.to_instant(datetime: DateTime, offset_minutes: Int) -> Instant
 Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
     let instant = time.to_instant(dt, 0)
@@ -183,6 +190,7 @@ time.to_utc(instant: Instant) -> DateTime
 Shorthand for `time.to_datetime(instant, 0)`.
 
 ```silt
+import time
 fn main() {
     println(time.now() |> time.to_utc)  -- 2026-04-06T18:46:09.005723612
 }
@@ -198,6 +206,7 @@ time.from_utc(datetime: DateTime) -> Instant
 Shorthand for `time.to_instant(datetime, 0)`.
 
 ```silt
+import time
 fn main() {
     let dt = time.now() |> time.to_utc
     let back = dt |> time.from_utc
@@ -215,6 +224,7 @@ time.format(datetime: DateTime, pattern: String) -> String
 Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %A %a %B %b %%`.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
     println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
@@ -233,6 +243,7 @@ time.format_date(date: Date, pattern: String) -> String
 Formats a `Date` using strftime patterns.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let d = time.date(2024, 6, 15)?
     println(d |> time.format_date("%d/%m/%Y"))  -- 15/06/2024
@@ -250,6 +261,7 @@ time.parse(s: String, pattern: String) -> Result(DateTime, String)
 Parses a string into a `DateTime` using a strftime pattern.
 
 ```silt
+import time
 fn main() {
     let dt = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
     println(dt)  -- Ok(2024-07-04T12:00:00)
@@ -266,6 +278,7 @@ time.parse_date(s: String, pattern: String) -> Result(Date, String)
 Parses a string into a `Date` using a strftime pattern.
 
 ```silt
+import time
 fn main() {
     let d = time.parse_date("2024-07-04", "%Y-%m-%d")
     println(d)  -- Ok(2024-07-04)
@@ -282,6 +295,7 @@ time.add_days(date: Date, days: Int) -> Date
 Adds (or subtracts, if negative) days from a date.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let d = time.date(2024, 1, 1)?
     println(d |> time.add_days(90))   -- 2024-03-31
@@ -300,6 +314,7 @@ time.add_months(date: Date, months: Int) -> Date
 Adds (or subtracts) months from a date. Clamps to the last valid day of the target month.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let d = time.date(2024, 1, 31)?
     println(d |> time.add_months(1))   -- 2024-02-29 (leap year, clamped)
@@ -318,6 +333,7 @@ time.add(instant: Instant, duration: Duration) -> Instant
 Adds a duration to an instant.
 
 ```silt
+import time
 fn main() {
     let t = time.now()
     let later = t |> time.add(time.hours(2))
@@ -335,6 +351,7 @@ time.since(from: Instant, to: Instant) -> Duration
 Returns the signed duration from `from` to `to` (computed as `to.epoch_ns − from.epoch_ns`).
 
 ```silt
+import time
 fn main() {
     let start = time.now()
     time.sleep(time.ms(100))
@@ -356,6 +373,7 @@ time.ms(n: Int) -> Duration
 Duration constructor functions.
 
 ```silt
+import time
 fn main() {
     println(time.hours(1))     -- 1h
     println(time.minutes(30))  -- 30m
@@ -374,6 +392,7 @@ time.weekday(date: Date) -> Weekday
 Returns the day of the week. Pattern-match on the result for exhaustive handling.
 
 ```silt
+import time
 fn main() {
     let day = time.today() |> time.weekday
     match day {
@@ -395,6 +414,7 @@ time.days_between(from: Date, to: Date) -> Int
 Returns the signed number of days between two dates.
 
 ```silt
+import time
 fn main() -> Result(Unit, String) {
     let a = time.date(2024, 1, 1)?
     let b = time.date(2024, 12, 31)?
@@ -413,6 +433,7 @@ time.days_in_month(year: Int, month: Int) -> Int
 Returns the number of days in the given month.
 
 ```silt
+import time
 fn main() {
     println(time.days_in_month(2024, 2))  -- 29 (leap year)
     println(time.days_in_month(2023, 2))  -- 28
@@ -429,6 +450,7 @@ time.is_leap_year(year: Int) -> Bool
 Returns true if the year is a leap year.
 
 ```silt
+import time
 fn main() {
     println(time.is_leap_year(2024))  -- true
     println(time.is_leap_year(1900))  -- false (divisible by 100)
@@ -446,6 +468,7 @@ time.sleep(duration: Duration) -> ()
 Blocks the current task for the given duration. Other tasks continue running.
 
 ```silt
+import time
 fn main() {
     let before = time.now()
     time.sleep(time.ms(100))

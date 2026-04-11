@@ -202,6 +202,17 @@ pub struct Compiler {
     /// to their qualified equivalents so intra-module calls resolve.
     /// Value is (module_name, map_of fn_name -> is_public).
     module_scope: Option<(String, HashMap<String, bool>)>,
+    /// For each compiled file-based module, the set of `pub fn` names it
+    /// exports. Populated during `compile_file_module_inner`. Used by the
+    /// module-qualified call/field-access paths to distinguish "function is
+    /// private" from "function doesn't exist" when a `mod.fn` reference
+    /// fails to resolve.
+    module_public_fns: HashMap<String, HashSet<String>>,
+    /// For each compiled file-based module, the set of non-`pub` (private)
+    /// function names it defines. Lets the call-site lookup emit a crisp
+    /// compile-time visibility error ("`helper` exists in module `mymod`
+    /// but is not `pub`") instead of the VM's generic "undefined global".
+    module_private_fns: HashMap<String, HashSet<String>>,
     /// Whether this compiler is being used to compile a REPL entry. In REPL
     /// mode, an unknown `name.field` where `name` is neither a local nor a
     /// known builtin module falls through to `GetGlobal(name) + GetField(field)`
@@ -231,6 +242,8 @@ impl Compiler {
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
+            module_public_fns: HashMap::new(),
+            module_private_fns: HashMap::new(),
             repl_mode: false,
         }
     }
@@ -247,6 +260,8 @@ impl Compiler {
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
+            module_public_fns: HashMap::new(),
+            module_private_fns: HashMap::new(),
             repl_mode: false,
         }
     }
@@ -346,8 +361,24 @@ impl Compiler {
     fn compile_decl(&mut self, decl: &Decl) -> Result<(), CompileError> {
         match decl {
             Decl::Fn(fn_decl) => {
-                let arity = fn_decl.params.len() as u8;
                 let span = fn_decl.span;
+                // Arity is encoded as a `u8` in bytecode. Silently
+                // wrapping via `.len() as u8` used to let functions
+                // with 256 parameters compile with arity=0; at the
+                // call site the VM then treated a stack value as the
+                // callee and blew up with "cannot call value of type
+                // Int". Reject at compile time instead.
+                if fn_decl.params.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "function '{}' has {} parameters; silt functions are limited to 255",
+                            resolve(fn_decl.name),
+                            fn_decl.params.len()
+                        ),
+                        span,
+                    });
+                }
+                let arity = fn_decl.params.len() as u8;
 
                 // Push a new context for the function body.
                 self.contexts
@@ -527,9 +558,20 @@ impl Compiler {
             Decl::TraitImpl(trait_impl) => {
                 // Compile each method and register as "TypeName.method_name" global.
                 for method in &trait_impl.methods {
+                    let span = method.span;
+                    if method.params.len() > u8::MAX as usize {
+                        return Err(CompileError {
+                            message: format!(
+                                "trait method '{}.{}' has {} parameters; silt functions are limited to 255",
+                                trait_impl.target_type,
+                                method.name,
+                                method.params.len()
+                            ),
+                            span,
+                        });
+                    }
                     let arity = method.params.len() as u8;
                     let qualified_name = format!("{}.{}", trait_impl.target_type, method.name);
-                    let span = method.span;
 
                     self.contexts
                         .push(CompileContext::new(qualified_name.clone(), arity));
@@ -796,6 +838,22 @@ impl Compiler {
                 all_fn_names.insert(resolve(f.name), f.is_pub);
             }
         }
+        // Remember each fn's visibility under this module so the caller-side
+        // `mod.fn` lookup can tell "exists-but-private" from "doesn't exist"
+        // and emit a visibility-specific compile error.
+        let mut pub_set: HashSet<String> = HashSet::new();
+        let mut priv_set: HashSet<String> = HashSet::new();
+        for (fn_name, is_pub) in &all_fn_names {
+            if *is_pub {
+                pub_set.insert(fn_name.clone());
+            } else {
+                priv_set.insert(fn_name.clone());
+            }
+        }
+        self.module_public_fns
+            .insert(module_name.to_string(), pub_set);
+        self.module_private_fns
+            .insert(module_name.to_string(), priv_set);
         self.module_scope = Some((module_name.to_string(), all_fn_names));
 
         // Compile each declaration. Functions get registered as
@@ -806,8 +864,18 @@ impl Compiler {
         for decl in &program.decls {
             match decl {
                 Decl::Fn(fn_decl) => {
-                    let arity = fn_decl.params.len() as u8;
                     let fn_span = fn_decl.span;
+                    if fn_decl.params.len() > u8::MAX as usize {
+                        return Err(CompileError {
+                            message: format!(
+                                "imported function '{}' has {} parameters; silt functions are limited to 255",
+                                resolve(fn_decl.name),
+                                fn_decl.params.len()
+                            ),
+                            span: fn_span,
+                        });
+                    }
+                    let arity = fn_decl.params.len() as u8;
 
                     self.contexts
                         .push(CompileContext::new(resolve(fn_decl.name), arity));
@@ -1060,6 +1128,44 @@ impl Compiler {
 
     // ── Expressions ───────────────────────────────────────────────
 
+    /// If `module` is a known file-based module and `name` is a `fn` declared
+    /// in it without `pub`, return a `CompileError` that names the function,
+    /// the module, the source file, and the exact syntactic fix. Returning
+    /// `None` means either the module isn't a tracked user module or the name
+    /// doesn't match a private function — in both cases callers should fall
+    /// through to the existing resolution path (and let the VM raise
+    /// "undefined global" at runtime for typos).
+    fn private_module_fn_error(
+        &self,
+        module: &str,
+        name: &str,
+        span: Span,
+    ) -> Option<CompileError> {
+        // Don't shadow intra-module lookups: if we're compiling inside
+        // `module` itself, the caller already has access via `module_scope`.
+        if let Some((ref cur_mod, _)) = self.module_scope {
+            if cur_mod == module {
+                return None;
+            }
+        }
+        let pub_set = self.module_public_fns.get(module)?;
+        // If it's public the normal path resolves it fine.
+        if pub_set.contains(name) {
+            return None;
+        }
+        let priv_set = self.module_private_fns.get(module)?;
+        if !priv_set.contains(name) {
+            return None;
+        }
+        Some(CompileError {
+            message: format!(
+                "`{name}` exists in module `{module}` but is not `pub` — \
+                 mark it `pub fn {name}` in {module}.silt to export it"
+            ),
+            span,
+        })
+    }
+
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), CompileError> {
         let span = expr.span;
         let tail = self.in_tail_position;
@@ -1208,6 +1314,24 @@ impl Compiler {
             }
 
             ExprKind::Call(callee, args) => {
+                // Argument count is encoded as a `u8` in all four
+                // call emission paths below (CallBuiltin, module-
+                // qualified Call, CallMethod, plain Call). Wrapping
+                // via `.len() as u8` used to let a 256-argument call
+                // compile with argc=0, and the VM would then
+                // misinterpret an unrelated stack value as the
+                // callee. Reject at compile time here — the method-
+                // call path adds the receiver so the limit is 254
+                // explicit arguments in that case.
+                if args.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "call has {} arguments; silt calls are limited to 255",
+                            args.len()
+                        ),
+                        span,
+                    });
+                }
                 // Check if this is a module-qualified builtin call like list.map(...)
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
                     // Emit arguments first
@@ -1241,6 +1365,17 @@ impl Compiler {
                                     span,
                                 });
                             }
+                            // Compile-time visibility check: if this module is
+                            // a known user file module and `method` exists as
+                            // a private (non-`pub`) fn there, emit a crisp
+                            // visibility error instead of letting the VM raise
+                            // a generic "undefined global" at runtime.
+                            let method_str = resolve(*method);
+                            if let Some(err) =
+                                self.private_module_fn_error(&mod_str, &method_str, span)
+                            {
+                                return Err(err);
+                            }
                             // Module-qualified call on a global module name.
                             let qualified = format!("{module}.{method}");
                             let name_idx = self.add_constant(Value::String(qualified), span)?;
@@ -1261,7 +1396,18 @@ impl Compiler {
                         }
                     } else {
                         // Method call on a value: expr.method(args)
-                        // Compile receiver as first argument.
+                        // Compile receiver as first argument. The
+                        // receiver takes one slot of the 255-argument
+                        // budget so the explicit-arg cap is 254 here.
+                        if args.len() >= u8::MAX as usize {
+                            return Err(CompileError {
+                                message: format!(
+                                    "method call has {} arguments (plus receiver); silt calls are limited to 255",
+                                    args.len()
+                                ),
+                                span,
+                            });
+                        }
                         self.compile_expr(receiver)?;
                         for arg in args {
                             self.compile_expr(arg)?;
@@ -1309,6 +1455,16 @@ impl Compiler {
                                 ),
                                 span,
                             });
+                        }
+                        // Compile-time visibility check for user file
+                        // modules: bare `mymod.helper` where `helper` is a
+                        // private fn of `mymod` should fail now with a crisp
+                        // error, not later with a VM-level "undefined global".
+                        let field_name = resolve(*field);
+                        if let Some(err) =
+                            self.private_module_fn_error(&name_str, &field_name, span)
+                        {
+                            return Err(err);
                         }
                         // B8: In REPL mode, a previously-bound value like `p`
                         // is a VM global (created via `eval_declaration`), not
@@ -1387,6 +1543,15 @@ impl Compiler {
             }
 
             ExprKind::Lambda { params, body } => {
+                if params.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "lambda has {} parameters; silt functions are limited to 255",
+                            params.len()
+                        ),
+                        span,
+                    });
+                }
                 let arity = params.len() as u8;
 
                 // Push a new context for the lambda body.
@@ -1635,6 +1800,19 @@ impl Compiler {
                         span,
                     });
                 }
+                // Defence in depth: `binding_count` is already a u8 so
+                // `expected <= 255` — but keep the limit explicit so a
+                // future refactor that widens `binding_count` doesn't
+                // silently reintroduce a wrap.
+                if args.len() > u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "recur has {} arguments; silt recur is limited to 255",
+                            args.len()
+                        ),
+                        span,
+                    });
+                }
 
                 for arg in args {
                     self.compile_expr(arg)?;
@@ -1828,6 +2006,17 @@ impl Compiler {
         // ghost stack slot and corrupted record field assignments.
         match &right.kind {
             ExprKind::Call(callee, args) => {
+                // The piped value takes one slot, so the explicit-arg
+                // cap is 254 here. Reject before the `+1` can wrap.
+                if args.len() >= u8::MAX as usize {
+                    return Err(CompileError {
+                        message: format!(
+                            "pipe call has {} arguments (plus piped value); silt calls are limited to 255",
+                            args.len()
+                        ),
+                        span,
+                    });
+                }
                 if let Some(builtin_name) = self.extract_builtin_name(callee)? {
                     // Builtins: val on stack first, then args
                     self.compile_expr(left)?;
@@ -1882,6 +2071,19 @@ impl Compiler {
         body: &Expr,
         span: Span,
     ) -> Result<(), CompileError> {
+        // `binding_count` is stored in `LoopInfo` as a `u8`, so more
+        // than 255 bindings would silently wrap and cause `recur`
+        // arity mismatches to be misreported. Reject up front.
+        if bindings.len() > u8::MAX as usize {
+            return Err(CompileError {
+                message: format!(
+                    "loop has {} bindings; silt loops are limited to 255",
+                    bindings.len()
+                ),
+                span,
+            });
+        }
+
         self.begin_scope();
 
         // Compile initial values and store in locals.

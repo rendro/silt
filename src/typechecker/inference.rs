@@ -354,18 +354,72 @@ impl TypeChecker {
                     self.bind_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            Pattern::Record { fields, .. } => {
+            Pattern::Record { name, fields, .. } => {
+                // BROKEN-4: `let Name { f } = v` used to silently bind `f`
+                // to a fresh TyVar when the base wasn't a record, or when
+                // the field didn't exist. Both were deferred to VM runtime
+                // errors. Reject them at the type-check stage.
                 let resolved = self.apply(ty);
-                if let Type::Record(_, field_types) = &resolved {
+                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> = if let Some(rec_name)
+                    = name
+                    && let Some(rec_info) = self.records.get(rec_name).cloned()
+                {
+                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.record_param_var_ids.get(rec_name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> = param_var_ids
+                            .iter()
+                            .map(|&v| (v, self.fresh_var()))
+                            .collect();
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
+                    Some((*rec_name, instantiated_fields))
+                } else if let Some(rec_name) = name {
+                    self.error(
+                        format!("undefined record type '{rec_name}' in pattern"),
+                        span,
+                    );
+                    None
+                } else {
+                    None
+                };
+                if let Some((pname, pfields)) = &pattern_record {
+                    let rec_ty = Type::Record(*pname, pfields.clone());
+                    self.unify(ty, &rec_ty, span);
+                }
+                let resolved = self.apply(&resolved);
+
+                if let Type::Record(rec_name, field_types) = &resolved {
                     for (field_name, sub_pat) in fields {
                         if let Some((_, ft)) = field_types.iter().find(|(n, _)| n == field_name) {
                             if let Some(sp) = sub_pat {
                                 self.bind_pattern(sp, ft, env, span);
                             } else {
-                                // Shorthand: field name is also the binding
                                 env.define(*field_name, Scheme::mono(ft.clone()));
                             }
-                        } else if let Some(sp) = sub_pat {
+                        } else {
+                            self.error(
+                                format!("record '{rec_name}' has no field '{field_name}'"),
+                                span,
+                            );
+                            if let Some(sp) = sub_pat {
+                                let tv = self.fresh_var();
+                                self.bind_pattern(sp, &tv, env, span);
+                            } else {
+                                let tv = self.fresh_var();
+                                env.define(*field_name, Scheme::mono(tv));
+                            }
+                        }
+                    }
+                } else if matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
+                    for (field_name, sub_pat) in fields {
+                        if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
                             self.bind_pattern(sp, &tv, env, span);
                         } else {
@@ -374,7 +428,12 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    // Bind with fresh vars
+                    self.error(
+                        format!(
+                            "record pattern requires a record value, but '{resolved}' is not a record type"
+                        ),
+                        span,
+                    );
                     for (field_name, sub_pat) in fields {
                         if let Some(sp) = sub_pat {
                             let tv = self.fresh_var();
@@ -1400,6 +1459,29 @@ impl TypeChecker {
                 let is_method_call = matches!(&callee.kind, ExprKind::FieldAccess(..));
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
+                // Option B (parser-recovery cascade fix): if the callee
+                // resolves to a parser-recovery stub, we cannot trust its
+                // signature — the user's real error is the parse failure
+                // that produced the stub, not whatever arity/arg-type
+                // mismatch we'd find here. Skip all checks and return a
+                // fresh TyVar so downstream expressions continue to
+                // typecheck without bogus cascade errors.
+                let is_stub_callee = match callee_fn_name {
+                    Some(name) => self.recovery_stub_names.contains(&name),
+                    None => false,
+                };
+                if is_stub_callee {
+                    // Walk arg expressions for inference side-effects (so
+                    // genuine errors inside the args still fire), but
+                    // discard any arity/arg-type checks against the stub.
+                    for arg in args.iter_mut() {
+                        let _ = self.infer_expr(arg, env);
+                    }
+                    let fresh = self.fresh_var();
+                    expr.ty = Some(self.apply(&fresh));
+                    return fresh;
+                }
+
                 // If callee is a named function, use instantiate_with_constraints
                 // to get where clause constraints with remapped type variables.
                 let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
@@ -1588,26 +1670,87 @@ impl TypeChecker {
             }
 
             ExprKind::RecordUpdate { expr: base, fields } => {
+                let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
-                if let Type::Record(ref rec_name, ref rec_fields) = resolved {
-                    let declared: std::collections::HashMap<Symbol, &Type> =
-                        rec_fields.iter().map(|(n, t)| (*n, t)).collect();
-                    for (field_name, field_expr) in fields {
+                // Three cases:
+                //  1. Concrete `Type::Record(name, fields)` — validate directly.
+                //  2. `Type::Generic(name, args)` resolving to a declared
+                //     record (happens when the base is a param annotated
+                //     with a user-defined record type). BROKEN-1.
+                //  3. Anything else — compile-time reject. BROKEN-2.
+                let mut handled = false;
+                if let Type::Record(rec_name, rec_fields) = &resolved {
+                    let declared: std::collections::HashMap<Symbol, Type> =
+                        rec_fields.iter().map(|(n, t)| (*n, t.clone())).collect();
+                    for (field_name, field_expr) in &mut *fields {
                         let ft = self.infer_expr(field_expr, env);
-                        if let Some(&declared_ty) = declared.get(field_name) {
+                        if let Some(declared_ty) = declared.get(field_name) {
                             self.unify(&ft, declared_ty, span);
                         } else {
                             self.error(
-                                format!("unknown field '{}' in {}", field_name, rec_name),
+                                format!("unknown field '{field_name}' in {rec_name}"),
                                 span,
                             );
                         }
                     }
-                } else {
-                    // Base type not resolved to a record — still infer field exprs
-                    for (_, field_expr) in fields {
+                    handled = true;
+                } else if let Type::Generic(type_name, type_args) = &resolved
+                    && let Some(rec_info) = self.records.get(type_name).cloned()
+                {
+                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
+                        self.record_param_var_ids.get(type_name).cloned()
+                    {
+                        let mapping: HashMap<TyVar, Type> = if type_args.len()
+                            == param_var_ids.len()
+                        {
+                            param_var_ids
+                                .iter()
+                                .zip(type_args.iter())
+                                .map(|(&v, t)| (v, t.clone()))
+                                .collect()
+                        } else {
+                            param_var_ids
+                                .iter()
+                                .map(|&v| (v, self.fresh_var()))
+                                .collect()
+                        };
+                        rec_info
+                            .fields
+                            .iter()
+                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
+                            .collect()
+                    } else {
+                        rec_info.fields.clone()
+                    };
+                    let declared: std::collections::HashMap<Symbol, Type> = instantiated_fields
+                        .iter()
+                        .map(|(n, t)| (*n, t.clone()))
+                        .collect();
+                    for (field_name, field_expr) in &mut *fields {
+                        let ft = self.infer_expr(field_expr, env);
+                        if let Some(declared_ty) = declared.get(field_name) {
+                            self.unify(&ft, declared_ty, span);
+                        } else {
+                            self.error(
+                                format!("unknown field '{field_name}' in {type_name}"),
+                                span,
+                            );
+                        }
+                    }
+                    handled = true;
+                }
+                if !handled {
+                    for (_, field_expr) in &mut *fields {
                         let _ft = self.infer_expr(field_expr, env);
+                    }
+                    if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
+                        self.error(
+                            format!(
+                                "record update requires a record base, but '{resolved}' is not a record type"
+                            ),
+                            base_span,
+                        );
                     }
                 }
                 base_ty
@@ -1951,8 +2094,6 @@ impl TypeChecker {
             Pattern::Record { name, fields, .. } => {
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
-                        // Instantiate fresh type variables for parameterized records
-                        // to avoid polluting template TyVars across different uses.
                         let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
                             self.record_param_var_ids.get(rec_name).cloned()
                         {
@@ -1981,11 +2122,34 @@ impl TypeChecker {
                                 } else {
                                     env.define(*field_name, Scheme::mono(ft.clone()));
                                 }
+                            } else {
+                                // BROKEN-3: Reject unknown field names in
+                                // match record patterns at compile time.
+                                self.error(
+                                    format!(
+                                        "record '{rec_name}' has no field '{field_name}'"
+                                    ),
+                                    span,
+                                );
+                                if let Some(sp) = sub_pat {
+                                    let tv = self.fresh_var();
+                                    self.check_pattern(sp, &tv, env, span);
+                                }
+                            }
+                        }
+                    } else {
+                        self.error(
+                            format!("undefined record type '{rec_name}' in pattern"),
+                            span,
+                        );
+                        for (_, sub_pat) in fields {
+                            if let Some(sp) = sub_pat {
+                                let tv = self.fresh_var();
+                                self.check_pattern(sp, &tv, env, span);
                             }
                         }
                     }
                 } else {
-                    // Anonymous record pattern — bind fields
                     for (field_name, sub_pat) in fields {
                         let tv = self.fresh_var();
                         if let Some(sp) = sub_pat {

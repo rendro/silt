@@ -53,6 +53,7 @@ string.char_code(s: String) -> Int
 Returns the Unicode code point of the first character. Panics on empty strings.
 
 ```silt
+import string
 fn main() {
     println(string.char_code("A"))  -- 65
 }
@@ -68,6 +69,7 @@ string.chars(s: String) -> List(String)
 Splits the string into a list of single-character strings.
 
 ```silt
+import string
 fn main() {
     println(string.chars("hi"))  -- ["h", "i"]
 }
@@ -83,6 +85,7 @@ string.contains(s: String, sub: String) -> Bool
 Returns `true` if `sub` appears anywhere in `s`.
 
 ```silt
+import string
 fn main() {
     println(string.contains("hello world", "world"))  -- true
 }
@@ -98,6 +101,7 @@ string.ends_with(s: String, suffix: String) -> Bool
 Returns `true` if `s` ends with `suffix`.
 
 ```silt
+import string
 fn main() {
     println(string.ends_with("hello.silt", ".silt"))  -- true
 }
@@ -114,6 +118,7 @@ Converts any value to its display string representation. This is the
 programmatic equivalent of string interpolation `"{value}"`.
 
 ```silt
+import string
 fn main() {
     println(string.from(42))        -- "42"
     println(string.from(true))      -- "true"
@@ -132,6 +137,7 @@ Converts a Unicode code point to a single-character string. Panics on invalid
 code points.
 
 ```silt
+import string
 fn main() {
     println(string.from_char_code(65))  -- "A"
 }
@@ -148,6 +154,7 @@ Returns `Some(index)` with the character index of the first occurrence of
 `needle` in `s`, or `None` if not found.
 
 ```silt
+import string
 fn main() {
     println(string.index_of("hello", "ll"))  -- Some(2)
     println(string.index_of("hello", "z"))   -- None
@@ -165,6 +172,7 @@ Returns `true` if all characters are alphanumeric. Returns `false` for empty
 strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_alnum("abc123"))  -- true
     println(string.is_alnum("abc!"))    -- false
@@ -183,6 +191,7 @@ Returns `true` if all characters are alphabetic. Returns `false` for empty
 strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_alpha("hello"))   -- true
     println(string.is_alpha("abc123"))  -- false
@@ -201,6 +210,7 @@ Returns `true` if all characters are ASCII digits (0-9). Returns `false`
 for empty strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_digit("123"))   -- true
     println(string.is_digit("12a"))   -- false
@@ -218,6 +228,7 @@ string.is_empty(s: String) -> Bool
 Returns `true` if the string has zero length.
 
 ```silt
+import string
 fn main() {
     println(string.is_empty(""))     -- true
     println(string.is_empty("hi"))   -- false
@@ -235,6 +246,7 @@ Returns `true` if all characters are lowercase. Returns `false` for empty
 strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_lower("hello"))  -- true
     println(string.is_lower("Hello"))  -- false
@@ -253,6 +265,7 @@ Returns `true` if all characters are uppercase. Returns `false` for empty
 strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_upper("HELLO"))  -- true
     println(string.is_upper("Hello"))  -- false
@@ -271,6 +284,7 @@ Returns `true` if all characters are whitespace. Returns `false` for empty
 strings.
 
 ```silt
+import string
 fn main() {
     println(string.is_whitespace("  \t"))  -- true
     println(string.is_whitespace(" a "))   -- false
@@ -288,6 +302,7 @@ string.join(parts: List(String), separator: String) -> String
 Joins a list of strings with a separator between each pair.
 
 ```silt
+import string
 fn main() {
     let result = string.join(["a", "b", "c"], ", ")
     println(result)  -- "a, b, c"
@@ -305,6 +320,7 @@ Returns the length of the string in bytes (UTF-8 encoding). See also
 `string.length` which counts characters.
 
 ```silt
+import string
 fn main() {
     println(string.byte_length("hello"))  -- 5
     println(string.byte_length("café"))   -- 5 (é is 2 bytes in UTF-8)
@@ -322,6 +338,7 @@ Returns the number of characters in the string. Use `string.byte_length` if
 you need the size in bytes.
 
 ```silt
+import string
 fn main() {
     println(string.length("hello"))  -- 5
     println(string.length("café"))   -- 4 (4 characters, 5 bytes)
@@ -339,6 +356,7 @@ Pads `s` on the left with the first character of `pad` until it reaches
 `width`. Returns `s` unchanged if already at or beyond `width`.
 
 ```silt
+import string
 fn main() {
     println(string.pad_left("42", 5, "0"))  -- "00042"
 }
@@ -355,6 +373,7 @@ Pads `s` on the right with the first character of `pad` until it reaches
 `width`. Returns `s` unchanged if already at or beyond `width`.
 
 ```silt
+import string
 fn main() {
     println(string.pad_right("hi", 5, "."))  -- "hi..."
 }
@@ -370,6 +389,7 @@ string.repeat(s: String, n: Int) -> String
 Returns the string repeated `n` times. `n` must be non-negative.
 
 ```silt
+import string
 fn main() {
     println(string.repeat("ab", 3))  -- "ababab"
 }
@@ -385,6 +405,7 @@ string.replace(s: String, from: String, to: String) -> String
 Replaces all occurrences of `from` with `to`.
 
 ```silt
+import string
 fn main() {
     println(string.replace("hello world", "world", "silt"))
     -- "hello silt"
@@ -403,6 +424,7 @@ Returns the substring from character index `start` (inclusive) to `end`
 if `start > end`. Negative indices are a runtime error.
 
 ```silt
+import string
 fn main() {
     println(string.slice("hello", 1, 4))  -- "ell"
 }
@@ -418,6 +440,7 @@ string.split(s: String, separator: String) -> List(String)
 Splits the string on every occurrence of `separator`.
 
 ```silt
+import string
 fn main() {
     let parts = string.split("a,b,c", ",")
     println(parts)  -- ["a", "b", "c"]
@@ -434,6 +457,7 @@ string.starts_with(s: String, prefix: String) -> Bool
 Returns `true` if `s` starts with `prefix`.
 
 ```silt
+import string
 fn main() {
     println(string.starts_with("hello", "hel"))  -- true
 }
@@ -449,6 +473,7 @@ string.to_lower(s: String) -> String
 Converts all characters to lowercase.
 
 ```silt
+import string
 fn main() {
     println(string.to_lower("HELLO"))  -- "hello"
 }
@@ -464,6 +489,7 @@ string.to_upper(s: String) -> String
 Converts all characters to uppercase.
 
 ```silt
+import string
 fn main() {
     println(string.to_upper("hello"))  -- "HELLO"
 }
@@ -479,6 +505,7 @@ string.trim(s: String) -> String
 Removes leading and trailing whitespace.
 
 ```silt
+import string
 fn main() {
     println(string.trim("  hello  "))  -- "hello"
 }
@@ -494,6 +521,7 @@ string.trim_end(s: String) -> String
 Removes trailing whitespace only.
 
 ```silt
+import string
 fn main() {
     println(string.trim_end("hello   "))  -- "hello"
 }
@@ -509,6 +537,7 @@ string.trim_start(s: String) -> String
 Removes leading whitespace only.
 
 ```silt
+import string
 fn main() {
     println(string.trim_start("   hello"))  -- "hello"
 }

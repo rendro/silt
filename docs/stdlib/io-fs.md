@@ -1,5 +1,5 @@
 ---
-title: "io / fs"
+title: "io / fs / env"
 section: "Standard Library"
 order: 8
 ---
@@ -29,6 +29,8 @@ Returns the command-line arguments as a list of strings, including the program
 name.
 
 ```silt
+import io
+import list
 fn main() {
     let args = io.args()
     list.each(args) { a -> println(a) }
@@ -46,6 +48,7 @@ Returns a debug-style string representation of any value, using silt syntax
 (e.g., strings include quotes, lists show brackets).
 
 ```silt
+import io
 fn main() {
     let s = io.inspect((1, "hello", true))
     println(s)  -- (1, "hello", true)
@@ -64,6 +67,7 @@ Reads the entire contents of a file. Returns `Ok(contents)` on success or
 transparently yields to the scheduler while the file is being read.
 
 ```silt
+import io
 fn main() {
     match io.read_file("data.txt") {
         Ok(contents) -> println(contents)
@@ -84,6 +88,7 @@ Reads a single line from stdin (trailing newline stripped). Returns
 spawned task, the operation transparently yields to the scheduler.
 
 ```silt
+import io
 fn main() {
     print("Name: ")
     match io.read_line() {
@@ -106,6 +111,7 @@ operation transparently yields to the scheduler while the file is being
 written.
 
 ```silt
+import io
 fn main() {
     match io.write_file("output.txt", "hello") {
         Ok(_) -> println("written")
@@ -218,6 +224,7 @@ fs.exists(path: String) -> Bool
 Returns `true` if the file or directory at `path` exists.
 
 ```silt
+import fs
 fn main() {
     match {
         fs.exists("config.toml") -> println("found config")
@@ -236,6 +243,7 @@ fs.is_file(path: String) -> Bool
 Returns `true` if the path exists and is a regular file.
 
 ```silt
+import fs
 fn main() {
     match {
         fs.is_file("data.csv") -> println("it's a file")
@@ -254,6 +262,7 @@ fs.is_dir(path: String) -> Bool
 Returns `true` if the path exists and is a directory.
 
 ```silt
+import fs
 fn main() {
     match {
         fs.is_dir("src") -> println("it's a directory")
@@ -275,6 +284,7 @@ or `Err(message)` if the path does not exist or is not a directory.
 ```silt
 import fs
 
+import list
 fn main() {
     match fs.list_dir(".") {
         Ok(entries) -> list.each(entries) { name -> println(name) }

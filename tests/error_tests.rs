@@ -598,9 +598,11 @@ fn test_runtime_negate_list() {
 #[test]
 fn test_runtime_not_on_int() {
     let err = run_err("fn main() { !42 }");
+    // Lock the exact phrase "cannot apply 'not' to Int" so a fallback like
+    // "could not..." or an "annotation" error won't accidentally satisfy it.
     assert!(
-        err.contains("cannot apply 'not'") || err.contains("not"),
-        "got: {err}"
+        err.contains("cannot apply 'not' to Int"),
+        "expected \"cannot apply 'not' to Int\", got: {err}"
     );
 }
 
@@ -608,8 +610,8 @@ fn test_runtime_not_on_int() {
 fn test_runtime_not_on_string() {
     let err = run_err(r#"fn main() { !"hello" }"#);
     assert!(
-        err.contains("cannot apply 'not'") || err.contains("not"),
-        "got: {err}"
+        err.contains("cannot apply 'not' to String"),
+        "expected \"cannot apply 'not' to String\", got: {err}"
     );
 }
 
@@ -930,9 +932,12 @@ fn foo() {
 fn main() { foo() }
     "#,
     );
+    // Lock the actual production string so a trivial fallback that
+    // happens to mention "?" (e.g. "parse error: unexpected ?") cannot
+    // satisfy this assertion.
     assert!(
-        err.contains("non-Result") || err.contains("non-variant") || err.contains("?"),
-        "got: {err}"
+        err.contains("? on non-variant: Int"),
+        "expected \"? on non-variant: Int\", got: {err}"
     );
 }
 
@@ -962,9 +967,12 @@ fn main() {
 }
     "#,
     );
+    // Lock the full phrase "cannot access field 'name' on Int"; a weaker
+    // fallback like "unknown field" or a generic "field" substring must
+    // not satisfy this.
     assert!(
-        err.contains("cannot access field") || err.contains("field"),
-        "got: {err}"
+        err.contains("cannot access field 'name' on Int"),
+        "expected \"cannot access field 'name' on Int\", got: {err}"
     );
 }
 
@@ -979,8 +987,8 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("cannot access field") || err.contains("method") || err.contains("field"),
-        "got: {err}"
+        err.contains("cannot access field 'name' on List"),
+        "expected \"cannot access field 'name' on List\", got: {err}"
     );
 }
 
@@ -1512,9 +1520,11 @@ fn main() {
 }
     "#,
     );
+    // Lock the exact production message so that a generic type-mismatch
+    // with just the word "expected" cannot satisfy this test.
     assert!(
-        err.contains("channel") || err.contains("expected"),
-        "got: {err}"
+        err.contains("channel.send requires a channel as first argument"),
+        "expected \"channel.send requires a channel as first argument\", got: {err}"
     );
 }
 
@@ -1529,8 +1539,8 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("channel") || err.contains("expected"),
-        "got: {err}"
+        err.contains("channel.receive requires a channel argument"),
+        "expected \"channel.receive requires a channel argument\", got: {err}"
     );
 }
 
@@ -1545,8 +1555,8 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("channel") || err.contains("expected"),
-        "got: {err}"
+        err.contains("channel.close requires a channel argument"),
+        "expected \"channel.close requires a channel argument\", got: {err}"
     );
 }
 
@@ -1591,9 +1601,11 @@ fn main() {
 }
     "#,
     );
+    // Lock the exact production string so a generic "expected X, got Y"
+    // type-mismatch error cannot satisfy this assertion.
     assert!(
-        err.contains("Handle") || err.contains("handle") || err.contains("expected"),
-        "got: {err}"
+        err.contains("task.join requires a handle argument"),
+        "expected \"task.join requires a handle argument\", got: {err}"
     );
 }
 
@@ -1608,8 +1620,8 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("Handle") || err.contains("handle") || err.contains("expected"),
-        "got: {err}"
+        err.contains("task.cancel requires a handle argument"),
+        "expected \"task.cancel requires a handle argument\", got: {err}"
     );
 }
 
@@ -1741,9 +1753,11 @@ fn main() {
 }
     "#,
     );
+    // Lock the exact production message; the previous OR chain's third
+    // branch `callable` subsumed the first two and made the assertion weak.
     assert!(
-        err.contains("not callable") || err.contains("cannot call") || err.contains("callable"),
-        "got: {err}"
+        err.contains("cannot call value of type Int"),
+        "expected \"cannot call value of type Int\", got: {err}"
     );
 }
 
@@ -1773,9 +1787,11 @@ import string
 fn main() { string.split(42, ",") }
     "#,
     );
+    // Lock the exact production message so a generic type-mismatch error
+    // with just the word "type" cannot satisfy this assertion.
     assert!(
-        err.contains("String") || err.contains("string") || err.contains("type"),
-        "got: {err}"
+        err.contains("string.split requires strings"),
+        "expected \"string.split requires strings\", got: {err}"
     );
 }
 
@@ -1831,9 +1847,13 @@ fn main() {
 }
     "#,
     );
+    // Lock the full panic string so that a type-mismatch or generic
+    // "mismatch"/"matched" error cannot satisfy this assertion.
+    // This is the most insidious gap: a bug that conflates a type mismatch
+    // with a non-exhaustive match would slip through the old `contains("match")`.
     assert!(
-        err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
-        "got: {err}"
+        err.contains("non-exhaustive match: no arm matched"),
+        "expected \"non-exhaustive match: no arm matched\", got: {err}"
     );
 }
 
@@ -1850,8 +1870,8 @@ fn main() {
     "#,
     );
     assert!(
-        err.contains("non-exhaustive") || err.contains("no arm matched") || err.contains("match"),
-        "got: {err}"
+        err.contains("non-exhaustive match: no arm matched"),
+        "expected \"non-exhaustive match: no arm matched\", got: {err}"
     );
 }
 
@@ -2347,5 +2367,39 @@ fn main() {
 }
 "#,
         "expected Int",
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION: channel.select signature is tuple (commit e78d6d9)
+// ════════════════════════════════════════════════════════════════════
+//
+// `channel.select(List(Channel(a)))` must return a 2-tuple
+// `(Channel(a), ChannelResult(a))`. If the signature regresses to
+// returning just `ChannelResult(a)` (or just `a`), the tuple destructure
+// below will no longer typecheck.
+//
+// `test_channel_select_returns_tuple` in integration.rs uses `run()`
+// which silently swallows typecheck errors, so it cannot lock this
+// invariant. This test drives the typechecker directly via `type_errors`
+// and asserts that NO hard errors are produced — any regression that
+// changes the return type away from a 2-tuple will emit a destructure
+// error.
+#[test]
+fn test_channel_select_signature_is_tuple_of_channel_and_result() {
+    let src = r#"
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(1)
+  let (winner, result): (Channel(Int), ChannelResult(Int)) = channel.select([ch])
+  let _ = winner
+  let _ = result
+  println("ok")
+}
+"#;
+    let errs = type_errors(src);
+    assert!(
+        errs.is_empty(),
+        "channel.select should typecheck with a 2-tuple destructure, got: {errs:?}"
     );
 }

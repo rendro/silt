@@ -145,6 +145,11 @@ pub struct TypeChecker {
     pub(super) method_table: HashMap<(Symbol, Symbol), MethodEntry>,
     /// Tracks which (trait_name, type_name) pairs have been implemented.
     pub(super) trait_impl_set: std::collections::HashSet<(Symbol, Symbol)>,
+    /// GAP-2: Maps `(trait_name, type_name)` → the span of the
+    /// `trait T for U { ... }` declaration, so the missing-method
+    /// diagnostic in `validate_trait_impls` can point at the impl
+    /// block's real source location instead of `Span::new(0, 0)`.
+    pub(super) trait_impl_spans: HashMap<(Symbol, Symbol), Span>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -182,6 +187,14 @@ pub struct TypeChecker {
     /// event without threading a result type through every recursive call.
     /// Reset at the start of each `check_exhaustiveness` invocation.
     pub(super) exhaustiveness_depth_exceeded: std::cell::Cell<bool>,
+    /// Names of function declarations that were synthesized by parser
+    /// error recovery (Option B). Populated in register_fn_decl when the
+    /// FnDecl has `is_recovery_stub == true`. Used by the `ExprKind::Call`
+    /// arm to suppress cascade errors (arity/arg-type) — the real parse
+    /// error already told the user what went wrong, so reporting N bogus
+    /// "undefined variable 'f'" or "function expects 2 args, got 1"
+    /// errors would just be noise.
+    pub(super) recovery_stub_names: std::collections::HashSet<Symbol>,
 }
 
 impl Default for TypeChecker {
@@ -201,6 +214,7 @@ impl TypeChecker {
             traits: HashMap::new(),
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
+            trait_impl_spans: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
@@ -211,6 +225,7 @@ impl TypeChecker {
             pending_numeric_checks: Vec::new(),
             top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
+            recovery_stub_names: std::collections::HashSet::new(),
         }
     }
 
@@ -538,6 +553,12 @@ impl TypeChecker {
             Type::Channel(_) => Some(intern("Channel")),
             Type::Tuple(_) => Some(intern("Tuple")),
             Type::ExtFloat => Some(intern("ExtFloat")),
+            // GAP-1: function values must resolve to a type name so that
+            // `where a: Trait` constraints are actually checked. No traits
+            // are registered for "Fun", so the lookup always fails and the
+            // user gets a real error instead of the constraint being
+            // silently dropped.
+            Type::Fun(_, _) => Some(intern("Fun")),
             Type::Var(_) => None, // unresolved
             _ => None,
         }
@@ -889,12 +910,17 @@ impl TypeChecker {
         // Validate trait implementations against their declarations
         self.validate_trait_impls();
 
-        // Third pass: type check function bodies to discover constraints
+        // Third pass: type check function bodies to discover constraints.
+        // Recovery stubs (Option B) are skipped: their synthetic empty
+        // body is not user code and must not produce "return type
+        // mismatch", "unused binding", "unreachable", etc.
         let pre_pass3_error_count = self.errors.len();
         let pre_pass3_field_count = self.pending_field_accesses.len();
         let pre_pass3_numeric_count = self.pending_numeric_checks.len();
         for i in 0..program.decls.len() {
-            if let Decl::Fn(ref mut f) = program.decls[i] {
+            if let Decl::Fn(ref mut f) = program.decls[i]
+                && !f.is_recovery_stub
+            {
                 self.check_fn_body(f, &env);
             }
         }
@@ -952,9 +978,12 @@ impl TypeChecker {
                 self.pending_numeric_checks
                     .truncate(pre_pass3_numeric_count);
 
-                // Re-check function bodies with narrowed schemes
+                // Re-check function bodies with narrowed schemes.
+                // Recovery stubs still skipped (same reason as pass 3).
                 for i in 0..program.decls.len() {
-                    if let Decl::Fn(ref mut f) = program.decls[i] {
+                    if let Decl::Fn(ref mut f) = program.decls[i]
+                        && !f.is_recovery_stub
+                    {
                         self.check_fn_body(f, &env);
                     }
                 }
@@ -996,15 +1025,25 @@ impl TypeChecker {
         // Validate using method_table + trait_impl_set (the new system).
         let impl_pairs: Vec<(Symbol, Symbol)> = self.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
+            // GAP-2: Prefer the impl block's real span (stored at
+            // registration time) over a method span or the sentinel
+            // `Span::new(0, 0)`. Fall back to the method table only for
+            // auto-derived impls that have no user-visible source site.
+            let diag_span = self
+                .trait_impl_spans
+                .get(&(*trait_name, *type_name))
+                .copied()
+                .or_else(|| {
+                    self.method_table
+                        .iter()
+                        .find(|((t, _), _)| t == type_name)
+                        .map(|(_, e)| e.span)
+                })
+                .unwrap_or_else(|| Span::new(0, 0));
+
             // Check that the trait exists first.
             let Some(trait_info) = self.traits.get(trait_name).cloned() else {
-                let span = self
-                    .method_table
-                    .iter()
-                    .find(|((t, _), _)| t == type_name)
-                    .map(|(_, e)| e.span)
-                    .unwrap_or(Span::new(0, 0));
-                self.error(format!("trait '{trait_name}' is not declared"), span);
+                self.error(format!("trait '{trait_name}' is not declared"), diag_span);
                 continue;
             };
 
@@ -1037,19 +1076,12 @@ impl TypeChecker {
                     let expected = substitute_vars(trait_method_type, &mapping);
                     self.unify(&impl_type, &expected, impl_span);
                 } else {
-                    // Find a span for the error.
-                    let span = self
-                        .method_table
-                        .iter()
-                        .find(|((t, _), _)| t == type_name)
-                        .map(|(_, e)| e.span)
-                        .unwrap_or(Span::new(0, 0));
                     self.error(
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
                             trait_name, type_name, method_name
                         ),
-                        span,
+                        diag_span,
                     );
                 }
             }
@@ -1426,20 +1458,31 @@ impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
     fn register_fn_decl(&mut self, f: &FnDecl, env: &mut TypeEnv) {
-        // G1: Detect duplicate top-level function definitions. We only report
-        // a hard error when the name collides with another user-registered
-        // top-level name. Collisions with builtins are handled elsewhere as
-        // a shadow warning.
-        if self.top_level_names.contains(&f.name) {
-            self.error(
-                format!(
-                    "duplicate top-level definition of '{}'; names must be unique at module scope",
-                    f.name
-                ),
-                f.span,
-            );
+        // Recovery-stub special case (Option B): record the name and bind
+        // its signature just like a real fn, so downstream references in
+        // unrelated code do not cascade into "undefined variable" errors.
+        // The stub is NOT registered as a "real" top-level name because
+        // duplicate-definition checks shouldn't flag a later *real* fn
+        // with the same name as a stubbed-out earlier one — the user is
+        // fixing the same broken decl, not redeclaring.
+        if f.is_recovery_stub {
+            self.recovery_stub_names.insert(f.name);
+        } else {
+            // G1: Detect duplicate top-level function definitions. We only report
+            // a hard error when the name collides with another user-registered
+            // top-level name. Collisions with builtins are handled elsewhere as
+            // a shadow warning.
+            if self.top_level_names.contains(&f.name) {
+                self.error(
+                    format!(
+                        "duplicate top-level definition of '{}'; names must be unique at module scope",
+                        f.name
+                    ),
+                    f.span,
+                );
+            }
+            self.top_level_names.insert(f.name);
         }
-        self.top_level_names.insert(f.name);
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
 
@@ -1574,6 +1617,9 @@ impl TypeChecker {
         }
 
         self.trait_impl_set.insert(impl_key);
+        // GAP-2: record the impl block's real span for validate_trait_impls
+        // to use when reporting missing-method diagnostics.
+        self.trait_impl_spans.insert(impl_key, ti.span);
 
         let self_type = Self::type_from_name(ti.target_type);
 
@@ -2047,9 +2093,11 @@ impl ReplTypeContext {
         // Validate trait implementations
         self.checker.validate_trait_impls();
 
-        // Check function bodies
+        // Check function bodies (skip recovery stubs per Option B).
         for i in 0..program.decls.len() {
-            if let Decl::Fn(ref mut f) = program.decls[i] {
+            if let Decl::Fn(ref mut f) = program.decls[i]
+                && !f.is_recovery_stub
+            {
                 self.checker.check_fn_body(f, &self.env);
             }
         }

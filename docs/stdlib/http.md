@@ -53,6 +53,8 @@ scheduler while the request is in flight. No API change is needed -- the
 call site looks the same.
 
 ```silt
+import http
+import string
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")

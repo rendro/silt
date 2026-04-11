@@ -38,6 +38,7 @@ map.contains(m: Map(k, v), key: k) -> Bool
 Returns `true` if the map has an entry for `key`.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1, "b": 2}
     println(map.contains(m, "a"))  -- true
@@ -55,6 +56,7 @@ map.delete(m: Map(k, v), key: k) -> Map(k, v)
 Returns a new map with `key` removed. No-op if key does not exist.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1, "b": 2}
     let m2 = map.delete(m, "a")
@@ -72,6 +74,7 @@ map.each(m: Map(k, v), f: (k, v) -> ()) -> ()
 Calls `f` with each key-value pair. Used for side effects.
 
 ```silt
+import map
 fn main() {
     let m = #{"x": 10, "y": 20}
     map.each(m) { k, v -> println("{k} = {v}") }
@@ -88,6 +91,7 @@ map.entries(m: Map(k, v)) -> List((k, v))
 Returns all key-value pairs as a list of tuples.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1, "b": 2}
     let pairs = map.entries(m)
@@ -105,6 +109,7 @@ map.filter(m: Map(k, v), f: (k, v) -> Bool) -> Map(k, v)
 Returns a new map containing only entries where `f` returns `true`.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1, "b": 2, "c": 3}
     let big = map.filter(m) { k, v -> v > 1 }
@@ -123,6 +128,7 @@ Builds a map from a list of `(key, value)` tuples. Later entries overwrite
 earlier ones with the same key.
 
 ```silt
+import map
 fn main() {
     let m = map.from_entries([("a", 1), ("b", 2)])
     println(m)  -- #{"a": 1, "b": 2}
@@ -139,6 +145,7 @@ map.get(m: Map(k, v), key: k) -> Option(v)
 Returns `Some(value)` if the key exists, or `None` otherwise.
 
 ```silt
+import map
 fn main() {
     let m = #{"name": "silt"}
     match map.get(m, "name") {
@@ -158,6 +165,7 @@ map.keys(m: Map(k, v)) -> List(k)
 Returns all keys as a list, in sorted order.
 
 ```silt
+import map
 fn main() {
     let ks = map.keys(#{"b": 2, "a": 1})
     println(ks)  -- ["a", "b"]
@@ -174,6 +182,7 @@ map.length(m: Map(k, v)) -> Int
 Returns the number of entries in the map.
 
 ```silt
+import map
 fn main() {
     println(map.length(#{"a": 1, "b": 2}))  -- 2
 }
@@ -189,6 +198,7 @@ map.map(m: Map(k, v), f: (k, v) -> (k2, v2)) -> Map(k2, v2)
 Transforms each entry. The callback must return a `(key, value)` tuple.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1, "b": 2}
     let doubled = map.map(m) { k, v -> (k, v * 2) }
@@ -206,6 +216,7 @@ map.merge(m1: Map(k, v), m2: Map(k, v)) -> Map(k, v)
 Merges two maps. When both have the same key, the value from `m2` wins.
 
 ```silt
+import map
 fn main() {
     let a = #{"x": 1, "y": 2}
     let b = #{"y": 99, "z": 3}
@@ -225,6 +236,7 @@ Returns a new map with the key set to value. Inserts if new, overwrites if
 existing.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1}
     let m2 = map.set(m, "b", 2)
@@ -243,6 +255,7 @@ If `key` exists, applies `f` to the current value. If `key` does not exist,
 applies `f` to `default`. Inserts the result.
 
 ```silt
+import map
 fn main() {
     let m = #{"a": 1}
     let m2 = map.update(m, "a", 0) { v -> v + 10 }
@@ -262,6 +275,7 @@ map.values(m: Map(k, v)) -> List(v)
 Returns all values as a list, in key-sorted order.
 
 ```silt
+import map
 fn main() {
     let vs = map.values(#{"a": 1, "b": 2})
     println(vs)  -- [1, 2]

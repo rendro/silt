@@ -30,6 +30,7 @@ Returns the absolute value. Runtime error if `n` is `Int` minimum
 (`-9223372036854775808`) since the result cannot be represented.
 
 ```silt
+import int
 fn main() {
     println(int.abs(-42))  -- 42
     println(int.abs(7))    -- 7
@@ -46,6 +47,7 @@ int.max(a: Int, b: Int) -> Int
 Returns the larger of two integers.
 
 ```silt
+import int
 fn main() {
     println(int.max(3, 7))  -- 7
 }
@@ -61,6 +63,7 @@ int.min(a: Int, b: Int) -> Int
 Returns the smaller of two integers.
 
 ```silt
+import int
 fn main() {
     println(int.min(3, 7))  -- 3
 }
@@ -77,6 +80,7 @@ Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
 `Ok(n)` on success, `Err(message)` on failure.
 
 ```silt
+import int
 fn main() {
     match int.parse("42") {
         Ok(n) -> println(n)
@@ -95,6 +99,7 @@ int.to_float(n: Int) -> Float
 Converts an integer to a float.
 
 ```silt
+import int
 fn main() {
     let f = int.to_float(42)
     println(f)  -- 42.0
@@ -111,6 +116,7 @@ int.to_string(n: Int) -> String
 Converts an integer to its string representation.
 
 ```silt
+import int
 fn main() {
     let s = int.to_string(42)
     println(s)  -- "42"
@@ -165,6 +171,7 @@ float.abs(f: Float) -> Float
 Returns the absolute value.
 
 ```silt
+import float
 fn main() {
     println(float.abs(-3.14))  -- 3.14
 }
@@ -180,6 +187,7 @@ float.ceil(f: Float) -> Float
 Rounds up to the nearest integer, returned as a Float.
 
 ```silt
+import float
 fn main() {
     println(float.ceil(3.2))   -- 4.0
     println(float.ceil(-3.2))  -- -3.0
@@ -196,6 +204,7 @@ float.floor(f: Float) -> Float
 Rounds down to the nearest integer, returned as a Float.
 
 ```silt
+import float
 fn main() {
     println(float.floor(3.9))   -- 3.0
     println(float.floor(-3.2))  -- -4.0
@@ -212,6 +221,7 @@ float.max(a: Float, b: Float) -> Float
 Returns the larger of two floats.
 
 ```silt
+import float
 fn main() {
     println(float.max(1.5, 2.5))  -- 2.5
 }
@@ -227,6 +237,7 @@ float.min(a: Float, b: Float) -> Float
 Returns the smaller of two floats.
 
 ```silt
+import float
 fn main() {
     println(float.min(1.5, 2.5))  -- 1.5
 }
@@ -244,6 +255,7 @@ Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
 `"Infinity"` are rejected.
 
 ```silt
+import float
 fn main() {
     match float.parse("3.14") {
         Ok(f) -> println(f)
@@ -262,6 +274,7 @@ float.round(f: Float) -> Float
 Rounds to the nearest integer, returned as a Float. Ties round away from zero.
 
 ```silt
+import float
 fn main() {
     println(float.round(3.6))  -- 4.0
     println(float.round(3.4))  -- 3.0
@@ -279,6 +292,7 @@ Truncates toward zero, converting to an integer. Accepts both `Float` and
 `ExtFloat`. Returns a runtime error if the value is NaN or Infinity.
 
 ```silt
+import float
 fn main() {
     println(float.to_int(3.9))   -- 3
     println(float.to_int(-3.9))  -- -3
@@ -296,6 +310,7 @@ Formats a float as a string with exactly `decimals` decimal places. The
 `decimals` argument is required and must be non-negative.
 
 ```silt
+import float
 fn main() {
     println(float.to_string(3.14159, 2))  -- "3.14"
     println(float.to_string(42.0, 0))     -- "42"

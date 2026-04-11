@@ -824,15 +824,25 @@ fn find_silt_files(dir: &Path) -> Vec<String> {
 ///
 /// This is a *best-effort* mapping used solely to improve runtime-error
 /// rendering when an error propagates out of an imported module. Name
-/// collisions between the main file and a module (both defining `foo`) or
-/// between two imported modules are resolved in favour of the FIRST entry
-/// encountered; the renderer falls back to the main file when there's no
-/// match, so it can never be worse than the previous behaviour.
+/// collisions are handled by *exclusion*, not by winner-takes-all:
 ///
-/// See E1 in the audit: without this, runtime errors from module code
-/// were rendered against the main file's source and path, producing
-/// nonsensical `main.silt:1:<col>` pointers into whatever happened to be
-/// at line 1 of the main file.
+///   1. If a function name is ALSO defined at the top level of the main
+///      source file, it is excluded from the map. The renderer then falls
+///      back to the main source — which is correct, because the VM's
+///      innermost frame name cannot distinguish `main::foo` from
+///      `mod::foo`, and the main file is the safer guess.
+///   2. If a function name appears in MORE THAN ONE imported module, it
+///      is likewise excluded — we have no way to pick the right module.
+///
+/// In both cases a map miss causes the renderer to fall back to the main
+/// source, which is the safe default: at worst the rendered snippet
+/// points at main's line N, which is typically close to the call site
+/// that invoked the module function.
+///
+/// See E1 in the audit for the original gap (runtime errors from module
+/// code rendered against the main file), and the follow-up collision
+/// case (`test_module_runtime_error_with_name_collision_renders_correct_file`)
+/// which motivated the exclusion strategy here.
 fn collect_module_function_sources(
     main_path: &str,
     main_source: &str,
@@ -846,6 +856,21 @@ fn collect_module_function_sources(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+
+    // Names defined at the top level of the main source file. Any module
+    // function sharing one of these names is ambiguous w.r.t. the VM's
+    // bare-name call frame, so we exclude it from the map and let the
+    // renderer fall back to the main source.
+    let main_fn_names: HashSet<String> =
+        extract_top_level_fn_names(main_source).into_iter().collect();
+
+    // First pass: walk the import graph, recording every (fn_name,
+    // module_file, module_source) tuple we encounter. We can't decide
+    // inclusion until we've seen the full graph — a name that appears in
+    // one module might also appear in another, in which case it must be
+    // excluded from the final map.
+    let mut candidates: Vec<(String, PathBuf, String)> = Vec::new();
+    let mut name_module_count: HashMap<String, usize> = HashMap::new();
 
     // BFS from main source: scan import statements, load each module file,
     // repeat for transitive imports.
@@ -867,13 +892,32 @@ fn collect_module_function_sources(
             let Ok(mod_source) = fs::read_to_string(&file_path) else {
                 continue;
             };
-            // Record every `fn name` (or `pub fn name`) in this module.
+            // Per-module dedupe: a function name appearing twice in the
+            // SAME file still counts as a single module for collision
+            // purposes.
+            let mut local_names: HashSet<String> = HashSet::new();
             for fn_name in extract_top_level_fn_names(&mod_source) {
-                out.entry(fn_name)
-                    .or_insert_with(|| (file_path.clone(), mod_source.clone()));
+                if local_names.insert(fn_name.clone()) {
+                    *name_module_count.entry(fn_name.clone()).or_insert(0) += 1;
+                    candidates.push((fn_name, file_path.clone(), mod_source.clone()));
+                }
             }
             queue.push((file_key, mod_source));
         }
+    }
+
+    // Second pass: build the final map, excluding any name that either
+    // collides with main or is defined in more than one module.
+    for (fn_name, file_path, mod_source) in candidates {
+        if main_fn_names.contains(&fn_name) {
+            continue;
+        }
+        if name_module_count.get(&fn_name).copied().unwrap_or(0) > 1 {
+            continue;
+        }
+        // At this point the name is unique to a single module and not
+        // shadowed by the main file, so recording it is unambiguous.
+        out.entry(fn_name).or_insert((file_path, mod_source));
     }
     out
 }

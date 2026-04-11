@@ -41,6 +41,7 @@ Returns the arccosine of `x` in radians. Returns `NaN` for inputs outside [-1, 1
 Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let angle = math.acos(1.0) else 0.0
     println(angle)  -- 0.0
@@ -58,6 +59,7 @@ Returns the arcsine of `x` in radians. Returns `NaN` for inputs outside [-1, 1].
 Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let angle = math.asin(1.0) else 0.0
     println(angle)  -- 1.5707... (pi/2)
@@ -74,6 +76,7 @@ math.atan(x: Float) -> Float
 Returns the arctangent of `x` in radians.
 
 ```silt
+import math
 fn main() {
     println(math.atan(1.0))  -- 0.7853... (pi/4)
 }
@@ -90,6 +93,7 @@ Returns the angle in radians between the positive x-axis and the point (x, y).
 Handles all quadrants correctly.
 
 ```silt
+import math
 fn main() {
     println(math.atan2(1.0, 1.0))  -- 0.7853... (pi/4)
 }
@@ -105,6 +109,7 @@ math.cos(x: Float) -> Float
 Returns the cosine of `x` (in radians).
 
 ```silt
+import math
 fn main() {
     println(math.cos(0.0))       -- 1.0
     println(math.cos(math.pi))   -- -1.0
@@ -122,6 +127,7 @@ Euler's number, approximately 2.718281828459045. This is a constant, not a
 function.
 
 ```silt
+import math
 fn main() {
     println(math.e)  -- 2.718281828459045
 }
@@ -138,6 +144,7 @@ Returns e raised to the power of `x`. May overflow to Infinity for large inputs.
 Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let result = math.exp(1.0) else 0.0
     println(result)  -- 2.718281828459045
@@ -155,6 +162,7 @@ Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
 `NaN` for negative inputs. Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let result = math.log(math.e) else 0.0
     println(result)  -- 1.0
@@ -172,6 +180,7 @@ Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
 `NaN` for negative inputs. Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let result = math.log10(100.0) else 0.0
     println(result)  -- 2.0
@@ -188,6 +197,7 @@ math.pi : Float
 Pi, approximately 3.141592653589793. This is a constant, not a function.
 
 ```silt
+import math
 fn main() {
     let circumference = 2.0 * math.pi * 5.0
     println(circumference)
@@ -205,6 +215,7 @@ Returns `base` raised to the power of `exponent`. Returns `ExtFloat` — may be
 Infinity for large results. Use `else` to narrow:
 
 ```silt
+import math
 fn main() {
     let result = math.pow(2.0, 10.0) else 0.0
     println(result)  -- 1024.0
@@ -221,6 +232,7 @@ math.random() -> Float
 Returns a random `Float` in the range [0.0, 1.0). The result is always finite.
 
 ```silt
+import math
 fn main() {
     let r = math.random()
     println(r)  -- e.g. 0.7291035...
@@ -237,6 +249,7 @@ math.sin(x: Float) -> Float
 Returns the sine of `x` (in radians).
 
 ```silt
+import math
 fn main() {
     println(math.sin(0.0))           -- 0.0
     println(math.sin(1.5707963))     -- 1.0 (pi/2)
@@ -254,6 +267,7 @@ Returns the square root of `x`. Returns `NaN` for negative inputs. Use `else`
 to narrow:
 
 ```silt
+import math
 fn main() {
     let result = math.sqrt(4.0) else 0.0
     println(result)  -- 2.0
@@ -270,6 +284,7 @@ math.tan(x: Float) -> Float
 Returns the tangent of `x` (in radians).
 
 ```silt
+import math
 fn main() {
     println(math.tan(0.0))           -- 0.0
     println(math.tan(0.7853982))     -- 1.0 (approximately, pi/4)

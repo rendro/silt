@@ -30,6 +30,7 @@ top-to-bottom:
 ### Real-World Pipeline
 
 ```silt
+import list
 type User {
   name: String,
   age: Int,

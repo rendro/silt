@@ -237,6 +237,13 @@ pub struct FnDecl {
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,
+    /// True when this declaration was synthesized by parser error recovery
+    /// (Option B: salvage the header and emit a stub so downstream references
+    /// to `name` do not cascade into "undefined variable" errors). The body
+    /// of a recovery stub is an empty/synthetic `Block` and must NOT be
+    /// type-checked; at call sites, the stub's signature is trusted only
+    /// enough to return a fresh type variable (no arity/arg-type cascade).
+    pub is_recovery_stub: bool,
 }
 
 #[derive(Debug, Clone)]

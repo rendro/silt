@@ -93,6 +93,45 @@ fn take_trailing_for_line(line: usize) -> Option<String> {
     })
 }
 
+/// Non-consuming check for a trailing comment on `line`. Used by the
+/// multi-line collection emitters to decide whether to force a
+/// multi-line layout without side-effecting the consumption state.
+fn has_trailing_for_line(line: usize) -> bool {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return false;
+        };
+        if state.trailing_consumed.contains(&line) {
+            return false;
+        }
+        state.trailing_map.contains_key(&line)
+    })
+}
+
+/// Non-consuming check for any unconsumed standalone comment whose
+/// source line lies strictly between `after_line` and `before_line`.
+/// Used to detect whether a collection literal contains interior
+/// standalone comments that force a multi-line layout.
+fn has_comments_between(after_line: usize, before_line: usize) -> bool {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return false;
+        };
+        for i in 0..state.comments.len() {
+            if state.consumed[i] {
+                continue;
+            }
+            let line = state.comments[i].line;
+            if line > after_line && line < before_line {
+                return true;
+            }
+        }
+        false
+    })
+}
+
 /// Consume and return every unconsumed standalone comment whose source
 /// line is strictly less than `before_line`, in source order.
 fn take_comments_before(before_line: usize) -> Vec<Comment> {
@@ -202,6 +241,247 @@ fn compute_block_end_line(span: Span) -> usize {
             }
         }
         span.line
+    })
+}
+
+/// Compute the 1-based line of the closing delimiter `close` for a
+/// bracketed form whose opening delimiter `open` is the first matching
+/// `open` character at or after `start_line`. Skips string literals
+/// (including escapes and simple interpolation-brace tracking for `{`)
+/// and `--` line comments. Returns `start_line` as a safe fallback
+/// when the scan cannot find a matching close.
+///
+/// `open` and `close` must be ASCII single-char delimiters such as
+/// `'['`/`']'`, `'('`/`')'`, or `'{'`/`'}'`.
+fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return start_line;
+        };
+        let source_lines = &state.source_lines;
+        if start_line == 0 || start_line > source_lines.len() {
+            return start_line;
+        }
+        let start_idx = start_line - 1;
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut in_string = false;
+        // Track nesting depth of interpolation braces only when we're
+        // scanning for brace brackets; other bracket kinds don't interact
+        // with `{` inside strings.
+        let mut interp_depths: Vec<i32> = Vec::new();
+        for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
+            let mut chars = line.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if in_string {
+                    if ch == '\\' {
+                        chars.next();
+                    } else if ch == '"' {
+                        in_string = false;
+                    } else if ch == '{' {
+                        interp_depths.push(0);
+                        in_string = false;
+                    }
+                    continue;
+                }
+                if ch == '"' {
+                    in_string = true;
+                    continue;
+                }
+                if ch == '-' && chars.peek() == Some(&'-') {
+                    break; // line comment
+                }
+                if !interp_depths.is_empty() {
+                    // Inside a string interpolation: `{` deepens, `}`
+                    // either decrements or closes the interp section
+                    // and re-enters the string.
+                    if ch == '{' {
+                        if let Some(d) = interp_depths.last_mut() {
+                            *d += 1;
+                        }
+                        continue;
+                    }
+                    if ch == '}' {
+                        if let Some(d) = interp_depths.last_mut() {
+                            if *d == 0 {
+                                interp_depths.pop();
+                                in_string = true;
+                            } else {
+                                *d -= 1;
+                            }
+                        }
+                        continue;
+                    }
+                    continue;
+                }
+                if ch == open {
+                    depth += 1;
+                    found_open = true;
+                } else if ch == close {
+                    depth -= 1;
+                }
+            }
+            if found_open && depth == 0 {
+                return line_idx + 1;
+            }
+        }
+        start_line
+    })
+}
+
+/// Compute the source line (1-based) of each parameter in a parameter
+/// list spanning from `start_line` (the line of the opening `(`) to
+/// `close_line` (the line of the matching `)`). Walks the source
+/// character-by-character between the `(` and `)`, tracking nesting of
+/// brackets and string literals, and records the line of the last
+/// non-whitespace character before each top-level comma and before the
+/// final `)`. The returned vector has length `n_params`; entries are
+/// `None` only when the source scan cannot resolve a line (safety
+/// fallback).
+fn compute_param_lines(
+    start_line: usize,
+    close_line: usize,
+    n_params: usize,
+) -> Vec<Option<usize>> {
+    if n_params == 0 {
+        return Vec::new();
+    }
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return vec![None; n_params];
+        };
+        let source_lines = &state.source_lines;
+        if start_line == 0
+            || start_line > source_lines.len()
+            || close_line > source_lines.len()
+        {
+            return vec![None; n_params];
+        }
+        let mut depth: i32 = 0;
+        let mut found_open = false;
+        let mut in_string = false;
+        let mut out: Vec<Option<usize>> = Vec::with_capacity(n_params);
+        // Track the 1-based line of the most-recently-seen non-whitespace
+        // character. When we emit an entry (on `,` or final `)`), we
+        // attribute it to that line.
+        let mut last_content_line: usize = start_line;
+        'outer: for (line_idx, line) in source_lines
+            .iter()
+            .enumerate()
+            .skip(start_line - 1)
+            .take(close_line - (start_line - 1))
+        {
+            let line_no = line_idx + 1;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let ch = chars[i];
+                if in_string {
+                    if ch == '\\' && i + 1 < chars.len() {
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '"' {
+                        in_string = false;
+                    }
+                    last_content_line = line_no;
+                    i += 1;
+                    continue;
+                }
+                if ch == '"' {
+                    in_string = true;
+                    last_content_line = line_no;
+                    i += 1;
+                    continue;
+                }
+                if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
+                    // Line comment — stop scanning this line.
+                    break;
+                }
+                if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+                    // Block comment on this line: walk to the matching
+                    // `-}` on the same line. Cross-line block comments
+                    // in param lists are rare enough that we bail out
+                    // of per-param line resolution if encountered.
+                    let mut bdepth: i32 = 1;
+                    let mut j = i + 2;
+                    while j < chars.len() {
+                        if j + 1 < chars.len()
+                            && chars[j] == '{'
+                            && chars[j + 1] == '-'
+                        {
+                            bdepth += 1;
+                            j += 2;
+                            continue;
+                        }
+                        if j + 1 < chars.len()
+                            && chars[j] == '-'
+                            && chars[j + 1] == '}'
+                        {
+                            bdepth -= 1;
+                            j += 2;
+                            if bdepth == 0 {
+                                break;
+                            }
+                            continue;
+                        }
+                        j += 1;
+                    }
+                    if bdepth != 0 {
+                        // Unterminated on this line — bail out.
+                        break 'outer;
+                    }
+                    i = j;
+                    continue;
+                }
+                if ch == '(' || ch == '[' || ch == '{' {
+                    if ch == '(' && !found_open {
+                        depth += 1;
+                        found_open = true;
+                        i += 1;
+                        continue;
+                    }
+                    depth += 1;
+                    last_content_line = line_no;
+                    i += 1;
+                    continue;
+                }
+                if ch == ')' || ch == ']' || ch == '}' {
+                    if ch == ')' && depth == 1 && found_open {
+                        // End of params: attribute final param to
+                        // `last_content_line` if we haven't emitted n
+                        // entries yet.
+                        if out.len() < n_params {
+                            out.push(Some(last_content_line));
+                        }
+                        break 'outer;
+                    }
+                    depth -= 1;
+                    last_content_line = line_no;
+                    i += 1;
+                    continue;
+                }
+                if ch == ',' && depth == 1 {
+                    // Top-level separator: the param we just closed
+                    // lives on `last_content_line`.
+                    if out.len() < n_params {
+                        out.push(Some(last_content_line));
+                    }
+                    i += 1;
+                    continue;
+                }
+                if !ch.is_whitespace() {
+                    last_content_line = line_no;
+                }
+                i += 1;
+            }
+        }
+        while out.len() < n_params {
+            out.push(None);
+        }
+        out
     })
 }
 
@@ -534,16 +814,35 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
 }
 
 /// Extract the trailing comment from a line of code, if present.
-/// Skips `--` that appear inside string literals.
+///
+/// Two kinds of trailing comments are recognized:
+///   1. A `--` line comment that follows code, e.g. `let x = 1 -- note`.
+///   2. A `{- ... -}` block comment (possibly nested) that follows code
+///      and whose closer is followed only by whitespace (or an even later
+///      trailing `--` line comment), e.g.
+///          `let x = 1 {- trailing -}`
+///          `let x = 1 {- {- nested -} -}`
+///          `let x = 1 {- block -} -- followed by line comment`
+///      A block comment with more code after its closer is NOT a trailing
+///      comment for the statement — it is an inline annotation.
+///
+/// `--` sequences that appear inside string literals or block comments are
+/// ignored, as are `{-` / `-}` pairs that appear inside string literals.
 fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    // First pass: find the byte index of the first `--` line comment that
+    // sits outside of any string or block comment, AND the byte index and
+    // depth-tracking info for the first `{-` that sits outside of any
+    // string (block-in-block is fine — we handle nesting).
     let mut in_string = false;
     let mut block_depth: usize = 0;
-    let chars: Vec<char> = line.chars().collect();
+    let mut block_start: Option<usize> = None;
+    let mut line_comment_start: Option<usize> = None;
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i];
         if in_string {
-            if ch == '\\' {
+            if ch == '\\' && i + 1 < chars.len() {
                 i += 2;
                 continue;
             }
@@ -553,35 +852,108 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             i += 1;
             continue;
         }
-        // Check for block comment start `{-`
-        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            block_depth += 1;
-            i += 2;
-            continue;
-        }
-        // Check for block comment end `-}`
-        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' && block_depth > 0 {
-            block_depth -= 1;
-            i += 2;
-            continue;
-        }
-        // Skip everything inside block comments
         if block_depth > 0 {
+            // Inside a block comment: only care about `{-` (deepen) and
+            // `-}` (close). `--` and `"` inside block comments are inert.
+            if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
             i += 1;
             continue;
         }
+        // Outside any string or block comment.
         if ch == '"' {
             in_string = true;
             i += 1;
             continue;
         }
         if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            let comment: String = chars[i..].iter().collect();
-            return Some(comment.trim_end().to_string());
+            line_comment_start = Some(i);
+            break;
+        }
+        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            if block_start.is_none() {
+                block_start = Some(i);
+            }
+            block_depth += 1;
+            i += 2;
+            continue;
         }
         i += 1;
     }
-    None
+
+    // If a `--` line comment exists at top level, it wins (and the
+    // extracted text may include a block comment that appears AFTER it
+    // as plain comment bytes, since once `--` starts everything to EOL
+    // is comment). The first-pass loop already stops at `--`, so we
+    // simply emit from `line_comment_start` to end.
+    if let Some(start) = line_comment_start {
+        let comment: String = chars[start..].iter().collect();
+        return Some(comment.trim_end().to_string());
+    }
+
+    // No line comment. If we saw a block comment, check whether it
+    // qualifies as a trailing block comment — its closer must be
+    // followed only by whitespace (or a `--` line comment).
+    let Some(start) = block_start else {
+        return None;
+    };
+    // Walk from `start` to find the matching close, accounting for
+    // nesting. The outer scan above already tracked depth, but by that
+    // point it may have discovered additional block comments later on
+    // the line, so we redo the walk here starting at the known outer
+    // `{-` to find exactly where it ends.
+    let mut depth: usize = 0;
+    let mut j = start;
+    let mut close_end: Option<usize> = None;
+    while j < chars.len() {
+        let ch = chars[j];
+        if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
+            depth += 1;
+            j += 2;
+            continue;
+        }
+        if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '}' {
+            depth -= 1;
+            j += 2;
+            if depth == 0 {
+                close_end = Some(j);
+                break;
+            }
+            continue;
+        }
+        j += 1;
+    }
+    let Some(close_end) = close_end else {
+        // Unterminated block comment on this line — cannot be a
+        // trailing comment.
+        return None;
+    };
+    // After the block comment's closer, only whitespace (and optionally
+    // a `--` line comment) may follow for it to count as trailing.
+    let mut k = close_end;
+    while k < chars.len() && chars[k].is_whitespace() {
+        k += 1;
+    }
+    if k < chars.len() {
+        // There's more content after the block close. If it's a `--`
+        // line comment, we accept the combined `{- ... -} -- ...` tail
+        // as the trailing comment. Otherwise this block comment is
+        // inline and NOT trailing.
+        if !(chars[k] == '-' && k + 1 < chars.len() && chars[k + 1] == '-') {
+            return None;
+        }
+    }
+    // Emit the trailing substring starting at the `{-`.
+    let comment: String = chars[start..].iter().collect();
+    Some(comment.trim_end().to_string())
 }
 
 /// Get the start line (1-based) of a declaration from its span, if available.
@@ -944,12 +1316,49 @@ fn indent(depth: usize) -> String {
 fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     let prefix = indent(depth);
     let pub_prefix = if f.is_pub { "pub " } else { "" };
-    let params = f
-        .params
-        .iter()
-        .map(format_param)
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Resolve per-param source lines so we can attach any trailing `--`
+    // comment the user wrote after a param and detect interior standalone
+    // comments that force a multi-line layout.
+    let fn_start_line = f.span.line;
+    let params_close_line = compute_bracket_end_line(fn_start_line, '(', ')');
+    let param_lines: Vec<Option<usize>> =
+        compute_param_lines(fn_start_line, params_close_line, f.params.len());
+    let concrete_param_lines: Vec<usize> =
+        param_lines.iter().filter_map(|l| *l).collect();
+    let multiline_params = !f.params.is_empty()
+        && should_layout_multiline(
+            fn_start_line,
+            params_close_line,
+            &concrete_param_lines,
+        );
+    let params = if multiline_params {
+        let mut lines: Vec<String> = Vec::new();
+        let mut prev_line = fn_start_line;
+        for (i, p) in f.params.iter().enumerate() {
+            let p_line = param_lines[i].unwrap_or(prev_line + 1);
+            let pre = take_comments_between(prev_line, p_line);
+            for c in &pre {
+                lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+            }
+            let p_str = format_param(p);
+            let trailing = take_trailing_for_line(p_line)
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            lines.push(format!("{}{p_str},{trailing}", indent(depth + 1)));
+            prev_line = p_line;
+        }
+        let tail = take_comments_between(prev_line, params_close_line);
+        for c in &tail {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        format!("\n{}\n{}", lines.join("\n"), indent(depth))
+    } else {
+        f.params
+            .iter()
+            .map(format_param)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let ret = if let Some(ty) = &f.return_type {
         format!(" -> {}", format_type_expr(ty))
     } else {
@@ -1020,21 +1429,31 @@ fn format_body(expr: &Expr, depth: usize) -> String {
         ExprKind::Block(stmts) => {
             let open_line = expr.span.line;
             let close_line = compute_block_end_line(expr.span);
+            // A multi-line block may carry a trailing `-- comment` on the
+            // line containing its `}`. Only consume it when multi-line so
+            // an inline `{}` doesn't steal a trailing comment from the
+            // outer line it shares with other code.
+            let close_trailing = if close_line > open_line {
+                take_trailing_for_line(close_line).map(|c| format!(" {c}"))
+            } else {
+                None
+            };
+            let close_suffix = close_trailing.unwrap_or_default();
             if stmts.is_empty() {
                 // Drain comments that sit strictly between `{` and `}`.
                 let inner = take_comments_between(open_line, close_line);
                 if inner.is_empty() {
-                    "{}".to_string()
+                    format!("{{}}{close_suffix}")
                 } else {
                     format!(
-                        "{{\n{}\n{}}}",
+                        "{{\n{}\n{}}}{close_suffix}",
                         render_comments(&inner, depth + 1),
                         indent(depth)
                     )
                 }
             } else {
                 let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
-                format!("{{\n{inner}\n{}}}", indent(depth))
+                format!("{{\n{inner}\n{}}}{close_suffix}", indent(depth))
             }
         }
         _ => format!(
@@ -1393,7 +1812,252 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     if matches!(expr.kind, ExprKind::Pipe(..)) {
         return format_pipe_chain_expr(expr, depth);
     }
+    // Collection literals and calls with source-line comments anywhere
+    // between their open and close delimiters must be rendered
+    // multi-line so per-element trailing comments and interior
+    // standalone comments are preserved. When there are no comments
+    // inside, the compact single-line form is used.
+    if let ExprKind::List(_) = &expr.kind
+        && let Some(out) = format_list_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
+    if let ExprKind::Tuple(_) = &expr.kind
+        && let Some(out) = format_tuple_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
+    if let ExprKind::Call(..) = &expr.kind
+        && let Some(out) = format_call_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
+    if let ExprKind::RecordCreate { .. } = &expr.kind
+        && let Some(out) = format_record_create_expr_if_multiline(expr, depth)
+    {
+        return out;
+    }
     format_expr_inner(&expr.kind, depth)
+}
+
+/// If `expr` is a list literal that requires multi-line formatting
+/// (because any element has a trailing comment or the literal contains
+/// interior standalone comments), render it as such and return
+/// `Some`. Otherwise return `None` and let the compact formatter in
+/// `format_expr_inner` handle it.
+fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::List(elems) = &expr.kind else {
+        return None;
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '[', ']');
+    // Compute per-element source lines. List elements are either a
+    // single expression or a spread `..expr`.
+    let elem_lines: Vec<usize> = elems
+        .iter()
+        .map(|e| match e {
+            ListElem::Single(x) | ListElem::Spread(x) => x.span.line,
+        })
+        .collect();
+    if !should_layout_multiline(open_line, close_line, &elem_lines) {
+        return None;
+    }
+    // Drain any standalone comments before the first element (inside
+    // the brackets).
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, elem) in elems.iter().enumerate() {
+        let elem_line = elem_lines[i];
+        // Standalone comments between the previous boundary and this
+        // element are emitted as indented comment lines.
+        let pre = take_comments_between(prev_line, elem_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let elem_str = match elem {
+            ListElem::Single(x) => format_expr(x, depth + 1),
+            ListElem::Spread(x) => format!("..{}", format_expr(x, depth + 1)),
+        };
+        let trailing = take_trailing_for_line(elem_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        lines.push(format!("{}{elem_str},{trailing}", indent(depth + 1)));
+        prev_line = elem_line;
+    }
+    // Drain any trailing standalone comments between the last element
+    // and the closing `]`.
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "[\n{}\n{}]",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Tuple multi-line emitter. Mirrors `format_list_expr_if_multiline`.
+fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::Tuple(elems) = &expr.kind else {
+        return None;
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '(', ')');
+    let elem_lines: Vec<usize> = elems.iter().map(|e| e.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &elem_lines) {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, elem) in elems.iter().enumerate() {
+        let elem_line = elem_lines[i];
+        let pre = take_comments_between(prev_line, elem_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let elem_str = format_expr(elem, depth + 1);
+        let trailing = take_trailing_for_line(elem_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        lines.push(format!("{}{elem_str},{trailing}", indent(depth + 1)));
+        prev_line = elem_line;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "(\n{}\n{})",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Call-expression multi-line emitter. Walks the argument list and emits
+/// one arg per line with trailing per-arg comments preserved.
+fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::Call(callee, args) = &expr.kind else {
+        return None;
+    };
+    if args.is_empty() {
+        return None;
+    }
+    // If the last arg is a trailing closure, the call already has its
+    // own lambda-based layout — don't interfere.
+    if let Some(last) = args.last()
+        && matches!(last.kind, ExprKind::Lambda { .. })
+    {
+        return None;
+    }
+    // The call's span is at the callee, not the `(`. The opening `(`
+    // lives on the same line (the parser ties calls with no newline
+    // between callee and `(`).
+    let open_line = expr.span.line;
+    let close_line = compute_bracket_end_line(open_line, '(', ')');
+    let arg_lines: Vec<usize> = args.iter().map(|a| a.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &arg_lines) {
+        return None;
+    }
+    let callee_str = format_expr(callee, depth);
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, arg) in args.iter().enumerate() {
+        let arg_line = arg_lines[i];
+        let pre = take_comments_between(prev_line, arg_line);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let arg_str = format_expr(arg, depth + 1);
+        let trailing = take_trailing_for_line(arg_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        lines.push(format!("{}{arg_str},{trailing}", indent(depth + 1)));
+        prev_line = arg_line;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "{callee_str}(\n{}\n{})",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// RecordCreate multi-line emitter.
+fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
+    let ExprKind::RecordCreate { name, fields } = &expr.kind else {
+        return None;
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    let open_line = expr.span.line;
+    // The record opener is the first `{` at or after the `Name` line.
+    let close_line = compute_bracket_end_line(open_line, '{', '}');
+    let field_lines: Vec<usize> = fields.iter().map(|(_, e)| e.span.line).collect();
+    if !should_layout_multiline(open_line, close_line, &field_lines) {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut prev_line = open_line;
+    for (i, (fname, fexpr)) in fields.iter().enumerate() {
+        let fline = field_lines[i];
+        let pre = take_comments_between(prev_line, fline);
+        for c in &pre {
+            lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+        }
+        let val = format_expr(fexpr, depth + 1);
+        let trailing = take_trailing_for_line(fline)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}{fname}: {val},{trailing}",
+            indent(depth + 1)
+        ));
+        prev_line = fline;
+    }
+    let tail = take_comments_between(prev_line, close_line);
+    for c in &tail {
+        lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
+    }
+    Some(format!(
+        "{name} {{\n{}\n{}}}",
+        lines.join("\n"),
+        indent(depth)
+    ))
+}
+
+/// Decide whether a collection literal needs multi-line layout: true
+/// when the literal spans multiple source lines AND either any
+/// element's source line has an attached trailing comment OR the
+/// literal contains an interior standalone comment strictly between
+/// the open-delimiter line and the close-delimiter line.
+///
+/// Requiring the source to already be multi-line avoids accidentally
+/// stealing a trailing comment that belongs to the *statement* rather
+/// than the innermost collection element when the whole expression was
+/// written on one source line, e.g. `println(1) {- trailing -}`.
+fn should_layout_multiline(
+    open_line: usize,
+    close_line: usize,
+    elem_lines: &[usize],
+) -> bool {
+    if close_line <= open_line {
+        return false;
+    }
+    if elem_lines.iter().any(|&l| has_trailing_for_line(l)) {
+        return true;
+    }
+    has_comments_between(open_line, close_line)
 }
 
 /// Format a pipe chain expression, preserving any trailing comments
@@ -1561,10 +2225,40 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Unary(op, expr) => {
+            // Unary operators bind tighter than Binary/Pipe/Range/FloatElse,
+            // so those inner expressions must be wrapped in parens to keep
+            // the original semantics. Without wrapping, `-(1 + 2)` reformats
+            // to `-1 + 2`, which changes the program's meaning from -3 to 1.
+            // Unary bp is 90 (see `parse_unary` in src/parser.rs). Binding
+            // powers lower than 90 need parens:
+            //   FloatElse (else)   10
+            //   Or (||)             20
+            //   And (&&)            30
+            //   Eq/Neq (==, !=)     40
+            //   Lt/Gt/Leq/Geq       50
+            //   Pipe (|>)           55
+            //   Range (..)          60
+            //   Add/Sub (+ -)       70
+            //   Mul/Div/Mod         80
+            // Ascription (95), QuestionMark (110), and postfix Call/Index/
+            // FieldAccess (120) bind tighter than unary and do NOT need
+            // wrapping.
+            let needs_parens = matches!(
+                &expr.kind,
+                ExprKind::Binary(..)
+                    | ExprKind::Pipe(..)
+                    | ExprKind::Range(..)
+                    | ExprKind::FloatElse(..)
+            );
             let inner = format_expr(expr, depth);
+            let wrapped = if needs_parens {
+                format!("({inner})")
+            } else {
+                inner
+            };
             match op {
-                UnaryOp::Neg => format!("-{inner}"),
-                UnaryOp::Not => format!("!{inner}"),
+                UnaryOp::Neg => format!("-{wrapped}"),
+                UnaryOp::Not => format!("!{wrapped}"),
             }
         }
 
@@ -3551,5 +4245,123 @@ import a
         let source = "fn try_it(x) = x?\n";
         let result = format(source).unwrap();
         assert_eq!(result, "fn try_it(x) = x?\n");
+    }
+
+    // ── BROKEN-1: Unary op must preserve parens around lower-bp inner ──
+
+    #[test]
+    fn test_format_unary_minus_wraps_binary_operand_parens() {
+        // `-(1 + 2)` must NOT become `-1 + 2` — that changes semantics
+        // from -3 to 1. The formatter must wrap a Binary inner expression
+        // in parens when the outer is a unary op.
+        let source = "fn main() {\n  let d = -(1 + 2)\n  println(d)\n}\n";
+        let result = format(source).unwrap();
+        let expected =
+            "fn main() {\n  let d = -(1 + 2)\n  println(d)\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_unary_not_wraps_logical_operand_parens() {
+        // `!(true && false)` must NOT become `!true && false`.
+        let source = "fn main() {\n  let b = !(true && false)\n  println(b)\n}\n";
+        let result = format(source).unwrap();
+        let expected =
+            "fn main() {\n  let b = !(true && false)\n  println(b)\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_unary_preserves_parens_in_arithmetic_context() {
+        // Several unary-paren shapes in one file. Each variant must
+        // keep its parentheses so the operator precedence does not
+        // silently change.
+        let source = "fn main() {\n  let a = -(x - y)\n  let b = !(x == y)\n  let c = f(-(1 + 2))\n  println((a, b, c))\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let a = -(x - y)\n  let b = !(x == y)\n  let c = f(-(1 + 2))\n  println((a, b, c))\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_unary_paren_idempotent() {
+        // fmt(fmt(s)) == fmt(s) for the unary-paren cases.
+        let source = "fn main() {\n  let d = -(1 + 2)\n  let e = !(a || b)\n  let f = -(x * y - z)\n  println((d, e, f))\n}\n";
+        let once = format(source).unwrap();
+        let twice = format(&once).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    // ── BROKEN-2: Trailing {- ... -} block comment on statement line ──
+
+    #[test]
+    fn test_format_preserves_trailing_block_comment_on_statement() {
+        // `let x = 1 {- trailing block -}` must keep the trailing block
+        // comment after the statement. Same for `println(1) {- trailing -}`.
+        let source = "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    // ── BROKEN-3: Trailing comment on body close brace line ──
+
+    #[test]
+    fn test_format_preserves_trailing_comment_on_body_close_brace() {
+        let source = "fn main() {\n  let x = 1\n} -- comment on close brace\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let x = 1\n} -- comment on close brace\n";
+        assert_eq!(result, expected);
+    }
+
+    // ── BROKEN-4: Trailing comments on multi-line collection elements ──
+
+    #[test]
+    fn test_format_preserves_trailing_comments_on_multiline_list_elements() {
+        let source = "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_preserves_trailing_comments_on_multiline_tuple_elements() {
+        let source = "fn main() {\n  let t = (\n    1, -- a\n    2, -- b\n  )\n  println(t)\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let t = (\n    1, -- a\n    2, -- b\n  )\n  println(t)\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_preserves_trailing_comments_on_multiline_call_arguments() {
+        let source = "fn main() {\n  add(\n    1, -- x\n    2, -- y\n    3,\n  )\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  add(\n    1, -- x\n    2, -- y\n    3,\n  )\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_preserves_trailing_comments_on_multiline_fn_params() {
+        let source = "fn add(\n  a, -- first\n  b,\n) = a + b\n";
+        let result = format(source).unwrap();
+        let expected = "fn add(\n  a, -- first\n  b,\n) = a + b\n";
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_format_preserves_trailing_comments_on_multiline_record_literal_fields() {
+        let source = "type Point { x: Int, y: Int }\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        let result = format(source).unwrap();
+        let expected = "type Point {\n  x: Int,\n  y: Int,\n}\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        assert_eq!(result, expected);
+    }
+
+    // ── BROKEN-5: Standalone comments inside multi-line list literal ──
+
+    #[test]
+    fn test_format_preserves_standalone_comments_inside_multiline_list_literal() {
+        let source = "fn main() {\n  let xs = [\n    -- before first\n    1,\n    -- between\n    2,\n  ]\n  println(xs)\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  let xs = [\n    -- before first\n    1,\n    -- between\n    2,\n  ]\n  println(xs)\n}\n";
+        assert_eq!(result, expected);
     }
 }

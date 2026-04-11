@@ -34,6 +34,7 @@ Closes the channel. Subsequent sends will fail. Receivers will see `Closed`
 after all buffered messages are consumed.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(10)
     channel.send(ch, 1)
@@ -52,6 +53,8 @@ Receives messages from the channel and calls `f` with each one, until the
 channel is closed. This is the idiomatic way to consume all messages.
 
 ```silt
+import channel
+import task
 fn main() {
     let ch = channel.new(10)
     task.spawn(fn() {
@@ -78,6 +81,7 @@ With an integer argument, creates a buffered channel with that capacity --
 sends block when the buffer is full, receives block when the buffer is empty.
 
 ```silt
+import channel
 fn main() {
     let rendezvous = channel.new()    -- true rendezvous (capacity 0)
     let buffered = channel.new(10)    -- buffered (capacity 10)
@@ -96,6 +100,7 @@ available, or `Closed` when the channel is closed and empty. Parks the task
 while waiting, allowing other tasks to run on the same thread.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
@@ -119,6 +124,8 @@ and returns a 2-tuple of `(channel, result)` where `result` is `Message(val)`
 for a successful receive or `Closed` if the channel is closed.
 
 ```silt
+import channel
+import task
 fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
@@ -142,6 +149,7 @@ Sends a value into the channel. Parks the task if the buffer is full, allowing
 other tasks to run until space opens up.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, "hello")
@@ -160,6 +168,7 @@ milliseconds. The returned channel carries no values -- it simply closes when
 the duration elapses. This is useful for adding deadlines to `channel.select`.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(10)
     let timer = channel.timeout(1000)  -- closes after 1 second
@@ -183,6 +192,7 @@ available, `Empty` if the channel is open but has no data, or `Closed` if the
 channel is closed and empty.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(1)
     match channel.try_receive(ch) {
@@ -205,6 +215,7 @@ Non-blocking send. Returns `true` if the value was successfully buffered,
 `false` if the buffer is full or the channel is closed.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(1)
     let ok = channel.try_send(ch, 42)
@@ -239,6 +250,7 @@ Cancels a running task. The task will not execute further. No-op if the task has
 already completed.
 
 ```silt
+import task
 fn main() {
     let h = task.spawn(fn() {
         -- long-running work
@@ -258,6 +270,7 @@ Blocks until the task completes and returns its result. Parks the calling task
 while waiting, allowing other tasks to run.
 
 ```silt
+import task
 fn main() {
     let h = task.spawn(fn() { 1 + 2 })
     let result = task.join(h)
@@ -277,6 +290,7 @@ Spawning is cheap -- it allocates a stack, not an OS thread. Returns a handle
 that can be used with `task.join` or `task.cancel`.
 
 ```silt
+import task
 fn main() {
     let h = task.spawn(fn() {
         println("running in a task")

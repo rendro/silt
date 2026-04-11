@@ -34,6 +34,7 @@ returns the `Err` unchanged. Useful for chaining fallible operations.
 ```silt
 import int
 
+import result
 fn main() {
     let r = Ok("42")
         |> result.flat_map { s -> int.parse(s) }
@@ -52,6 +53,7 @@ Collapses a nested Result. `Ok(Ok(v))` becomes `Ok(v)`, `Ok(Err(e))` becomes
 `Err(e)`, and `Err(e)` stays `Err(e)`.
 
 ```silt
+import result
 fn main() {
     println(result.flatten(Ok(Ok(42))))         -- Ok(42)
     println(result.flatten(Ok(Err("oops"))))    -- Err("oops")
@@ -68,6 +70,7 @@ result.is_err(r: Result(a, e)) -> Bool
 Returns `true` if the result is an `Err`.
 
 ```silt
+import result
 fn main() {
     println(result.is_err(Err("fail")))  -- true
     println(result.is_err(Ok(42)))       -- false
@@ -84,6 +87,7 @@ result.is_ok(r: Result(a, e)) -> Bool
 Returns `true` if the result is an `Ok`.
 
 ```silt
+import result
 fn main() {
     println(result.is_ok(Ok(42)))       -- true
     println(result.is_ok(Err("fail")))  -- false
@@ -100,6 +104,7 @@ result.map_err(r: Result(a, e), f: (e) -> f) -> Result(a, f)
 If `r` is `Err(e)`, returns `Err(f(e))`. If `r` is `Ok`, returns it unchanged.
 
 ```silt
+import result
 fn main() {
     let r = Err("not found") |> result.map_err { e -> "Error: {e}" }
     println(r)  -- Err("Error: not found")
@@ -116,6 +121,7 @@ result.map_ok(r: Result(a, e), f: (a) -> b) -> Result(b, e)
 If `r` is `Ok(v)`, returns `Ok(f(v))`. If `r` is `Err`, returns it unchanged.
 
 ```silt
+import result
 fn main() {
     let r = Ok(21) |> result.map_ok { n -> n * 2 }
     println(r)  -- Ok(42)
@@ -132,6 +138,7 @@ result.unwrap_or(r: Result(a, e), default: a) -> a
 Returns the `Ok` value, or `default` if the result is `Err`.
 
 ```silt
+import result
 fn main() {
     println(result.unwrap_or(Ok(42), 0))        -- 42
     println(result.unwrap_or(Err("fail"), 0))    -- 0
@@ -168,6 +175,7 @@ If `opt` is `Some(v)`, calls `f(v)` and returns its result. If `opt` is `None`,
 returns `None`.
 
 ```silt
+import option
 fn main() {
     let result = Some(42) |> option.flat_map { n ->
         match {
@@ -189,6 +197,7 @@ option.is_none(opt: Option(a)) -> Bool
 Returns `true` if the option is `None`.
 
 ```silt
+import option
 fn main() {
     println(option.is_none(None))      -- true
     println(option.is_none(Some(1)))   -- false
@@ -205,6 +214,7 @@ option.is_some(opt: Option(a)) -> Bool
 Returns `true` if the option is `Some`.
 
 ```silt
+import option
 fn main() {
     println(option.is_some(Some(1)))   -- true
     println(option.is_some(None))      -- false
@@ -221,6 +231,7 @@ option.map(opt: Option(a), f: (a) -> b) -> Option(b)
 If `opt` is `Some(v)`, returns `Some(f(v))`. If `opt` is `None`, returns `None`.
 
 ```silt
+import option
 fn main() {
     let result = Some(21) |> option.map { n -> n * 2 }
     println(result)  -- Some(42)
@@ -237,6 +248,7 @@ option.to_result(opt: Option(a), error: e) -> Result(a, e)
 Converts `Some(v)` to `Ok(v)` and `None` to `Err(error)`.
 
 ```silt
+import option
 fn main() {
     let r = option.to_result(Some(42), "missing")
     println(r)  -- Ok(42)
@@ -256,6 +268,7 @@ option.unwrap_or(opt: Option(a), default: a) -> a
 Returns the inner value if `Some`, otherwise returns `default`.
 
 ```silt
+import option
 fn main() {
     println(option.unwrap_or(Some(42), 0))  -- 42
     println(option.unwrap_or(None, 0))      -- 0

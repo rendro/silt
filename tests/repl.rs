@@ -417,3 +417,108 @@ f() + 0
         out.stderr
     );
 }
+
+// ── 9. LATENT: runtime error from prior declaration does not mislead caret ──
+//
+// Regression: when a runtime error bubbles out of a function that was
+// compiled in a *previous* REPL entry, the VM's span points into that
+// previous entry's source (e.g. `fn a() = 1 / 0` → line 1 col 12). The
+// REPL then adjusts the span against the *current* entry's text (`c()`,
+// 3 chars wide) and prints a caret at column 12 of a 3-character line —
+// phantom whitespace past the end of the real input.
+//
+// The fix: detect spans that don't correspond to a valid character in
+// the current input and render the primary location as `--> <declaration>`
+// (matching the already-`<declaration>`-labelled call-stack frames)
+// instead of printing a caret against the wrong source line.
+
+#[test]
+fn test_repl_runtime_error_from_prior_declaration_does_not_mislead_caret() {
+    // Each `fn` below is its own REPL entry; the final `c()` is an
+    // expression input. The runtime division-by-zero originates inside
+    // `a`'s chunk (compiled during the first entry), so its span is in
+    // that prior source's coordinates. The REPL must not try to align a
+    // caret against `c()`'s text, which is only 3 chars wide.
+    let script = "\
+fn a() = 1 / 0
+fn b() = a() + 1
+fn c() = b() + 2
+c()
+";
+    let out = run_session(script);
+    assert_has_banner(&out);
+    assert!(
+        out.success,
+        "repl should exit successfully despite runtime error, stderr: {}",
+        out.stderr
+    );
+
+    // The division-by-zero message itself must still be shown.
+    assert!(
+        out.stderr.contains("division by zero"),
+        "expected `division by zero` in stderr, got:\n{}",
+        out.stderr
+    );
+
+    // The primary location line must be labelled `<declaration>`
+    // (consistent with how the call-stack frames label prior entries).
+    // We specifically assert on the `-->` line carrying that label, not
+    // just the existence of `<declaration>` anywhere (the call stack
+    // frames already contain that string).
+    assert!(
+        out.stderr
+            .lines()
+            .any(|l| l.trim_start().starts_with("--> ") && l.contains("<declaration>")),
+        "expected `--> <declaration>` header line for prior-entry span, got:\n{}",
+        out.stderr
+    );
+
+    // And — the load-bearing assertion — stderr must NOT contain a caret
+    // positioned past the end of `c()`. The bug printed
+    //     |    ^ division by zero
+    // with the caret in empty whitespace beyond column 3 of `c()`.
+    // After the fix we render no caret at all for prior-entry spans.
+    //
+    // We check two things:
+    //  (a) No caret-carrying diagnostic line appears alongside the
+    //      primary location.
+    //  (b) No source-snippet line (starting with ` 1 | c()`) is emitted
+    //      for the primary location: the fix drops the snippet too.
+    //
+    // Both checks are on the *primary* location only; the call stack
+    // below uses a different `-> name at <declaration>` format and must
+    // remain intact.
+    let primary_has_caret = out.stderr.lines().any(|l| {
+        let t = l.trim_start();
+        // `SourceError` renders the caret line as `| {spaces}^ {msg}`.
+        t.starts_with('|') && t.contains('^') && l.contains("division by zero")
+    });
+    assert!(
+        !primary_has_caret,
+        "primary location must not render a caret for prior-entry spans, stderr:\n{}",
+        out.stderr
+    );
+
+    let primary_has_snippet = out
+        .stderr
+        .lines()
+        .any(|l| l.contains(" 1 | ") && l.contains("c()"));
+    assert!(
+        !primary_has_snippet,
+        "primary location must not render a `c()` source snippet for prior-entry spans, stderr:\n{}",
+        out.stderr
+    );
+
+    // And the existing call-stack frames must still be present — the fix
+    // only touches the primary location, not the secondary frames.
+    assert!(
+        out.stderr.contains("-> a"),
+        "expected `a` frame in call stack, got stderr:\n{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("-> c"),
+        "expected `c` frame in call stack, got stderr:\n{}",
+        out.stderr
+    );
+}

@@ -399,6 +399,8 @@ Producer ----> [channel] ----> Consumer
 ```
 
 ```silt
+import channel
+import task
 fn main() {
   let ch = channel.new(10)
 
@@ -440,6 +442,9 @@ Distribute work across multiple tasks, then collect results.
 ```
 
 ```silt
+import channel
+import list
+import task
 fn main() {
   let jobs = channel.new(10)
   let results = channel.new(10)
@@ -489,6 +494,8 @@ writes to the next.
 ```
 
 ```silt
+import channel
+import task
 fn main() {
   let raw = channel.new(10)
   let doubled = channel.new(10)
@@ -537,6 +544,8 @@ branch has an equal chance of being chosen, so you cannot encode priority by
 ordering the list.
 
 ```silt
+import channel
+import task
 fn main() {
   let alerts = channel.new(5)
   let logs = channel.new(5)
@@ -580,6 +589,8 @@ detect closure via `channel.each` (which terminates) or by matching `Closed`
 on `channel.receive`.
 
 ```silt
+import channel
+import task
 fn main() {
   let work = channel.new(10)
   let done = channel.new(1)
@@ -619,6 +630,9 @@ channel's closed state is the shutdown signal.
 The simplest pattern: spawn several tasks, let them do work, join them all.
 
 ```silt
+import channel
+import list
+import task
 fn main() {
   let results = channel.new(10)
 
@@ -645,6 +659,7 @@ When you have finished all producers and want to collect results without
 knowing the exact count:
 
 ```silt
+import channel
 fn drain(ch) {
   match channel.try_receive(ch) {
     Message(val) -> {

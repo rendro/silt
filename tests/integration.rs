@@ -8293,9 +8293,12 @@ fn main() {
 }
     "#,
     );
+    // Lock the full production phrase "loop() expects 1 argument(s), got 2"
+    // so that any generic compile error containing the word "argument"
+    // cannot satisfy the assertion.
     assert!(
-        err.contains("expects 1") || err.contains("argument"),
-        "expected arity mismatch error, got: {err}"
+        err.contains("loop() expects 1 argument(s), got 2"),
+        "expected \"loop() expects 1 argument(s), got 2\", got: {err}"
     );
 }
 

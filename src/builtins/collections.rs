@@ -343,9 +343,36 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 1 {
                 return Err(VmError::new("list.length takes 1 argument".into()));
             }
-            match args[0].collection_len() {
-                Some(len) => Ok(Value::Int(len as i64)),
-                None => Err(VmError::new("list.length requires a list or range".into())),
+            // Ranges can describe spans larger than `i64::MAX`
+            // (e.g. `i64::MIN..i64::MAX` has `u64::MAX + 1` elements).
+            // Previously this went through `collection_len -> usize as
+            // i64`, which wrapped to `i64::MIN` on 64-bit platforms.
+            // Surface a clean overflow error instead.
+            match &args[0] {
+                Value::List(xs) => {
+                    let len = xs.len();
+                    i64::try_from(len).map(Value::Int).map_err(|_| {
+                        VmError::new(
+                            "list.length overflow: list too large to represent as Int".into(),
+                        )
+                    })
+                }
+                Value::Range(lo, hi) => {
+                    if hi < lo {
+                        Ok(Value::Int(0))
+                    } else {
+                        // Compute in i128 so we can detect spans that
+                        // exceed i64::MAX without losing precision.
+                        let span = (*hi as i128) - (*lo as i128) + 1;
+                        i64::try_from(span).map(Value::Int).map_err(|_| {
+                            VmError::new(
+                                "list.length overflow: range too large to represent as Int"
+                                    .into(),
+                            )
+                        })
+                    }
+                }
+                _ => Err(VmError::new("list.length requires a list or range".into())),
             }
         }
         "append" => {

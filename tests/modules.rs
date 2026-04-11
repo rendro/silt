@@ -236,9 +236,14 @@ fn main() {
 }
         "#,
     );
+    // The compiler now detects "exists-but-private" at compile time and
+    // emits a visibility error that names the function, the module, and
+    // the fix. See `test_private_module_function_reference_emits_visibility_error`
+    // below for the canonical assertions; this older test accepts either the
+    // new crisp error or any "undefined"-flavoured fallback.
     assert!(
-        err.contains("undefined") || err.contains("Undefined"),
-        "expected error about undefined name, got: {err}"
+        err.contains("secret") && (err.contains("pub") || err.to_lowercase().contains("undefined")),
+        "expected visibility or undefined error about `secret`, got: {err}"
     );
 }
 
@@ -593,4 +598,81 @@ fn main() { mid.process(5) }
         "#,
     );
     assert_eq!(result, Value::Int(15));
+}
+
+// ── Private module function visibility error ───────────────────────
+
+/// Calling a private function across a module boundary used to surface
+/// as a VM-level "undefined global: mymod.helper" at runtime, which is
+/// indistinguishable from a typo. The compiler now detects the
+/// "exists but not `pub`" case and raises a compile-time visibility
+/// error that names the function, the module, the source file, and the
+/// exact syntactic fix.
+#[test]
+fn test_private_module_function_reference_emits_visibility_error() {
+    let err = run_module_test_err(
+        &[(
+            "mymod.silt",
+            r#"
+fn helper() = 1
+pub fn x() = helper()
+            "#,
+        )],
+        r#"
+import mymod
+
+fn main() {
+  mymod.helper()
+}
+        "#,
+    );
+    assert!(
+        err.contains("helper"),
+        "error should name the private function, got: {err}"
+    );
+    assert!(
+        err.contains("mymod"),
+        "error should name the module, got: {err}"
+    );
+    assert!(
+        err.contains("pub"),
+        "error should suggest `pub` as the fix, got: {err}"
+    );
+    assert!(
+        !err.contains("undefined global"),
+        "new visibility path should fire instead of the generic runtime \
+         error, got: {err}"
+    );
+}
+
+/// Control: calling a name that is NOT in the imported module at all
+/// (neither public nor private) should still fall through to the
+/// existing "undefined" error path, not the new visibility-specific
+/// message.
+#[test]
+fn test_truly_unknown_module_function_still_emits_undefined_error() {
+    let err = run_module_test_err(
+        &[(
+            "mymod.silt",
+            r#"
+pub fn x() = 1
+            "#,
+        )],
+        r#"
+import mymod
+
+fn main() {
+  mymod.genuinely_missing()
+}
+        "#,
+    );
+    assert!(
+        err.to_lowercase().contains("undefined")
+            || err.to_lowercase().contains("not found"),
+        "unknown names must still surface as an undefined/not-found error, got: {err}"
+    );
+    assert!(
+        !err.contains("but is not `pub`"),
+        "visibility error must not fire for a name that doesn't exist at all, got: {err}"
+    );
 }

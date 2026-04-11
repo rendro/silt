@@ -1642,3 +1642,295 @@ fn main() -> Int {
         "expected 111+222+333 = 666; any other value (or panic) means the spawned task's stack was truncated to the wrong offset after `?` early-return"
     );
 }
+
+// ── Audit regression: integer/arity overflow locks ──────────────────
+//
+// These tests lock down a batch of audit findings where integer widening
+// / narrowing conversions silently truncated values and caused either
+// garbage results (`as i32`/`as u32`/`as u8`) or outright panics in
+// chrono (`Duration::minutes`, `Display::format`). Each test reproduces
+// the specific bug described in the audit and asserts the fixed, clean
+// error path.
+
+// BROKEN-1: `list.length` on a range whose size does not fit in i64
+// used to wrap via `usize as i64`, producing `i64::MIN` for the largest
+// representable range. The fix surfaces a clean VmError via
+// `i64::try_from(len)`.
+#[test]
+fn test_list_length_range_near_max_errors_or_limits() {
+    // Pick bounds so that the span (hi - lo + 1) exceeds i64::MAX.
+    // -4611686018427387904..4611686018427387903 yields
+    // 2^63 - 1 + 2^62 elements, which wraps to i64::MIN when cast.
+    let err = run_err(
+        r#"
+import list
+fn main() -> Int {
+  let r = -4611686018427387904..4611686018427387903
+  list.length(r)
+}
+"#,
+    );
+    assert!(
+        err.contains("list.length") && err.to_lowercase().contains("overflow"),
+        "expected list.length overflow error, got: {err}"
+    );
+
+    // Positive control: a small range still works and returns the right count.
+    let ok = run(
+        r#"
+import list
+fn main() -> Int {
+  list.length(1..10)
+}
+"#,
+    );
+    assert_eq!(ok, Value::Int(10));
+}
+
+// BROKEN-2a: `extract_date` used `*n as i32` on the year field, so a
+// year of `u32::MAX + 1 + 1999` would wrap to `1999`. Fix: reject with
+// a clean VmError.
+#[test]
+fn test_extract_date_year_out_of_i32_range_rejected() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> String {
+  let d = Date { year: 4294967296 + 1999, month: 1, day: 1 }
+  time.format_date(d, "%Y-%m-%d")
+}
+"#,
+    );
+    assert!(
+        err.to_lowercase().contains("year")
+            && (err.to_lowercase().contains("out of range") || err.contains("i32")),
+        "expected year-out-of-range error, got: {err}"
+    );
+
+    // And via `time.weekday` (also reaches extract_date).
+    let err2 = run_err(
+        r#"
+import time
+fn main() -> String {
+  let d = Date { year: 4294967296 + 1999, month: 1, day: 1 }
+  time.weekday(d)
+}
+"#,
+    );
+    assert!(
+        err2.to_lowercase().contains("year"),
+        "expected year-out-of-range error from weekday, got: {err2}"
+    );
+}
+
+// BROKEN-2b: `extract_time` used `*n as u32` on hour/minute/second,
+// so e.g. `hour = u32::MAX + 1 + 9` wrapped to `9`. Fix: reject with
+// a clean VmError before chrono sees the bad value.
+#[test]
+fn test_extract_time_hour_out_of_u32_range_rejected() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> String {
+  let t = Time { hour: 4294967305, minute: 0, second: 0, ns: 0 }
+  let d = Date { year: 2024, month: 1, day: 1 }
+  let dt = time.datetime(d, t)
+  time.format(dt, "%H:%M:%S")
+}
+"#,
+    );
+    assert!(
+        err.to_lowercase().contains("hour") && err.to_lowercase().contains("out of range"),
+        "expected hour-out-of-range error, got: {err}"
+    );
+}
+
+// BROKEN-2c: `time.days_in_month(year, month)` used `*m as u32` and
+// silently truncated. `u32::MAX + 1 + 2` wrapped to `2` (February) and
+// returned 29 for 2024. Fix: reject out-of-range components.
+#[test]
+fn test_time_days_in_month_u32_out_of_range_rejected() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> Int {
+  time.days_in_month(2024, 4294967298)
+}
+"#,
+    );
+    assert!(
+        err.to_lowercase().contains("month") && err.to_lowercase().contains("out of range"),
+        "expected month-out-of-range error, got: {err}"
+    );
+}
+
+// BROKEN-2d: `time.is_leap_year(year)` used `*y as i32` and truncated,
+// so `u32::MAX + 1 + 4` returned `true`. Fix: reject silently-truncated
+// years with a clean error.
+#[test]
+fn test_time_is_leap_year_i32_out_of_range_rejected() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> Bool {
+  time.is_leap_year(4294967300)
+}
+"#,
+    );
+    assert!(
+        err.to_lowercase().contains("year") && err.to_lowercase().contains("out of range"),
+        "expected year-out-of-range error, got: {err}"
+    );
+}
+
+// GAP-1a: Compiler silently truncated parameter count via `.len() as u8`,
+// so a function with 256 parameters compiled but the runtime arity was 0.
+// Fix: reject at compile time with a clean error.
+#[test]
+fn test_compile_rejects_256_parameter_fn() {
+    let mut params = String::new();
+    for i in 0..256 {
+        if i > 0 {
+            params.push_str(", ");
+        }
+        params.push_str(&format!("p{i}"));
+    }
+    let src = format!("fn big({params}) -> Int {{ 0 }}\nfn main() -> Int {{ 0 }}\n");
+    let err = run_err(&src);
+    assert!(
+        err.contains("255") || err.to_lowercase().contains("parameter"),
+        "expected 255-parameter limit error, got: {err}"
+    );
+
+    // Positive control: 255 parameters should still compile and run.
+    let mut params255 = String::new();
+    for i in 0..255 {
+        if i > 0 {
+            params255.push_str(", ");
+        }
+        params255.push_str(&format!("p{i}"));
+    }
+    let src255 = format!("fn big({params255}) -> Int {{ 0 }}\nfn main() -> Int {{ 0 }}\n");
+    let ok = run(&src255);
+    assert_eq!(ok, Value::Int(0));
+}
+
+// GAP-1b: Compiler silently truncated argument count via `.len() as u8`,
+// so a call with 256 arguments compiled with argc=0 and the VM then
+// mis-identified the callee as some value underneath on the stack.
+// Fix: reject at compile time with a clean error.
+#[test]
+fn test_compile_rejects_256_argument_call() {
+    let mut args = String::new();
+    for i in 0..256 {
+        if i > 0 {
+            args.push_str(", ");
+        }
+        args.push_str(&format!("{i}"));
+    }
+    let src = format!("fn f() -> Int {{ 0 }}\nfn main() -> Int {{ f({args}) }}\n");
+    let err = run_err(&src);
+    assert!(
+        err.contains("255") || err.to_lowercase().contains("argument"),
+        "expected 255-argument limit error, got: {err}"
+    );
+}
+
+// GAP-2a: `time.format` panicked inside chrono when given an invalid
+// strftime specifier like "%Q". Fix: validate via StrftimeItems and
+// return a clean VmError.
+#[test]
+fn test_time_format_rejects_invalid_chrono_specifier() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> String {
+  let d = Date { year: 2024, month: 1, day: 1 }
+  let t = Time { hour: 0, minute: 0, second: 0, ns: 0 }
+  let dt = time.datetime(d, t)
+  time.format(dt, "%Q")
+}
+"#,
+    );
+    assert!(
+        err.contains("time.format") && err.to_lowercase().contains("invalid format specifier"),
+        "expected clean invalid-specifier error, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error should not mention 'panicked': {err}"
+    );
+}
+
+// GAP-2b: `time.format_date` panicked inside chrono when given an
+// invalid strftime specifier like "%Q". Fix: same validation as above.
+#[test]
+fn test_time_format_date_rejects_invalid_chrono_specifier() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> String {
+  let d = Date { year: 2024, month: 1, day: 1 }
+  time.format_date(d, "%Q")
+}
+"#,
+    );
+    assert!(
+        err.contains("time.format_date")
+            && err.to_lowercase().contains("invalid format specifier"),
+        "expected clean invalid-specifier error, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error should not mention 'panicked': {err}"
+    );
+}
+
+// LATENT-1a: `time.to_datetime` called `chrono::Duration::minutes(i64)`,
+// which panics on i64::MAX. Fix: use `try_minutes` and map None to a
+// clean VmError.
+#[test]
+fn test_time_to_datetime_rejects_offset_out_of_range() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> DateTime {
+  let inst = Instant { epoch_ns: 0 }
+  time.to_datetime(inst, 9223372036854775807)
+}
+"#,
+    );
+    assert!(
+        err.contains("time.to_datetime") && err.to_lowercase().contains("out of range"),
+        "expected clean offset-out-of-range error, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error should not mention 'panicked': {err}"
+    );
+}
+
+// LATENT-1b: `time.to_instant` had the same chrono panic path on
+// a pathological offset. Fix: same `try_minutes` guard.
+#[test]
+fn test_time_to_instant_rejects_offset_out_of_range() {
+    let err = run_err(
+        r#"
+import time
+fn main() -> Instant {
+  let d = Date { year: 2024, month: 1, day: 1 }
+  let t = Time { hour: 0, minute: 0, second: 0, ns: 0 }
+  let dt = time.datetime(d, t)
+  time.to_instant(dt, 9223372036854775807)
+}
+"#,
+    );
+    assert!(
+        err.contains("time.to_instant") && err.to_lowercase().contains("out of range"),
+        "expected clean offset-out-of-range error, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "error should not mention 'panicked': {err}"
+    );
+}

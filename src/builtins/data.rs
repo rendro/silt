@@ -200,6 +200,56 @@ fn make_duration(ns: i64) -> Value {
     Value::Record("Duration".into(), Arc::new(fields))
 }
 
+/// Convert a Silt `Int` field on a record to an `i32`, rejecting
+/// values that don't fit with a clean `VmError`. `default` is used
+/// when the field is missing. Previously this was done via `as i32`
+/// casts that silently truncated, letting `year = u32::MAX + 1999`
+/// wrap to `1999` inside `NaiveDate::from_ymd_opt`.
+fn field_as_i32(
+    fields: &BTreeMap<String, Value>,
+    name: &str,
+    default: i32,
+) -> Result<i32, VmError> {
+    match fields.get(name) {
+        Some(Value::Int(n)) => i32::try_from(*n)
+            .map_err(|_| VmError::new(format!("time: {name} {n} out of range for i32"))),
+        _ => Ok(default),
+    }
+}
+
+/// Same as [`field_as_i32`] but for `u32`-typed components (month,
+/// day, hour, minute, second, nanosecond). Silently truncating
+/// `hour = u32::MAX + 9` to `9` previously let bogus timestamps
+/// slip past `NaiveTime::from_hms_nano_opt`'s validation.
+fn field_as_u32(
+    fields: &BTreeMap<String, Value>,
+    name: &str,
+    default: u32,
+) -> Result<u32, VmError> {
+    match fields.get(name) {
+        Some(Value::Int(n)) => u32::try_from(*n)
+            .map_err(|_| VmError::new(format!("time: {name} {n} out of range for u32"))),
+        _ => Ok(default),
+    }
+}
+
+/// Validate a chrono strftime pattern before calling `format()` on
+/// it. Chrono's `Display` impl for `DelayedFormat` writes to the
+/// formatter and calls `panic!("a Display implementation returned an
+/// error unexpectedly")` whenever the pattern contains an unknown
+/// specifier like `%Q`. That panic is caught by our
+/// `catch_builtin_panic` wrapper, but the resulting error message is
+/// opaque. Detect invalid items up front and surface a clean error.
+fn validate_strftime_pattern(fn_name: &str, pattern: &str) -> Result<(), VmError> {
+    use chrono::format::{Item, StrftimeItems};
+    if StrftimeItems::new(pattern).any(|item| matches!(item, Item::Error)) {
+        return Err(VmError::new(format!(
+            "{fn_name}: invalid format specifier in '{pattern}'"
+        )));
+    }
+    Ok(())
+}
+
 /// Extract a NaiveDate from a Silt Date record.
 fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
     let Value::Record(name, fields) = v else {
@@ -208,18 +258,9 @@ fn extract_date(v: &Value) -> Result<NaiveDate, VmError> {
     if name != "Date" {
         return Err(VmError::new(format!("expected Date, got {name}")));
     }
-    let y = match fields.get("year") {
-        Some(Value::Int(n)) => *n as i32,
-        _ => 0,
-    };
-    let m = match fields.get("month") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 1,
-    };
-    let d = match fields.get("day") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 1,
-    };
+    let y = field_as_i32(fields, "year", 0)?;
+    let m = field_as_u32(fields, "month", 1)?;
+    let d = field_as_u32(fields, "day", 1)?;
     NaiveDate::from_ymd_opt(y, m, d)
         .ok_or_else(|| VmError::new(format!("invalid date: {y}-{m}-{d}")))
 }
@@ -232,22 +273,10 @@ fn extract_time(v: &Value) -> Result<NaiveTime, VmError> {
     if name != "Time" {
         return Err(VmError::new(format!("expected Time, got {name}")));
     }
-    let h = match fields.get("hour") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 0,
-    };
-    let m = match fields.get("minute") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 0,
-    };
-    let s = match fields.get("second") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 0,
-    };
-    let ns = match fields.get("ns") {
-        Some(Value::Int(n)) => *n as u32,
-        _ => 0,
-    };
+    let h = field_as_u32(fields, "hour", 0)?;
+    let m = field_as_u32(fields, "minute", 0)?;
+    let s = field_as_u32(fields, "second", 0)?;
+    let ns = field_as_u32(fields, "ns", 0)?;
     NaiveTime::from_hms_nano_opt(h, m, s, ns)
         .ok_or_else(|| VmError::new(format!("invalid time: {h}:{m}:{s}.{ns}")))
 }
@@ -1042,7 +1071,18 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             else {
                 return Err(VmError::new("time.date requires Int arguments".into()));
             };
-            match NaiveDate::from_ymd_opt(*y as i32, *m as u32, *d as u32) {
+            // Reject silently-truncated `as i32`/`as u32` values: a
+            // year of `u32::MAX + 1999` used to silently wrap to 1999.
+            let y32 = i32::try_from(*y).map_err(|_| {
+                VmError::new(format!("time.date: year {y} out of range for i32"))
+            })?;
+            let m32 = u32::try_from(*m).map_err(|_| {
+                VmError::new(format!("time.date: month {m} out of range for u32"))
+            })?;
+            let d32 = u32::try_from(*d).map_err(|_| {
+                VmError::new(format!("time.date: day {d} out of range for u32"))
+            })?;
+            match NaiveDate::from_ymd_opt(y32, m32, d32) {
                 Some(date) => Ok(Value::Variant("Ok".into(), vec![make_date(date)])),
                 None => Ok(Value::Variant(
                     "Err".into(),
@@ -1061,7 +1101,16 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             else {
                 return Err(VmError::new("time.time requires Int arguments".into()));
             };
-            match NaiveTime::from_hms_opt(*h as u32, *m as u32, *s as u32) {
+            let h32 = u32::try_from(*h).map_err(|_| {
+                VmError::new(format!("time.time: hour {h} out of range for u32"))
+            })?;
+            let m32 = u32::try_from(*m).map_err(|_| {
+                VmError::new(format!("time.time: minute {m} out of range for u32"))
+            })?;
+            let s32 = u32::try_from(*s).map_err(|_| {
+                VmError::new(format!("time.time: second {s} out of range for u32"))
+            })?;
+            match NaiveTime::from_hms_opt(h32, m32, s32) {
                 Some(t) => Ok(Value::Variant("Ok".into(), vec![make_time(t)])),
                 None => Ok(Value::Variant(
                     "Err".into(),
@@ -1096,7 +1145,15 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let utc_dt = DateTime::from_timestamp(epoch_secs, nano_remainder)
                 .ok_or_else(|| VmError::new("instant out of range".into()))?
                 .naive_utc();
-            let offset = chrono::Duration::minutes(*offset_min);
+            // `chrono::Duration::minutes(i64)` panics when the value is
+            // outside a roughly `i64::MAX / 60000` window. Use the
+            // fallible constructor so a pathological offset surfaces as
+            // a clean VmError rather than a builtin panic.
+            let offset = chrono::Duration::try_minutes(*offset_min).ok_or_else(|| {
+                VmError::new(format!(
+                    "time.to_datetime: offset {offset_min} minutes out of range"
+                ))
+            })?;
             let local_dt = utc_dt + offset;
             Ok(make_datetime(local_dt))
         }
@@ -1111,7 +1168,11 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(offset_min) = &args[1] else {
                 return Err(VmError::new("time.to_instant requires Int offset".into()));
             };
-            let offset = chrono::Duration::minutes(*offset_min);
+            let offset = chrono::Duration::try_minutes(*offset_min).ok_or_else(|| {
+                VmError::new(format!(
+                    "time.to_instant: offset {offset_min} minutes out of range"
+                ))
+            })?;
             let utc_dt = dt - offset;
             let epoch_ns = utc_dt
                 .and_utc()
@@ -1159,6 +1220,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::String(pattern) = &args[1] else {
                 return Err(VmError::new("time.format requires a String pattern".into()));
             };
+            validate_strftime_pattern("time.format", pattern)?;
             Ok(Value::String(dt.format(pattern).to_string()))
         }
 
@@ -1174,6 +1236,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.format_date requires a String pattern".into(),
                 ));
             };
+            validate_strftime_pattern("time.format_date", pattern)?;
             Ok(Value::String(d.format(pattern).to_string()))
         }
 
@@ -1428,7 +1491,20 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "time.days_in_month requires Int arguments".into(),
                 ));
             };
-            Ok(Value::Int(days_in_month(*y as i32, *m as u32) as i64))
+            // Previously these were `*y as i32` / `*m as u32`, which
+            // silently wrapped: `days_in_month(2024, u32::MAX + 2)`
+            // returned 29. Require the arguments to fit.
+            let y32 = i32::try_from(*y).map_err(|_| {
+                VmError::new(format!(
+                    "time.days_in_month: year {y} out of range for i32"
+                ))
+            })?;
+            let m32 = u32::try_from(*m).map_err(|_| {
+                VmError::new(format!(
+                    "time.days_in_month: month {m} out of range for u32"
+                ))
+            })?;
+            Ok(Value::Int(days_in_month(y32, m32) as i64))
         }
 
         "is_leap_year" => {
@@ -1438,8 +1514,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let Value::Int(y) = &args[0] else {
                 return Err(VmError::new("time.is_leap_year requires an Int".into()));
             };
-            let y = *y as i32;
-            let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+            let y32 = i32::try_from(*y).map_err(|_| {
+                VmError::new(format!(
+                    "time.is_leap_year: year {y} out of range for i32"
+                ))
+            })?;
+            let leap = (y32 % 4 == 0 && y32 % 100 != 0) || (y32 % 400 == 0);
             Ok(Value::Bool(leap))
         }
 

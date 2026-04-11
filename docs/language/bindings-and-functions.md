@@ -33,9 +33,11 @@ Concurrency primitives live in modules (`channel.new`, `channel.send`,
 `task.spawn`, etc.) rather than as keywords — this keeps the global
 namespace clean and avoids the PHP problem of too many bare globals.
 
-The global namespace has only 7 names that are always available: `print`,
-`println`, `panic`, `Ok`, `Err`, `Some`, `None`. Additional constructors
-become available with imports: `Stop`/`Continue` (require `import list`),
+The following names are always available without an import: `print`,
+`println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the primitive type
+descriptors `Int`, `Float`, `String`, and `Bool` (used with type-directed
+APIs like `json.parse_map`). Additional constructors become available with
+imports: `Stop`/`Continue` (require `import list`),
 `Message`/`Closed`/`Empty`/`Sent` (require `import channel`), the
 `Weekday` variants (require `import time`), and the HTTP method constructors
 `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`HEAD`/`OPTIONS` (require `import http`).

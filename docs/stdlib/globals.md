@@ -160,6 +160,7 @@ None : Option(a)
 The absent variant of `Option`. This is a value, not a function.
 
 ```silt
+import option
 fn main() {
     let x = None
     println(option.is_none(x))  -- true
@@ -177,6 +178,7 @@ Signals early termination from `list.fold_until`. The value becomes the final
 accumulator result.
 
 ```silt
+import list
 fn main() {
     let result = list.fold_until([1, 2, 3, 4, 5], 0) { acc, x ->
         match {
@@ -209,6 +211,7 @@ Wraps a value received from a channel. Returned by `channel.receive` and
 `channel.try_receive` when a value is available.
 
 ```silt
+import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)

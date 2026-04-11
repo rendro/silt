@@ -1295,3 +1295,128 @@ fn test_lsp_unknown_method_returns_error_response() {
 
     client.shutdown();
 }
+
+// ── 19. textDocument/formatting range.end is in UTF-16 code units, not bytes ─
+//
+// Regression: guards `fn format()` in src/lsp.rs. Per the LSP spec,
+// `Position.character` is measured in UTF-16 code units, not UTF-8 bytes and
+// not Rust `char`s. A previous implementation computed the whole-document
+// replacement range using `str::lines().count()` for the end line (which is
+// one PAST the last valid line index) and `str::len()` for the end column
+// (which is UTF-8 BYTES). That "works" for pure ASCII by accident but
+// mis-reports the range whenever the last line contains any multibyte
+// character.
+//
+// This test pins the correct behaviour by feeding a document whose last
+// line is `-- résultat comment`. That line is 20 UTF-8 bytes but only 19
+// UTF-16 code units (the single `é` is 2 bytes in UTF-8 but 1 code unit in
+// UTF-16). The fixed server must return `range.end = {line: 3, character:
+// 19}`, NOT `{line: 4, character: 20}`.
+
+#[test]
+fn test_formatting_range_end_uses_utf16_not_bytes() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    // Four lines (indices 0..=3). Line 1 is deliberately unformatted
+    // (`let x=1` with no spaces) so the formatter definitely produces a
+    // different string and the handler emits a whole-document edit rather
+    // than bailing out early with an empty list.
+    //
+    // Line 3 — the last line — is `-- résultat comment`:
+    //   UTF-8 bytes    : 20   (the `é` is two bytes: 0xC3 0xA9)
+    //   UTF-16 units   : 19   (the `é` is one code unit)
+    //   Rust chars     : 19
+    // The previous buggy code used `str::len()` (bytes) and would therefore
+    // report column 20. The fix must report 19.
+    let source = "fn main() {\nlet x=1\n}\n-- résultat comment";
+
+    // Sanity-check our counts at test-compile-time so a future edit to the
+    // literal can't silently drift away from the invariant being tested.
+    let last_line = source.lines().last().expect("non-empty source");
+    assert_eq!(last_line, "-- résultat comment");
+    assert_eq!(last_line.len(), 20, "last line must be 20 UTF-8 bytes");
+    assert_eq!(
+        last_line.chars().map(|c| c.len_utf16()).sum::<usize>(),
+        19,
+        "last line must be 19 UTF-16 code units"
+    );
+
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": {
+                "tabSize": 2,
+                "insertSpaces": true,
+            }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "formatting request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("formatting response must have a `result` field");
+    let edits = result
+        .as_array()
+        .expect("formatting result must be an array of TextEdit");
+    assert!(
+        !edits.is_empty(),
+        "expected a whole-document TextEdit for unformatted input, got empty list"
+    );
+
+    // The server returns a single whole-document replacement edit. Its
+    // `range.start` is always (0, 0); the interesting bit is `range.end`.
+    let edit = &edits[0];
+    let range = edit
+        .get("range")
+        .expect("TextEdit must have a `range` field");
+
+    let start_line = range
+        .pointer("/start/line")
+        .and_then(|v| v.as_u64())
+        .expect("range.start.line must be a number");
+    let start_char = range
+        .pointer("/start/character")
+        .and_then(|v| v.as_u64())
+        .expect("range.start.character must be a number");
+    assert_eq!(start_line, 0, "range.start.line must be 0");
+    assert_eq!(start_char, 0, "range.start.character must be 0");
+
+    let end_line = range
+        .pointer("/end/line")
+        .and_then(|v| v.as_u64())
+        .expect("range.end.line must be a number");
+    let end_char = range
+        .pointer("/end/character")
+        .and_then(|v| v.as_u64())
+        .expect("range.end.character must be a number");
+
+    // The document has four lines (indices 0..=3). The last valid line
+    // index is 3 — NOT 4 (which is what `lines().count() as u32` would
+    // produce and which is what the old buggy code returned).
+    assert_eq!(
+        end_line, 3,
+        "range.end.line must be the last valid line index (3), not one past it; got {end_line}"
+    );
+
+    // The last line is 19 UTF-16 code units. The old buggy code used
+    // `str::len()` and would report 20 (UTF-8 bytes). Pin the correct
+    // behaviour so a regression to byte-counting fails loudly.
+    assert_eq!(
+        end_char, 19,
+        "range.end.character must be the UTF-16 length of the last line (19), not its UTF-8 byte length (20); got {end_char}"
+    );
+
+    client.shutdown();
+}

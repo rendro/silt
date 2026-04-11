@@ -41,6 +41,7 @@ stored as UTC:
 | `DateTime` | `YYYY-MM-DDTHH:MM:SS`, with optional `Z` or `±HH:MM` offset | `"2024-03-15T09:00:00+09:00"` |
 
 ```silt
+import json
 type User {
     name: String,
     age: Int,
@@ -83,6 +84,8 @@ json.parse_list(T: Type, s: String) -> Result(List(T), String)
 Parses a JSON array where each element is a record of type `T`.
 
 ```silt
+import json
+import list
 type Point {
     x: Int,
     y: Int,
@@ -108,6 +111,8 @@ Parses a JSON object into a `Map(String, V)`. The first argument is a type
 descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
+import json
+import map
 fn main() {
     let input = """{"x": 10, "y": 20}"""
     match json.parse_map(Int, input) {
@@ -128,6 +133,7 @@ Serializes any value to a pretty-printed JSON string (with indentation and
 newlines).
 
 ```silt
+import json
 fn main() {
     let data = #{"name": "silt", "version": "1.0"}
     println(json.pretty(data))
@@ -144,6 +150,7 @@ json.stringify(value: a) -> String
 Serializes any value to a compact JSON string.
 
 ```silt
+import json
 fn main() {
     let data = #{"key": [1, 2, 3]}
     println(json.stringify(data))
