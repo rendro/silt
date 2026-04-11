@@ -72,6 +72,39 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             else {
                 return Err(VmError::new("string.replace requires strings".into()));
             };
+            // Cap the worst-case result length. Without this, a call like
+            // `s.replace("", long_to)` inserts `to` at every byte boundary,
+            // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
+            // blow out RAM. Sibling builtins (`string.repeat`,
+            // `string.pad_left`, `string.pad_right`) cap at
+            // `MAX_RANGE_MATERIALIZE`; mirror that exactly.
+            let s_len = s.len() as u128;
+            let from_len = from.len() as u128;
+            let to_len = to.len() as u128;
+            let result_len: u128 = if from_len == 0 {
+                // Rust inserts `to` between every byte (including both ends):
+                // result = (|s| + 1) * |to| + |s|.
+                s_len
+                    .saturating_add(1)
+                    .saturating_mul(to_len)
+                    .saturating_add(s_len)
+            } else {
+                // Count occurrences to compute the exact result length:
+                // result = |s| + occurrences * (|to| - |from|).
+                let occurrences = s.matches(from.as_str()).count() as u128;
+                if to_len >= from_len {
+                    s_len.saturating_add(occurrences.saturating_mul(to_len - from_len))
+                } else {
+                    let shrink = occurrences.saturating_mul(from_len - to_len);
+                    s_len.saturating_sub(shrink)
+                }
+            };
+            if result_len > MAX_RANGE_MATERIALIZE as u128 {
+                return Err(VmError::new(format!(
+                    "string.replace: result would exceed maximum string size ({} bytes > {} limit)",
+                    result_len, MAX_RANGE_MATERIALIZE
+                )));
+            }
             Ok(Value::String(s.replace(from.as_str(), to.as_str())))
         }
         "join" => {

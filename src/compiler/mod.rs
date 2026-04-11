@@ -163,22 +163,30 @@ fn format_module_source_error(
     inner_message: &str,
     span: Span,
 ) -> String {
+    // Clamp a span pointing past EOF back onto the last real line so
+    // unexpected-EOF parse errors still render a snippet. Mirrors
+    // `errors::clamp_span_to_source`; duplicated here because that
+    // helper is private to errors.rs. Without this, truncated module
+    // files (e.g. `pub fn broken(\n` with an EOF on line 2) produce
+    // a header-only error with no caret line — the G1 audit finding.
+    // Lock: tests/modules.rs `test_module_parse_error_eof_renders_snippet`.
+    let clamped_span = clamp_span_to_module_source(span, source);
     let mut out = format!(
         "module '{module_name}': {kind} at {file_path}:{line}:{col} — {inner_message}",
-        line = span.line,
-        col = span.col,
+        line = clamped_span.line,
+        col = clamped_span.col,
     );
 
     // Pull the offending source line from the module file so the reader
     // can see exactly where the caret points. If the span.line is 0 or
     // past the end of the file we silently skip the snippet — there's
     // nothing sensible to render.
-    if span.line > 0
-        && let Some(src_line) = source.lines().nth(span.line - 1)
+    if clamped_span.line > 0
+        && let Some(src_line) = source.lines().nth(clamped_span.line - 1)
     {
         // Width of the line-number gutter for alignment. Matches the
         // convention in src/errors.rs::SourceError::Display.
-        let line_num = span.line;
+        let line_num = clamped_span.line;
         let gutter_width = {
             // floor(log10(line_num)) + 1 — inlined to avoid pulling
             // in the private helper from src/errors.rs.
@@ -191,7 +199,11 @@ fn format_module_source_error(
             w
         };
         let gutter_blank: String = " ".repeat(gutter_width);
-        let col = if span.col > 0 { span.col - 1 } else { 0 };
+        let col = if clamped_span.col > 0 {
+            clamped_span.col - 1
+        } else {
+            0
+        };
         // Preserve tabs so the caret lines up with the actual char.
         let caret_spacing: String = src_line
             .chars()
@@ -203,7 +215,7 @@ fn format_module_source_error(
             "\n --> {file_path}:{line}:{col}",
             file_path = file_path,
             line = line_num,
-            col = span.col,
+            col = clamped_span.col,
         ));
         out.push_str(&format!("\n {gutter_blank} |"));
         out.push_str(&format!("\n {line_num} | {src_line}"));
@@ -213,6 +225,27 @@ fn format_module_source_error(
     }
 
     out
+}
+
+/// Clamp a span pointing past the end of `source` back onto the last
+/// real line. Mirrors `errors::clamp_span_to_source`; duplicated here
+/// so `format_module_source_error` can render a snippet for EOF
+/// parse errors. Lock: tests/modules.rs
+/// `test_module_parse_error_eof_renders_snippet`.
+fn clamp_span_to_module_source(span: Span, source: &str) -> Span {
+    if span.line == 0 {
+        return span;
+    }
+    let line_count = source.lines().count();
+    if line_count == 0 {
+        return span;
+    }
+    if span.line <= line_count {
+        return span;
+    }
+    let last_line = source.lines().last().unwrap_or("");
+    let last_col = last_line.chars().count().saturating_add(1);
+    Span::with_offset(line_count, last_col, span.offset)
 }
 
 /// Validate that a computed `JumpBack` distance fits in the instruction's
@@ -242,7 +275,12 @@ pub struct Compiler {
     /// Modules already compiled in this compilation unit (avoids double-compile).
     compiled_modules: HashSet<String>,
     /// Modules currently being compiled (for circular import detection).
+    /// The HashSet gives O(1) membership checks for the hot path, and the
+    /// parallel Vec preserves insertion order so a detected cycle can be
+    /// rendered as an arrow-chain (`a -> b -> c -> a`). Both fields are
+    /// always pushed/popped together by `compile_file_module`.
     compiling_modules: HashSet<String>,
+    compiling_modules_stack: Vec<String>,
     /// Warnings emitted during compilation.
     warnings: Vec<CompileWarning>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
@@ -289,6 +327,7 @@ impl Compiler {
             project_root: None,
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
+            compiling_modules_stack: Vec::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
@@ -307,6 +346,7 @@ impl Compiler {
             project_root: Some(root),
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
+            compiling_modules_stack: Vec::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
@@ -784,20 +824,47 @@ impl Compiler {
             return Ok(vec![]);
         }
 
-        // Detect circular imports.
+        // Detect circular imports. When detected, render the full
+        // chain from the cycle's entry point (the first re-occurrence
+        // of `module_name` in the stack) through to the re-entry, so
+        // the user can trace the path: e.g. `a -> b -> c -> a`.
+        // Lock: tests/modules.rs
+        // `test_circular_import_error_includes_full_chain`.
         if self.compiling_modules.contains(module_name) {
+            let cycle_start = self
+                .compiling_modules_stack
+                .iter()
+                .position(|m| m == module_name)
+                .unwrap_or(0);
+            let mut chain: Vec<&str> = self.compiling_modules_stack[cycle_start..]
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            chain.push(module_name);
+            let rendered_chain = chain.join(" -> ");
             return Err(CompileError {
                 message: format!(
-                    "circular import detected: module '{module_name}' imports itself (directly or indirectly)"
+                    "circular import detected: {rendered_chain} (module '{module_name}' imports itself directly or indirectly)"
                 ),
                 span,
             });
         }
         self.compiling_modules.insert(module_name.to_string());
+        self.compiling_modules_stack.push(module_name.to_string());
 
         let result = self.compile_file_module_inner(module_name, span);
 
         self.compiling_modules.remove(module_name);
+        // Pop the matching frame from the stack; normally this is the
+        // last element, but we remove by position to be robust against
+        // any inner path that would violate LIFO ordering.
+        if let Some(pos) = self
+            .compiling_modules_stack
+            .iter()
+            .rposition(|m| m == module_name)
+        {
+            self.compiling_modules_stack.remove(pos);
+        }
         if result.is_ok() {
             self.compiled_modules.insert(module_name.to_string());
         }
@@ -2470,11 +2537,17 @@ impl Compiler {
     }
 
     /// Add an upvalue descriptor to a context, deduplicating. Returns
-    /// `Err` if the context already holds the maximum of 256 upvalues;
-    /// the bytecode format addresses upvalues with a single byte so
-    /// anything beyond index 255 would truncate. Mirrors the sibling
-    /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255" path
-    /// so both hard limits surface as `CompileError` rather than panics.
+    /// `Err` if the context already holds the maximum of 255 upvalues;
+    /// the bytecode format addresses upvalues with a single byte *and*
+    /// stores the count as a `u8`, so the last legal index is 254 and
+    /// the max count is 255. Anything beyond would either truncate the
+    /// index to zero (`256 as u8 == 0`) or wrap `upvalue_count` (and
+    /// the emitted `MakeClosure` count byte) to zero while still
+    /// writing 2N operand bytes after it — those bytes would then be
+    /// reinterpreted as bytecode at runtime. Mirrors the sibling
+    /// bounds-check in `resolve_upvalue_in`'s "captured slot > 255"
+    /// path so both hard limits surface as `CompileError` rather than
+    /// panics or silent miscompiles.
     fn add_upvalue(
         &mut self,
         context_index: usize,
@@ -2489,11 +2562,11 @@ impl Compiler {
             }
         }
         let index = ctx.upvalues.len();
-        if index > u8::MAX as usize {
+        if index >= u8::MAX as usize {
             return Err(CompileError {
                 message: format!(
                     "too many upvalues: closure captures more than {} values (max)",
-                    u8::MAX as usize + 1
+                    u8::MAX as usize
                 ),
                 span,
             });
@@ -3561,17 +3634,23 @@ fn f(expected, actual) {
         assert!(super::jumpback_fits_u16(usize::MAX, Span::new(0, 0)).is_err());
     }
 
-    // ── Audit regression: add_upvalue >256 upvalues (V5) ────────────
+    // ── Audit regression: add_upvalue >255 upvalues (B5) ────────────
     //
-    // The bytecode addresses upvalues with a single byte (0..=255), so
-    // `add_upvalue` must reject the 257th capture instead of tripping
-    // an `assert!` — an assert panics the compiler thread, which is a
-    // denial-of-service for the host when compiling untrusted input.
-    // The fix turns the assert into a `CompileError`; this test
-    // exercises the bounds-check by pre-filling a compile context with
-    // 256 upvalues and verifying that the 257th attempt returns Err.
+    // The bytecode addresses upvalues with a single byte AND stores
+    // `function.upvalue_count` as `u8`, AND the `MakeClosure` opcode
+    // emits a single-byte count followed by 2N descriptor operand
+    // bytes. Together these mean the hard limit is 255 (not 256):
+    // pushing a 256th upvalue would leave `ctx.upvalues.len() == 256`,
+    // which truncates to `0u8` both in `upvalue_count` and in the
+    // count byte emitted before the descriptor operands. Those
+    // descriptor bytes would then be interpreted as bytecode at
+    // runtime — a silent miscompile worse than a panic.
+    //
+    // This test locks the bounds check by pre-filling a compile
+    // context with 255 upvalues and verifying that the 256th attempt
+    // returns `Err`, NOT `Ok(0u8)`.
     #[test]
-    fn test_add_upvalue_rejects_over_256() {
+    fn test_add_upvalue_rejects_over_255() {
         use crate::bytecode::UpvalueDesc;
         use crate::lexer::Span;
 
@@ -3587,10 +3666,10 @@ fn f(expected, actual) {
             .push(CompileContext::new("inner".into(), 0));
         let inner_idx = 1usize;
 
-        // Register exactly 256 distinct upvalues (indices 0..=255) as
+        // Register exactly 255 distinct upvalues (indices 0..=254) as
         // locals captured from the enclosing scope. These must all
         // succeed.
-        for i in 0..=u8::MAX {
+        for i in 0..u8::MAX {
             let desc = UpvalueDesc {
                 is_local: true,
                 index: i,
@@ -3598,11 +3677,12 @@ fn f(expected, actual) {
             let result = compiler.add_upvalue(inner_idx, desc, Span::new(0, 0));
             assert!(
                 result.is_ok(),
-                "upvalue {i} (of 256) should be accepted; got {result:?}"
+                "upvalue {i} (of 255) should be accepted; got {result:?}"
             );
         }
 
-        // A 257th distinct upvalue must now be rejected — not panic.
+        // A 256th distinct upvalue must now be rejected — not panic,
+        // and critically not silently accepted with a wrapped index.
         // Use `is_local: false` so the dedup check in `add_upvalue`
         // can't collapse it with an existing local-captured entry.
         let overflowing = UpvalueDesc {
@@ -3611,11 +3691,76 @@ fn f(expected, actual) {
         };
         let err = compiler
             .add_upvalue(inner_idx, overflowing, Span::new(0, 0))
-            .expect_err("expected 257th upvalue to return CompileError");
+            .expect_err("expected 256th upvalue to return CompileError");
         assert!(
             err.message.contains("too many upvalues"),
             "expected too-many-upvalues error, got: {}",
             err.message
+        );
+
+        // And the context must still hold exactly 255 upvalues — the
+        // rejected 256th must NOT have been pushed into ctx.upvalues.
+        let ctx = &compiler.contexts[inner_idx];
+        assert_eq!(
+            ctx.upvalues.len(),
+            255,
+            "rejected upvalue must not be pushed into ctx.upvalues"
+        );
+        assert_eq!(
+            ctx.function.upvalue_count, 255u8,
+            "function.upvalue_count must reflect 255 (not wrapped to 0)"
+        );
+    }
+
+    // ── Audit regression: add_upvalue accepts exactly 255 (B5) ──────
+    //
+    // The complementary positive-direction lock for
+    // test_add_upvalue_rejects_over_255: fill a context with exactly
+    // 255 upvalues and verify `ctx.upvalues.len() == 255` AND
+    // `ctx.function.upvalue_count == 255u8`. This pins the upper
+    // bound so a future refactor can't silently drop it below 255.
+    #[test]
+    fn test_add_upvalue_accepts_exactly_255_upvalues() {
+        use crate::bytecode::UpvalueDesc;
+        use crate::lexer::Span;
+
+        let mut compiler = Compiler::new();
+        compiler
+            .contexts
+            .push(CompileContext::new("<script>".into(), 0));
+        compiler
+            .contexts
+            .push(CompileContext::new("inner".into(), 0));
+        let inner_idx = 1usize;
+
+        for i in 0..u8::MAX {
+            let desc = UpvalueDesc {
+                is_local: true,
+                index: i,
+            };
+            let returned = compiler
+                .add_upvalue(inner_idx, desc, Span::new(0, 0))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "upvalue {i} (of 255) must be accepted; got {}",
+                        e.message
+                    )
+                });
+            assert_eq!(
+                returned, i,
+                "add_upvalue must return the index at which it stored the desc"
+            );
+        }
+
+        let ctx = &compiler.contexts[inner_idx];
+        assert_eq!(
+            ctx.upvalues.len(),
+            255,
+            "context must hold exactly 255 upvalues"
+        );
+        assert_eq!(
+            ctx.function.upvalue_count, 255u8,
+            "function.upvalue_count must be 255 (not wrapped to 0)"
         );
     }
 }

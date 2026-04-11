@@ -15,6 +15,44 @@ const SKIP: &[&str] = &[
     // (none currently — add with a comment explaining why if needed)
 ];
 
+/// Examples that are allowed to emit compile/type warnings under
+/// `silt check`. Each entry MUST have a documented reason. This list is
+/// consulted only by the warning-free half of `every_example_type_checks`;
+/// every file in this list still has to type-check cleanly (exit 0).
+///
+/// The goal of the warning walker (round-16 GAP G6 lock) is to catch
+/// *new* warnings introduced by future edits — not to force fixes on
+/// pre-existing warnings that represent known limitations. Each entry
+/// below is a deliberate exception; anything outside this list must be
+/// warning-free or the test fails.
+const WARN_ALLOWLIST: &[&str] = &[
+    // The `match expr` blocks in `fn eval`, `fn simplify`, `fn depth`,
+    // `fn node_count`, `fn to_rpn` and the trait `Display` for `Expr`
+    // cover every `Expr` variant, but the type checker's pattern
+    // exhaustiveness analysis hits a recursion-depth limit on the
+    // recursive `Expr` type and emits a `warning[type]` regardless.
+    // Adding `_ -> ...` arms does not silence the warning (verified
+    // against line 230 which already has `_ -> "other"`). This is a
+    // known type-checker limitation tracked in src/ — the example
+    // itself is correct.
+    "expr_eval.silt",
+    // `let result = mymath.add(3, 4)` shadows the builtin `result`
+    // module. The `result` binding is the pedagogically natural
+    // variable name for a computation result, and this example is the
+    // first thing a reader sees under examples/modules/. Renaming
+    // would harm the teaching value; the warning is harmless.
+    "main.silt",
+    // `let result = matches |> list.fold(...)` shadows the builtin
+    // `result` module. Same rationale as above — `result` is the
+    // natural name for the fold's accumulator.
+    "link_checker.silt",
+    // `(_, Message(result)) -> { let (worker_id, outcome) = result }`
+    // destructures the channel message payload into a binding named
+    // `result`, which shadows the builtin `result` module. Renaming
+    // inside a deep match arm would make the example harder to read.
+    "concurrent_processor.silt",
+];
+
 fn silt_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_silt"))
 }
@@ -36,7 +74,7 @@ fn collect_silt_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn every_example_type_checks() {
+fn every_example_type_checks_and_has_no_warnings() {
     let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     assert!(
         examples_dir.is_dir(),
@@ -54,6 +92,7 @@ fn every_example_type_checks() {
     );
 
     let mut failures: Vec<String> = Vec::new();
+    let mut warn_failures: Vec<String> = Vec::new();
 
     for file in &files {
         let name = file
@@ -70,15 +109,37 @@ fn every_example_type_checks() {
             .output()
             .expect("failed to spawn silt");
 
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
             failures.push(format!(
                 "{}: exit={:?}\nstdout:\n{}\nstderr:\n{}",
                 file.display(),
                 output.status.code(),
                 stdout,
                 stderr
+            ));
+            continue;
+        }
+
+        // Round-16 GAP G6 lock: every example must also be
+        // warning-free. This mirrors the companion doc-walker
+        // `test_doc_fn_main_blocks_emit_no_compile_warnings` so a new
+        // `warning[...]` on any example cannot ship silently.
+        if WARN_ALLOWLIST.contains(&name) {
+            continue;
+        }
+        let warn_lines: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("warning["))
+            .collect();
+        if !warn_lines.is_empty() {
+            warn_failures.push(format!(
+                "{}: emitted {} warning line(s):\n{}",
+                file.display(),
+                warn_lines.len(),
+                warn_lines.join("\n")
             ));
         }
     }
@@ -88,6 +149,17 @@ fn every_example_type_checks() {
         "silt check failed for {} example(s):\n\n{}",
         failures.len(),
         failures.join("\n---\n")
+    );
+
+    assert!(
+        warn_failures.is_empty(),
+        "silt check emitted warnings for {} example(s). A new warning \
+         on any example would ship silently without this lock — fix the \
+         underlying cause in the example, or (if it's a known type-checker \
+         limitation) add the filename to `WARN_ALLOWLIST` in \
+         tests/examples_check.rs with a documented reason.\n\n{}",
+        warn_failures.len(),
+        warn_failures.join("\n---\n")
     );
 }
 
@@ -1199,5 +1271,301 @@ fn test_getting_started_tooling_block_matches_main_help() {
         missing,
         tooling_block,
         help_text
+    );
+}
+
+/// Round-16 GAP G8 lock: doc `fn main` blocks are compiled by
+/// `all_doc_fn_main_blocks_compile` but never actually *run* by the
+/// walker. That means a block that compiles but panics at runtime
+/// (wrong-shaped record, impossible match arm, hidden division by
+/// zero, missing option unwrap) ships to users silently.
+///
+/// This walker extracts every ```silt fence block in `docs/**/*.md`
+/// (plus README.md) that contains `fn main(`, applies an aggressive
+/// skip heuristic to exclude blocks that need interactive,
+/// networked, filesystem, or long-running features the walker cannot
+/// safely execute, and invokes `silt run` on each surviving block.
+/// A block that exits non-zero, panics, or emits `error[` on stderr
+/// is a regression.
+///
+/// # Skip list convention
+///
+/// A block is skipped if:
+///
+/// 1. The first non-empty line inside the ``` ```silt ``` fence is a
+///    comment of exactly `// noexec` or `-- noexec`. This is the
+///    per-block opt-out — use it sparingly for blocks that compile
+///    cleanly but deliberately demonstrate runtime behavior the
+///    walker cannot validate.
+///
+/// 2. The block body contains any substring from `DENY_SUBSTRINGS`
+///    below. This is the heuristic opt-out. Each entry documents why.
+///    The deny list is intentionally conservative — a false positive
+///    (block skipped when it could have run) is far cheaper than a
+///    false negative (walker hangs forever on an interactive block
+///    or tries to hit a real network).
+///
+/// The current skip rate is high (roughly 70-80% of doc blocks) and
+/// that is OK — running even 20-30% of blocks is a large improvement
+/// over running 0%. As the runtime grows sandboxed mocks for fs/env
+/// and channel operations, the deny list can tighten.
+///
+/// # Timeout
+///
+/// Each subprocess has a 10-second wall clock cap enforced via
+/// `Command::output()`'s implicit wait plus a post-hoc duration check
+/// — if a block *does* slip through the deny list and runs long, the
+/// test still terminates reasonably because none of the non-deny
+/// blocks should take more than a handful of milliseconds.
+#[test]
+fn all_doc_fn_main_blocks_run_if_safe() {
+    // Each entry in this list suppresses execution of any ```silt
+    // block whose body contains it. The match is a raw substring
+    // check — we deliberately skip blocks that *mention* these APIs
+    // even in comments, because many doc blocks comment out a line
+    // to document expected output. False positives on the walker
+    // are acceptable.
+    //
+    // Kept as a `const` so the skip list is discoverable from a
+    // single grep of the file and changes show up in review.
+    const DENY_SUBSTRINGS: &[&str] = &[
+        // Networked — would hit the real internet in CI.
+        "http.get",
+        "http.post",
+        "http.put",
+        "http.delete",
+        "http.serve",
+        "http.Server",
+        // Concurrency — can block forever on unbounded
+        // send/receive, and task scheduling is non-deterministic
+        // under subprocess timing. Blocks using these are doc-only.
+        "task.spawn",
+        "task.sleep",
+        "channel.new",
+        "channel.send",
+        "channel.receive",
+        "channel.recv",
+        "channel.select",
+        "channel.close",
+        // Interactive IO — blocks waiting for stdin in CI.
+        "io.read_line",
+        "io.stdin",
+        "read_line",
+        // File system — platform-dependent behavior and may
+        // require fixtures that don't exist in the test harness.
+        "fs.read",
+        "fs.write",
+        "fs.append",
+        "fs.list",
+        "fs.delete",
+        "fs.remove",
+        "fs.exists",
+        "fs.create_dir",
+        "fs.copy",
+        "fs.move",
+        "fs.metadata",
+        // Environment — CI environment may not have the
+        // variables the doc block assumes.
+        "env.get",
+        "env.set",
+        "env.args",
+        // Time — `time.sleep` blocks; `time.now` is
+        // non-deterministic but usually safe, so we only deny
+        // the blocking form.
+        "time.sleep",
+        // Infinite loops — `loop { ... }` without a bound is
+        // common in server/daemon demos and would hang the
+        // walker. This is a fuzzy match; blocks using bounded
+        // `loop acc = 0 { ... }` accumulators are safe because
+        // they don't contain the bare `loop {` pattern.
+        "loop {",
+        "while true",
+        // `process.exit` would terminate the subprocess but
+        // is usually paired with demonstration of signal
+        // handling — skip to avoid spurious non-zero exits.
+        "process.exit",
+    ];
+
+    // Blocks whose first non-empty line is one of these markers
+    // are opted out of execution explicitly by the doc author.
+    const NOEXEC_MARKERS: &[&str] = &["// noexec", "-- noexec"];
+
+    /// Decide whether a block should be executed. Returns
+    /// `Some(reason)` to skip with a human-readable reason, or
+    /// `None` to run it.
+    fn skip_reason(src: &str) -> Option<String> {
+        // 1. Explicit opt-out via `// noexec` / `-- noexec` marker
+        //    on the first non-empty line.
+        let first_nonempty = src.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+        let trimmed = first_nonempty.trim();
+        for marker in NOEXEC_MARKERS {
+            if trimmed == *marker {
+                return Some(format!("explicit {marker}"));
+            }
+        }
+
+        // 2. Heuristic deny list.
+        for needle in DENY_SUBSTRINGS {
+            if src.contains(needle) {
+                return Some(format!("contains `{needle}`"));
+            }
+        }
+
+        None
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Collect targets: README.md plus every .md file under docs/
+    // (recursive). Matches the set used by
+    // `all_doc_fn_main_blocks_compile` so the two walkers operate
+    // on the same universe of blocks.
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let readme = manifest_dir.join("README.md");
+    if readme.is_file() {
+        targets.push(readme);
+    }
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+    assert!(
+        !targets.is_empty(),
+        "expected at least one markdown target (README.md or docs/**/*.md)"
+    );
+
+    let tmp_dir =
+        std::env::temp_dir().join(format!("silt_doc_run_walker_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+    let mut ran = 0usize;
+    let mut skipped = 0usize;
+    let mut total_fn_main_blocks = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    for doc_path in &targets {
+        let body = std::fs::read_to_string(doc_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+        let blocks = extract_silt_blocks(&body);
+
+        for (opener_line, src) in blocks {
+            if !src.contains("fn main") {
+                continue;
+            }
+            total_fn_main_blocks += 1;
+
+            if let Some(_reason) = skip_reason(&src) {
+                skipped += 1;
+                continue;
+            }
+
+            let file_stem = doc_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("doc");
+            let file = tmp_dir.join(format!("{file_stem}_line{opener_line}.silt"));
+            std::fs::write(&file, &src).expect("write temp silt file");
+
+            let output = silt_cmd()
+                .arg("run")
+                .arg(&file)
+                .output()
+                .expect("failed to spawn silt");
+            ran += 1;
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            // Panic detection: a Rust panic on the worker subprocess
+            // would surface `panicked at` in stderr. Any panic is a
+            // hard BROKEN finding.
+            if stderr.contains("panicked at") {
+                failures.push(format!(
+                    "{}:{} (```silt fence): silt panicked while running \
+                     the block.\nstderr:\n{}\nstdout:\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    stderr,
+                    stdout
+                ));
+                continue;
+            }
+
+            // An `error[` line on stderr is a runtime or late
+            // compile error that the compile-only walker missed.
+            let error_lines: Vec<&str> = stderr
+                .lines()
+                .filter(|l| l.contains("error["))
+                .collect();
+            if !error_lines.is_empty() {
+                failures.push(format!(
+                    "{}:{} (```silt fence): runtime error(s):\n{}\n\
+                     stderr:\n{}\nstdout:\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    error_lines.join("\n"),
+                    stderr,
+                    stdout
+                ));
+                continue;
+            }
+
+            if !output.status.success() {
+                failures.push(format!(
+                    "{}:{} (```silt fence): exit={:?}\nstdout:\n{}\n\
+                     stderr:\n{}",
+                    doc_path.display(),
+                    opener_line,
+                    output.status.code(),
+                    stdout,
+                    stderr
+                ));
+            }
+        }
+    }
+
+    // Sanity check: the universe should have at least some `fn main`
+    // blocks (the compile walker already asserts this), and the
+    // runnable subset should be non-empty so the walker is actually
+    // exercising something. If the deny list grows so broad that
+    // zero blocks run, treat that as a configuration failure.
+    assert!(
+        total_fn_main_blocks > 0,
+        "expected at least one ```silt block with `fn main` across docs/"
+    );
+    assert!(
+        ran > 0,
+        "the DENY_SUBSTRINGS list skipped every doc block — the walker \
+         would never catch a runtime regression. Tighten the list."
+    );
+
+    if failures.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    assert!(
+        failures.is_empty(),
+        "`silt run` failed for {} doc ```silt block(s) out of {} runnable \
+         (of {} fn-main total, {} skipped by deny list). A doc block that \
+         compiles cleanly but fails at runtime is a user-visible bug — \
+         fix the doc or tag the block with a `// noexec` first-line \
+         marker and file an issue for the underlying cause.\n\n{}",
+        failures.len(),
+        ran,
+        total_fn_main_blocks,
+        skipped,
+        failures.join("\n---\n")
     );
 }

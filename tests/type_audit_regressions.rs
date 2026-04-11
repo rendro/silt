@@ -451,3 +451,228 @@ fn main() { println(check(Pair { a: 1, b: 2 })) }
     );
 }
 
+// ════════════════════════════════════════════════════════════════════
+// AUDIT FINDINGS: round 16
+// ════════════════════════════════════════════════════════════════════
+
+// ── B1 (round 16): refutable variant pattern in `let` is type-unsound
+//
+// `let Square(n) = circle_value` used to silently destructure the
+// Circle's payload into `n` and produce nonsense downstream (Circle's
+// Int payload was read into `n`, and the error cascaded into a
+// misleading `+ Int String` at the first use of `n`). The typechecker
+// now rejects refutable Constructor patterns in `let` outright with
+// a clean, actionable diagnostic — the user must use `match` or
+// `when ... else` for multi-variant enums. Single-variant enums
+// (e.g. `type Wrapper { Wrap(Int) }`) remain irrefutable and are
+// allowed.
+
+#[test]
+fn test_let_refutable_variant_pattern_rejected_at_typecheck() {
+    let errs = type_errors(
+        r#"
+type Shape { Circle(Int), Square(String) }
+fn main() {
+  let s = Circle(5)
+  let Square(n) = s
+  println(n)
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "refutable pattern in `let`: constructor 'Square' is only one of 2 variants of enum 'Shape'"
+        )),
+        "expected refutable-pattern error for let Square(n) = circle, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_let_single_variant_constructor_still_accepted() {
+    // Positive lock: when the enum has exactly one variant, the
+    // Constructor pattern is irrefutable and must still typecheck
+    // cleanly. This guards against a regression that over-rejects.
+    let errs = type_errors(
+        r#"
+type Wrapper { Wrap(Int) }
+fn main() {
+  let w = Wrap(5)
+  let Wrap(r) = w
+  println(r + 1)
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for let Wrap(r) = w, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_let_nested_refutable_variant_rejected() {
+    // Nested: `let (a, Some(x)) = (1, opt)` — the inner Some is
+    // refutable (Option has Some | None). Walk must descend into
+    // the Tuple and surface the inner refutable constructor.
+    let errs = type_errors(
+        r#"
+fn main() {
+  let tup = (1, Some(42))
+  let (_, Some(x)) = tup
+  println(x)
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "refutable pattern in `let`: constructor 'Some' is only one of 2 variants of enum 'Option'"
+        )),
+        "expected refutable-pattern error for nested Some(x), got: {errs:?}"
+    );
+}
+
+// ── B2 (round 16): wrong-arity record type annotation silently accepted
+//
+// `type Box(a) { value: a }; fn takes(b: Box(Int, String)) -> Int { ... }`
+// used to typecheck without any error — the extra type arg was dropped
+// silently, and the first field access (`b.value + 1`) exploded at
+// runtime as "cannot apply '+' to Int and String". The typechecker
+// now catches the arity mismatch when resolving the annotation.
+
+#[test]
+fn test_box_type_annotation_extra_arg_rejected() {
+    let errs = type_errors(
+        r#"
+type Box(a) { value: a }
+fn takes(b: Box(Int, String)) -> Int { b.value + 1 }
+fn main() { println(takes(Box { value: 5 })) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "type argument count mismatch for record 'Box': expected 1, got 2"
+        )),
+        "expected arity mismatch error for Box(Int, String), got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_box_type_annotation_correct_arity_accepted() {
+    // Positive lock: `Box(Int)` with a matching argument list still
+    // typechecks cleanly.
+    let errs = type_errors(
+        r#"
+type Box(a) { value: a }
+fn takes(b: Box(Int)) -> Int { b.value + 1 }
+fn main() { println(takes(Box { value: 5 })) }
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for Box(Int), got: {errs:?}"
+    );
+}
+
+// ── B3 (round 16): exhaustiveness misses Int-column in tuple-of-(Int, Enum)
+//
+// `match (t: (Int, Color)) { (0, Red) -> _, (_, Green) -> _, (_, Blue) -> _ }`
+// used to typecheck — the checker specialized the Int column on a
+// single wildcard constructor, kept every row, and declared the Color
+// column exhaustive. The `(1, Red)` case then blew up at runtime with
+// `non-exhaustive match: no arm matched`. The checker now splits the
+// Int column into `{literals seen} ∪ {witness not in matrix}` and
+// surfaces the missing case at typecheck time.
+
+#[test]
+fn test_exhaustiveness_int_color_tuple_missing_arm_rejected() {
+    let errs = type_errors(
+        r#"
+type Color { Red, Green, Blue }
+fn classify(t: (Int, Color)) -> String {
+  match t {
+    (0, Red) -> "zero red"
+    (_, Green) -> "green"
+    (_, Blue) -> "blue"
+  }
+}
+fn main() { println(classify((1, Red))) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("non-exhaustive match")),
+        "expected 'non-exhaustive match' error for (Int, Color) tuple, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_exhaustiveness_int_color_tuple_with_wildcard_still_passes() {
+    // Positive lock: adding `(_, Red) -> _` covers the missing case,
+    // so the match must typecheck cleanly.
+    let errs = type_errors(
+        r#"
+type Color { Red, Green, Blue }
+fn classify(t: (Int, Color)) -> String {
+  match t {
+    (0, Red) -> "zero red"
+    (_, Red) -> "other red"
+    (_, Green) -> "green"
+    (_, Blue) -> "blue"
+  }
+}
+fn main() { println(classify((1, Red))) }
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for fully covered (Int, Color) match, got: {errs:?}"
+    );
+}
+
+// ── B4 (round 16): where-clause dropped when param stays an unresolved TyVar
+//
+// `fn indirect(x: a) -> String { show(x) }` used to typecheck even
+// when `show` required `a: Display`. The call-site check applied
+// `a` into a still-unresolved Var, `type_name_for_impl` returned
+// None, and the constraint was silently dropped. Soundness fix:
+// the enclosing function must declare the same constraint or the
+// call is rejected.
+
+#[test]
+fn test_where_constraint_propagation_rejects_missing_declaration() {
+    let errs = type_errors(
+        r#"
+trait Display {
+  fn display(self) -> String
+}
+fn show(x: a) -> String where a: Display { x.display() }
+fn indirect(x: a) -> String { show(x) }
+fn main() { println(indirect(5)) }
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "enclosing function does not declare constraint required by call to 'show': `a: Display`"
+        )),
+        "expected constraint-propagation error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_where_constraint_propagation_accepts_declared_constraint() {
+    // Positive lock: when the enclosing fn declares the same
+    // constraint, the indirect call typechecks.
+    let errs = type_errors(
+        r#"
+trait Display {
+  fn display(self) -> String
+}
+fn show(x: a) -> String where a: Display { x.display() }
+fn indirect(x: a) -> String where a: Display { show(x) }
+fn main() { println(indirect(5)) }
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors when enclosing fn declares the constraint, got: {errs:?}"
+    );
+}
+

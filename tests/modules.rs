@@ -743,15 +743,17 @@ fn main() {
     );
 
     // The actual offending line from the module source must be
-    // reproduced. The broken module's line 4 is the lone `}` — pick a
-    // marker unique to the module content to detect it robustly.
+    // reproduced. The parse error lands at bad.silt line 4 (the lone
+    // `}`) because the parser only notices the mismatch when it hits
+    // the next token after the unclosed `(`. Pin to the EXACT
+    // formatted gutter+source line so a regression that drops the
+    // snippet body (but leaves the `-->` locator intact) is caught
+    // immediately. No single-character fallbacks — those match too
+    // loosely and were the L5 audit finding.
     assert!(
-        err_msg.contains("pub fn hello(x,")
-            || err_msg.contains("y,")
-            || err_msg.contains("z")
-            || err_msg.contains("}"),
-        "error must quote a line from bad.silt so the user sees the broken \
-         source, got:\n{err_msg}"
+        err_msg.contains(" 4 | }"),
+        "error must quote the exact offending line from bad.silt \
+         (\" 4 | }}\"), got:\n{err_msg}"
     );
 
     // The caret glyph must appear inside the message body to mark the
@@ -810,5 +812,173 @@ fn main() {
     assert!(
         err_msg.contains("^"),
         "error must include a caret marker, got:\n{err_msg}"
+    );
+}
+
+// ── B6: module parse-error snippet must not render twice ───────────
+//
+// When a parse error inside an imported module is rendered via the
+// full `SourceError::Display` path (as main.rs/repl.rs do), the
+// inner module snippet must appear EXACTLY ONCE, not twice. The
+// audit finding (B6) was that round 15 embedded a multi-line
+// `--> ... | ^` snippet into `CompileError.message`; `SourceError::
+// Display` then echoed that entire blob both in the header
+// (`error[compile]: {msg}`) AND on the caret line (`^ {msg}`),
+// duplicating the inner snippet. The fix (errors.rs) truncates
+// `msg` at the first newline when rendering the caret line. This
+// test counts occurrences of the unique inner source line and
+// pins to exactly 1.
+#[test]
+fn test_module_parse_error_inner_snippet_rendered_once() {
+    use silt::errors::SourceError;
+
+    let dir = tempdir();
+    // Inner module with a parse error mid-line: unclosed param list
+    // followed by `{`. The parse error lands at 1:16 — the open brace.
+    let inner_src = "pub fn broken( {\n";
+    fs::write(dir.join("m_inner.silt"), inner_src).expect("failed to write m_inner.silt");
+
+    // Top-level module that imports the broken one. This ensures the
+    // import chain is nontrivial (m_top -> m_inner) and the outer
+    // caret lands in m_top.silt at its own `import m_inner`.
+    let top_src = "import m_inner\npub fn top() = 1\n";
+    fs::write(dir.join("m_top.silt"), top_src).expect("failed to write m_top.silt");
+
+    let main_src = "import m_top\n\nfn main() {\n  m_top.top()\n}\n";
+    let tokens = Lexer::new(main_src).tokenize().expect("main lex error");
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .expect("main parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    let compile_err = match compiler.compile_program(&program) {
+        Ok(_) => panic!("expected compile error"),
+        Err(e) => e,
+    };
+
+    // Render through the same path main.rs uses so we exercise the
+    // full `SourceError::Display` output — this is where the double
+    // rendering bug surfaced.
+    let source_err = SourceError::from_compile_error(&compile_err, main_src, "main.silt");
+    let rendered = format!("{source_err}");
+
+    // The inner file's source line body must appear EXACTLY once.
+    // The B6 bug manifested as the embedded snippet block (gutter +
+    // source line + caret line) appearing twice, once in the header
+    // and once after the outer caret line. `SourceError::Display`
+    // now truncates `msg` at the first newline for the caret-line
+    // echo, so the multi-line embedded snippet only appears once.
+    let snippet_occurrences = rendered.matches("pub fn broken( {").count();
+    assert_eq!(
+        snippet_occurrences, 1,
+        "inner module source line must appear exactly once (was {snippet_occurrences}); \
+         full rendered error:\n{rendered}"
+    );
+
+    // And the formatted gutter `1 | pub fn broken( {` — the actual
+    // snippet body — must also appear exactly once. Pinning the
+    // formatted gutter catches a regression where the source text
+    // is printed bare (unformatted) a second time.
+    let gutter_occurrences = rendered.matches(" 1 | pub fn broken( {").count();
+    assert_eq!(
+        gutter_occurrences, 1,
+        "formatted gutter `1 | pub fn broken( {{` must appear exactly \
+         once (was {gutter_occurrences}); full rendered error:\n{rendered}"
+    );
+}
+
+// ── G1: module parse error with EOF-past-end span must keep snippet ──
+//
+// A truncated inner module file (e.g. `pub fn broken(\n` with an
+// unexpected EOF) parses with a span pointing at line 2, column 1 —
+// one line past the end of the file. Before the fix,
+// `format_module_source_error` silently dropped the snippet because
+// `source.lines().nth(span.line - 1)` returned `None`. The fix
+// clamps the span back onto the last real line. This test locks
+// the rendered error message to include both the `pub fn broken(`
+// line and a caret marker.
+#[test]
+fn test_module_parse_error_eof_renders_snippet() {
+    let dir = tempdir();
+    // Deliberately truncated: open-paren on line 1, then EOF.
+    let inner_src = "pub fn broken(\n";
+    fs::write(dir.join("inner.silt"), inner_src).expect("failed to write inner.silt");
+
+    let main_src = "import inner\n\nfn main() {\n  inner.broken()\n}\n";
+    let tokens = Lexer::new(main_src).tokenize().expect("main lex error");
+    let mut program = Parser::new(tokens)
+        .parse_program()
+        .expect("main parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = Compiler::with_project_root(dir.clone());
+    let err_msg = match compiler.compile_program(&program) {
+        Ok(_) => panic!("expected compile error from truncated module"),
+        Err(e) => e.message,
+    };
+
+    // The snippet containing the actual truncated line must be in
+    // the error message, not just the header. Exact pin — no OR.
+    assert!(
+        err_msg.contains("pub fn broken("),
+        "error must quote the truncated line from inner.silt, got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("^"),
+        "error must include a caret marker pointing at the EOF, got:\n{err_msg}"
+    );
+    // The `-->` locator should point at inner.silt on a real line
+    // (1, not 2 — the clamp moves it back). This locks the clamp.
+    assert!(
+        err_msg.contains("--> ") && err_msg.contains("inner.silt:1:"),
+        "error must include a `--> inner.silt:1:COL` locator clamped onto the \
+         last real line, got:\n{err_msg}"
+    );
+}
+
+// ── G4: circular-import error must render the full chain ───────────
+//
+// A 3-cycle `c_a -> c_b -> c_c -> c_a` must produce an error message
+// that includes the exact arrow chain as a substring, not just a
+// bare "module 'c_a' imports itself" line. This lets the user see
+// the path through which the cycle was reached.
+#[test]
+fn test_circular_import_error_includes_full_chain() {
+    let err = run_module_test_err(
+        &[
+            (
+                "c_a.silt",
+                r#"
+import c_b
+pub fn fa() = 1
+                "#,
+            ),
+            (
+                "c_b.silt",
+                r#"
+import c_c
+pub fn fb() = 2
+                "#,
+            ),
+            (
+                "c_c.silt",
+                r#"
+import c_a
+pub fn fc() = 3
+                "#,
+            ),
+        ],
+        r#"
+import c_a
+
+fn main() {
+  c_a.fa()
+}
+        "#,
+    );
+    // Exact arrow-chain substring — not an OR chain.
+    assert!(
+        err.contains("c_a -> c_b -> c_c -> c_a"),
+        "circular-import error must render the full arrow chain \
+         `c_a -> c_b -> c_c -> c_a`, got: {err}"
     );
 }

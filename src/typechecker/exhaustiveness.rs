@@ -567,6 +567,103 @@ impl TypeChecker {
         let query_first = &sub_pats[0];
         let query_rest = Pattern::Tuple(sub_pats[1..].to_vec());
 
+        // B3: when `query_first` is a wildcard against an "infinite" scalar
+        // column type (Int / Float / ExtFloat / String), the legacy
+        // `constructors_for_query` returned just `[Wildcard]`. That
+        // specialization kept every matrix row, which made matches like
+        // `(0, Red) -> _ | (_, Green) -> _ | (_, Blue) -> _` on
+        // `(Int, Color)` look exhaustive: the rest-column check saw all
+        // three Color variants and said "covered", never noticing that
+        // `(1, Red)` has no matching arm.
+        //
+        // Fix: split the first column into
+        //   {each literal value appearing in any matrix row's first col} ∪
+        //   {a synthetic "not in matrix" witness}.
+        // The witness case only keeps rows whose first column is already
+        // wildcard/ident, so the Red literal row is dropped and the
+        // recursive wildcard check on the rest column surfaces the
+        // missing `(_, Red)` arm as non-exhaustive.
+        let is_infinite_scalar = matches!(
+            &first_ty,
+            Type::Int | Type::Float | Type::ExtFloat | Type::String
+        );
+        let query_first_is_wild =
+            matches!(query_first, Pattern::Wildcard | Pattern::Ident(_));
+
+        if is_infinite_scalar && query_first_is_wild {
+            // Collect distinct literal constructors seen in the first
+            // column of the matrix.
+            let mut literal_ctors: Vec<Pattern> = Vec::new();
+            for pat in matrix {
+                if let Pattern::Tuple(ps) = pat
+                    && ps.len() == arity
+                {
+                    match &ps[0] {
+                        Pattern::Int(_)
+                        | Pattern::Float(_)
+                        | Pattern::StringLit(..)
+                        | Pattern::Range(..)
+                        | Pattern::FloatRange(..) => {
+                            let c = ps[0].clone();
+                            if !literal_ctors
+                                .iter()
+                                .any(|x| Self::patterns_first_col_equal(x, &c))
+                            {
+                                literal_ctors.push(c);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Pass 1: each literal constructor.
+            for ctor in &literal_ctors {
+                let mut specialized_rest: Vec<Pattern> = Vec::new();
+                for pat in matrix {
+                    match pat {
+                        Pattern::Tuple(ps) if ps.len() == arity => {
+                            if Self::first_col_matches(&ps[0], ctor) {
+                                specialized_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                            }
+                        }
+                        Pattern::Wildcard | Pattern::Ident(_) => {
+                            let wilds: Vec<Pattern> =
+                                (0..arity - 1).map(|_| Pattern::Wildcard).collect();
+                            specialized_rest.push(Pattern::Tuple(wilds));
+                        }
+                        _ => {}
+                    }
+                }
+                let rest_refs: Vec<&Pattern> = specialized_rest.iter().collect();
+                if self.is_useful(&rest_refs, &query_rest, &rest_ty, depth + 1) {
+                    return true;
+                }
+            }
+            // Pass 2: synthetic "not in matrix" witness — only rows whose
+            // first column is already wildcard/ident survive.
+            let mut witness_rest: Vec<Pattern> = Vec::new();
+            for pat in matrix {
+                match pat {
+                    Pattern::Tuple(ps) if ps.len() == arity => {
+                        if matches!(ps[0], Pattern::Wildcard | Pattern::Ident(_)) {
+                            witness_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                        }
+                    }
+                    Pattern::Wildcard | Pattern::Ident(_) => {
+                        let wilds: Vec<Pattern> =
+                            (0..arity - 1).map(|_| Pattern::Wildcard).collect();
+                        witness_rest.push(Pattern::Tuple(wilds));
+                    }
+                    _ => {}
+                }
+            }
+            let rest_refs: Vec<&Pattern> = witness_rest.iter().collect();
+            if self.is_useful(&rest_refs, &query_rest, &rest_ty, depth + 1) {
+                return true;
+            }
+            return false;
+        }
+
         // For each constructor that query_first could be, specialize the matrix
         // on that constructor in the first column and check if query_rest is useful.
         let first_constructors = self.constructors_for_query(query_first, &first_ty);
@@ -596,6 +693,20 @@ impl TypeChecker {
             }
         }
         false
+    }
+
+    /// B3 helper: structural equality for literal-constructor patterns used
+    /// when deduping distinct first-column literals from the matrix. Only
+    /// meaningful for the literal variants enumerated at the call site.
+    fn patterns_first_col_equal(a: &Pattern, b: &Pattern) -> bool {
+        match (a, b) {
+            (Pattern::Int(x), Pattern::Int(y)) => x == y,
+            (Pattern::Float(x), Pattern::Float(y)) => x == y,
+            (Pattern::StringLit(x, _), Pattern::StringLit(y, _)) => x == y,
+            (Pattern::Range(a1, b1), Pattern::Range(a2, b2)) => a1 == a2 && b1 == b2,
+            (Pattern::FloatRange(a1, b1), Pattern::FloatRange(a2, b2)) => a1 == a2 && b1 == b2,
+            _ => false,
+        }
     }
 
     /// Get the set of constructors to check for a query pattern against a type.

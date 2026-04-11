@@ -195,6 +195,36 @@ pub struct TypeChecker {
     /// "undefined variable 'f'" or "function expects 2 args, got 1"
     /// errors would just be noise.
     pub(super) recovery_stub_names: std::collections::HashSet<Symbol>,
+    /// B2: span used by `resolve_type_expr` when reporting arity errors
+    /// on user type annotations. Callers set this to the surrounding
+    /// declaration's span (e.g. `f.span`) before calling resolve, and
+    /// reset it afterward. Defaults to a sentinel zero-span when no
+    /// caller has populated it.
+    pub(super) current_type_anno_span: Option<Span>,
+    /// B4: deferred where-clause obligations seen at call sites where
+    /// the type argument stayed an unresolved type variable. Each
+    /// entry is `(tyvar_at_call_site, trait_name, callee_fn_name,
+    /// span, snapshot_of_active_constraints)`. Finalize re-applies
+    /// the substitution after all bodies are inferred: if the var
+    /// resolved to a concrete type with a matching impl, the
+    /// obligation is satisfied; if it resolved to a type variable
+    /// still not covered by the enclosing fn's active constraints at
+    /// the time of the call, a clean diagnostic is emitted.
+    pub(super) pending_where_constraints: Vec<(
+        TyVar,
+        Symbol,
+        Option<Symbol>,
+        Span,
+        HashMap<TyVar, Vec<Symbol>>,
+        Vec<TyVar>,
+    )>,
+    /// B4: the instantiated type-variable IDs of the enclosing function's
+    /// parameters at the time `check_fn_body` is running. Used to decide
+    /// whether a call-site where-constraint is touching the enclosing fn's
+    /// own polymorphism (in which case the enclosing fn must declare the
+    /// constraint) or a top-level unrelated Var (in which case we leave
+    /// the obligation alone — the value will resolve via pass-3 narrowing).
+    pub(super) current_fn_param_tyvars: Vec<TyVar>,
 }
 
 impl Default for TypeChecker {
@@ -226,6 +256,9 @@ impl TypeChecker {
             top_level_names: std::collections::HashSet::new(),
             exhaustiveness_depth_exceeded: std::cell::Cell::new(false),
             recovery_stub_names: std::collections::HashSet::new(),
+            current_type_anno_span: None,
+            pending_where_constraints: Vec::new(),
+            current_fn_param_tyvars: Vec::new(),
         }
     }
 
@@ -902,6 +935,9 @@ impl TypeChecker {
                     self.top_level_names.insert(*name);
                     env.define(*name, scheme);
                 } else {
+                    // B1: reject refutable Constructor patterns in
+                    // top-level `let` before binding.
+                    self.reject_refutable_constructor_in_let(pattern, span);
                     self.bind_pattern(pattern, &val_ty, &mut env, span);
                 }
             }
@@ -977,6 +1013,12 @@ impl TypeChecker {
                 self.pending_field_accesses.truncate(pre_pass3_field_count);
                 self.pending_numeric_checks
                     .truncate(pre_pass3_numeric_count);
+                // B4: discard the pending where-clause obligations so
+                // the re-check with narrowed schemes re-collects them
+                // from scratch. Otherwise stale entries pollute the
+                // finalize pass with obligations that belong to
+                // pre-narrowed instantiations.
+                self.pending_where_constraints.clear();
 
                 // Re-check function bodies with narrowed schemes.
                 // Recovery stubs still skipped (same reason as pass 3).
@@ -1116,6 +1158,9 @@ impl TypeChecker {
             );
         }
         self.top_level_names.insert(td.name);
+        // B2: populate the span hint used by `resolve_type_expr` for any
+        // arity error on field / variant type annotations.
+        let prev_type_span = self.current_type_anno_span.replace(td.span);
         // Create a mapping from type param names to placeholder type vars
         let mut param_vars: HashMap<Symbol, Type> = HashMap::new();
         for p in &td.params {
@@ -1137,6 +1182,24 @@ impl TypeChecker {
                         _ => unreachable!(),
                     })
                     .collect();
+
+                // G3: detect duplicate variant names within the same enum.
+                // Previously `type Color { Red, Green, Red }` compiled
+                // silently — the second `Red` overwrote the first's
+                // constructor binding and no diagnostic was emitted.
+                let mut seen_variants: std::collections::HashSet<Symbol> =
+                    std::collections::HashSet::new();
+                for variant in variants {
+                    if !seen_variants.insert(variant.name) {
+                        self.error(
+                            format!(
+                                "duplicate variant '{}' in enum '{}'",
+                                variant.name, td.name
+                            ),
+                            td.span,
+                        );
+                    }
+                }
 
                 for variant in variants {
                     let field_types: Vec<Type> = variant
@@ -1196,6 +1259,23 @@ impl TypeChecker {
                 );
             }
             TypeBody::Record(fields) => {
+                // G2: detect duplicate field names in the same record.
+                // Previously `type R { a: Int, a: String }` compiled
+                // silently and the first field's type was overwritten
+                // by the second at the VM record layout level.
+                let mut seen_fields: std::collections::HashSet<Symbol> =
+                    std::collections::HashSet::new();
+                for f in fields {
+                    if !seen_fields.insert(f.name) {
+                        self.error(
+                            format!(
+                                "duplicate field '{}' in record type '{}'",
+                                f.name, td.name
+                            ),
+                            td.span,
+                        );
+                    }
+                }
                 let field_types: Vec<(Symbol, Type)> = fields
                     .iter()
                     .map(|f| {
@@ -1318,6 +1398,7 @@ impl TypeChecker {
                 },
             );
         }
+        self.current_type_anno_span = prev_type_span;
     }
 
     /// Resolve a TypeExpr AST node to our internal Type representation.
@@ -1422,7 +1503,45 @@ impl TypeChecker {
                     "Channel" if resolved_args.len() == 1 => {
                         Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
-                    _ => Type::Generic(*name, resolved_args),
+                    _ => {
+                        // B2: enforce arity for user-declared parameterized
+                        // records and enums. Without this check, an
+                        // annotation like `Box(Int, String)` against a
+                        // `type Box(a) { ... }` silently produced a
+                        // `Type::Generic("Box", [Int, String])` whose extra
+                        // arg was dropped at unify time (the `Record /
+                        // Generic` arms in `unify` only run when the arities
+                        // agree, so mismatched ones no-op'd), leaving the
+                        // user with no diagnostic and a runtime type
+                        // error at first use of the field.
+                        let expected_arity = self
+                            .record_param_var_ids
+                            .get(name)
+                            .map(|v| v.len())
+                            .or_else(|| self.enums.get(name).map(|e| e.params.len()));
+                        if let Some(expected) = expected_arity
+                            && expected != resolved_args.len()
+                        {
+                            let kind = if self.records.contains_key(name) {
+                                "record"
+                            } else {
+                                "enum"
+                            };
+                            let err_span = self.current_type_anno_span.unwrap_or(Span {
+                                line: 0,
+                                col: 0,
+                                offset: 0,
+                            });
+                            self.error(
+                                format!(
+                                    "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
+                                    resolved_args.len()
+                                ),
+                                err_span,
+                            );
+                        }
+                        Type::Generic(*name, resolved_args)
+                    }
                 }
             }
             TypeExpr::Tuple(elems) => {
@@ -1486,6 +1605,9 @@ impl TypeChecker {
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
 
+        // B2: populate the span hint used by `resolve_type_expr` for any
+        // arity error on parameter / return type annotations.
+        let prev_type_span = self.current_type_anno_span.replace(f.span);
         for param in &f.params {
             let ty = if let Some(te) = &param.ty {
                 self.resolve_type_expr(te, &mut param_map)
@@ -1500,6 +1622,7 @@ impl TypeChecker {
         } else {
             self.fresh_var()
         };
+        self.current_type_anno_span = prev_type_span;
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type));
         let mut scheme = self.generalize(env, &fn_type);

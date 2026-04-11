@@ -188,9 +188,36 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if args.len() != 2 {
                 return Err(VmError::new("list.zip takes 2 arguments".into()));
             }
+            // Cap check: the result length is bounded by the minimum of the
+            // two input lengths. Compute expected lengths using `u128` for
+            // ranges (to avoid `usize` overflow on e.g. `0..i64::MAX`), then
+            // enforce `MAX_RANGE_MATERIALIZE`. Without this guard,
+            // `Vec::with_capacity(usize::MAX)` panics opaquely as
+            // "builtin module 'list' panicked".
+            fn zip_input_len(v: &Value) -> Result<u128, VmError> {
+                match v {
+                    Value::List(xs) => Ok(xs.len() as u128),
+                    Value::Range(lo, hi) => {
+                        if hi < lo {
+                            Ok(0)
+                        } else {
+                            Ok((*hi as i128 - *lo as i128 + 1) as u128)
+                        }
+                    }
+                    _ => Err(VmError::new("list.zip requires a list or range".into())),
+                }
+            }
+            let len_a = zip_input_len(&args[0])?;
+            let len_b = zip_input_len(&args[1])?;
+            let expected = len_a.min(len_b);
+            if expected > MAX_RANGE_MATERIALIZE as u128 {
+                return Err(VmError::new(format!(
+                    "list.zip: result length {expected} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
+                )));
+            }
+            let cap = expected as usize;
             let mut a = ValueIter::try_from(&args[0], "list.zip")?;
             let mut b = ValueIter::try_from(&args[1], "list.zip")?;
-            let cap = a.len().min(b.len());
             let mut pairs = Vec::with_capacity(cap);
             while let (Some(x), Some(y)) = (a.next(), b.next()) {
                 pairs.push(Value::Tuple(vec![x, y]));

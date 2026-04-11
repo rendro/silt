@@ -93,6 +93,7 @@ Terminates execution with an error message. Accepts any value that implements
 can appear anywhere a value is expected.
 
 ```silt
+-- noexec
 fn main() {
     panic("something went wrong")
     panic(42)  -- also valid
@@ -215,7 +216,7 @@ import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
-    let Message(v) = channel.receive(ch)
+    when Message(v) = channel.receive(ch) else { return }
     println(v)  -- 42
 }
 ```

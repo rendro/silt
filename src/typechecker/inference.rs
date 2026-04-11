@@ -6,6 +6,46 @@
 use super::*;
 
 impl TypeChecker {
+    /// B4 helper: does the enclosing function's active where-clause
+    /// constraints cover `trait_name` for the type variable at the
+    /// resolved call-site tyvar? We can't simply walk `apply` from the
+    /// callee's tyvar, because `unify` may bind the enclosing fn's
+    /// constraint-var to the callee's fresh var (giving a chain
+    /// `enclosing_tv → callee_tv`); `apply` on the callee side returns
+    /// `callee_tv` and active_constraints is keyed on `enclosing_tv`.
+    /// So we iterate the active constraints and, for each `(tv, traits)`,
+    /// check whether `apply(Type::Var(tv))` lands on the same resolved
+    /// tyvar as `resolved`, on either side of the chain.
+    fn covered_by_active_constraint(&self, resolved: &Type, trait_name: Symbol) -> bool {
+        let resolved = self.apply(resolved);
+        let resolved_var = match &resolved {
+            Type::Var(v) => *v,
+            _ => return false,
+        };
+        for (tv, traits) in &self.active_constraints {
+            if !traits.contains(&trait_name) {
+                continue;
+            }
+            // Direct match: the enclosing fn's constraint tyvar is
+            // itself the resolved tyvar.
+            if *tv == resolved_var {
+                return true;
+            }
+            // Transitive: apply the enclosing constraint's tyvar and
+            // see if it lands on the same resolved tyvar as the call
+            // site. This handles the common unify direction where
+            // the enclosing tyvar gets bound to the callee's fresh
+            // var.
+            let applied = self.apply(&Type::Var(*tv));
+            if let Type::Var(v) = applied
+                && v == resolved_var
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     // ── Check function body ─────────────────────────────────────────
 
     pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
@@ -62,6 +102,19 @@ impl TypeChecker {
                 .push(*trait_name);
         }
 
+        // B4: capture the instantiated param tyvars so call-site where-
+        // clause checks can determine whether a pending obligation
+        // touches the enclosing fn's own polymorphism (vs. an unrelated
+        // top-level or downstream Var that will resolve via pass-3
+        // narrowing). We store just the Var IDs — concrete params are
+        // not of interest here.
+        let prev_fn_param_tyvars = std::mem::take(&mut self.current_fn_param_tyvars);
+        for pt in &param_types {
+            if let Type::Var(v) = self.apply(pt) {
+                self.current_fn_param_tyvars.push(v);
+            }
+        }
+
         // Bind parameters
         for (i, param) in f.params.iter().enumerate() {
             if let Some(ty) = param_types.get(i) {
@@ -86,6 +139,7 @@ impl TypeChecker {
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
         self.active_constraints = prev_constraints;
+        self.current_fn_param_tyvars = prev_fn_param_tyvars;
 
         Some(constrained_fn)
     }
@@ -256,6 +310,168 @@ impl TypeChecker {
                     span,
                 );
             }
+        }
+
+        // B4: deferred where-clause obligations. At call site we push
+        // `(tyvar, trait, fn_name, span, active_constraints_snapshot,
+        // fn_param_tyvars_snapshot)` for any call whose resolved type
+        // arg was still a type variable at the time. Re-apply the
+        // substitution now — if the var resolved to a concrete type
+        // with a matching impl the obligation is satisfied; if it
+        // resolved to another type variable equivalent to one of the
+        // enclosing fn's param tyvars AND that param is not covered
+        // by the enclosing fn's own where-clause, emit a clean
+        // propagation error. Otherwise (the var is unrelated to the
+        // enclosing fn's polymorphism — e.g. a top-level let whose
+        // scheme was over-general at pass 2) drop it silently; the
+        // value is already concrete from the caller's perspective.
+        let pending_where = std::mem::take(&mut self.pending_where_constraints);
+        for (tyvar, trait_name, callee_fn_name, span, active_snapshot, param_tyvars) in
+            pending_where
+        {
+            let resolved = self.apply(&Type::Var(tyvar));
+            if matches!(resolved, Type::Error | Type::Never) {
+                continue;
+            }
+            if let Some(type_name) = self.type_name_for_impl(&resolved) {
+                if !self.trait_impl_set.contains(&(trait_name, type_name)) {
+                    self.error(
+                        format!(
+                            "type '{}' does not implement trait '{}'",
+                            type_name, trait_name
+                        ),
+                        span,
+                    );
+                }
+                continue;
+            }
+            if let Type::Var(v) = &resolved {
+                // Still a type variable. First, test equivalence to any
+                // of the enclosing fn's param tyvars at the time of the
+                // call — if none match, this is not the enclosing fn's
+                // concern (e.g. a top-level `a = id(5)` whose scheme was
+                // over-general during pass 2). In that case, drop.
+                let mut touches_fn_param = false;
+                for &pv in &param_tyvars {
+                    if pv == *v {
+                        touches_fn_param = true;
+                        break;
+                    }
+                    let applied = self.apply(&Type::Var(pv));
+                    if let Type::Var(av) = applied
+                        && av == *v
+                    {
+                        touches_fn_param = true;
+                        break;
+                    }
+                }
+                if !touches_fn_param {
+                    continue;
+                }
+
+                // The var is linked to the enclosing fn's polymorphism.
+                // Check the snapshot of active constraints captured at
+                // the original call site for the matching trait.
+                let mut covered = false;
+                for (tv, traits) in &active_snapshot {
+                    if !traits.contains(&trait_name) {
+                        continue;
+                    }
+                    if *tv == *v {
+                        covered = true;
+                        break;
+                    }
+                    let applied = self.apply(&Type::Var(*tv));
+                    if let Type::Var(av) = applied
+                        && av == *v
+                    {
+                        covered = true;
+                        break;
+                    }
+                }
+                if !covered {
+                    let fn_label = callee_fn_name
+                        .map(|s| format!("'{}'", resolve(s)))
+                        .unwrap_or_else(|| "<callee>".to_string());
+                    self.error(
+                        format!(
+                            "enclosing function does not declare constraint required by call to {fn_label}: `a: {trait_name}`"
+                        ),
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Let-pattern refutability check ─────────────────────────────
+    //
+    // B1: a `let` binding must not destructure a variant that is only
+    // one of several enum constructors. `let Square(n) = shape` where
+    // `Shape = Circle(Int) | Square(String)` was previously accepted
+    // by the typechecker and produced silent payload corruption at
+    // runtime — the VM read `Circle(5)`'s Int payload into `n` and
+    // the error cascaded into a misleading `+ Int String` at the
+    // first use of `n`. Walk the pattern and reject any Constructor
+    // pattern whose parent enum has more than one variant. Match arms
+    // do NOT call this check — refutable patterns are legal there.
+    pub(super) fn reject_refutable_constructor_in_let(
+        &mut self,
+        pattern: &Pattern,
+        span: Span,
+    ) {
+        match pattern {
+            Pattern::Constructor(name, sub_pats) => {
+                if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
+                    && let Some(enum_info) = self.enums.get(&enum_name).cloned()
+                    && enum_info.variants.len() > 1
+                {
+                    self.error(
+                        format!(
+                            "refutable pattern in `let`: constructor '{}' is only one of {} variants of enum '{}'; use a `match` or `when ... else` instead",
+                            name,
+                            enum_info.variants.len(),
+                            enum_name
+                        ),
+                        span,
+                    );
+                }
+                for p in sub_pats {
+                    self.reject_refutable_constructor_in_let(p, span);
+                }
+            }
+            Pattern::Tuple(pats) => {
+                for p in pats {
+                    self.reject_refutable_constructor_in_let(p, span);
+                }
+            }
+            Pattern::List(elems, rest) => {
+                for p in elems {
+                    self.reject_refutable_constructor_in_let(p, span);
+                }
+                if let Some(r) = rest {
+                    self.reject_refutable_constructor_in_let(r, span);
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for (_, sub_pat) in fields {
+                    if let Some(p) = sub_pat {
+                        self.reject_refutable_constructor_in_let(p, span);
+                    }
+                }
+            }
+            Pattern::Or(alts) => {
+                for p in alts {
+                    self.reject_refutable_constructor_in_let(p, span);
+                }
+            }
+            // Non-constructor patterns are out of scope for this
+            // B1 fix. Literal/map/pin patterns also happen to be
+            // refutable in `let`, but existing programs already
+            // reach them through the existing typechecker paths;
+            // leave them alone to avoid regressing unrelated
+            // tests.
+            _ => {}
         }
     }
 
@@ -887,6 +1103,26 @@ impl TypeChecker {
                         expr.ty = Some(resolved.clone());
                         return resolved;
                     }
+                    // G5: when `<module>` is a known builtin module (list,
+                    // string, map, ...) and `<member>` is not registered,
+                    // emit a specific "unknown function on module" error
+                    // BEFORE falling through to the generic obj-inference
+                    // path (which would misleadingly report `undefined
+                    // variable '<module>'`). We deliberately do NOT short
+                    // circuit: we emit the error and return a fresh var
+                    // so downstream inference continues.
+                    let module_str = resolve(module_name);
+                    if crate::module::is_builtin_module(&module_str) {
+                        self.error(
+                            format!(
+                                "unknown function '{field}' on module '{module_str}'"
+                            ),
+                            span,
+                        );
+                        let fresh = self.fresh_var();
+                        expr.ty = Some(fresh.clone());
+                        return fresh;
+                    }
                 }
 
                 // Could be record.field — infer the object type
@@ -1453,6 +1689,25 @@ impl TypeChecker {
                                     ),
                                     span,
                                 );
+                            } else if matches!(&resolved, Type::Var(_))
+                                && !self.covered_by_active_constraint(&resolved, *trait_name)
+                            {
+                                // B4: defer — the tyvar may still resolve
+                                // to a concrete type in a later body
+                                // (e.g. a lambda's param pinned after
+                                // the enclosing function body unifies
+                                // it at the top-level call site). We
+                                // re-check in `finalize_deferred_checks`.
+                                if let Type::Var(v) = resolved {
+                                    self.pending_where_constraints.push((
+                                        v,
+                                        *trait_name,
+                                        callee_fn_name,
+                                        span,
+                                        self.active_constraints.clone(),
+                                        self.current_fn_param_tyvars.clone(),
+                                    ));
+                                }
                             }
                         }
 
@@ -1679,6 +1934,23 @@ impl TypeChecker {
                             ),
                             span,
                         );
+                    } else if matches!(&resolved, Type::Var(_))
+                        && !self.covered_by_active_constraint(&resolved, *trait_name)
+                    {
+                        // B4: defer — the tyvar may still resolve to a
+                        // concrete type in a later body. See the pipe
+                        // arm for details; both sites push to the same
+                        // pending list re-examined by finalize.
+                        if let Type::Var(v) = resolved {
+                            self.pending_where_constraints.push((
+                                v,
+                                *trait_name,
+                                callee_fn_name,
+                                span,
+                                self.active_constraints.clone(),
+                                self.current_fn_param_tyvars.clone(),
+                            ));
+                        }
                     }
                 }
 
@@ -2050,6 +2322,11 @@ impl TypeChecker {
                         env.define(*name, scheme);
                     }
                     _ => {
+                        // B1: reject refutable Constructor patterns in
+                        // `let` before binding, so we produce a clean
+                        // typecheck error instead of silent runtime
+                        // payload corruption from a tag mismatch.
+                        self.reject_refutable_constructor_in_let(pattern, value_span);
                         self.bind_pattern(pattern, &val_ty, env, value_span);
                     }
                 }

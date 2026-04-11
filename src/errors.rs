@@ -304,6 +304,19 @@ impl fmt::Display for SourceError {
                 .map(|ch| if ch == '\t' { '\t' } else { ' ' })
                 .collect();
 
+            // If `self.message` is a multi-line blob (e.g. a
+            // module-import error that already embeds a nested
+            // `--> file | ^` snippet into its message text), only
+            // echo the first line under the outer caret — otherwise
+            // the nested snippet would render twice: once inside
+            // the header at the top of the block, and once again
+            // here after the outer caret. Lock: tests/modules.rs
+            // `test_module_parse_error_inner_snippet_rendered_once`.
+            let caret_msg = self
+                .message
+                .split_once('\n')
+                .map(|(head, _)| head)
+                .unwrap_or(self.message.as_str());
             write!(
                 f,
                 "\n {cyan}{gutter:>width$} |{reset} {spacing}{label_color}{bold}^ {msg}{reset}",
@@ -314,7 +327,7 @@ impl fmt::Display for SourceError {
                 spacing = spacing,
                 label_color = label_color,
                 bold = c.bold,
-                msg = self.message,
+                msg = caret_msg,
             )?;
         }
 

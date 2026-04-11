@@ -1908,6 +1908,13 @@ fn main() {
 
 #[test]
 fn test_ascription_missing_type() {
+    // L4 (hardening): previously asserted `!err.is_empty()`, which any
+    // parse error would have satisfied. Pin the exact diagnostic phrase
+    // the parser emits when `as` isn't followed by a type expression:
+    // `parse_type_expr` → `expect_ident` → "expected identifier, found }".
+    // This way a regression that accepts `42 as` silently (or that
+    // changes the error to something unrelated like "unexpected token")
+    // actually fails the test instead of rubber-stamping it.
     let err = parse_err(
         r#"
 fn main() {
@@ -1916,8 +1923,8 @@ fn main() {
     "#,
     );
     assert!(
-        !err.is_empty(),
-        "expected parse error for missing type after 'as'"
+        err.contains("expected identifier, found }"),
+        "expected parser diagnostic 'expected identifier, found }}' for `42 as`, got: {err:?}"
     );
 }
 
@@ -2412,5 +2419,103 @@ fn main() {
     assert!(
         errs.is_empty(),
         "channel.select should typecheck with a 2-tuple destructure, got: {errs:?}"
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT FINDINGS: round 16 (G2 / G3 / G5)
+// ════════════════════════════════════════════════════════════════════
+
+// ── G2: duplicate record field silently accepted ───────────────────
+
+#[test]
+fn test_duplicate_record_field_rejected() {
+    // `type R { a: Int, a: String }` used to compile silently — the
+    // second `a` overwrote the first's type at the VM record layout
+    // level. The typechecker now emits a specific diagnostic pointing
+    // at the duplicate field name.
+    let errs = type_errors(
+        r#"
+type R { a: Int, a: String }
+fn main() {
+  let r = R { a: 1 }
+  println(r.a)
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("duplicate field 'a' in record type 'R'")),
+        "expected duplicate-field error, got: {errs:?}"
+    );
+}
+
+// ── G3: duplicate enum variant silently accepted ───────────────────
+
+#[test]
+fn test_duplicate_enum_variant_rejected() {
+    // `type Color { Red, Green, Red }` used to compile silently —
+    // the second `Red` overwrote the first's constructor binding in
+    // the type environment. The typechecker now emits a specific
+    // diagnostic pointing at the duplicate variant.
+    let errs = type_errors(
+        r#"
+type Color { Red, Green, Red }
+fn main() { println("ok") }
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("duplicate variant 'Red' in enum 'Color'")),
+        "expected duplicate-variant error, got: {errs:?}"
+    );
+}
+
+// ── G5: misleading "undefined variable '<module>'" error ──────────
+
+#[test]
+fn test_missing_module_member_reports_specific_error() {
+    // `import list; fn main() { list.range(1, 5) }` — `range` is not
+    // a member of the `list` module. The old typechecker failed the
+    // qualified lookup, fell through to inferring the bare `list`
+    // identifier, and emitted the misleading `undefined variable
+    // 'list'`. The fix emits the specific "unknown function 'range'
+    // on module 'list'" before the fall-through.
+    let errs = type_errors(
+        r#"
+import list
+fn main() { list.range(1, 5) }
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("unknown function 'range' on module 'list'")),
+        "expected module-member error for list.range, got: {errs:?}"
+    );
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("undefined variable 'list'")),
+        "must no longer report 'undefined variable list' for a valid builtin module: {errs:?}"
+    );
+}
+
+#[test]
+fn test_valid_module_member_still_resolves() {
+    // Positive lock: a valid `list.reverse(...)` call must still
+    // typecheck cleanly after the G5 guard — i.e. the guard fires
+    // only when the qualified lookup actually fails.
+    let errs = type_errors(
+        r#"
+import list
+fn main() {
+  let r = list.reverse([1, 2, 3])
+  println("{r}")
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for list.reverse([1,2,3]), got: {errs:?}"
     );
 }

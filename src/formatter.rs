@@ -42,13 +42,28 @@ struct FmtState {
     trailing_map: HashMap<usize, String>,
     /// Source lines whose trailing comment has already been emitted.
     trailing_consumed: HashSet<usize>,
+    /// Map from source line to leading inline block comment text. A
+    /// leading inline block comment is a `{- ... -}` (or sequence of
+    /// them) that appears at the start of a statement line before the
+    /// statement's code on the same line, e.g. `{- lead -} let a = 1`.
+    /// These are attached to the statement at that line and emitted
+    /// immediately before the statement's leading indent.
+    leading_inline_map: HashMap<usize, String>,
+    /// Source lines whose leading inline block comment has already been
+    /// emitted.
+    leading_inline_consumed: HashSet<usize>,
     /// Raw source lines (access via line_idx = line - 1), used for
     /// computing block end lines on demand.
     source_lines: Vec<String>,
 }
 
 impl FmtState {
-    fn new(comments: Vec<Comment>, trailing_map: HashMap<usize, String>, source: &str) -> Self {
+    fn new(
+        comments: Vec<Comment>,
+        trailing_map: HashMap<usize, String>,
+        leading_inline_map: HashMap<usize, String>,
+        source: &str,
+    ) -> Self {
         let consumed = vec![false; comments.len()];
         let source_lines: Vec<String> = source.lines().map(|s| s.to_string()).collect();
         Self {
@@ -56,6 +71,8 @@ impl FmtState {
             consumed,
             trailing_map,
             trailing_consumed: HashSet::new(),
+            leading_inline_map,
+            leading_inline_consumed: HashSet::new(),
             source_lines,
         }
     }
@@ -66,10 +83,11 @@ impl FmtState {
 fn with_fmt_state<R>(
     comments: Vec<Comment>,
     trailing: HashMap<usize, String>,
+    leading_inline: HashMap<usize, String>,
     source: &str,
     f: impl FnOnce() -> R,
 ) -> R {
-    let state = FmtState::new(comments, trailing, source);
+    let state = FmtState::new(comments, trailing, leading_inline, source);
     let prev = FMT_STATE.with(|cell| cell.replace(Some(state)));
     let result = f();
     FMT_STATE.with(|cell| {
@@ -90,6 +108,23 @@ fn take_trailing_for_line(line: usize) -> Option<String> {
         }
         let text = state.trailing_map.get(&line).cloned()?;
         state.trailing_consumed.insert(line);
+        Some(text)
+    })
+}
+
+/// Take the leading inline block comment attached to `line`, marking it
+/// consumed so it is not also emitted later. Returns the raw comment
+/// text (e.g. `{- lead -}`, possibly a sequence like `{- a -} {- b -}`)
+/// or `None`.
+fn take_leading_inline_for_line(line: usize) -> Option<String> {
+    FMT_STATE.with(|cell| {
+        let mut borrowed = cell.borrow_mut();
+        let state = borrowed.as_mut()?;
+        if state.leading_inline_consumed.contains(&line) {
+            return None;
+        }
+        let text = state.leading_inline_map.get(&line).cloned()?;
+        state.leading_inline_consumed.insert(line);
         Some(text)
     })
 }
@@ -704,9 +739,20 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
 /// comments) or the block comment starts on its own line.
 ///
 /// A "trailing" comment shares a line with code (e.g., `let x = 42 -- note`).
-fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
+///
+/// The third return value is a map from source line to any leading inline
+/// block comment text (e.g. `{- lead -}` from `{- lead -} let a = 1`). A
+/// leading inline block comment starts at the beginning of a line (possibly
+/// after indentation) but is followed on the same line by actual code, so
+/// it is NOT a standalone comment; it is attached to the statement at that
+/// line. Multiple leading `{- ... -}` block comments on the same line are
+/// concatenated, preserving the source spacing between them.
+fn extract_comments(
+    source: &str,
+) -> (Vec<Comment>, Vec<TrailingComment>, HashMap<usize, String>) {
     let mut comments = Vec::new();
     let mut trailing = Vec::new();
+    let mut leading_inline: HashMap<usize, String> = HashMap::new();
     let lines: Vec<&str> = source.lines().collect();
     let line_kinds = classify_lines(source);
     let mut i = 0;
@@ -753,11 +799,117 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
             continue;
         }
 
-        // Block comment starting on its own line
+        // Block comment starting on its own line. We first attempt to
+        // consume one or more leading `{- ... -}` block comments that all
+        // close on this same line. If the remainder of the line is
+        // empty/whitespace (or only a `--` line comment), the entire
+        // sequence is a standalone single-line comment. If the block
+        // comment spans multiple lines, it's a standalone multi-line
+        // block comment. Otherwise — if real code follows the closer(s)
+        // on the same line — the block comment(s) are LEADING INLINE
+        // annotations attached to that statement and must not be emitted
+        // as standalone comments (which would duplicate the statement
+        // text and/or corrupt it).
         if trimmed.starts_with("{-") {
-            let mut block = String::new();
             let start_line = i + 1; // 1-based
-            // Accumulate lines until we close all nested block comments
+            let chars: Vec<char> = line.chars().collect();
+            // Find the byte position (in chars) of the first `{-` on
+            // this line. `trimmed.starts_with("{-")` guarantees the
+            // first non-whitespace chars are `{-`, so scan past leading
+            // whitespace.
+            let mut leading_ws = 0usize;
+            while leading_ws < chars.len() && chars[leading_ws].is_whitespace() {
+                leading_ws += 1;
+            }
+            // Walk leading `{- ... -}` pairs on the same line. After
+            // each closer, skip whitespace; if another `{-` follows,
+            // consume it too. Stop when we hit something that isn't a
+            // leading block comment.
+            let mut pos = leading_ws;
+            let mut last_close_end: Option<usize> = None;
+            loop {
+                if pos + 1 >= chars.len()
+                    || chars[pos] != '{'
+                    || chars[pos + 1] != '-'
+                {
+                    break;
+                }
+                // Walk to matching `-}` on the same line, tracking nesting.
+                let mut depth: usize = 1;
+                let mut j = pos + 2;
+                while j + 1 < chars.len() {
+                    if chars[j] == '{' && chars[j + 1] == '-' {
+                        depth += 1;
+                        j += 2;
+                        continue;
+                    }
+                    if chars[j] == '-' && chars[j + 1] == '}' {
+                        depth -= 1;
+                        j += 2;
+                        if depth == 0 {
+                            break;
+                        }
+                        continue;
+                    }
+                    j += 1;
+                }
+                if depth != 0 {
+                    // Unterminated on this line — this is a multi-line
+                    // block comment. Reset and fall through to the
+                    // multi-line consumption path below.
+                    last_close_end = None;
+                    break;
+                }
+                last_close_end = Some(j);
+                pos = j;
+                // Skip whitespace to check for another `{-`.
+                while pos < chars.len() && chars[pos].is_whitespace() {
+                    pos += 1;
+                }
+            }
+
+            if let Some(close_end) = last_close_end {
+                // All leading block comments closed on this same line.
+                // Classify the remainder of the line.
+                let mut k = close_end;
+                while k < chars.len() && chars[k].is_whitespace() {
+                    k += 1;
+                }
+                let has_line_comment = k + 1 < chars.len()
+                    && chars[k] == '-'
+                    && chars[k + 1] == '-';
+                if k >= chars.len() || has_line_comment {
+                    // Standalone single-line block comment sequence
+                    // (possibly followed by a `-- ...` line comment).
+                    comments.push(Comment {
+                        line: start_line,
+                        text: line.to_string(),
+                    });
+                    i += 1;
+                    continue;
+                }
+                // Real code follows the block comment(s): leading inline.
+                // Store only the `{- ... -}` text (including any spacing
+                // between successive block comments) in the map.
+                let text: String = chars[leading_ws..close_end].iter().collect();
+                leading_inline.insert(start_line, text);
+                // Fall through to trailing-comment extraction on the
+                // remainder of the line. Any `--` or trailing `{- -}`
+                // after the real code is handled by
+                // `extract_trailing_comment_from_line` below.
+                if let Some(comment_text) = extract_trailing_comment_from_line(line) {
+                    trailing.push(TrailingComment {
+                        line: i + 1,
+                        text: comment_text,
+                    });
+                }
+                i += 1;
+                continue;
+            }
+
+            // Multi-line block comment: accumulate lines until the
+            // matching `-}` is found (possibly several lines down).
+            let mut block = String::new();
             let mut depth: i32 = 0;
             let mut found_end = false;
             while i < lines.len() {
@@ -811,7 +963,7 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>) {
 
         i += 1;
     }
-    (comments, trailing)
+    (comments, trailing, leading_inline)
 }
 
 /// Extract the trailing comment from a line of code, if present.
@@ -1133,7 +1285,7 @@ pub fn format(source: &str) -> Result<String, FmtError> {
 fn format_program_with_comments(program: &Program, source: &str) -> String {
     if program.decls.is_empty() {
         // Even with no declarations, there might be comments
-        let (comments, _trailing) = extract_comments(source);
+        let (comments, _trailing, _leading_inline) = extract_comments(source);
         if comments.is_empty() {
             return String::from("\n");
         }
@@ -1148,7 +1300,7 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         return result;
     }
 
-    let (comments, trailing_comments) = extract_comments(source);
+    let (comments, trailing_comments, leading_inline_map) = extract_comments(source);
     let decl_lines = resolve_decl_lines(&program.decls, source);
     let decl_end_lines = resolve_decl_end_lines(&program.decls, &decl_lines, source);
 
@@ -1210,9 +1362,13 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
         .enumerate()
         .map(|(i, d)| {
             let decl_body_comments = body_comments[i].clone();
-            with_fmt_state(decl_body_comments, trailing_map.clone(), source, || {
-                format_decl_with_comments(d, 0)
-            })
+            with_fmt_state(
+                decl_body_comments,
+                trailing_map.clone(),
+                leading_inline_map.clone(),
+                source,
+                || format_decl_with_comments(d, 0),
+            )
         })
         .collect();
 
@@ -1513,6 +1669,19 @@ fn format_stmts_with_comments(
         }
 
         let mut formatted = format_stmt(stmt, depth);
+        // Attach any leading inline `{- ... -}` block comment that sits
+        // on the same line as the statement, before the statement's
+        // code (e.g. `{- lead -} let a = 1`). It must be inserted after
+        // the indent prefix produced by `format_stmt` so the output is
+        // `  {- lead -} let a = 1`.
+        if let Some(leading) = take_leading_inline_for_line(stmt_line) {
+            let prefix = indent(depth);
+            let rest = formatted
+                .strip_prefix(&prefix)
+                .map(str::to_string)
+                .unwrap_or_else(|| formatted.clone());
+            formatted = format!("{prefix}{leading} {rest}");
+        }
         if let Some(tc) = take_trailing_for_line(stmt_line) {
             formatted.push(' ');
             formatted.push_str(&tc);
@@ -2790,7 +2959,8 @@ fn c() = 3
 
     #[test]
     fn test_extract_comments_basic() {
-        let (comments, _trailing) = extract_comments("-- hello\nfn foo() = 1\n-- bye");
+        let (comments, _trailing, _leading) =
+            extract_comments("-- hello\nfn foo() = 1\n-- bye");
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[0].line, 1);
         assert_eq!(comments[0].text, "-- hello");
@@ -2800,7 +2970,8 @@ fn c() = 3
 
     #[test]
     fn test_extract_block_comment() {
-        let (comments, _trailing) = extract_comments("{- block\ncomment -}\nfn foo() = 1");
+        let (comments, _trailing, _leading) =
+            extract_comments("{- block\ncomment -}\nfn foo() = 1");
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line, 1);
         assert!(comments[0].text.contains("{- block"));
@@ -4323,6 +4494,73 @@ import a
         let result = format(source).unwrap();
         let expected = "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
         assert_eq!(result, expected);
+    }
+
+    // ── B7: Leading {- ... -} block comment on statement line ─────────
+    // Regression: previously the formatter duplicated the statement
+    // whose line started with a leading inline `{- ... -}` block
+    // comment, emitting the statement both via the standalone-comment
+    // path (which mistakenly captured the whole line as comment text)
+    // and via the normal per-statement emit loop. This corrupted the
+    // program silently because the duplicated `let` pattern simply
+    // shadow-bound the name and `silt check` accepted it.
+
+    #[test]
+    fn test_format_preserves_leading_block_comment_on_statement_no_duplicate() {
+        let source = "fn main() {\n  {- lead -} let a = 1\n  let b = 2\n}\n";
+        let result = format(source).unwrap();
+        let expected = "fn main() {\n  {- lead -} let a = 1\n  let b = 2\n}\n";
+        assert_eq!(result, expected);
+        // Belt-and-braces: assert the statement is emitted exactly once
+        // and the leading block comment is preserved.
+        assert_eq!(
+            result.matches("let a = 1").count(),
+            1,
+            "`let a = 1` must be emitted exactly once, got: {result:?}"
+        );
+        assert_eq!(
+            result.matches("{- lead -}").count(),
+            1,
+            "`{{- lead -}}` must be preserved exactly once, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_leading_block_comment_two_adjacent_stmts() {
+        let source = "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
+        let result = format(source).unwrap();
+        let expected =
+            "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
+        assert_eq!(result, expected);
+        assert_eq!(
+            result.matches("let a = 1").count(),
+            1,
+            "`let a = 1` must be emitted exactly once, got: {result:?}"
+        );
+        assert_eq!(
+            result.matches("let b = 2").count(),
+            1,
+            "`let b = 2` must be emitted exactly once, got: {result:?}"
+        );
+        assert_eq!(
+            result.matches("{- lead -}").count(),
+            1,
+            "`{{- lead -}}` must be preserved exactly once, got: {result:?}"
+        );
+        assert_eq!(
+            result.matches("{- lead2 -}").count(),
+            1,
+            "`{{- lead2 -}}` must be preserved exactly once, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_leading_block_comment_is_idempotent() {
+        // fmt(fmt(s)) == fmt(s) for the leading-inline-block-comment case.
+        let source = "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
+        let once = format(source).unwrap();
+        let twice = format(&once).unwrap();
+        assert_eq!(once, twice);
     }
 
     // ── BROKEN-3: Trailing comment on body close brace line ──

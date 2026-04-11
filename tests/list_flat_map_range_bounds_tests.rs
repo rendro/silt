@@ -71,17 +71,18 @@ fn main() {
 }
         "#,
     );
-    // Strong pin: must mention list.flat_map by name (the fix prefixes
-    // the error with "list.flat_map:") and must mention the cap phrasing.
-    // The old weak-OR fallback on "range" was too broad and would have
-    // accepted any error text mentioning ranges at all.
+    // Exact-phrase pin: the production error routes through
+    // `checked_range_len` prefixed with "list.flat_map: ", which emits
+    // "materializing more than <cap> is not allowed". Prior OR-chain
+    // fallbacks (`contains("flat_map")`, `contains("materializ")`) were
+    // too broad and would have matched unrelated error messages.
     assert!(
-        err.contains("list.flat_map") || err.contains("flat_map"),
-        "error should mention flat_map by name, got: {err}"
+        err.contains("list.flat_map"),
+        "error should mention list.flat_map by name, got: {err}"
     );
     assert!(
-        err.contains("exceeds maximum") || err.contains("materializ"),
-        "error should mention the cap phrasing, got: {err}"
+        err.contains("materializing more than 10000000 is not allowed"),
+        "error should contain the exact cap phrasing, got: {err}"
     );
 }
 
@@ -223,9 +224,16 @@ fn main() {
 }
         "#,
     );
+    // Exact-phrase pin: `checked_range_len` emits
+    // "materializing more than <cap> is not allowed" and the flat_map
+    // dispatch prefixes it with "list.flat_map: ".
     assert!(
-        err.contains("exceeds maximum") || err.contains("materializ"),
-        "error should mention the cap phrasing, got: {err}"
+        err.contains("list.flat_map"),
+        "error should mention list.flat_map by name, got: {err}"
+    );
+    assert!(
+        err.contains("materializing more than 10000000 is not allowed"),
+        "error should contain the exact cap phrasing, got: {err}"
     );
 }
 
@@ -246,8 +254,13 @@ fn main() {
 }
         "#,
     );
+    // Exact-phrase pin: the accumulated-overflow branch in execute.rs
+    // emits "list.flat_map: accumulated result exceeds maximum list
+    // length of 10000000 elements".
     assert!(
-        err.contains("exceeds maximum") || err.contains("materializ"),
-        "error should mention the cap phrasing, got: {err}"
+        err.contains(
+            "list.flat_map: accumulated result exceeds maximum list length of 10000000 elements"
+        ),
+        "error should contain the exact accumulated-cap phrasing, got: {err}"
     );
 }

@@ -1136,3 +1136,177 @@ fn test_module_runtime_error_with_name_collision_renders_correct_file() {
     // Clean up.
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ── Empty file input (round-16 GAP G7) ─────────────────────────────
+//
+// Every `silt <subcmd>` path must handle a zero-byte `.silt` file
+// without panicking. Historically, an indexing bug on `tokens[0]` or
+// an unconditional `main.call(...)` could ship a user-visible panic
+// for the common case of an empty file (user just ran `silt init` and
+// deleted the scaffolding, or is piping in a placeholder).
+//
+// Each test pins the exact handled behavior observed at lock time:
+//
+//   silt run    : exit 1 with "program has no main() function" — the
+//                 entry-point check catches the empty program cleanly.
+//   silt check  : exit 0 (empty program has zero type errors).
+//   silt fmt    : exit 0 (formatting empty source is a no-op).
+//   silt test   : exit 0 with "0 tests: 0 passed, 0 failed, 0 skipped".
+//   silt disasm : exit 0 (disassembles the implicit script frame).
+//
+// If any of these regress to a panic or non-zero unhandled error,
+// this walker catches it before release.
+
+#[test]
+fn test_run_empty_file() {
+    let path = temp_silt_file("empty_run", "");
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // Must NOT crash / panic. The handled behavior is exit 1 with a
+    // clean "no main() function" diagnostic from the CLI.
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit (empty program has no main), stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let code = output.status.code();
+    assert_eq!(
+        code,
+        Some(1),
+        "expected clean exit code 1, got {:?} (panic / unhandled error?)",
+        code
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("program has no main() function"),
+        "expected clean 'no main()' diagnostic, got: {stderr}"
+    );
+    // A panic would surface `panicked at` or `RUST_BACKTRACE` hints.
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_check_empty_file() {
+    let path = temp_silt_file("empty_check", "");
+
+    let output = silt_cmd()
+        .arg("check")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // `silt check` only runs lex/parse/typecheck. An empty program has
+    // zero type errors, so this must be a clean exit 0.
+    assert!(
+        output.status.success(),
+        "expected exit 0 for empty file under `silt check`, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error["),
+        "stderr should not contain an error[ line, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_fmt_empty_file() {
+    let path = temp_silt_file("empty_fmt", "");
+
+    let output = silt_cmd()
+        .arg("fmt")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // Formatting empty source is a no-op, exit 0.
+    assert!(
+        output.status.success(),
+        "expected exit 0 for empty file under `silt fmt`, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic, got: {stderr}"
+    );
+
+    // File on disk should still be trivially empty (or whitespace-only).
+    let formatted = fs::read_to_string(&path).expect("failed to read formatted file");
+    assert!(
+        formatted.trim().is_empty(),
+        "expected empty/whitespace-only content after fmt, got: {formatted:?}"
+    );
+}
+
+#[test]
+fn test_test_empty_file() {
+    let path = temp_silt_file("empty_test", "");
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // Empty file has no test functions, so `silt test` reports 0/0/0
+    // and exits cleanly. Exit 0 is the handled behavior.
+    assert!(
+        output.status.success(),
+        "expected exit 0 for empty file under `silt test`, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic, got: {stderr}"
+    );
+    // The "0 tests: ..." summary line is emitted on stderr by the
+    // test runner (stdout is reserved for test output).
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("0 tests:"),
+        "expected '0 tests:' line in stderr, got stderr: {stderr}\nstdout: {stdout}"
+    );
+}
+
+#[test]
+fn test_disasm_empty_file() {
+    let path = temp_silt_file("empty_disasm", "");
+
+    let output = silt_cmd()
+        .arg("disasm")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // An empty program still produces a valid (trivial) implicit
+    // script frame. Exit 0 is the handled behavior.
+    assert!(
+        output.status.success(),
+        "expected exit 0 for empty file under `silt disasm`, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "stderr should not contain a Rust panic, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("== <script>"),
+        "expected script header in disasm output, got: {stdout}"
+    );
+}

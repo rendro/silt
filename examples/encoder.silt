@@ -140,7 +140,7 @@ fn print_separator() {
   println(string.repeat("-", 72))
 }
 
-fn print_table_header(title) {
+fn print_table_header(title: String) {
   println("")
   println(title)
   print_separator()
