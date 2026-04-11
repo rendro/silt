@@ -2937,8 +2937,14 @@ fn main() {
 fn bar() = 2
 "#;
         let result = format(source).unwrap();
-        // foo's closing brace must come after "inside foo" and before
-        // "between functions".
+        let expected = "fn foo() {\n  -- inside foo\n  let x = 1\n  x\n}\n\n-- between functions\n\nfn bar() = 2\n";
+        assert_eq!(
+            result, expected,
+            "body+between comments must stay in their canonical positions, got: {result}"
+        );
+        // Defensive: foo's closing brace must come after "inside foo" and
+        // before "between functions". Catches hoisting out of the fn body
+        // even if the assert_eq! message is overlooked.
         let inside_pos = result.find("-- inside foo").unwrap();
         let foo_close = result.find("}\n").unwrap();
         let between_pos = result.find("-- between functions").unwrap();
@@ -3005,6 +3011,13 @@ fn bar() = 2
 }
 "#;
         let result = format(source).unwrap();
+        let expected = "fn main() {\n  let x = 42\n  -- trailing body comment\n}\n";
+        assert_eq!(
+            result, expected,
+            "trailing body comment must remain between the last stmt and `}}`, got: {result}"
+        );
+        // Defensive: the comment must appear before the closing brace, not
+        // after it. Catches hoisting even if the expected string changes.
         let comment_pos = result.find("-- trailing body comment").unwrap();
         let close_pos = result.find("\n}").unwrap();
         assert!(

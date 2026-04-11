@@ -311,7 +311,10 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let Value::Int(n) = &args[0] else {
                 return Err(VmError::new("string.from_char_code requires an int".into()));
             };
-            match char::from_u32(*n as u32) {
+            // Reject negatives and values outside u32 range before casting,
+            // then let char::from_u32 catch surrogates and >0x10FFFF values.
+            // Unchecked `as u32` would silently wrap (e.g. 4294967337 -> 41 = ')').
+            match u32::try_from(*n).ok().and_then(char::from_u32) {
                 Some(c) => Ok(Value::String(c.to_string())),
                 None => Err(VmError::new(format!("invalid code point {n}"))),
             }

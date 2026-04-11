@@ -10720,6 +10720,54 @@ fn main() { string.from_char_code(1114112) }
     assert!(err.contains("invalid code point"), "got: {err}");
 }
 
+#[test]
+fn test_string_from_char_code_rejects_out_of_range() {
+    // Regression: an unchecked `as u32` cast silently wrapped i64 values
+    // outside the u32 range. e.g. 4294967337 (u32::MAX + 42) wraps to 41
+    // and would return ")" instead of erroring, and -4294967256 wraps to
+    // 40 and would return "(". Both must error with a message containing
+    // the original out-of-range value.
+
+    // Positive value beyond u32::MAX that wraps to 41 = ')'.
+    let err = run_err(
+        r#"
+import string
+fn main() { string.from_char_code(4294967337) }
+    "#,
+    );
+    assert!(
+        err.contains("invalid code point") && err.contains("4294967337"),
+        "expected invalid-code-point error naming 4294967337, got: {err}"
+    );
+
+    // Negative value whose low 32 bits equal 40 = '('. Must error, not
+    // silently produce a character.
+    let err = run_err(
+        r#"
+import string
+fn main() { string.from_char_code(-4294967256) }
+    "#,
+    );
+    assert!(
+        err.contains("invalid code point") && err.contains("-4294967256"),
+        "expected invalid-code-point error naming -4294967256, got: {err}"
+    );
+
+    // Guard against overcorrection: valid ASCII codepoints must still work.
+    let result = run(r#"
+import string
+fn main() { string.from_char_code(65) }
+    "#);
+    assert_eq!(result, Value::String("A".into()));
+
+    // And a valid non-BMP codepoint (U+1F600 grinning face) must still work.
+    let result = run(r#"
+import string
+fn main() { string.from_char_code(128512) }
+    "#);
+    assert_eq!(result, Value::String("\u{1F600}".into()));
+}
+
 // ── string.to_upper / to_lower / starts_with / ends_with ────────────
 
 #[test]
