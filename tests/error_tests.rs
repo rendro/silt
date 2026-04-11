@@ -511,33 +511,32 @@ fn main() {
 #[test]
 fn test_type_duplicate_function() {
     // Define the same function twice
-    let errs = type_errors(
+    assert_type_error(
         r#"
 fn foo() = 1
 fn foo() = 2
 fn main() { foo() }
     "#,
+        "duplicate top-level definition",
     );
-    // May or may not be an error — at minimum, should not crash
-    let _ = errs;
 }
 
 // ── Trait constraint violations ─────────────────────────────────────
 
 #[test]
 fn test_type_where_clause_violation() {
-    // where clause requires Display but passing something that might not have it
-    let errs = type_errors(
+    // where clause references `x` (a value name) instead of a type variable;
+    // the typechecker rejects this with a clear "not introduced in the function
+    // signature" diagnostic.
+    assert_type_error(
         r#"
 fn show(x) where x: Display = x.display()
 fn main() {
   show(fn() { 1 })
 }
     "#,
+        "not introduced in the function signature",
     );
-    // Closures may not implement Display
-    // This test documents the behavior — whether it's caught at type time or runtime
-    let _ = errs;
 }
 
 #[test]
@@ -2029,8 +2028,10 @@ fn main() { float.to_string(3.14, 2) }
 #[test]
 fn test_scheme_narrowing_rejects_wrong_type() {
     // fn add_one(x) = x + 1 should infer Int -> Int, not forall a. a -> a
-    let result = run_err("fn add_one(x) = x + 1\nfn main() { add_one(\"hello\") }");
-    assert!(result.contains("type mismatch") || result.contains("cannot"));
+    assert_type_error(
+        "fn add_one(x) = x + 1\nfn main() { add_one(\"hello\") }",
+        "type mismatch: expected Int, got String",
+    );
 }
 
 #[test]
@@ -2042,19 +2043,21 @@ fn test_scheme_narrowing_preserves_polymorphism() {
 #[test]
 fn test_scheme_narrowing_pattern_match() {
     // fn process(pair) { match pair { (a, b) -> b + 10 } } should constrain b to Int
-    let result = run_err(
+    assert_type_error(
         "fn process(pair) { match pair { (a, b) -> b + 10 } }\nfn main() { process((1, \"hello\")) }",
+        "type mismatch: expected Int, got String",
     );
-    assert!(result.contains("type mismatch") || result.contains("cannot"));
 }
 
 #[test]
 fn test_scheme_narrowing_multiple_params() {
     // fn sum(x, y) = x + y + 1 constrains both params to Int via the + 1 literal
-    let result = run_err("fn sum(x, y) = x + y + 1\nfn main() { sum(\"hello\", \"world\") }");
-    // sum should be narrowed to (Int, Int) -> Int because + 1 forces Int
-    // Passing strings should fail
-    assert!(result.contains("type mismatch") || result.contains("cannot"));
+    // sum should be narrowed to (Int, Int) -> Int because + 1 forces Int;
+    // passing strings should fail at compile time.
+    assert_type_error(
+        "fn sum(x, y) = x + y + 1\nfn main() { sum(\"hello\", \"world\") }",
+        "type mismatch: expected Int, got String",
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════
