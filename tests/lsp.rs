@@ -888,3 +888,324 @@ fn test_goto_definition_on_local_variable() {
 
     client.shutdown();
 }
+
+// ── 11. textDocument/formatting returns edits for unformatted source ─
+//
+// Regression: guards `fn format()` in src/lsp.rs (the `Formatting::METHOD`
+// dispatch). If the formatting handler ever stopped running the formatter,
+// stopped computing the full-document replacement edit, or started
+// returning `None`/`[]` for clearly-unformatted input, this test would
+// fail. The snippet below is intentionally ugly ( `let x=42` has no spaces
+// around `=`, and the body is flush-left inside the block) so the
+// formatter definitely produces a different string, forcing at least one
+// TextEdit in the response.
+
+#[test]
+fn test_formatting_returns_edits() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    // Deliberately unformatted: no spaces around `=`, body not indented.
+    let source = "fn main() {\nlet x=42\nprintln(x)\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri },
+            "options": {
+                "tabSize": 2,
+                "insertSpaces": true,
+            }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "formatting request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("formatting response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null formatting result for a known document"
+    );
+
+    let edits = result
+        .as_array()
+        .expect("formatting result must be an array of TextEdit");
+    assert!(
+        !edits.is_empty(),
+        "expected at least one TextEdit when formatting clearly-unformatted source, got empty list"
+    );
+
+    // Each edit must have both a `range` and a `newText` field. The
+    // implementation returns a single whole-document replacement, so check
+    // that the first edit has a non-empty `newText` that differs from the
+    // original source — this is the "actually formatted" signal.
+    let edit = &edits[0];
+    assert!(
+        edit.get("range").is_some(),
+        "TextEdit must have a range, got: {edit}"
+    );
+    let new_text = edit
+        .get("newText")
+        .and_then(|v| v.as_str())
+        .expect("TextEdit must have a newText string");
+    assert!(
+        !new_text.is_empty(),
+        "newText must not be empty for an unformatted document"
+    );
+    assert_ne!(
+        new_text, source,
+        "newText must differ from the original source for unformatted input"
+    );
+    // The formatter canonicalizes `let x=42` to `let x = 42`. If that
+    // normalization ever stops happening, the edit's new text will not
+    // contain the spaced form.
+    assert!(
+        new_text.contains("let x = 42"),
+        "expected formatted output to contain `let x = 42`, got: {new_text}"
+    );
+
+    client.shutdown();
+}
+
+// ── 12. textDocument/signatureHelp returns a signature with parameters ─
+//
+// Regression: guards `fn signature_help()` in src/lsp.rs (the
+// `SignatureHelpRequest::METHOD` dispatch). If the handler ever stopped
+// locating the enclosing call, stopped looking up the definition, or
+// stopped building a SignatureInformation label from `DefInfo`, this test
+// would fail. Uses a user-defined `fn add(a: Int, b: Int) -> Int` so the
+// assertion on the label is deterministic (not dependent on the stdlib).
+
+#[test]
+fn test_signature_help_returns_arity() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    //   line 0: fn add(a: Int, b: Int) -> Int {
+    //   line 1:   a + b
+    //   line 2: }
+    //   line 3: fn main() {
+    //   line 4:   add(
+    //   line 5: }
+    //
+    // Cursor will sit just after the `(` of the `add(` call on line 4.
+    let source =
+        "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn main() {\n  add(\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    // "  add(" is 6 columns, cursor goes right after the `(`.
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/signatureHelp",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 4, "character": 6 }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "signatureHelp request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("signatureHelp response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null signatureHelp result inside a known call"
+    );
+
+    let sigs = result
+        .pointer("/signatures")
+        .and_then(|v| v.as_array())
+        .expect("signatureHelp result must have a `signatures` array");
+    assert!(
+        !sigs.is_empty(),
+        "signatures array must contain at least one SignatureInformation"
+    );
+
+    let sig = &sigs[0];
+    let label = sig
+        .get("label")
+        .and_then(|v| v.as_str())
+        .expect("SignatureInformation must have a label string");
+
+    // `build_signature_from_def` renders a typed Fun as
+    //   fn add(a: Int, b: Int) -> Int
+    // — assert on both parameter names and the return type.
+    assert!(
+        label.contains("add"),
+        "signature label must mention the function name `add`, got: {label}"
+    );
+    assert!(
+        label.contains("a: Int"),
+        "signature label must mention the first parameter `a: Int`, got: {label}"
+    );
+    assert!(
+        label.contains("b: Int"),
+        "signature label must mention the second parameter `b: Int`, got: {label}"
+    );
+    assert!(
+        label.contains("-> Int"),
+        "signature label must mention the return type `-> Int`, got: {label}"
+    );
+
+    // The `parameters` field must reflect the function's arity (2).
+    let params = sig
+        .get("parameters")
+        .and_then(|v| v.as_array())
+        .expect("SignatureInformation must have a parameters array");
+    assert_eq!(
+        params.len(),
+        2,
+        "signature must have 2 parameters for `fn add(a, b)`, got: {params:?}"
+    );
+
+    // At the cursor (just after `(`, before any arg), active_parameter is 0.
+    let active = sig
+        .get("activeParameter")
+        .and_then(|v| v.as_u64())
+        .expect("SignatureInformation must have activeParameter");
+    assert_eq!(
+        active, 0,
+        "activeParameter must be 0 before any comma has been typed, got: {active}"
+    );
+
+    client.shutdown();
+}
+
+// ── 13. textDocument/documentSymbol lists top-level declarations ───
+//
+// Regression: guards `fn document_symbols()` in src/lsp.rs (the
+// `DocumentSymbolRequest::METHOD` dispatch). If the handler ever stopped
+// walking the program's declarations, stopped including Fn/Type decls, or
+// regressed on the serialization shape, this test would fail. The snippet
+// has a function, a record type, and a top-level `let` so all three
+// branches of the handler are exercised at least shallowly.
+
+#[test]
+fn test_document_symbols_lists_top_level_defs() {
+    let mut client = LspClient::spawn();
+    let _ = client.initialize();
+
+    let uri = unique_uri();
+    //   line 0: type Point {
+    //   line 1:   x: Int,
+    //   line 2:   y: Int,
+    //   line 3: }
+    //   line 4: fn origin() -> Point {
+    //   line 5:   Point { x: 0, y: 0 }
+    //   line 6: }
+    //   line 7: fn main() {
+    //   line 8:   let _p = origin()
+    //   line 9: }
+    let source = "type Point {\n  x: Int,\n  y: Int,\n}\n\
+                  fn origin() -> Point {\n  Point { x: 0, y: 0 }\n}\n\
+                  fn main() {\n  let _p = origin()\n}\n";
+    let _ = client.did_open_and_wait(&uri, source);
+
+    let id = next_id();
+    client.send_request(
+        id,
+        "textDocument/documentSymbol",
+        json!({
+            "textDocument": { "uri": uri }
+        }),
+    );
+    let resp = client.recv_response_for(id);
+
+    assert!(
+        resp.get("error").is_none(),
+        "documentSymbol request returned an error: {resp}"
+    );
+
+    let result = resp
+        .get("result")
+        .expect("documentSymbol response must have a `result` field");
+    assert!(
+        !result.is_null(),
+        "expected non-null documentSymbol result for a document with declarations"
+    );
+
+    // The server returns `DocumentSymbolResponse::Nested(...)`, which serializes
+    // as a bare array of DocumentSymbol. Fall back to `{items: [...]}` just in
+    // case the serialization shape ever varies.
+    let symbols: &Vec<Value> = if let Some(arr) = result.as_array() {
+        arr
+    } else {
+        panic!("unexpected documentSymbol result shape: {result}");
+    };
+
+    assert!(
+        !symbols.is_empty(),
+        "expected at least one top-level DocumentSymbol, got empty list"
+    );
+
+    // Collect (name, kind) tuples. LSP SymbolKind values: FUNCTION=12,
+    // STRUCT=23, VARIABLE=13 — but we assert on names + the presence of the
+    // kind field rather than pinning to the exact numeric values, which are
+    // implementation details of the lsp-types crate.
+    let names: Vec<&str> = symbols
+        .iter()
+        .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+        .collect();
+
+    assert!(
+        names.contains(&"origin"),
+        "expected top-level function `origin` in document symbols, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"main"),
+        "expected top-level function `main` in document symbols, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"Point"),
+        "expected top-level type `Point` in document symbols, got: {names:?}"
+    );
+
+    // Every symbol must carry a `kind` and a `range` — these are required
+    // by the LSP spec and by the editor UIs that consume them.
+    for sym in symbols {
+        assert!(
+            sym.get("kind").is_some(),
+            "DocumentSymbol must have a `kind`, got: {sym}"
+        );
+        assert!(
+            sym.get("range").is_some(),
+            "DocumentSymbol must have a `range`, got: {sym}"
+        );
+        assert!(
+            sym.get("selectionRange").is_some(),
+            "DocumentSymbol must have a `selectionRange`, got: {sym}"
+        );
+    }
+
+    // Locate the `origin` symbol specifically and assert it's reported as
+    // a function kind (LSP SymbolKind::FUNCTION == 12). This guards against
+    // a regression where Fn decls get mislabeled as Variable etc.
+    let origin_sym = symbols
+        .iter()
+        .find(|s| s.get("name").and_then(|v| v.as_str()) == Some("origin"))
+        .expect("origin symbol must be present");
+    assert_eq!(
+        origin_sym.get("kind").and_then(|v| v.as_u64()),
+        Some(12),
+        "`origin` must be reported as SymbolKind::FUNCTION (12), got: {origin_sym}"
+    );
+
+    client.shutdown();
+}

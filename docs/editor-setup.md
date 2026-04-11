@@ -26,7 +26,7 @@ The server communicates over stdin/stdout using the standard LSP protocol.
 | **Diagnostics** | Lex, parse, and type errors on every edit |
 | **Hover** | Show inferred type for any expression (`K` in nvim) |
 | **Go to definition** | Jump to function, type, trait, let-binding definitions (`gd`) |
-| **Completion** | Keywords, builtins, 160+ stdlib functions, user definitions |
+| **Completion** | Keywords, builtins, stdlib functions, user definitions |
 | **Signature help** | Parameter names and types while typing a call |
 | **Document symbols** | Outline of all declarations in the file |
 | **Formatting** | Format via the existing `silt fmt` formatter |

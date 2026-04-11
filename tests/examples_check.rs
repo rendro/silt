@@ -91,61 +91,125 @@ fn every_example_type_checks() {
     );
 }
 
-/// Guard against reintroducing a drifting example-count claim in user-facing
-/// docs. Prior fixes removed "40+ runnable sample programs" / "35+ runnable
-/// sample programs" from README.md and docs/getting-started.md after the count
-/// drifted away from the real number of files in `examples/`. The convergent
-/// decision was to not state a count at all. This test locks that in: neither
-/// file may contain a `<digits>+ runnable sample` pattern.
+/// Guard against reintroducing a drifting count claim in user-facing docs.
+/// Prior fixes removed "40+ runnable sample programs" / "35+ runnable sample
+/// programs" from README.md and docs/getting-started.md, and "160+ stdlib
+/// functions" from docs/editor-setup.md, after the counts drifted away from
+/// the real number of files in `examples/` or real stdlib function count.
+/// The convergent decision was to not state a count at all.
+///
+/// This test locks that in across the whole doc surface: it scans README.md
+/// and every `.md` file under `docs/` for any `<digits>+<ws>?<noun>` pattern
+/// where `<noun>` is one of the drift-prone kinds (stdlib, runnable sample,
+/// example, keyword, function, module). If a doc states such a count, it
+/// must be removed — not corrected — per the standing audit preference.
 #[test]
 fn docs_do_not_claim_drifting_example_count() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let targets = [
-        manifest_dir.join("README.md"),
-        manifest_dir.join("docs").join("getting-started.md"),
-    ];
 
-    // Hand-rolled matcher for `\d+\+ runnable sample` to avoid pulling in a
-    // regex dependency for a single test.
-    fn contains_drifting_count(haystack: &str) -> bool {
-        let needle = " runnable sample";
-        for (idx, _) in haystack.match_indices(needle) {
-            // Walk backwards from `idx` over one or more digits followed by a '+'.
-            let prefix = &haystack.as_bytes()[..idx];
-            if prefix.last() != Some(&b'+') {
-                continue;
-            }
-            let mut i = prefix.len() - 1; // position of '+'
-            if i == 0 {
-                continue;
-            }
-            let mut digit_count = 0;
-            while i > 0 {
-                let b = prefix[i - 1];
-                if b.is_ascii_digit() {
-                    digit_count += 1;
-                    i -= 1;
-                } else {
-                    break;
-                }
-            }
-            if digit_count > 0 {
-                return true;
+    // Collect targets: README.md plus every .md file under docs/ (recursive).
+    let mut targets: Vec<PathBuf> = Vec::new();
+    targets.push(manifest_dir.join("README.md"));
+    fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_md_files(&path, out);
+            } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(path);
             }
         }
-        false
+    }
+    collect_md_files(&manifest_dir.join("docs"), &mut targets);
+    targets.sort();
+
+    // Drift-prone nouns that, when prefixed by `<digits>+`, indicate a count
+    // claim that can (and historically has) drifted away from reality.
+    const DRIFT_NOUNS: &[&str] = &[
+        "stdlib",
+        "runnable sample",
+        "example",
+        "examples",
+        "keyword",
+        "keywords",
+        "function",
+        "functions",
+        "module",
+        "modules",
+    ];
+
+    // Hand-rolled matcher for `\d+\+\s*<noun>` to avoid pulling in a regex
+    // dependency for a single test. Returns the first offending match as a
+    // short snippet, or None if the haystack is clean.
+    fn find_drifting_count(haystack: &str) -> Option<String> {
+        for noun in DRIFT_NOUNS {
+            // Try matching `<digits>+ <noun>` and `<digits>+<noun>` (no space).
+            for (idx, _) in haystack.match_indices(noun) {
+                // Require that the match is at a word boundary on the right
+                // (next char is not alphanumeric/underscore), so we don't
+                // treat "function" inside "functional" as a hit.
+                let tail = &haystack.as_bytes()[idx + noun.len()..];
+                if let Some(&b) = tail.first() {
+                    if b.is_ascii_alphanumeric() || b == b'_' {
+                        continue;
+                    }
+                }
+
+                // Walk backwards over optional whitespace, then require '+',
+                // then one or more ascii digits.
+                let prefix = &haystack.as_bytes()[..idx];
+                let mut i = prefix.len();
+                // Skip whitespace immediately before the noun.
+                while i > 0 && (prefix[i - 1] == b' ' || prefix[i - 1] == b'\t') {
+                    i -= 1;
+                }
+                if i == 0 || prefix[i - 1] != b'+' {
+                    continue;
+                }
+                i -= 1; // position of '+'
+                let plus_pos = i;
+                let mut digit_count = 0;
+                while i > 0 && prefix[i - 1].is_ascii_digit() {
+                    digit_count += 1;
+                    i -= 1;
+                }
+                if digit_count == 0 {
+                    continue;
+                }
+                // Build a short snippet for the error message.
+                let snippet_start = i;
+                let snippet_end = idx + noun.len();
+                let snippet = &haystack[snippet_start..snippet_end];
+                // Require that the char before the digits is not itself a
+                // digit or word char (avoids matching "v1.0+ function" etc.).
+                if snippet_start > 0 {
+                    let b = prefix[snippet_start - 1];
+                    if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' {
+                        continue;
+                    }
+                }
+                let _ = plus_pos;
+                return Some(snippet.to_string());
+            }
+        }
+        None
     }
 
     let mut failures: Vec<String> = Vec::new();
     for path in &targets {
         let body = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
-        if contains_drifting_count(&body) {
+        if let Some(hit) = find_drifting_count(&body) {
             failures.push(format!(
-                "{} contains a `<digits>+ runnable sample` count; per prior audit \
-                 fix the convergent decision is to omit the count entirely so it \
-                 cannot drift from the real file count in examples/",
-                path.display()
+                "{} contains a drift-prone `<digits>+ <noun>` count: `{}`. \
+                 Per prior audit fix the convergent decision is to omit the \
+                 count entirely so it cannot drift from reality.",
+                path.display(),
+                hit
             ));
         }
     }
