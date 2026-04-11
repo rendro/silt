@@ -2816,6 +2816,65 @@ fn test_builtin_panic_converted_to_vm_error() {
     );
 }
 
+// ── Audit regression: println/print runtime arity guard ─────────────
+
+#[test]
+fn test_println_rejects_wrong_arity() {
+    // Locks the defence-in-depth arity checks in `dispatch_builtin` for
+    // the built-in `println` and `print` functions. In well-typed silt
+    // programs the type checker (see `src/typechecker/builtins.rs`)
+    // rejects wrong-arity calls to both with arity 1, so these runtime
+    // guards exist purely to catch a hypothetical compiler or emitter
+    // bug that mis-emits argc. Mirrors `test_tail_call_rejects_arity_mismatch`
+    // in spirit: bypass the compiler by calling `dispatch_builtin`
+    // directly with the wrong number of arguments and assert we get a
+    // clean VmError naming the builtin and the actual count.
+    //
+    // A silent revert of either `args.len() != 1` check would otherwise
+    // slip through unnoticed.
+    let mut vm = Vm::new();
+
+    // println with 0 args
+    let err = vm
+        .dispatch_builtin("println", &[])
+        .expect_err("expected VmError for println with 0 args");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("println takes 1 argument, got 0"),
+        "expected println 0-arg guard message, got: {msg}"
+    );
+
+    // println with 2 args
+    let err = vm
+        .dispatch_builtin("println", &[Value::Int(1), Value::Int(2)])
+        .expect_err("expected VmError for println with 2 args");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("println takes 1 argument, got 2"),
+        "expected println 2-arg guard message, got: {msg}"
+    );
+
+    // print with 0 args
+    let err = vm
+        .dispatch_builtin("print", &[])
+        .expect_err("expected VmError for print with 0 args");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("print takes 1 argument, got 0"),
+        "expected print 0-arg guard message, got: {msg}"
+    );
+
+    // print with 2 args
+    let err = vm
+        .dispatch_builtin("print", &[Value::Int(1), Value::Int(2)])
+        .expect_err("expected VmError for print with 2 args");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("print takes 1 argument, got 2"),
+        "expected print 2-arg guard message, got: {msg}"
+    );
+}
+
 // ── Audit regression: MakeClosure constant must be a VmClosure (R3) ──
 
 #[test]

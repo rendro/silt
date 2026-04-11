@@ -874,3 +874,104 @@ fn test_two() {
         "expected '0 failed' (file errors are tracked separately), got:\n{combined}"
     );
 }
+
+// ── silt fmt --check: rejects unformatted files without mutating ───
+
+#[test]
+fn test_fmt_check_mode_rejects_unformatted() {
+    // Deliberately unformatted: extra whitespace in signature, unindented body.
+    let original = "fn  main( ) {\nprintln(\"hello\")\n}\n";
+    let path = temp_silt_file("fmt_check_unformatted", original);
+
+    let output = silt_cmd()
+        .arg("fmt")
+        .arg("--check")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // (a) Exit code must be 1 — the key --check contract.
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit for unformatted file, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let code = output.status.code().unwrap_or(-1);
+    assert_eq!(
+        code, 1,
+        "expected exit code 1 for unformatted file, got {code}"
+    );
+
+    // (b) File on disk MUST be unchanged — --check is read-only.
+    let on_disk = fs::read_to_string(&path).expect("failed to read file after --check");
+    assert_eq!(
+        on_disk, original,
+        "silt fmt --check must not mutate the file on disk"
+    );
+
+    // (c) Some diagnostic about the file being unformatted must appear.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("not formatted"),
+        "expected 'not formatted' diagnostic, got stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+// ── silt fmt --check: accepts already-formatted files ──────────────
+
+#[test]
+fn test_fmt_check_mode_accepts_formatted() {
+    // Already formatted by silt's formatter.
+    let original = "fn main() {\n  println(\"hello\")\n}\n";
+    let path = temp_silt_file("fmt_check_formatted", original);
+
+    let output = silt_cmd()
+        .arg("fmt")
+        .arg("--check")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    // Exit 0 for a well-formatted file.
+    assert!(
+        output.status.success(),
+        "expected exit 0 for already-formatted file, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // File on disk must still be unchanged (--check is read-only).
+    let on_disk = fs::read_to_string(&path).expect("failed to read file after --check");
+    assert_eq!(
+        on_disk, original,
+        "silt fmt --check must not mutate the file on disk"
+    );
+}
+
+// ── silt test --help: mentions filename auto-discovery pattern ─────
+
+#[test]
+fn test_silt_test_help_mentions_filename_pattern() {
+    for flag in ["--help", "-h"] {
+        let output = silt_cmd()
+            .arg("test")
+            .arg(flag)
+            .output()
+            .expect("failed to run silt");
+        assert!(
+            output.status.success(),
+            "silt test {flag}: expected exit 0, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("_test.silt"),
+            "silt test {flag}: expected '_test.silt' in help output, got: {stdout}"
+        );
+        assert!(
+            stdout.contains(".test.silt"),
+            "silt test {flag}: expected '.test.silt' in help output, got: {stdout}"
+        );
+    }
+}

@@ -465,6 +465,9 @@ fn main() {
                     println!("Options:");
                     println!("  --filter <pat>   Only run tests whose name contains <pat>");
                     println!("  --watch, -w      Re-run on file changes");
+                    println!();
+                    println!("Auto-discovery: when no file is given, recursively runs tests");
+                    println!("from files matching *_test.silt or *.test.silt.");
                     process::exit(0);
                 } else if args[i].starts_with('-') {
                     // Unknown flag — don't silently treat as a filename.

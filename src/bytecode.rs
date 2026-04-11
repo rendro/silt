@@ -403,7 +403,11 @@ impl Chunk {
 
     /// Get the source span for a bytecode offset.
     pub fn span_at(&self, offset: usize) -> Span {
-        // Binary search for the last span entry <= offset.
+        // Linear scan for the last span entry <= offset. The spans table is
+        // appended in strictly ascending offset order during emission, so a
+        // forward scan that breaks on the first entry past `offset` is
+        // correct; it's deliberately linear to keep the common (near-end)
+        // case fast and to avoid binary-search bookkeeping overhead.
         let mut result = Span::new(0, 0);
         for &(off, span) in &self.spans {
             if off <= offset {

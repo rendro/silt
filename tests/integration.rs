@@ -1835,6 +1835,16 @@ fn main() { string.index_of("hello", "xyz") }"#);
 }
 
 #[test]
+fn test_string_index_of_multibyte_char_offset() {
+    // "é" is a 2-byte UTF-8 sequence, so "x" sits at byte index 2 but
+    // character index 1. If the builtin returned the raw byte offset the
+    // result would be Some(2); the correct character-based result is Some(1).
+    let result = run(r#"import string
+fn main() { string.index_of("éxyz", "x") }"#);
+    assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(1)]));
+}
+
+#[test]
 fn test_string_slice() {
     let result = run(r#"import string
 fn main() { string.slice("hello world", 0, 5) }"#);
