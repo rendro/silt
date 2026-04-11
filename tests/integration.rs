@@ -10869,3 +10869,50 @@ fn test_float_floor_whole() {
 fn main() { float.floor(3.0) }"#);
     assert_eq!(result, Value::Float(3.0));
 }
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION: Channel(T) in type annotations (3a4edd6 G1)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_channel_type_annotation_parameterized() {
+    // Locks in 3a4edd6 G1: `Channel(T)` must resolve to `Type::Channel(T)`,
+    // not the catch-all `Type::Generic("Channel", [T])`. Without the fix,
+    // the annotation was a different nominal type than the value returned
+    // by `channel.new(...)` and the `let` binding failed to type-check.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch: Channel(Int) = channel.new(10)
+  channel.send(ch, 42)
+  match channel.receive(ch) {
+    Message(v) -> v
+    Sent -> 0
+    Closed -> 0
+    Empty -> 0
+  }
+}
+"#);
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_channel_type_annotation_unparameterized() {
+    // Locks in 3a4edd6 G1: bare `Channel` (no type arg) must also be
+    // recognized as `Type::Channel(fresh_var)` so that partial annotations
+    // remain valid. Covers the other branch of the G1 fix.
+    let result = run(r#"
+import channel
+fn main() {
+  let ch: Channel = channel.new(10)
+  channel.send(ch, 7)
+  match channel.receive(ch) {
+    Message(v) -> v
+    Sent -> 0
+    Closed -> 0
+    Empty -> 0
+  }
+}
+"#);
+    assert_eq!(result, Value::Int(7));
+}

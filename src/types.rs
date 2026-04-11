@@ -354,3 +354,80 @@ pub fn substitute_enum_params(
         _ => field_ty.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Regression: substitute_enum_params recurses into Map/Set ───────
+    // Locks in 3a4edd6 B3: prior to the fix these branches fell through
+    // to `_ => field_ty.clone()`, so a variant field typed
+    // `Map(String, a)` (or `Set(a)`) carrying the enum's parameter
+    // variable was returned unchanged, leaking the enum's internal
+    // TyVar into downstream inference instead of being replaced with
+    // the concrete instantiation.
+
+    #[test]
+    fn substitute_enum_params_recurses_into_map_value() {
+        // Simulate `type Box(a) { Carry(Map(String, a)) }` instantiated
+        // as `Box(Int)`: enum param var is TyVar 0, type_args is [Int].
+        let param_var_ids = vec![0usize];
+        let type_args = vec![Type::Int];
+        let field = Type::Map(Box::new(Type::String), Box::new(Type::Var(0)));
+        let result = substitute_enum_params(&field, &param_var_ids, &type_args);
+        assert_eq!(
+            result,
+            Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+            "Map value type variable must be substituted"
+        );
+    }
+
+    #[test]
+    fn substitute_enum_params_recurses_into_map_key() {
+        // A pathological but legal shape: `Map(a, Int)`.
+        let param_var_ids = vec![0usize];
+        let type_args = vec![Type::String];
+        let field = Type::Map(Box::new(Type::Var(0)), Box::new(Type::Int));
+        let result = substitute_enum_params(&field, &param_var_ids, &type_args);
+        assert_eq!(
+            result,
+            Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+            "Map key type variable must be substituted"
+        );
+    }
+
+    #[test]
+    fn substitute_enum_params_recurses_into_set() {
+        // Simulate `type Bag(a) { Contents(Set(a)) }` as `Bag(Int)`.
+        let param_var_ids = vec![0usize];
+        let type_args = vec![Type::Int];
+        let field = Type::Set(Box::new(Type::Var(0)));
+        let result = substitute_enum_params(&field, &param_var_ids, &type_args);
+        assert_eq!(
+            result,
+            Type::Set(Box::new(Type::Int)),
+            "Set element type variable must be substituted"
+        );
+    }
+
+    #[test]
+    fn substitute_enum_params_handles_nested_map_of_set() {
+        // Map(String, Set(a)) — catches a regression where only the
+        // outermost container is substituted.
+        let param_var_ids = vec![0usize];
+        let type_args = vec![Type::Int];
+        let field = Type::Map(
+            Box::new(Type::String),
+            Box::new(Type::Set(Box::new(Type::Var(0)))),
+        );
+        let result = substitute_enum_params(&field, &param_var_ids, &type_args);
+        assert_eq!(
+            result,
+            Type::Map(
+                Box::new(Type::String),
+                Box::new(Type::Set(Box::new(Type::Int))),
+            ),
+            "nested Set inside Map must be substituted"
+        );
+    }
+}

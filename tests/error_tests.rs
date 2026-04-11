@@ -2115,3 +2115,30 @@ fn test_parse_unclosed_call_args_points_at_opener() {
         "expected 'line 2' in error, got: {msg}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT REGRESSION: value restriction on top-level let bindings (3a4edd6 B2)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_top_level_let_channel_not_generalized() {
+    // A top-level `let ch = channel.new(...)` must NOT be generalized to
+    // `forall a. Channel(a)`. `channel.new(...)` is not a syntactic value,
+    // so the value restriction keeps `ch` monomorphic: the first use pins
+    // the element type, and a second use with a different type must fail.
+    //
+    // Without the value restriction (prior to 3a4edd6 B2) this program
+    // type-checked, and at runtime a single channel carried values of
+    // two different types.
+    assert_type_error(
+        r#"
+import channel
+let ch = channel.new(1)
+fn main() {
+  channel.send(ch, 42)
+  channel.send(ch, "hi")
+}
+"#,
+        "expected Int",
+    );
+}

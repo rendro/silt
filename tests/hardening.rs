@@ -1352,3 +1352,50 @@ fn main() {
         "expected combined-size error, got: {err}"
     );
 }
+
+// ── Audit regression: Range destructure at i64::MAX (3a4edd6 L2) ────
+
+#[test]
+fn test_range_destructure_rest_at_i64_max_does_not_overflow() {
+    // Locks in 3a4edd6 L2: DestructListRest on a Range whose upper bound
+    // is i64::MAX must use checked arithmetic when computing `hi + 1`.
+    // Before the fix, the expression `new_lo > hi + 1` panicked with
+    // "attempt to add with overflow" in debug builds whenever the range
+    // extended to i64::MAX, even though semantically the rest slice is
+    // a well-defined (possibly empty) sub-range.
+    //
+    // Repro: 3-element range ending at i64::MAX, destructured into
+    // [a, b, ..rest]. After consuming two elements, `new_lo = i64::MAX`
+    // and `hi = i64::MAX`, so the overflow guard is exercised.
+    let result = run(r#"
+import list
+fn main() {
+  let [a, b, ..rest] = 9223372036854775805..9223372036854775807
+  -- rest is the tail Range(i64::MAX, i64::MAX); materialize to check len.
+  list.length(rest)
+}
+"#);
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn test_range_destructure_new_lo_overflow_is_clean_error() {
+    // Companion to the test above: exercises the *other* checked_add in
+    // the L2 fix — `lo.checked_add(start as i64)`. With `lo = i64::MAX - 1`
+    // and a rest pattern starting at index 2, the naive `lo + 2` panics
+    // with "attempt to add with overflow". The fix reports a clean
+    // `range index overflow` runtime error instead.
+    let err = run_err(
+        r#"
+import list
+fn main() {
+  let [a, b, ..rest] = 9223372036854775806..9223372036854775807
+  list.length(rest)
+}
+"#,
+    );
+    assert!(
+        err.contains("range index overflow"),
+        "expected graceful overflow error, got: {err}"
+    );
+}

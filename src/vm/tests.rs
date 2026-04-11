@@ -2653,6 +2653,96 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
 // patterns compiled both before and after the eviction threshold still
 // produce correct match results.
 
+// ── Audit regression: TailCall arity check (3a4edd6 L1) ────────────
+
+#[test]
+fn test_tail_call_rejects_arity_mismatch() {
+    // Locks in 3a4edd6 L1: `Op::TailCall` must verify that the caller
+    // pushed exactly `arity` arguments before mutating the current
+    // frame. In well-typed silt programs the type checker always
+    // matches arity, so this is defense-in-depth — a compiler or
+    // bytecode-emitter bug could otherwise corrupt the call frame by
+    // stomping parameters with a wrong-sized argument window.
+    //
+    // The test bypasses the compiler by building a `Function` with
+    // arity 2 and a script that pushes only ONE argument before
+    // emitting `TailCall 1`. The fix turns this into a clean runtime
+    // error; the pre-fix path silently proceeded with corrupted state.
+    use crate::bytecode::VmClosure;
+
+    // Callee: expects 2 arguments, body is just `Return`.
+    let mut callee = Function::new("two_arg".to_string(), 2);
+    callee.chunk.emit_op(Op::Return, span());
+    let closure = Arc::new(VmClosure {
+        function: Arc::new(callee),
+        upvalues: vec![],
+    });
+
+    // Script: push the closure, push ONE int, then TailCall argc=1.
+    // This simulates a buggy emitter sending the wrong argc for a
+    // known 2-arg function.
+    let script = make_function(|chunk| {
+        let closure_idx = chunk.add_constant(Value::VmClosure(closure)).unwrap();
+        let arg_idx = chunk.add_constant(Value::Int(1)).unwrap();
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(closure_idx, span());
+        chunk.emit_op(Op::Constant, span());
+        chunk.emit_u16(arg_idx, span());
+        chunk.emit_op(Op::TailCall, span());
+        chunk.emit_u8(1, span()); // wrong argc
+        chunk.emit_op(Op::Return, span());
+    });
+
+    let mut vm = Vm::new();
+    let err = vm.run(script).expect_err("expected arity-mismatch error");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("two_arg") && msg.contains("expects 2") && msg.contains("got 1"),
+        "expected arity error naming the callee and counts, got: {msg}"
+    );
+}
+
+// ── Audit regression: shared channel/task ID counters (3a4edd6 L3) ──
+
+#[test]
+fn test_spawn_child_shares_channel_id_counter() {
+    // Locks in 3a4edd6 L3: when a VM spawns a child (for task.spawn), the
+    // channel ID counter must be shared via Arc so IDs remain globally
+    // unique across parent and child. Before the fix, each VM had its
+    // own `AtomicU64`, so a channel created in a spawned task could
+    // collide with a channel created in the parent, leading to
+    // scheduler confusion.
+    let mut parent = Vm::new();
+    let id0 = parent.next_channel_id();
+    assert_eq!(id0, 0);
+
+    let mut child = parent.spawn_child();
+    // Child must observe the counter advanced by the parent — so its
+    // next ID is 1, not 0. If the Arc were cloned-per-VM as a fresh
+    // AtomicU64 (the bug), child would also return 0.
+    let id1 = child.next_channel_id();
+    assert_eq!(id1, 1, "child VM must share channel ID counter with parent");
+
+    // Allocating again from the parent must see the child's advance.
+    let id2 = parent.next_channel_id();
+    assert_eq!(id2, 2, "parent must observe child's channel ID advance");
+}
+
+#[test]
+fn test_spawn_child_shares_task_id_counter() {
+    // Companion to the channel test: same invariant for task IDs.
+    let mut parent = Vm::new();
+    let id0 = parent.next_task_id();
+    assert_eq!(id0, 0);
+
+    let mut child = parent.spawn_child();
+    let id1 = child.next_task_id();
+    assert_eq!(id1, 1, "child VM must share task ID counter with parent");
+
+    let id2 = parent.next_task_id();
+    assert_eq!(id2, 2, "parent must observe child's task ID advance");
+}
+
 #[test]
 fn test_regex_cache_eviction_correctness() {
     // Compile 260 distinct regex patterns (>256 MAX_ENTRIES), each
