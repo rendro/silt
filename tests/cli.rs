@@ -1560,3 +1560,70 @@ fn test_silt_lowercase_v_prints_version() {
         );
     }
 }
+
+// ── JSON message field must not contain embedded newlines ───────────
+//
+// Module import errors produce multi-line diagnostic strings (source
+// snippets, carets, gutter lines).  The JSON output must truncate at the
+// first newline so programmatic consumers get a clean single-line message.
+
+#[test]
+fn test_json_error_message_field_has_no_embedded_newlines() {
+    // Fresh project dir so imports resolve relative to main.silt.
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_json_nl_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    // broken.silt: a module with a parse error (unclosed parameter list).
+    let broken = dir.join("broken.silt");
+    fs::write(&broken, "pub fn broken(\n").unwrap();
+
+    // main.silt: imports the broken module.
+    let main = dir.join("main.silt");
+    fs::write(&main, "import broken\n\nfn main() {}\n").unwrap();
+
+    let output = silt_cmd()
+        .arg("check")
+        .arg("--format")
+        .arg("json")
+        .arg(&main)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code for broken import"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let arr = parsed.as_array().expect("expected JSON array");
+    assert!(!arr.is_empty(), "expected at least one error in JSON output");
+
+    // Find an error whose message mentions the module parse failure.
+    let module_err = arr.iter().find(|e| {
+        e["message"]
+            .as_str()
+            .map_or(false, |m| m.contains("module") || m.contains("expected parameter name"))
+    });
+    assert!(
+        module_err.is_some(),
+        "expected a module-related error in JSON output, got: {stdout}"
+    );
+
+    let msg = module_err.unwrap()["message"].as_str().unwrap();
+
+    // The message field must NOT contain a newline character.
+    assert!(
+        !msg.contains('\n'),
+        "JSON message field must not contain embedded newlines, got: {msg:?}"
+    );
+
+    // The message field should still contain the key error phrase so
+    // callers can programmatically identify what went wrong.
+    assert!(
+        msg.contains("module") || msg.contains("expected parameter name"),
+        "expected key error phrase in message, got: {msg:?}"
+    );
+}

@@ -1285,7 +1285,7 @@ fn print_json_errors(errors: &[&SourceError]) {
                 "file": e.file.as_deref().unwrap_or("<unknown>"),
                 "line": e.span.line,
                 "col": e.span.col,
-                "message": e.message,
+                "message": e.message.lines().next().unwrap_or(&e.message),
                 "severity": if e.is_warning { "warning" } else { "error" },
                 "kind": e.kind.to_string(),
             })

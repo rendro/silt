@@ -1018,7 +1018,7 @@ fn main() {
 }
     "#,
     );
-    assert!(err.contains("expects 2 argument(s)"), "got: {err}");
+    assert!(err.contains("expects 2 arguments"), "got: {err}");
 }
 
 #[test]

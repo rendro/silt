@@ -1231,6 +1231,12 @@ impl Vm {
                         )));
                     }
                     let base = self.current_frame()?.base_slot;
+                    if base + argc > self.stack.len() {
+                        return Err(VmError::new(format!(
+                            "tail call: destination slot out of bounds (base {base}, argc {argc}, stack len {})",
+                            self.stack.len()
+                        )));
+                    }
                     for i in 0..argc {
                         self.stack[base + i] = self.stack[func_slot + 1 + i].clone();
                     }

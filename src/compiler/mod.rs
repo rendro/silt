@@ -1966,10 +1966,10 @@ impl Compiler {
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
+                    let arg_word = if expected == 1 { "argument" } else { "arguments" };
                     return Err(CompileError {
                         message: format!(
-                            "loop() expects {} argument(s), got {}",
-                            expected,
+                            "loop() expects {expected} {arg_word}, got {}",
                             args.len()
                         ),
                         span,

@@ -2905,3 +2905,24 @@ fn test_make_closure_rejects_non_closure_constant() {
         "expected MakeClosure guard error, got: {msg}"
     );
 }
+
+/// Defence-in-depth: `Op::TailCall` now checks that `base + argc` is within
+/// the stack before copying arguments.  This condition cannot be triggered from
+/// valid silt source (the compiler guarantees correctness), so instead we
+/// verify that the check does not *over-reject* — a normal tail-recursive
+/// program must still succeed.
+#[test]
+fn test_tail_call_bounds_check_does_not_reject_valid_tail_call() {
+    let result = run_vm(
+        r#"
+        fn countdown(n) {
+            match n {
+                0 -> 0
+                _ -> countdown(n - 1)
+            }
+        }
+        fn main() { countdown(100) }
+        "#,
+    );
+    assert_eq!(result, Value::Int(0));
+}

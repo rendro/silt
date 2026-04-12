@@ -2468,7 +2468,43 @@ fn main() {
 }
     "#,
     );
-    assert!(result.contains("expects 2 argument(s)"));
+    assert!(result.contains("expects 2 arguments"));
+}
+
+#[test]
+fn test_loop_arity_mismatch_singular_plural() {
+    // Singular: 1 binding, called with 0 args → "expects 1 argument"
+    let err_singular = run_err(
+        r#"
+fn main() {
+  loop x = 0 {
+    match x > 5 {
+      true -> x
+      _ -> loop()
+    }
+  }
+}
+    "#,
+    );
+    assert!(
+        err_singular.contains("loop() expects 1 argument, got 0"),
+        "expected singular form \"loop() expects 1 argument, got 0\", got: {err_singular}"
+    );
+
+    // Plural: 2 bindings, called with 1 arg → "expects 2 arguments"
+    let err_plural = run_err(
+        r#"
+fn main() {
+  loop x = 0, y = 0 {
+    loop(1)
+  }
+}
+    "#,
+    );
+    assert!(
+        err_plural.contains("loop() expects 2 arguments, got 1"),
+        "expected plural form \"loop() expects 2 arguments, got 1\", got: {err_plural}"
+    );
 }
 
 #[test]
@@ -8294,12 +8330,11 @@ fn main() {
 }
     "#,
     );
-    // Lock the full production phrase "loop() expects 1 argument(s), got 2"
-    // so that any generic compile error containing the word "argument"
-    // cannot satisfy the assertion.
+    // Lock the full production phrase so that any generic compile error
+    // containing the word "argument" cannot satisfy the assertion.
     assert!(
-        err.contains("loop() expects 1 argument(s), got 2"),
-        "expected \"loop() expects 1 argument(s), got 2\", got: {err}"
+        err.contains("loop() expects 1 argument, got 2"),
+        "expected \"loop() expects 1 argument, got 2\", got: {err}"
     );
 }
 
