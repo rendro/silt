@@ -342,19 +342,38 @@ impl fmt::Display for SourceError {
         }
 
         // Multi-line body: emit remaining message lines as `= note:`
-        // continuation lines AFTER the caret block, so regex/parse
-        // errors with embedded snippets render cleanly below the
-        // locator instead of being orphaned above it.
+        // (or `= help:`) continuation lines AFTER the caret block, so
+        // regex/parse errors with embedded snippets render cleanly
+        // below the locator instead of being orphaned above it.
+        //
+        // Per-line `help: ` prefix support: a body line whose text
+        // begins with `help: ` renders as `= help: <rest>` instead of
+        // `= note: help: ...`. This lets diagnostics (e.g. the type
+        // checker's "did you mean ...?" hint) opt into rustc-style
+        // `help:` continuation without reshaping SourceError.
+        // Lock: tests/diagnostic_suggestion_tests.rs
+        // `test_undefined_variable_suggests_close_match`.
         if let Some(body) = note_body {
-            for (i, line) in body.lines().enumerate() {
-                let prefix = if i == 0 { "= note:" } else { "        " };
+            let mut first = true;
+            for line in body.lines() {
+                let (prefix, content) = if let Some(rest) = line.strip_prefix("help: ") {
+                    first = false;
+                    ("= help:", rest)
+                } else if first {
+                    first = false;
+                    ("= note:", line)
+                } else {
+                    // Align continuation spaces under `= note: `/`= help: `
+                    // (7-char prefix + 1-char separator = 8 cols wide).
+                    ("        ", line)
+                };
                 write!(
                     f,
-                    "\n  {cyan}{prefix}{reset} {line}",
+                    "\n  {cyan}{prefix}{reset} {content}",
                     cyan = c.cyan,
                     reset = c.reset,
                     prefix = prefix,
-                    line = line,
+                    content = content,
                 )?;
             }
         }

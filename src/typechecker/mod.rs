@@ -11,6 +11,7 @@ mod builtins;
 mod exhaustiveness;
 mod inference;
 mod resolve;
+mod suggest;
 
 pub(super) use std::collections::{BTreeSet, HashMap};
 
@@ -56,6 +57,19 @@ impl TypeEnv {
             parent.lookup(name)
         } else {
             None
+        }
+    }
+
+    /// Collect all in-scope names into `out`. Walks the scope chain from
+    /// innermost (self) to outermost (root), inserting each `Symbol`
+    /// once. Used by the "did you mean ...?" suggestion path so the type
+    /// checker can enumerate candidate names to match against a typo.
+    pub(super) fn collect_names(&self, out: &mut BTreeSet<Symbol>) {
+        for k in self.bindings.keys() {
+            out.insert(*k);
+        }
+        if let Some(ref parent) = self.parent {
+            parent.collect_names(out);
         }
     }
 

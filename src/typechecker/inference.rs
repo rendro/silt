@@ -4,6 +4,7 @@
 //! bind_pattern, check_pattern, and check_fn_body.
 
 use super::*;
+use super::suggest::suggest_similar;
 
 /// GAP (round 17 F5): pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
@@ -11,6 +12,69 @@ use super::*;
 /// tooling and users had been complaining about.
 pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &'a str {
     if n == 1 { singular } else { plural_form }
+}
+
+/// Format an "undefined variable '<typo>'" error message with an
+/// optional "did you mean `<cand>`?" hint appended as a `help:` body
+/// line so `SourceError::Display` renders it as a `= help:` continuation
+/// below the caret. Sourced candidates come from every in-scope name
+/// the typechecker's env chain exposes (locals, fn params, top-level
+/// decls, stdlib builtins) — the caller hands us `env`. If no candidate
+/// passes the suggest-similar threshold, we emit the plain error.
+///
+/// Closes round-17 deferred finding #4: see `src/typechecker/suggest.rs`.
+/// Lock: tests/diagnostic_suggestion_tests.rs.
+pub(super) fn format_undefined_variable_message(
+    name: Symbol,
+    env: &TypeEnv,
+    suffix: &str,
+) -> String {
+    let name_str = resolve(name);
+    let base = if suffix.is_empty() {
+        format!("undefined variable '{name_str}'")
+    } else {
+        format!("undefined variable '{name_str}' {suffix}")
+    };
+    let mut candidates = BTreeSet::new();
+    env.collect_names(&mut candidates);
+    // Strip fully-qualified builtin names like `list.map` — those are
+    // not useful suggestions for a bare identifier typo. Also drop the
+    // pseudo-binding for `self` which is handled by the Ident arm.
+    let candidate_strs: Vec<String> = candidates
+        .iter()
+        .map(|s| resolve(*s))
+        .filter(|s| !s.contains('.') && s != "self")
+        .collect();
+    if let Some(hint) = suggest_similar(&name_str, candidate_strs.iter()) {
+        format!("{base}\nhelp: did you mean `{hint}`?")
+    } else {
+        base
+    }
+}
+
+/// Format an "unknown function '<field>' on module '<module>'" error
+/// with a "did you mean `<cand>`?" hint when one of the module's builtin
+/// functions is a close edit-distance match. See
+/// `src/module.rs::builtin_module_functions` for the candidate source.
+pub(super) fn format_unknown_module_function_message(
+    field: Symbol,
+    module_str: &str,
+) -> String {
+    let field_str = resolve(field);
+    let base = format!("unknown function '{field_str}' on module '{module_str}'");
+    let fns = crate::module::builtin_module_functions(module_str);
+    let consts = crate::module::builtin_module_constants(module_str);
+    // Merge functions and constants so e.g. `math.pj` gets suggested
+    // `pi`. The header says "unknown function" either way — the hint is
+    // still useful.
+    let mut merged: Vec<&str> = fns.into_iter().chain(consts).collect();
+    merged.sort();
+    merged.dedup();
+    if let Some(hint) = suggest_similar(&field_str, merged.iter()) {
+        format!("{base}\nhelp: did you mean `{hint}`?")
+    } else {
+        base
+    }
 }
 
 impl TypeChecker {
@@ -1004,7 +1068,9 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(ty, &pinned_ty, span);
                 } else {
-                    self.error(format!("undefined variable '{name}' in pin pattern"), span);
+                    let msg =
+                        format_undefined_variable_message(*name, env, "in pin pattern");
+                    self.error(msg, span);
                 }
             }
         }
@@ -1177,7 +1243,8 @@ impl TypeChecker {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
                 } else {
-                    self.error(format!("undefined variable '{name}'"), span);
+                    let msg = format_undefined_variable_message(name, env, "");
+                    self.error(msg, span);
                     self.fresh_var()
                 }
             }
@@ -1213,12 +1280,11 @@ impl TypeChecker {
                     // so downstream inference continues.
                     let module_str = resolve(module_name);
                     if crate::module::is_builtin_module(&module_str) {
-                        self.error(
-                            format!(
-                                "unknown function '{field}' on module '{module_str}'"
-                            ),
-                            span,
+                        let msg = format_unknown_module_function_message(
+                            field,
+                            &module_str,
                         );
+                        self.error(msg, span);
                         let fresh = self.fresh_var();
                         expr.ty = Some(fresh.clone());
                         return fresh;
@@ -2786,7 +2852,9 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
                 } else {
-                    self.error(format!("undefined variable '{name}' in pin pattern"), span);
+                    let msg =
+                        format_undefined_variable_message(*name, env, "in pin pattern");
+                    self.error(msg, span);
                 }
             }
         }
