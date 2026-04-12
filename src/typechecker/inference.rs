@@ -289,7 +289,7 @@ impl TypeChecker {
         let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
         let constrained_ret = self.apply(&ret_type);
         let constrained_fn = Type::Fun(constrained_params, Box::new(constrained_ret));
-        self.fn_body_types.insert(f.name, constrained_fn.clone());
+        self.fn_body_types.insert(lookup_name, constrained_fn.clone());
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;

@@ -306,7 +306,11 @@ impl TypeChecker {
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _) => Self::expr_references_name(e, name),
+            | ExprKind::FieldAccess(e, _)
+            | ExprKind::Ascription(e, _) => Self::expr_references_name(e, name),
+            ExprKind::FloatElse(e1, e2) => {
+                Self::expr_references_name(e1, name) || Self::expr_references_name(e2, name)
+            }
             ExprKind::Call(callee, args) => {
                 Self::expr_references_name(callee, name)
                     || args.iter().any(|a| Self::expr_references_name(a, name))

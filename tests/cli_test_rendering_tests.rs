@@ -833,6 +833,158 @@ fn test_disasm_unknown_flag() {
     );
 }
 
+// ── Round-21 G1: silt run module-error SourceError path normalization ──
+
+/// When `silt run` is invoked with a relative path and a runtime error
+/// occurs inside an imported module, the `-->` header path in the
+/// SourceError and the frame paths in the call stack must both be
+/// relative — no absolute paths mixed in. Previously the SourceError
+/// used the canonicalized absolute module path while the call stack
+/// frames were normalized to relative.
+///
+/// Mutation reasoning: reverting the G1 fix (moving normalize_path
+/// before SourceError construction and applying it to err_path) makes
+/// the `-->` locator show an absolute path while call-stack frames
+/// stay relative, tripping the "no absolute paths" assertion below.
+#[test]
+fn test_run_module_error_paths_consistently_normalized() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_r21_g1_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    let helper = dir.join("helper.silt");
+    fs::write(&helper, "pub fn kaboom() = 1 / 0\n").unwrap();
+
+    let main = dir.join("main.silt");
+    fs::write(
+        &main,
+        "import helper\nfn main() = helper.kaboom()\n",
+    )
+    .unwrap();
+
+    // Run with a relative path so paths should stay relative.
+    let output = silt_cmd()
+        .arg("run")
+        .arg("main.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected runtime error to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("division by zero"),
+        "expected division by zero, got: {stderr}"
+    );
+
+    // The `-->` locator must reference helper.silt but NOT with an
+    // absolute path. Extract lines containing `-->`.
+    let locator_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("-->"))
+        .collect();
+    assert!(
+        !locator_lines.is_empty(),
+        "expected '-->' locator in stderr, got: {stderr}"
+    );
+    let abs_dir_str = dir.to_str().unwrap();
+    for line in &locator_lines {
+        assert!(
+            !line.contains(abs_dir_str),
+            "found absolute path in '-->' locator when relative was expected: {:?}\nfull stderr:\n{stderr}",
+            line
+        );
+    }
+
+    // Call-stack frame lines (if present) must also be relative.
+    let frame_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.trim_start().starts_with("->") && l.contains(".silt:"))
+        .collect();
+    for line in &frame_lines {
+        assert!(
+            !line.contains(abs_dir_str),
+            "found absolute path in call-stack frame when relative was expected: {:?}\nfull stderr:\n{stderr}",
+            line
+        );
+    }
+}
+
+// ── Round-21 G2: silt test setup-error path normalization ──────────────
+
+/// When `silt test` is invoked with a relative path on a test file
+/// whose imported module crashes at top level (setup error), both the
+/// SourceError `-->` path and any call-stack frame paths must be
+/// relative — no absolute paths should leak through.
+///
+/// Mutation reasoning: reverting the G2 fix (moving normalize_path
+/// above vm.run() in the test handler and applying it to setup-error
+/// paths) makes the `-->` locator and frame paths show absolute paths,
+/// tripping the "no absolute paths" assertion below.
+#[test]
+fn test_test_setup_error_paths_normalized() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_r21_g2_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    let module_file = dir.join("crasher.silt");
+    fs::write(&module_file, "pub let value = 1 / 0\n").unwrap();
+
+    let test_file = dir.join("crasher_test.silt");
+    fs::write(
+        &test_file,
+        "import crasher\nimport test\nfn test_never_runs() {\n  test.assert_eq(crasher.value, 0)\n}\n",
+    )
+    .unwrap();
+
+    // Run with a relative path so paths should stay relative.
+    let output = silt_cmd()
+        .arg("test")
+        .arg("crasher_test.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected setup error to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("setup error"),
+        "expected 'setup error' marker, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("-->"),
+        "expected '-->' locator in stderr, got: {stderr}"
+    );
+    // The error should reference the module file, not the test file.
+    assert!(
+        stderr.contains("crasher.silt"),
+        "expected 'crasher.silt' in error, got: {stderr}"
+    );
+
+    // No line should contain the absolute temp dir path.
+    let abs_dir_str = dir.to_str().unwrap();
+    for line in stderr.lines() {
+        // Skip the test-file name echoed by the harness (e.g.
+        // "crasher_test.silt: setup error:") — focus on the
+        // SourceError and call-stack rendering lines.
+        if line.contains("-->") || line.trim_start().starts_with("->") {
+            assert!(
+                !line.contains(abs_dir_str),
+                "found absolute path in error rendering when relative was expected: {:?}\nfull stderr:\n{stderr}",
+                line
+            );
+        }
+    }
+}
+
 // ── Round-19 L5: per-test multi-line error indentation ────────────────
 
 /// When `silt test` renders a multi-line SourceError for a failing test,

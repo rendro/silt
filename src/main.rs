@@ -1158,6 +1158,39 @@ fn vm_run_file(path: &str) {
     let mut vm = Vm::new();
     if let Err(e) = vm.run(script) {
         if let Some(span) = e.span {
+            // F13 (audit round 17) + G1 (audit round 21): normalize
+            // frame and error-header paths so they all use the same
+            // style the user typed on the command line.  Moved above
+            // the SourceError construction so the `-->` line also
+            // benefits from normalization, not just the call-stack
+            // frames.
+            //
+            // Lock: tests/cli_test_rendering_tests.rs
+            // `test_cross_module_call_stack_uses_consistent_path_style`
+            // `test_run_module_error_paths_consistently_normalized`.
+            let user_path_is_absolute = Path::new(path).is_absolute();
+            let cwd = std::env::current_dir().ok();
+            let normalize_path = |candidate: &Path| -> String {
+                if user_path_is_absolute {
+                    if candidate.is_absolute() {
+                        candidate.display().to_string()
+                    } else if let Some(ref cwd) = cwd {
+                        cwd.join(candidate).display().to_string()
+                    } else {
+                        candidate.display().to_string()
+                    }
+                } else {
+                    if let Some(ref cwd) = cwd {
+                        match candidate.strip_prefix(cwd) {
+                            Ok(rel) => rel.display().to_string(),
+                            Err(_) => candidate.display().to_string(),
+                        }
+                    } else {
+                        candidate.display().to_string()
+                    }
+                }
+            };
+
             // Determine which source text & file path to render against.
             // Prefer the innermost non-synthetic frame's function name,
             // falling back to the main file when the frame isn't from an
@@ -1167,14 +1200,14 @@ fn vm_run_file(path: &str) {
                 .iter()
                 .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
                 .map(|(n, _)| n.as_str());
-            let (err_source, err_path): (&str, &str) =
+            let (err_source, err_path): (&str, String) =
                 match innermost_fn_name.and_then(|n| module_sources.get(n)) {
                     Some((module_path, module_source)) => {
-                        (module_source.as_str(), module_path.to_str().unwrap_or(path))
+                        (module_source.as_str(), normalize_path(module_path))
                     }
-                    None => (source.as_str(), path),
+                    None => (source.as_str(), normalize_path(Path::new(path))),
                 };
-            let source_err = SourceError::runtime_at(&e.message, span, err_source, err_path);
+            let source_err = SourceError::runtime_at(&e.message, span, err_source, &err_path);
             eprintln!("{source_err}");
             // Print call stack if there are user frames beyond the error site.
             // Drop synthetic entry-point frames (<script>, <call:...>) by name
@@ -1194,47 +1227,6 @@ fn vm_run_file(path: &str) {
                 eprintln!("\ncall stack:");
                 let head = 10;
                 let tail = 5;
-                // F13 (audit round 17): normalize frame paths so a
-                // cross-module call stack doesn't mix absolute and
-                // relative paths. Goal: every frame uses the same
-                // path style the user originally typed on the command
-                // line. If the user ran with an absolute path, render
-                // absolute; if they ran with a relative path, render
-                // relative to cwd. The `module_sources` lookup returns
-                // canonicalized absolute paths from the module loader,
-                // so we relativize them back to the cwd when the user
-                // path is relative.
-                //
-                // Lock: tests/cli_test_rendering_tests.rs
-                // `test_cross_module_call_stack_uses_consistent_path_style`.
-                let user_path_is_absolute = Path::new(path).is_absolute();
-                let cwd = std::env::current_dir().ok();
-                let normalize_path = |candidate: &Path| -> String {
-                    if user_path_is_absolute {
-                        // Everything should be absolute. If the
-                        // candidate is already absolute, keep it; if
-                        // it's relative, resolve it against cwd.
-                        if candidate.is_absolute() {
-                            candidate.display().to_string()
-                        } else if let Some(ref cwd) = cwd {
-                            cwd.join(candidate).display().to_string()
-                        } else {
-                            candidate.display().to_string()
-                        }
-                    } else {
-                        // User used a relative path. Strip the cwd
-                        // prefix from absolute candidates so every
-                        // frame renders relative to cwd.
-                        if let Some(ref cwd) = cwd {
-                            match candidate.strip_prefix(cwd) {
-                                Ok(rel) => rel.display().to_string(),
-                                Err(_) => candidate.display().to_string(),
-                            }
-                        } else {
-                            candidate.display().to_string()
-                        }
-                    }
-                };
                 let print_frame = |name: &str, frame_span: &silt::lexer::Span| {
                     // Each frame uses its own function's source file for
                     // file labels — this matters when the call crosses a
@@ -1551,59 +1543,12 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // from imported modules can render against the correct source file.
         let module_sources = collect_module_function_sources(path, &source);
 
-        let script = Arc::new(first);
-        let mut vm = Vm::new();
-        if let Err(e) = vm.run(script) {
-            if let Some(span) = e.span {
-                // Find the innermost frame that identifies a source file:
-                // either a user function or a <module:X> init frame.
-                let innermost_fn_name: Option<&str> = e
-                    .call_stack
-                    .iter()
-                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
-                    .map(|(n, _)| n.as_str());
-                let (err_source, err_path): (&str, String) =
-                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                        Some((module_path, module_source)) => (
-                            module_source.as_str(),
-                            module_path.display().to_string(),
-                        ),
-                        None => (source.as_str(), path.to_string()),
-                    };
-                let source_err =
-                    SourceError::runtime_at(&e.message, span, err_source, &err_path);
-                eprintln!("{path}: setup error:");
-                eprintln!("{source_err}");
-                let stack_lines = silt::vm::error::render_call_stack(
-                    &e.call_stack,
-                    |frame_name, frame_span| {
-                        let frame_path: String =
-                            match module_sources.get(frame_name) {
-                                Some((p, _)) => p.display().to_string(),
-                                None => path.to_string(),
-                            };
-                        if frame_span.line > 0 {
-                            format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
-                        } else {
-                            format!("{frame_path}:<unknown location>")
-                        }
-                    },
-                );
-                if !stack_lines.is_empty() {
-                    eprintln!("\ncall stack:");
-                    for line in stack_lines {
-                        eprintln!("{line}");
-                    }
-                }
-            } else {
-                eprintln!("{path}: setup error: {e}");
-            }
-            file_errors += 1;
-            continue;
-        }
-
-        // Normalize frame paths to match the user's input style (relative
-        // or absolute), mirroring `silt run`'s normalize_path closure.
+        // G2 (audit round 21): normalize frame and error-header paths
+        // for both setup errors and per-test errors.  Moved above the
+        // vm.run() call so setup-error rendering can also benefit.
+        //
+        // Lock: tests/cli_test_rendering_tests.rs
+        // `test_test_setup_error_paths_normalized`.
         let user_path_is_absolute = Path::new(path.as_str()).is_absolute();
         let cwd = std::env::current_dir().ok();
         let normalize_path = |candidate: &Path| -> String {
@@ -1626,6 +1571,57 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 }
             }
         };
+
+        let script = Arc::new(first);
+        let mut vm = Vm::new();
+        if let Err(e) = vm.run(script) {
+            if let Some(span) = e.span {
+                // Find the innermost frame that identifies a source file:
+                // either a user function or a <module:X> init frame.
+                let innermost_fn_name: Option<&str> = e
+                    .call_stack
+                    .iter()
+                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
+                    .map(|(n, _)| n.as_str());
+                let (err_source, err_path): (&str, String) =
+                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
+                        Some((module_path, module_source)) => (
+                            module_source.as_str(),
+                            normalize_path(module_path),
+                        ),
+                        None => (source.as_str(), normalize_path(Path::new(path))),
+                    };
+                let source_err =
+                    SourceError::runtime_at(&e.message, span, err_source, &err_path);
+                eprintln!("{path}: setup error:");
+                eprintln!("{source_err}");
+                let stack_lines = silt::vm::error::render_call_stack(
+                    &e.call_stack,
+                    |frame_name, frame_span| {
+                        let frame_path: String =
+                            match module_sources.get(frame_name) {
+                                Some((p, _)) => normalize_path(p),
+                                None => normalize_path(Path::new(path)),
+                            };
+                        if frame_span.line > 0 {
+                            format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
+                        } else {
+                            format!("{frame_path}:<unknown location>")
+                        }
+                    },
+                );
+                if !stack_lines.is_empty() {
+                    eprintln!("\ncall stack:");
+                    for line in stack_lines {
+                        eprintln!("{line}");
+                    }
+                }
+            } else {
+                eprintln!("{path}: setup error: {e}");
+            }
+            file_errors += 1;
+            continue;
+        }
 
         // Run each test function
         for decl in &program.decls {

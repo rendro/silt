@@ -44,7 +44,7 @@ fn main() {
     );
     let msg = result.unwrap_err();
     assert!(
-        msg.contains("expected else") || msg.contains("expected") || msg.contains("="),
+        msg.contains("expected else, found ="),
         "error message should mention the unexpected `=`; got: {msg}"
     );
 }

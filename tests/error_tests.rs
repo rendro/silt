@@ -1035,7 +1035,7 @@ import test
 fn main() { test.assert(false) }
     "#,
     );
-    assert!(err.contains("assert"), "got: {err}");
+    assert!(err.contains("assertion failed: false"), "got: {err}");
 }
 
 #[test]
@@ -1046,7 +1046,7 @@ import test
 fn main() { test.assert_eq(1, 2) }
     "#,
     );
-    assert!(err.contains("1") && err.contains("2"), "got: {err}");
+    assert!(err.contains("assertion failed: 1 != 2"), "got: {err}");
 }
 
 #[test]
@@ -1057,7 +1057,7 @@ import test
 fn main() { test.assert_ne(5, 5) }
     "#,
     );
-    assert!(err.contains("5"), "got: {err}");
+    assert!(err.contains("assertion failed: 5 == 5"), "got: {err}");
 }
 
 // ── when/else guard errors ──────────────────────────────────────────

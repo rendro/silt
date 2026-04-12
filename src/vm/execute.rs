@@ -792,6 +792,9 @@ impl Vm {
                 Ok(DispatchResult::Return(result)) => {
                     let finished_base = self.current_frame()?.base_slot;
                     self.frames.pop();
+                    // Prune tail-call elided diagnostic entries for the
+                    // just-popped frame, mirroring invoke_callable's Return arm.
+                    self.prune_tco_elided(self.frames.len());
                     if self.frames.len() < saved_frame_count {
                         return Err(VmError::new(
                             "frame underflow in resume_suspended_invoke".into(),
@@ -809,6 +812,10 @@ impl Vm {
                     value,
                     finished_base,
                 }) => {
+                    // Prune tail-call elided diagnostic entries after
+                    // EarlyReturn's implicit frame pop, mirroring
+                    // invoke_callable's EarlyReturn arm.
+                    self.prune_tco_elided(self.frames.len());
                     if self.frames.len() <= saved_frame_count {
                         self.stack.truncate(func_slot);
                         return Ok(value);
@@ -1519,23 +1526,29 @@ impl Vm {
                         ));
                     }
                 };
-                match b {
-                    Value::List(xs) => result.extend(xs.iter().cloned()),
-                    Value::Range(lo, hi) => {
-                        checked_range_len(lo, hi).map_err(VmError::new)?;
-                        result.extend((lo..=hi).map(Value::Int));
-                    }
+                // Pre-check combined size BEFORE materializing `b` to avoid
+                // allocating ~800MB when two near-limit operands are concatenated.
+                let b_len = match &b {
+                    Value::List(xs) => xs.len(),
+                    Value::Range(lo, hi) => checked_range_len(*lo, *hi).map_err(VmError::new)?,
                     _ => {
                         return Err(VmError::new(
                             "ListConcat: right operand is not a list or range".into(),
                         ));
                     }
-                }
-                if result.len() > MAX_RANGE_MATERIALIZE {
+                };
+                if result.len() + b_len > MAX_RANGE_MATERIALIZE {
                     return Err(VmError::new(format!(
                         "concatenated list exceeds maximum size of {} elements",
                         MAX_RANGE_MATERIALIZE
                     )));
+                }
+                match b {
+                    Value::List(xs) => result.extend(xs.iter().cloned()),
+                    Value::Range(lo, hi) => {
+                        result.extend((lo..=hi).map(Value::Int));
+                    }
+                    _ => unreachable!(),
                 }
                 self.push(Value::List(Arc::new(result)));
             }
@@ -1900,8 +1913,18 @@ impl Vm {
                 if let Some(func) = self.globals.get(&qualified).cloned() {
                     let args: Vec<Value> = self.stack[receiver_slot..].to_vec();
                     self.stack.truncate(receiver_slot);
-                    let result = self.invoke_callable(&func, &args)?;
-                    self.push(result);
+                    match self.invoke_callable(&func, &args) {
+                        Ok(result) => self.push(result),
+                        Err(e) if e.is_yield => {
+                            // Re-push receiver + args so CallMethod can re-read
+                            // them when the instruction re-executes after resume.
+                            for arg in &args {
+                                self.push(arg.clone());
+                            }
+                            return Err(e);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 } else {
                     let extra_args: Vec<Value> = self.stack[receiver_slot + 1..].to_vec();
                     // Try built-in trait methods (display, equal, compare)
@@ -1914,8 +1937,19 @@ impl Vm {
                         if let Some(field_val) = fields.get(&method_name) {
                             let callable = field_val.clone();
                             self.stack.truncate(receiver_slot);
-                            let result = self.invoke_callable(&callable, &extra_args)?;
-                            self.push(result);
+                            match self.invoke_callable(&callable, &extra_args) {
+                                Ok(result) => self.push(result),
+                                Err(e) if e.is_yield => {
+                                    // Re-push receiver first, then extra_args
+                                    // so CallMethod can re-read them on resume.
+                                    self.push(receiver.clone());
+                                    for arg in &extra_args {
+                                        self.push(arg.clone());
+                                    }
+                                    return Err(e);
+                                }
+                                Err(e) => return Err(e),
+                            }
                         } else {
                             return Err(VmError::new(format!(
                                 "no method '{method_name}' for type '{type_name}'"

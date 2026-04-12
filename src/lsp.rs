@@ -1953,13 +1953,24 @@ fn find_field_in_expr(
     if let ExprKind::FieldAccess(receiver, field) = &expr.kind {
         // Find where the field name starts in the source.
         // The FieldAccess span covers the receiver. The field name is after the dot.
-        // Search forward from the receiver for `.field`
+        //
+        // For chained access like `d.response.status`, the AST nests as:
+        //   FieldAccess(FieldAccess(d, "response"), "status")
+        // and all nodes share the same `span.offset` (the leftmost receiver).
+        // A naive `find('.')` would always locate the FIRST dot, mis-identifying
+        // the field position for deeper chains.  Instead we search backwards
+        // (rfind) for the needle `.{field_name}`, bounded to the region that
+        // can contain the cursor, so we match the correct dot.
         let field_str = resolve(*field);
         let expr_start = expr.span.offset;
         if cursor >= expr_start {
-            // Find the dot position in the source after the receiver
-            if let Some(dot_rel) = source[expr_start..].find('.') {
-                let field_start = expr_start + dot_rel + 1;
+            let needle = format!(".{field_str}");
+            // Upper-bound: the field text must end at or after the cursor,
+            // so the needle cannot start later than `cursor`.  Clamp to
+            // source length for safety.
+            let search_end = source.len().min(cursor + field_str.len());
+            if let Some(dot_rel) = source[expr_start..search_end].rfind(&needle) {
+                let field_start = expr_start + dot_rel + 1; // skip the '.'
                 let field_end = field_start + field_str.len();
                 if cursor >= field_start && cursor < field_end {
                     // Cursor is on the field name — look up the field type
@@ -3723,5 +3734,142 @@ mod tests {
         let before = r#"foo("""hello, world""", 42"#;
         let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
         assert_eq!(param, 1, "comma inside triple-quoted string ignored");
+    }
+
+    // ── find_field_type_at_offset: chained field access ─────────────
+
+    #[test]
+    fn test_find_field_single_dot_access() {
+        //            0         1         2         3         4         5         6
+        //            0123456789012345678901234567890123456789012345678901234567890123456
+        let source = "type Pt { x: Int, y: Int }\nfn main() { let p = Pt { x: 1, y: 2 }\np.x }";
+        let program = parse_and_check(source);
+
+        // "p.x" — the 'x' field starts after the dot.  Find where "p.x" is
+        // in the source and place the cursor on 'x'.
+        let px_offset = source.rfind("p.x").unwrap();
+        let cursor_on_x = px_offset + 2; // the 'x' in "p.x"
+
+        let result = find_field_type_at_offset(&program, source, cursor_on_x);
+        assert!(result.is_some(), "should find field for single-dot access");
+        let (name, ty) = result.unwrap();
+        assert_eq!(name, "x");
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_find_field_chained_access_rightmost() {
+        // Manually construct a chained field access AST: `d.inner.value`
+        // where the source text is "d.inner.value" starting at offset 0.
+        //
+        // AST structure:
+        //   FieldAccess(FieldAccess(d, "inner"), "value")
+        // Both FieldAccess nodes share span.offset = 0 (the leftmost
+        // receiver), which used to cause `find('.')` to locate the FIRST
+        // dot instead of the correct one for "value".
+        let source = "d.inner.value";
+        let span = Span { line: 1, col: 1, offset: 0 };
+
+        let inner_sym = crate::intern::intern("inner");
+        let value_sym = crate::intern::intern("value");
+
+        // The innermost receiver `d` — type doesn't matter here.
+        let d_expr = Expr {
+            kind: ExprKind::Ident(crate::intern::intern("d")),
+            span,
+            ty: Some(Type::Record(
+                crate::intern::intern("Outer"),
+                vec![(inner_sym, Type::Record(
+                    crate::intern::intern("Inner"),
+                    vec![(value_sym, Type::Int)],
+                ))],
+            )),
+        };
+
+        // Middle node: `d.inner` with type Record("Inner", [("value", Int)])
+        let inner_access = Expr {
+            kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym),
+            span,
+            ty: Some(Type::Record(
+                crate::intern::intern("Inner"),
+                vec![(value_sym, Type::Int)],
+            )),
+        };
+
+        // Outermost node: `d.inner.value` with type Int
+        // The receiver is `inner_access` whose type is Record("Inner", ...)
+        let outer_access = Expr {
+            kind: ExprKind::FieldAccess(Box::new(inner_access), value_sym),
+            span,
+            ty: Some(Type::Int),
+        };
+
+        // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
+        let cursor_on_value = 8;
+        let mut result = None;
+        find_field_in_expr(&outer_access, source, cursor_on_value, &mut result);
+
+        assert!(
+            result.is_some(),
+            "should find field-specific hover for rightmost field in chain"
+        );
+        let (name, ty) = result.unwrap();
+        assert_eq!(name, "value");
+        assert_eq!(ty, Type::Int);
+    }
+
+    #[test]
+    fn test_find_field_chained_access_middle() {
+        // Same chain `d.inner.value`, but cursor on 'i' of "inner" (offset 2).
+        let source = "d.inner.value";
+        let span = Span { line: 1, col: 1, offset: 0 };
+
+        let inner_sym = crate::intern::intern("inner");
+        let value_sym = crate::intern::intern("value");
+
+        let d_expr = Expr {
+            kind: ExprKind::Ident(crate::intern::intern("d")),
+            span,
+            ty: Some(Type::Record(
+                crate::intern::intern("Outer"),
+                vec![(inner_sym, Type::Record(
+                    crate::intern::intern("Inner"),
+                    vec![(value_sym, Type::Int)],
+                ))],
+            )),
+        };
+
+        let inner_access = Expr {
+            kind: ExprKind::FieldAccess(Box::new(d_expr), inner_sym),
+            span,
+            ty: Some(Type::Record(
+                crate::intern::intern("Inner"),
+                vec![(value_sym, Type::Int)],
+            )),
+        };
+
+        let outer_access = Expr {
+            kind: ExprKind::FieldAccess(Box::new(inner_access), value_sym),
+            span,
+            ty: Some(Type::Int),
+        };
+
+        // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"
+        let cursor_on_inner = 2;
+        let mut result = None;
+        find_field_in_expr(&outer_access, source, cursor_on_inner, &mut result);
+
+        assert!(
+            result.is_some(),
+            "should find field-specific hover for middle field in chain"
+        );
+        let (name, ty) = result.unwrap();
+        assert_eq!(name, "inner");
+        // `inner` field type is Record("Inner", ...)
+        if let Type::Record(sym, _) = &ty {
+            assert_eq!(crate::intern::resolve(*sym), "Inner");
+        } else {
+            panic!("expected Record type for 'inner' field, got {:?}", ty);
+        }
     }
 }

@@ -1241,3 +1241,48 @@ fn main() {
         "expected no type errors for correct receiver method arity, got: {errs:?}"
     );
 }
+
+// ── LATENT: expr_references_name must recurse into Ascription & FloatElse
+//
+// `expr_references_name` fell through to `_ => false` for Ascription and
+// FloatElse, causing a let binding used only inside one of those expressions
+// to be falsely flagged as unreferenced (spurious "could not determine type").
+
+#[test]
+fn test_ascription_does_not_trigger_spurious_unresolved_type() {
+    // `x` is only referenced inside an ascription (`x as Int`).
+    // Before the fix, `expr_references_name` missed the Ascription variant
+    // and the heuristic could report a spurious type error.
+    let errs = type_errors(
+        r#"
+fn main() {
+  let x = 42
+  let y = (x as Int)
+  println(y)
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "ascription should not cause spurious type error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_float_else_does_not_trigger_spurious_unresolved_type() {
+    // `x` is only referenced inside a float-else expression.
+    // Before the fix, `expr_references_name` missed the FloatElse variant.
+    let errs = type_errors(
+        r#"
+fn main() {
+  let x = 1.0
+  let y = x / 0.0 else 0.0
+  println(y)
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "float-else should not cause spurious type error, got: {errs:?}"
+    );
+}
