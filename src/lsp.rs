@@ -778,25 +778,12 @@ impl Server {
         let cursor = position_to_offset(&doc.source, &pos);
         let before = &doc.source[..cursor];
 
-        // Count commas at the current nesting level to determine active param.
-        let mut active_param = 0u32;
-        let mut depth = 0i32;
-        for ch in before.chars().rev() {
-            match ch {
-                ')' | ']' | '}' => depth += 1,
-                '(' | '[' | '{' => {
-                    if depth == 0 {
-                        break;
-                    }
-                    depth -= 1;
-                }
-                ',' if depth == 0 => active_param += 1,
-                _ => {}
-            }
-        }
-
-        // Find the function name: scan back past the `(` to the ident.
-        let paren_pos = before.rfind('(')?;
+        // Forward-scan `before` to find the active call site: the last `(`
+        // at nesting depth 0, and count commas at depth 1 from there.
+        // Skips string literals and silt comments so that commas/parens
+        // inside them are not miscounted.
+        let (active_param, paren_pos) =
+            scan_call_site_forward(before.as_bytes())?;
         let before_paren = before[..paren_pos].trim_end();
         let fn_name: String = before_paren
             .chars()
@@ -1464,6 +1451,90 @@ fn expr_extent(expr: &Expr, source: &str) -> (usize, ()) {
         return (end, ());
     }
     (source.len(), ())
+}
+
+/// Forward-scan `before` (the source slice up to the cursor) to find the
+/// innermost active call site. Returns `(active_param, paren_byte_offset)`
+/// where `paren_byte_offset` is the position of the opening `(` of the call
+/// and `active_param` is the 0-based comma count between that `(` and the end.
+///
+/// Skips string literals (`"..."`, `""" ... """`), line comments (`--`), and
+/// block comments (`{- ... -}`) so commas and parens inside them are ignored.
+fn scan_call_site_forward(bytes: &[u8]) -> Option<(u32, usize)> {
+    // Stack of (paren_byte_offset, comma_count) for each nesting depth.
+    let mut stack: Vec<(usize, u32)> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // ── Strings ──────────────────────────────────────────
+            b'"' => {
+                if i + 2 < bytes.len() && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+                    i += 3;
+                    while i + 2 < bytes.len()
+                        && !(bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"')
+                    {
+                        i += 1;
+                    }
+                    i = (i + 3).min(bytes.len());
+                } else {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'"' {
+                        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                }
+            }
+            // ── Block comments {- ... -} (with nesting) ─────────
+            b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                i += 2;
+                let mut cd = 1u32;
+                while i < bytes.len() && cd > 0 {
+                    if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                        cd += 1;
+                        i += 2;
+                    } else if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                        cd -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            // ── Line comments -- ... ────────────────────────────
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            // ── Brackets ────────────────────────────────────────
+            b'(' => {
+                stack.push((i, 0));
+                i += 1;
+            }
+            b')' => {
+                stack.pop();
+                i += 1;
+            }
+            b',' => {
+                if let Some(top) = stack.last_mut() {
+                    top.1 += 1;
+                }
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    // The top of the stack is the innermost unclosed `(` — that's our call site.
+    let (paren_pos, comma_count) = stack.last()?;
+    Some((*comma_count, *paren_pos))
 }
 
 /// Given an offset at (or just before) a `{`, return the byte offset of the
@@ -3593,5 +3664,64 @@ mod tests {
         // Opening `{` at index 9.  Real closing `}` at index 29.
         let result = match_closing_brace(source, 9);
         assert_eq!(result, Some(29), "should match the outermost closing brace");
+    }
+
+    // ── scan_call_site_forward tests ─────────────────────────────
+
+    #[test]
+    fn test_sig_help_comma_in_string_not_counted() {
+        // foo("hello, world", 42)  — cursor after 42
+        // The comma inside the string must not be counted.
+        let before = r#"foo("hello, world", 42"#;
+        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "should be param 1 (y), not 2");
+        assert_eq!(paren, 3, "paren at index 3");
+    }
+
+    #[test]
+    fn test_sig_help_comma_in_line_comment_not_counted() {
+        // foo(1,\n-- a, b, c\n2)  — cursor after 2
+        let before = "foo(1,\n-- a, b, c\n2";
+        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "commas inside -- comment should be ignored");
+    }
+
+    #[test]
+    fn test_sig_help_comma_in_block_comment_not_counted() {
+        // foo(1, {- a, b -} 2)  — cursor after 2
+        let before = "foo(1, {- a, b -} 2";
+        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "commas inside block comment should be ignored");
+    }
+
+    #[test]
+    fn test_sig_help_nested_call_finds_outer_function() {
+        // add(mul(1, 2), 3)  — cursor after 3
+        let before = "add(mul(1, 2), 3";
+        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "should be param 1 of add, not param of mul");
+        assert_eq!(paren, 3, "paren should be add's ( at index 3");
+    }
+
+    #[test]
+    fn test_sig_help_cursor_inside_inner_call() {
+        // add(mul(1, | — cursor between 1 and closing
+        let before = "add(mul(1, ";
+        let (param, paren) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "should be param 1 of mul");
+        assert_eq!(paren, 7, "paren should be mul's ( at index 7");
+    }
+
+    #[test]
+    fn test_sig_help_no_open_paren_returns_none() {
+        let before = "let x = 42";
+        assert!(scan_call_site_forward(before.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn test_sig_help_triple_quoted_string_skipped() {
+        let before = r#"foo("""hello, world""", 42"#;
+        let (param, _) = scan_call_site_forward(before.as_bytes()).unwrap();
+        assert_eq!(param, 1, "comma inside triple-quoted string ignored");
     }
 }
