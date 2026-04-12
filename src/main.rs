@@ -1063,6 +1063,12 @@ fn collect_module_function_sources(
                     candidates.push((fn_name, file_path.clone(), mod_source.clone()));
                 }
             }
+            // Register the synthetic module-init frame name so that
+            // top-level errors (e.g. `pub let x = 1 / 0`) can be
+            // resolved to the module's source file.
+            let init_key = format!("<module:{import_name}>");
+            out.insert(init_key, (file_path.clone(), mod_source.clone()));
+
             queue.push((file_key, mod_source));
         }
     }
@@ -1159,7 +1165,7 @@ fn vm_run_file(path: &str) {
             let innermost_fn_name: Option<&str> = e
                 .call_stack
                 .iter()
-                .find(|(n, _)| !n.starts_with('<'))
+                .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
                 .map(|(n, _)| n.as_str());
             let (err_source, err_path): (&str, &str) =
                 match innermost_fn_name.and_then(|n| module_sources.get(n)) {
@@ -1174,10 +1180,11 @@ fn vm_run_file(path: &str) {
             // Drop synthetic entry-point frames (<script>, <call:...>) by name
             // rather than by span — a zero-spanned frame inside an otherwise
             // good stack shouldn't cause the whole stack to be discarded.
+            // Keep <module:...> frames for module-aware path resolution.
             let meaningful: Vec<_> = e
                 .call_stack
                 .iter()
-                .filter(|(name, _)| !name.starts_with('<'))
+                .filter(|(name, _)| !name.starts_with('<') || name.starts_with("<module:"))
                 .collect();
             // Only show the stack if it adds information beyond the error
             // site the user already sees above. A single-frame "stack"
@@ -1540,25 +1547,45 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             file_errors += 1;
             continue;
         };
+        // Build module_sources BEFORE running the script so setup errors
+        // from imported modules can render against the correct source file.
+        let module_sources = collect_module_function_sources(path, &source);
+
         let script = Arc::new(first);
         let mut vm = Vm::new();
         if let Err(e) = vm.run(script) {
-            // Mirror `silt run`: if the error has a span, render it with a
-            // source snippet + caret via SourceError::runtime_at, and
-            // append the call stack when there are meaningful frames
-            // beyond the error site itself. Falling back to the bare
-            // VmError::Display only when no span info is available.
             if let Some(span) = e.span {
-                let source_err = SourceError::runtime_at(&e.message, span, &source, path);
+                // Find the innermost frame that identifies a source file:
+                // either a user function or a <module:X> init frame.
+                let innermost_fn_name: Option<&str> = e
+                    .call_stack
+                    .iter()
+                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
+                    .map(|(n, _)| n.as_str());
+                let (err_source, err_path): (&str, String) =
+                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
+                        Some((module_path, module_source)) => (
+                            module_source.as_str(),
+                            module_path.display().to_string(),
+                        ),
+                        None => (source.as_str(), path.to_string()),
+                    };
+                let source_err =
+                    SourceError::runtime_at(&e.message, span, err_source, &err_path);
                 eprintln!("{path}: setup error:");
                 eprintln!("{source_err}");
                 let stack_lines = silt::vm::error::render_call_stack(
                     &e.call_stack,
-                    |_name, frame_span| {
+                    |frame_name, frame_span| {
+                        let frame_path: String =
+                            match module_sources.get(frame_name) {
+                                Some((p, _)) => p.display().to_string(),
+                                None => path.to_string(),
+                            };
                         if frame_span.line > 0 {
-                            format!("{}:{}:{}", path, frame_span.line, frame_span.col)
+                            format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
                         } else {
-                            format!("{path}:<unknown location>")
+                            format!("{frame_path}:<unknown location>")
                         }
                     },
                 );
@@ -1574,11 +1601,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             file_errors += 1;
             continue;
         }
-
-        // Build a name -> (module_file, source) map so runtime errors
-        // from imported modules are rendered against the correct file's
-        // source text (mirrors `silt run`'s approach).
-        let module_sources = collect_module_function_sources(path, &source);
 
         // Normalize frame paths to match the user's input style (relative
         // or absolute), mirroring `silt run`'s normalize_path closure.
@@ -1641,7 +1663,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                 let innermost_fn_name: Option<&str> = e
                                     .call_stack
                                     .iter()
-                                    .find(|(n, _)| !n.starts_with('<'))
+                                    .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
                                     .map(|(n, _)| n.as_str());
                                 let (err_source, err_path): (&str, String) =
                                     match innermost_fn_name

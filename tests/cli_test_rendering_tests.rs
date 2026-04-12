@@ -1069,3 +1069,89 @@ fn test_cross_module() {
     }
 }
 
+// ── L4: per-module frame resolves setup errors to module source ──
+
+/// When a test file imports a module whose top-level code crashes
+/// (e.g. `pub let value = 1 / 0`), the error should point at the
+/// module file's source, not the test file's import statement.
+#[test]
+fn test_silt_test_setup_error_renders_module_source() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_l4_modframe_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    let module_file = dir.join("bad_init.silt");
+    fs::write(
+        &module_file,
+        "pub let value = 1 / 0\npub fn add(a, b) = a + b\n",
+    )
+    .unwrap();
+
+    let test_file = dir.join("bad_init_test.silt");
+    fs::write(
+        &test_file,
+        "import bad_init\nimport test\nfn test_add() {\n  test.assert_eq(bad_init.add(1, 2), 3)\n}\n",
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg("bad_init_test.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("bad_init.silt"),
+        "expected 'bad_init.silt' in error, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 / 0"),
+        "expected '1 / 0' from module source in error, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--> bad_init_test.silt"),
+        "error should point at module, not test file: {stderr}"
+    );
+}
+
+/// Same as above but via `silt run` instead of `silt test`.
+#[test]
+fn test_silt_run_setup_error_renders_module_source() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_l4_run_modframe_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    let module_file = dir.join("bad_mod.silt");
+    fs::write(&module_file, "pub let x = 1 / 0\n").unwrap();
+
+    let main_file = dir.join("main.silt");
+    fs::write(
+        &main_file,
+        "import bad_mod\nfn main() {\n  println(bad_mod.x)\n}\n",
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("run")
+        .arg("main.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("bad_mod.silt"),
+        "expected 'bad_mod.silt' in error, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 / 0"),
+        "expected '1 / 0' from module source in error, got: {stderr}"
+    );
+}
+

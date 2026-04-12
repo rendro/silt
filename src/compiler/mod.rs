@@ -974,6 +974,12 @@ impl Compiler {
             .insert(module_name.to_string(), priv_set);
         self.module_scope = Some((module_name.to_string(), all_fn_names));
 
+        // Wrap module top-level code in a synthetic `<module:name>` function
+        // so runtime errors carry a frame that identifies the source file.
+        let init_name = format!("<module:{module_name}>");
+        self.contexts
+            .push(CompileContext::new(init_name, 0));
+
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
         // internal helpers that closures might reference). Synthetic emissions
@@ -1127,6 +1133,25 @@ impl Compiler {
                 }
             }
         }
+
+        // Close the module init function and call it inline.
+        self.current_chunk().emit_op(Op::Unit, span);
+        self.current_chunk().emit_op(Op::Return, span);
+        let init_ctx = self.contexts.pop().ok_or(CompileError {
+            message: "compiler bug: missing module init context".into(),
+            span,
+        })?;
+        let init_closure = Arc::new(VmClosure {
+            function: Arc::new(init_ctx.function),
+            upvalues: vec![],
+        });
+        let ci = self.add_constant(Value::VmClosure(init_closure), span)?;
+        self.current_chunk().emit_op(Op::Constant, span);
+        self.current_chunk().emit_u16(ci, span);
+        self.current_chunk().emit_op(Op::Call, span);
+        self.current_chunk().emit_u8(0, span);
+        self.current_chunk().emit_op(Op::Pop, span);
+
         self.module_scope = saved_scope;
         Ok(exported_names)
     }
