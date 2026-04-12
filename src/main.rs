@@ -788,9 +788,36 @@ fn main() {
             }
             init_project();
         }
-        // If the argument looks like a file, run it directly
+        // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => {
-            vm_run_file(arg);
+            let file = arg;
+            let mut disasm = false;
+            for extra in &args[2..] {
+                if extra == "--help" || extra == "-h" {
+                    println!("Usage: silt run [--watch] [--disassemble] <file.silt>");
+                    println!();
+                    println!("Options:");
+                    println!("  --watch, -w     Re-run on file changes");
+                    println!("  --disassemble   Show bytecode disassembly instead of running");
+                    process::exit(0);
+                } else if extra == "--disassemble" {
+                    disasm = true;
+                } else if extra.starts_with('-') {
+                    let suggestion = match extra.as_str() {
+                        "--disasm" | "--disassembly" | "-d" => " (did you mean --disassemble?)",
+                        "--h" | "-help" => " (did you mean --help?)",
+                        _ => "",
+                    };
+                    eprintln!("silt run: unknown flag '{extra}'{suggestion}");
+                    eprintln!("Run 'silt run --help' for usage.");
+                    process::exit(1);
+                }
+            }
+            if disasm {
+                disasm_file(file);
+            } else {
+                vm_run_file(file);
+            }
         }
         other => {
             eprintln!("Unknown command: {other}");
