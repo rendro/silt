@@ -6345,7 +6345,7 @@ fn main() {
             r#"
 import http
 fn main() {
-  http.get("http://example.com", #{})
+  http.get("http://example.com")
 }
         "#,
         );

@@ -590,9 +590,21 @@ impl Vm {
                 let args: Vec<Value> = self.stack[start..start + argc].to_vec();
                 // Pop everything including the function slot
                 self.stack.truncate(func_slot);
-                let result = self.dispatch_builtin(&name, &args)?;
-                self.push(result);
-                Ok(())
+                match self.dispatch_builtin(&name, &args) {
+                    Ok(result) => {
+                        self.push(result);
+                        Ok(())
+                    }
+                    Err(e) if e.is_yield => {
+                        // The builtin already re-pushed the args before yielding.
+                        // We must also re-push the function value BEFORE the args
+                        // so that Op::Call finds it at func_slot on resume.
+                        let args_start = self.stack.len() - argc;
+                        self.stack.insert(args_start, Value::BuiltinFn(name));
+                        Err(e)
+                    }
+                    Err(e) => Err(e),
+                }
             }
             Value::VariantConstructor(name, arity) => {
                 if argc != arity {

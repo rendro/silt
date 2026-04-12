@@ -638,6 +638,14 @@ fn main() {
                     process::exit(0);
                 }
             }
+            // Reject unknown flags before starting the server.
+            for arg in &args[2..] {
+                if arg.starts_with('-') && arg != "--help" && arg != "-h" {
+                    eprintln!("silt lsp: unknown flag '{arg}'");
+                    eprintln!("Run 'silt lsp --help' for usage.");
+                    process::exit(1);
+                }
+            }
             silt::lsp::run();
         }
         #[cfg(not(feature = "lsp"))]
@@ -653,6 +661,14 @@ fn main() {
                     println!();
                     println!("Start an interactive REPL session. Type :help inside for commands.");
                     process::exit(0);
+                }
+            }
+            // Reject unknown flags before starting the REPL.
+            for arg in &args[2..] {
+                if arg.starts_with('-') && arg != "--help" && arg != "-h" {
+                    eprintln!("silt repl: unknown flag '{arg}'");
+                    eprintln!("Run 'silt repl --help' for usage.");
+                    process::exit(1);
                 }
             }
             silt::repl::run_repl();
@@ -762,6 +778,14 @@ fn main() {
                     process::exit(0);
                 }
             }
+            // Reject unknown flags before proceeding.
+            for arg in &args[2..] {
+                if arg.starts_with('-') && arg != "--help" && arg != "-h" {
+                    eprintln!("silt init: unknown flag '{arg}'");
+                    eprintln!("Run 'silt init --help' for usage.");
+                    process::exit(1);
+                }
+            }
             init_project();
         }
         // If the argument looks like a file, run it directly
@@ -839,7 +863,7 @@ fn check_format(path: &str) -> bool {
             }
         }
         Err(e) => {
-            eprintln!("{path}: {}", render_fmt_error(&e, &source, path));
+            eprintln!("{}", render_fmt_error(&e, &source, path));
             false
         }
     }
@@ -1427,7 +1451,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
         if !parse_errors.is_empty() {
             eprintln!("{path}: failed to compile — parse errors:");
-            for e in &parse_errors {
+            for (i, e) in parse_errors.iter().enumerate() {
+                if i > 0 { eprintln!(); }
                 let source_err = SourceError::from_parse_error(e, &source, path.as_str());
                 eprintln!("{source_err}");
             }
@@ -1445,12 +1470,15 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // in the block below.
         let type_errors = typechecker::check(&mut program);
         let mut has_type_error = false;
+        let mut printed_type_errors: usize = 0;
         for te in &type_errors {
             let source_err = SourceError::from_type_error(te, &source, path);
             if is_unknown_module_warning(&source_err) {
                 continue;
             }
+            if printed_type_errors > 0 { eprintln!(); }
             eprintln!("{source_err}");
+            printed_type_errors += 1;
             if te.severity == typechecker::Severity::Error {
                 has_type_error = true;
             }
@@ -1525,6 +1553,31 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // source text (mirrors `silt run`'s approach).
         let module_sources = collect_module_function_sources(path, &source);
 
+        // Normalize frame paths to match the user's input style (relative
+        // or absolute), mirroring `silt run`'s normalize_path closure.
+        let user_path_is_absolute = Path::new(path.as_str()).is_absolute();
+        let cwd = std::env::current_dir().ok();
+        let normalize_path = |candidate: &Path| -> String {
+            if user_path_is_absolute {
+                if candidate.is_absolute() {
+                    candidate.display().to_string()
+                } else if let Some(ref cwd) = cwd {
+                    cwd.join(candidate).display().to_string()
+                } else {
+                    candidate.display().to_string()
+                }
+            } else {
+                if let Some(ref cwd) = cwd {
+                    match candidate.strip_prefix(cwd) {
+                        Ok(rel) => rel.display().to_string(),
+                        Err(_) => candidate.display().to_string(),
+                    }
+                } else {
+                    candidate.display().to_string()
+                }
+            }
+        };
+
         // Run each test function
         for decl in &program.decls {
             if let silt::ast::Decl::Fn(f) = decl {
@@ -1563,20 +1616,18 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                     .iter()
                                     .find(|(n, _)| !n.starts_with('<'))
                                     .map(|(n, _)| n.as_str());
-                                let (err_source, err_path): (&str, &str) =
+                                let (err_source, err_path): (&str, String) =
                                     match innermost_fn_name
                                         .and_then(|n| module_sources.get(n))
                                     {
                                         Some((module_path, module_source)) => (
                                             module_source.as_str(),
-                                            module_path
-                                                .to_str()
-                                                .unwrap_or(path.as_str()),
+                                            normalize_path(module_path),
                                         ),
-                                        None => (source.as_str(), path.as_str()),
+                                        None => (source.as_str(), path.to_string()),
                                     };
                                 let source_err = SourceError::runtime_at(
-                                    &e.message, span, err_source, err_path,
+                                    &e.message, span, err_source, &err_path,
                                 );
                                 // Indent every line of the formatted error
                                 // so multi-line SourceErrors stay aligned
@@ -1596,13 +1647,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                     &e.call_stack,
                                     |frame_name, frame_span| {
                                         // Use module path if the frame
-                                        // belongs to an imported module.
-                                        let frame_path: &str =
+                                        // belongs to an imported module,
+                                        // then normalize to match user's
+                                        // path style (relative/absolute).
+                                        let frame_path: String =
                                             match module_sources.get(frame_name) {
-                                                Some((p, _)) => {
-                                                    p.to_str().unwrap_or(path.as_str())
-                                                }
-                                                None => path.as_str(),
+                                                Some((p, _)) => normalize_path(p),
+                                                None => path.to_string(),
                                             };
                                         if frame_span.line > 0 {
                                             format!(

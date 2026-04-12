@@ -50,6 +50,20 @@ fn assert_type_error(input: &str, pattern: &str) {
     );
 }
 
+fn type_diagnostics_all(input: &str) -> Vec<(String, Severity)> {
+    let tokens = silt::lexer::Lexer::new(input)
+        .tokenize()
+        .expect("lexer error");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse error");
+    let diagnostics = typechecker::check(&mut program);
+    diagnostics
+        .into_iter()
+        .map(|e| (e.message, e.severity))
+        .collect()
+}
+
 // ── BROKEN-1: RecordUpdate on Type::Generic base ───────────────────
 
 #[test]
@@ -1020,4 +1034,136 @@ fn main() { run(Finish) }
             w.span.line, w.message
         );
     }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// AUDIT FINDINGS: round 19
+// ════════════════════════════════════════════════════════════════════
+
+// ── BROKEN (round 19 F1): check_pattern accepts sub-patterns on zero-arg ctors
+//
+// `match x { Red(y) -> ... }` where Red has zero fields used to slip
+// through typecheck silently (no error, no unification), crashing at
+// runtime. The `_ =>` arm in check_pattern's Constructor handler now
+// emits an error when sub_pats is non-empty on a zero-arg constructor.
+
+#[test]
+fn test_zero_arg_constructor_with_sub_patterns_rejected() {
+    assert_type_error(
+        r#"
+type Color { Red, Green, Blue }
+fn main() {
+  let x: Color = Red
+  match x {
+    Red(y) -> "red"
+    Green -> "green"
+    Blue -> "blue"
+  }
+}
+"#,
+        "expects 0 fields",
+    );
+}
+
+#[test]
+fn test_zero_arg_constructor_without_sub_patterns_still_accepted() {
+    // Positive lock: matching a zero-arg constructor without sub-patterns
+    // must continue to typecheck cleanly.
+    let errs = type_errors(
+        r#"
+type Color { Red, Green, Blue }
+fn main() {
+  let x: Color = Red
+  match x {
+    Red -> "red"
+    Green -> "green"
+    Blue -> "blue"
+  }
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for valid zero-arg constructor match, got: {errs:?}"
+    );
+}
+
+// ── BROKEN (round 19 F2): method call arity check allows one extra argument
+//
+// The arity check for method calls had a backwards disjunct
+// `arg_types.len() == params.len() + 1` that let one extra argument
+// through. This affected module-qualified calls (e.g. `math.sqrt`)
+// which parse as FieldAccess and thus set is_method_call = true but
+// whose params do NOT include a `self` slot. The extra disjunct let
+// exactly one surplus argument slip past the arity gate.
+
+#[test]
+fn test_method_call_extra_arg_rejected() {
+    // Module-qualified call with one extra argument. Before the fix,
+    // `string.length("hi", "extra")` passed arity check because the
+    // backwards condition matched: arg_types.len()==params.len()+1.
+    assert_type_error(
+        r#"
+import string
+fn main() {
+  println(string.length("hi", "extra"))
+}
+"#,
+        "argument",
+    );
+}
+
+#[test]
+fn test_method_call_correct_arity_accepted() {
+    // Positive lock: correct-arity module-qualified call must still work.
+    let errs = type_errors(
+        r#"
+import string
+fn main() {
+  println(string.length("hi"))
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for correct module call arity, got: {errs:?}"
+    );
+}
+
+// ── GAP (round 19 F3): recur arity mismatch emits warning instead of error
+//
+// The typechecker emitted a warning for loop/recur arity mismatches,
+// but this should be a hard error. Changed `self.warning(...)` to
+// `self.error(...)`.
+
+#[test]
+fn test_recur_arity_mismatch_is_error_not_warning() {
+    let diagnostics = type_diagnostics_all(
+        r#"
+fn main() {
+  loop n = 0 {
+    match n > 5 {
+      true -> n
+      false -> loop(n + 1, "extra")
+    }
+  }
+}
+"#,
+    );
+    // Must have at least one Error-severity diagnostic about binding/argument count
+    let has_error = diagnostics.iter().any(|(msg, sev)| {
+        *sev == Severity::Error && msg.contains("loop has") && msg.contains("recur supplies")
+    });
+    assert!(
+        has_error,
+        "expected an Error-severity diagnostic for recur arity mismatch, got: {diagnostics:?}"
+    );
+    // Must NOT have a Warning-severity diagnostic for the same thing
+    let has_warning = diagnostics.iter().any(|(msg, sev)| {
+        *sev == Severity::Warning && msg.contains("loop has") && msg.contains("recur supplies")
+    });
+    assert!(
+        !has_warning,
+        "recur arity mismatch should be Error, not Warning, got: {diagnostics:?}"
+    );
 }

@@ -1483,6 +1483,22 @@ fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
     while i < bytes.len() {
         let b = bytes[i];
         match b {
+            b'{' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // Skip `{- ... -}` block comment (with nesting).
+                i += 2;
+                let mut comment_depth = 1u32;
+                while i < bytes.len() && comment_depth > 0 {
+                    if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                        comment_depth += 1;
+                        i += 2;
+                    } else if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                        comment_depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
             b'{' => {
                 depth += 1;
                 i += 1;
@@ -1518,17 +1534,11 @@ fn match_closing_brace(source: &str, start: usize) -> Option<usize> {
                     }
                 }
             }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // Skip `--` line comment to end of line.
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
-            }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
-                i += 2;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(bytes.len());
             }
             _ => i += 1,
         }
@@ -3543,5 +3553,45 @@ mod tests {
         // Simulate DidCloseTextDocument by invoking the removal directly.
         server.documents.remove(&uri);
         assert!(!server.documents.contains_key(&uri));
+    }
+
+    // ── match_closing_brace ──────────────────────────────────────
+
+    #[test]
+    fn test_match_closing_brace_skips_silt_line_comment() {
+        // The `-- }` line comment should NOT count as a closing brace.
+        let source = "fn foo() { -- }\n  42\n}";
+        //           0         1
+        //           0123456789012345678901
+        // Opening `{` is at index 9.  Real closing `}` is at index 21.
+        let result = match_closing_brace(source, 9);
+        assert_eq!(result, Some(22), "line comment `-- }}` should be skipped");
+    }
+
+    #[test]
+    fn test_match_closing_brace_skips_silt_block_comment() {
+        // The `{- } -}` block comment should NOT count as a closing brace
+        // and the `{-` should NOT count as an opening brace.
+        let source = "fn foo() { {- } -}\n  42\n}";
+        //           0         1         2
+        //           0123456789012345678901234
+        // Opening `{` is at index 9.  Real closing `}` is at index 24.
+        let result = match_closing_brace(source, 9);
+        assert_eq!(
+            result,
+            Some(25),
+            "block comment `{{- }} -}}` should be skipped"
+        );
+    }
+
+    #[test]
+    fn test_match_closing_brace_normal() {
+        // Basic matching of braces without any comments.
+        let source = "fn foo() { let x = { 1 }; x }";
+        //           0         1         2
+        //           0123456789012345678901234567890
+        // Opening `{` at index 9.  Real closing `}` at index 29.
+        let result = match_closing_brace(source, 9);
+        assert_eq!(result, Some(29), "should match the outermost closing brace");
     }
 }

@@ -729,8 +729,8 @@ fn test_divide_by_zero() {
     // The error snippet must contain the module's source line, not a
     // random test-file line.
     assert!(
-        stderr.contains("a / b") || stderr.contains("divide"),
-        "expected module source (a / b or divide) in stderr, got: {stderr}"
+        stderr.contains("a / b") || stderr.contains("pub fn divide"),
+        "expected module source (a / b or pub fn divide) in stderr, got: {stderr}"
     );
     // The error path in the snippet should reference the module file,
     // not just the test file.
@@ -898,6 +898,172 @@ fn test_division_error() {
         assert!(
             line.starts_with("    "),
             "expected 4-space indent on error line, got: {:?}\nfull stderr:\n{stderr}",
+            line
+        );
+    }
+}
+
+// ── Fix 2: silt test multi-error output has blank separators ──────────
+
+/// When a test file has multiple parse errors, `silt test` should insert
+/// a blank line between consecutive SourceError blocks, matching the
+/// convention used by `silt run` and `silt check`.
+#[test]
+fn test_silt_test_multi_parse_error_blank_separator() {
+    // Two distinct parse errors: missing closing paren and missing closing brace.
+    let path = temp_silt_file(
+        "multi_parse_err",
+        r#"fn test_a( {
+}
+fn test_b( {
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code for parse errors"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // There should be at least two "error[" markers (one per parse error).
+    let error_count = stderr.matches("error[").count();
+    assert!(
+        error_count >= 2,
+        "expected at least 2 parse errors in stderr, found {error_count}\nstderr:\n{stderr}"
+    );
+
+    // Find the positions of consecutive error blocks and check there's a
+    // blank line ("\n\n") between them.
+    let first_error_end = stderr.find("error[").unwrap();
+    let second_error = stderr[first_error_end + 1..].find("error[");
+    assert!(
+        second_error.is_some(),
+        "expected a second error block in stderr"
+    );
+    let between = &stderr[first_error_end..first_error_end + 1 + second_error.unwrap()];
+    assert!(
+        between.contains("\n\n"),
+        "expected blank line between consecutive error blocks, got:\n{between}\nfull stderr:\n{stderr}"
+    );
+}
+
+/// When a test file has multiple type errors, `silt test` should insert
+/// a blank line between consecutive SourceError blocks.
+#[test]
+fn test_silt_test_multi_type_error_blank_separator() {
+    // Two type errors: type mismatches on annotated bindings.
+    let path = temp_silt_file(
+        "multi_type_err",
+        r#"fn test_types() {
+  let a: Int = "hello"
+  let b: String = 42
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code for type errors"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // There should be at least two error markers.
+    let error_count = stderr.matches("error[").count();
+    assert!(
+        error_count >= 2,
+        "expected at least 2 type errors in stderr, found {error_count}\nstderr:\n{stderr}"
+    );
+
+    // Check blank line between consecutive error blocks.
+    let first_error_end = stderr.find("error[").unwrap();
+    let second_error = stderr[first_error_end + 1..].find("error[");
+    assert!(
+        second_error.is_some(),
+        "expected a second error block in stderr"
+    );
+    let between = &stderr[first_error_end..first_error_end + 1 + second_error.unwrap()];
+    assert!(
+        between.contains("\n\n"),
+        "expected blank line between consecutive type error blocks, got:\n{between}\nfull stderr:\n{stderr}"
+    );
+}
+
+// ── Fix 3: silt test cross-module call stack normalizes paths ─────────
+
+/// When running `silt test` with a relative path on a file that imports a
+/// module causing a runtime error, all paths in stderr (error site and call
+/// stack frames) should be relative — no absolute paths mixed in.
+#[test]
+fn test_silt_test_cross_module_path_normalization() {
+    let dir = std::env::temp_dir().join("silt_cli_test_rendering_crossmod");
+    fs::create_dir_all(&dir).unwrap();
+
+    // helper.silt: a module with a pub fn that will trigger a runtime error.
+    let helper_path = dir.join("helper.silt");
+    fs::write(
+        &helper_path,
+        r#"import test
+pub fn do_check(x) {
+  test.assert_eq(x, 999)
+}
+"#,
+    )
+    .unwrap();
+
+    // main_test.silt: imports helper and calls do_check from a test.
+    let test_path = dir.join("crossmod_test.silt");
+    fs::write(
+        &test_path,
+        r#"import helper
+fn test_cross_module() {
+  helper.do_check(1)
+}
+"#,
+    )
+    .unwrap();
+
+    // Run with a relative path by setting the working directory.
+    let output = silt_cmd()
+        .arg("test")
+        .arg("crossmod_test.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected failing test to exit non-zero"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("FAIL"),
+        "expected FAIL in stderr, got: {stderr}"
+    );
+
+    // No line in the error output should contain the absolute temp dir path.
+    // All paths should be relative since we passed a relative path.
+    let abs_dir_str = dir.to_str().unwrap();
+    for line in stderr.lines() {
+        assert!(
+            !line.contains(abs_dir_str),
+            "found absolute path in stderr line when relative was expected: {:?}\nfull stderr:\n{stderr}",
             line
         );
     }

@@ -2062,7 +2062,6 @@ impl TypeChecker {
                         let arity_ok = if is_method_call {
                             arg_types.len() == params.len()
                                 || arg_types.len() + 1 == params.len()
-                                || arg_types.len() == params.len() + 1
                         } else {
                             arg_types.len() == params.len()
                         };
@@ -2433,7 +2432,7 @@ impl TypeChecker {
                 if let Some(binding_types) = self.loop_binding_types.clone() {
                     if recur_count != binding_types.len() {
                         let bindings_n = binding_types.len();
-                        self.warning(
+                        self.error(
                             format!(
                                 "loop has {} {}, but recur supplies {} {}",
                                 bindings_n,
@@ -2649,6 +2648,11 @@ impl TypeChecker {
                             // Zero-arg constructor
                             if sub_pats.is_empty() {
                                 self.unify(expected, &ctor_ty, span);
+                            } else {
+                                self.error(
+                                    format!("constructor '{}' expects 0 fields, but pattern has {}", name, sub_pats.len()),
+                                    pattern.span,
+                                );
                             }
                         }
                     }

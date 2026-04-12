@@ -100,6 +100,7 @@ impl SourceError {
         source: &str,
         file: impl Into<String>,
     ) -> Self {
+        let span = clamp_span_to_source(span, source);
         let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Compile,
@@ -128,6 +129,7 @@ impl SourceError {
         source: &str,
         file: impl Into<String>,
     ) -> Self {
+        let span = clamp_span_to_source(span, source);
         let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Runtime,
@@ -627,5 +629,54 @@ mod tests {
         // Span should be clamped to line 1 (only line)
         assert_eq!(err.span.line, 1);
         assert_eq!(err.source_line, Some("fn main() = 42".to_string()));
+    }
+
+    #[test]
+    fn test_compile_warning_clamps_eof_span() {
+        // Source has 2 lines but the warning span points at line 5
+        // (past EOF). After clamping, the warning should have a source
+        // snippet from the last line.
+        let source = "let a = 1\nlet b = 2";
+        let err = SourceError::compile_warning(
+            "unused variable",
+            Span::with_offset(5, 1, 99),
+            source,
+            "test.silt",
+        );
+        // Span should be clamped to line 2
+        assert_eq!(err.span.line, 2);
+        // Source line should be present (the last real line)
+        assert_eq!(err.source_line, Some("let b = 2".to_string()));
+        // Should be a warning
+        assert!(err.is_warning);
+        // The rendered output should contain the source snippet
+        let output = format!("{err}");
+        assert!(
+            output.contains("let b = 2"),
+            "expected clamped source snippet in output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_runtime_at_clamps_eof_span() {
+        // Source has 1 line but the runtime error span points at line 5
+        // (past EOF). After clamping, the error should have a source
+        // snippet from the last line.
+        let source = "fn main() = 42";
+        let err = SourceError::runtime_at(
+            "division by zero",
+            Span::with_offset(5, 1, 99),
+            source,
+            "test.silt",
+        );
+        // Span should be clamped to line 1 (only line)
+        assert_eq!(err.span.line, 1);
+        assert_eq!(err.source_line, Some("fn main() = 42".to_string()));
+        // The rendered output should contain the source snippet
+        let output = format!("{err}");
+        assert!(
+            output.contains("fn main() = 42"),
+            "expected clamped source snippet in output:\n{output}"
+        );
     }
 }

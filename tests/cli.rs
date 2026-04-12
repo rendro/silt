@@ -1627,3 +1627,95 @@ fn test_json_error_message_field_has_no_embedded_newlines() {
         "expected key error phrase in message, got: {msg:?}"
     );
 }
+
+// ── Fix 1: init/repl/lsp reject unknown flags ────────────────────────
+
+#[test]
+fn test_init_unknown_flag() {
+    let output = silt_cmd()
+        .arg("init")
+        .arg("--nonexistent")
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success(), "expected non-zero exit code");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown flag") && stderr.contains("--nonexistent"),
+        "expected error mentioning the unknown flag, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_repl_unknown_flag() {
+    let output = silt_cmd()
+        .arg("repl")
+        .arg("--nonexistent")
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success(), "expected non-zero exit code");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown flag") && stderr.contains("--nonexistent"),
+        "expected error mentioning the unknown flag, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lsp_unknown_flag() {
+    let output = silt_cmd()
+        .arg("lsp")
+        .arg("--nonexistent")
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success(), "expected non-zero exit code");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown flag") && stderr.contains("--nonexistent"),
+        "expected error mentioning the unknown flag, got: {stderr}"
+    );
+}
+
+// ── Fix 4: silt fmt --check error has no redundant path prefix ────────
+
+#[test]
+fn test_fmt_check_error_no_redundant_path_prefix() {
+    // Create a file with a parse error so fmt --check hits the error path.
+    let path = temp_silt_file(
+        "fmt_redundant_prefix",
+        "fn broken( {\n}\n",
+    );
+
+    let output = silt_cmd()
+        .arg("fmt")
+        .arg("--check")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(!output.status.success(), "expected non-zero exit code");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path_str = path.to_str().unwrap();
+
+    // The stderr should NOT start with "path: error[..." — the path should
+    // only appear in the "--> path:line:col" locator line inside the SourceError.
+    // Check that no line begins with the filename followed by ": error[".
+    for line in stderr.lines() {
+        assert!(
+            !line.starts_with(&format!("{path_str}: error[")),
+            "found redundant path prefix in error output: {line}\nfull stderr:\n{stderr}"
+        );
+    }
+
+    // The path should still appear in the --> locator line.
+    assert!(
+        stderr.contains("-->"),
+        "expected '-->' locator line in stderr, got: {stderr}"
+    );
+}
