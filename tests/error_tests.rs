@@ -233,7 +233,10 @@ fn test_parse_missing_closing_bracket() {
 #[test]
 fn test_parse_missing_closing_brace() {
     let errs = parse_errors("fn main() { let x = 1");
-    assert!(!errs.is_empty(), "should report an error for missing brace");
+    assert!(
+        errs.iter().any(|e| e.contains("expected '}' to close block")),
+        "got: {errs:?}"
+    );
 }
 
 #[test]
@@ -254,8 +257,8 @@ fn test_parse_fn_missing_body() {
     // Test something that actually fails: a function with no name.
     let errs = parse_errors("fn () { }");
     assert!(
-        !errs.is_empty(),
-        "fn without name should error, got: {errs:?}"
+        errs.iter().any(|e| e.contains("expected identifier, found (")),
+        "got: {errs:?}"
     );
 }
 
@@ -283,8 +286,8 @@ fn main() {
 fn test_parse_type_missing_body() {
     let errs = parse_errors("type Foo");
     assert!(
-        !errs.is_empty(),
-        "type without body should error, got: {errs:?}"
+        errs.iter().any(|e| e.contains("expected {, found EOF")),
+        "got: {errs:?}"
     );
 }
 
@@ -292,23 +295,26 @@ fn test_parse_type_missing_body() {
 fn test_parse_import_missing_module_name() {
     let errs = parse_errors("import");
     assert!(
-        !errs.is_empty(),
-        "import without name should error, got: {errs:?}"
+        errs.iter().any(|e| e.contains("expected identifier, found EOF")),
+        "got: {errs:?}"
     );
 }
 
 #[test]
 fn test_parse_double_comma_in_args() {
     let errs = parse_errors("fn main() { foo(1,, 2) }");
-    assert!(!errs.is_empty(), "double comma should error, got: {errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("expected expression, found ,")),
+        "got: {errs:?}"
+    );
 }
 
 #[test]
 fn test_parse_trailing_operator() {
     let errs = parse_errors("fn main() { 1 + }");
     assert!(
-        !errs.is_empty(),
-        "trailing operator should error, got: {errs:?}"
+        errs.iter().any(|e| e.contains("expected expression, found }")),
+        "got: {errs:?}"
     );
 }
 
@@ -1657,8 +1663,10 @@ trait Greetable for Int {
 fn main() { 42 }
     "#,
     );
-    // Should flag the missing `farewell` method, or at minimum not crash
-    let _ = errs;
+    assert!(
+        errs.iter().any(|e| e.contains("missing method 'farewell'")),
+        "expected error about missing method 'farewell', got: {errs:?}"
+    );
 }
 
 #[test]
@@ -1679,9 +1687,10 @@ trait Numeric for Int {
 fn main() { 42 }
     "#,
     );
-    // If the typechecker improves, it will catch this. For now, just
-    // ensure we don't panic.
-    let _ = errs;
+    assert!(
+        errs.iter().any(|e| e.contains("type mismatch: expected Int, got String")),
+        "expected type mismatch error, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -1887,9 +1896,15 @@ fn foo(x: Self) -> Self { x }
 fn main() { 42 }
     "#,
     );
-    // Self outside a trait context is not meaningful; at minimum it should not crash.
-    // If the typechecker produces an error, it should mention 'Self'.
-    let _ = errs;
+    // Self outside a trait context is not meaningful; the typechecker currently
+    // does not reject it (known gap). Assert the current behavior so that if
+    // the typechecker improves to reject it, this test will break and can be
+    // updated to pin the new diagnostic.
+    assert!(
+        errs.is_empty(),
+        "Self outside trait currently accepted without error; if this fires, \
+         update the assertion to pin the new diagnostic: {errs:?}"
+    );
 }
 
 // ── Type ascription errors ──────────────────────────────────────────
@@ -2332,8 +2347,8 @@ fn main() {
 "#,
     );
     assert!(
-        !errs.is_empty(),
-        "expected a type error for [1, 2, Int], got none"
+        errs.iter().any(|e| e.contains("TypeOf(Int)")),
+        "expected type error about TypeOf(Int) in list, got: {errs:?}"
     );
 }
 

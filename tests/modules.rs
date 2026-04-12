@@ -236,14 +236,11 @@ fn main() {
 }
         "#,
     );
-    // The compiler now detects "exists-but-private" at compile time and
-    // emits a visibility error that names the function, the module, and
-    // the fix. See `test_private_module_function_reference_emits_visibility_error`
-    // below for the canonical assertions; this older test accepts either the
-    // new crisp error or any "undefined"-flavoured fallback.
+    // The compiler detects "exists-but-private" at compile time and emits
+    // a visibility error naming the function, the module, and the fix.
     assert!(
-        err.contains("secret") && (err.contains("pub") || err.to_lowercase().contains("undefined")),
-        "expected visibility or undefined error about `secret`, got: {err}"
+        err.contains("`secret` exists in module `calc` but is not `pub`"),
+        "expected visibility error about `secret`, got: {err}"
     );
 }
 
@@ -266,12 +263,8 @@ fn main() {
         "#,
     );
     assert!(
-        err.contains("no public item")
-            || err.contains("not public")
-            || err.contains("not found")
-            || err.contains("Undefined")
-            || err.contains("undefined"),
-        "expected error about private item, got: {err}"
+        err.contains("undefined global: calc.secret"),
+        "expected 'undefined global: calc.secret', got: {err}"
     );
 }
 

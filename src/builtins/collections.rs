@@ -241,6 +241,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                     other => result.push(other),
                 }
+                if result.len() > MAX_RANGE_MATERIALIZE {
+                    return Err(VmError::new(format!(
+                        "list.flatten: accumulated result exceeds maximum list length of {} elements",
+                        MAX_RANGE_MATERIALIZE
+                    )));
+                }
             }
             Ok(Value::List(Arc::new(result)))
         }
@@ -610,6 +616,12 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                             && pair.len() == 2
                         {
                             result.push(pair[0].clone());
+                            if result.len() > MAX_RANGE_MATERIALIZE {
+                                return Err(VmError::new(format!(
+                                    "list.unfold: accumulated result exceeds maximum list length of {} elements",
+                                    MAX_RANGE_MATERIALIZE
+                                )));
+                            }
                             state = pair[1].clone();
                             continue;
                         }

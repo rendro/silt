@@ -275,6 +275,12 @@ pub struct TypeChecker {
     /// constraint) or a top-level unrelated Var (in which case we leave
     /// the obligation alone — the value will resolve via pass-3 narrowing).
     pub(super) current_fn_param_tyvars: Vec<TyVar>,
+    /// Audit round 19: tracks trait constraints on type variables created
+    /// by `instantiate_with_constraints`. When a scheme with where-clause
+    /// constraints is instantiated, the fresh type variables inherit the
+    /// constraints here. `generalize` then consults this map to propagate
+    /// constraints into newly created schemes (e.g. `let f = constrained_fn`).
+    pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<Symbol>>,
 }
 
 impl Default for TypeChecker {
@@ -309,6 +315,7 @@ impl TypeChecker {
             current_type_anno_span: None,
             pending_where_constraints: Vec::new(),
             current_fn_param_tyvars: Vec::new(),
+            tyvar_trait_constraints: HashMap::new(),
         }
     }
 
@@ -553,6 +560,13 @@ impl TypeChecker {
 
     /// Generalize a type into a scheme by quantifying over free variables
     /// not present in the environment.
+    ///
+    /// Audit round 19: constraints are no longer unconditionally empty.
+    /// We scan `tyvar_trait_constraints` for any recorded constraint whose
+    /// tyvar resolves (via `apply`) to one of the quantified vars, and
+    /// include those constraints in the resulting scheme. This ensures that
+    /// `let f = constrained_fn` and `let f = { x -> constrained_fn(x) }`
+    /// preserve where-clause obligations.
     pub(super) fn generalize(&self, env: &TypeEnv, ty: &Type) -> Scheme {
         let ty = self.apply(ty);
         let env_fvs = env.free_vars(self);
@@ -561,10 +575,27 @@ impl TypeChecker {
             .into_iter()
             .filter(|v| !env_fvs.contains(v))
             .collect();
+        // Collect constraints: for each entry in tyvar_trait_constraints,
+        // resolve the tyvar and check if it matches a quantified var.
+        let mut constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        if !vars.is_empty() {
+            for (&tv, trait_names) in &self.tyvar_trait_constraints {
+                let resolved = self.apply(&Type::Var(tv));
+                if let Type::Var(rv) = resolved
+                    && vars.contains(&rv)
+                {
+                    for &trait_name in trait_names {
+                        if !constraints.contains(&(rv, trait_name)) {
+                            constraints.push((rv, trait_name));
+                        }
+                    }
+                }
+            }
+        }
         Scheme {
             vars,
             ty,
-            constraints: vec![],
+            constraints,
         }
     }
 
@@ -650,7 +681,7 @@ impl TypeChecker {
             mapping.insert(v, self.fresh_var());
         }
         let ty = substitute_vars(&scheme.ty, &mapping);
-        let constraints = scheme
+        let constraints: Vec<(TyVar, Symbol)> = scheme
             .constraints
             .iter()
             .map(|(v, trait_name)| match mapping.get(v) {
@@ -658,6 +689,16 @@ impl TypeChecker {
                 _ => (*v, *trait_name),
             })
             .collect();
+        // Audit round 19: record constraints on the fresh tyvars so that
+        // `generalize` can propagate them into any scheme built from a
+        // type that contains these variables (e.g. `let f = constrained_fn`
+        // or `let f = { x -> constrained_fn(x) }`).
+        for &(tv, trait_name) in &constraints {
+            self.tyvar_trait_constraints
+                .entry(tv)
+                .or_default()
+                .push(trait_name);
+        }
         (ty, constraints)
     }
 
@@ -1134,6 +1175,7 @@ impl TypeChecker {
                     for (old_tv, trait_name) in &original_scheme.constraints {
                         if let Some(&new_tv) = remap.get(old_tv)
                             && new_scheme.vars.contains(&new_tv)
+                            && !final_scheme.constraints.contains(&(new_tv, *trait_name))
                         {
                             final_scheme.constraints.push((new_tv, *trait_name));
                         }
@@ -2168,7 +2210,9 @@ impl TypeChecker {
             let key = intern(&format!("{}.{}", ti.target_type, method.name));
             let mut scheme = self.generalize(env, &fn_type);
             for (tv, trait_name) in &method_constraints {
-                scheme.constraints.push((*tv, *trait_name));
+                if !scheme.constraints.contains(&(*tv, *trait_name)) {
+                    scheme.constraints.push((*tv, *trait_name));
+                }
             }
             env.define(key, scheme);
         }

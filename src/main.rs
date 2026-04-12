@@ -525,6 +525,14 @@ fn main() {
                 println!("  silt disasm main.silt");
                 process::exit(0);
             }
+            // Reject unknown flags before interpreting args as filenames.
+            for arg in &args[2..] {
+                if arg.starts_with('-') && arg != "--help" && arg != "-h" {
+                    eprintln!("silt disasm: unknown flag '{arg}'");
+                    eprintln!("Run 'silt disasm --help' for usage.");
+                    process::exit(1);
+                }
+            }
             if args.len() < 3 {
                 eprintln!("Usage: silt disasm <file.silt>");
                 process::exit(1);
@@ -1352,9 +1360,15 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     Err(_) => return true, // keep the file so the error is reported later
                 };
                 // Scan for function names like `fn test_...` or `fn skip_test_...`
+                // (including `pub fn` variants).
                 for line in source.lines() {
                     let trimmed = line.trim_start();
-                    if let Some(rest) = trimmed.strip_prefix("fn ") {
+                    let rest = if let Some(r) = trimmed.strip_prefix("pub fn ") {
+                        Some(r)
+                    } else {
+                        trimmed.strip_prefix("fn ")
+                    };
+                    if let Some(rest) = rest {
                         let name: String = rest
                             .chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '_')
@@ -1506,6 +1520,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             continue;
         }
 
+        // Build a name -> (module_file, source) map so runtime errors
+        // from imported modules are rendered against the correct file's
+        // source text (mirrors `silt run`'s approach).
+        let module_sources = collect_module_function_sources(path, &source);
+
         // Run each test function
         for decl in &program.decls {
             if let silt::ast::Decl::Fn(f) = decl {
@@ -1537,9 +1556,35 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                         Err(e) => {
                             eprintln!("  FAIL {path}::{name}");
                             if let Some(span) = e.span {
-                                let source_err =
-                                    SourceError::runtime_at(&e.message, span, &source, path);
-                                eprintln!("    {source_err}");
+                                // Determine which source text & file path
+                                // to render against, mirroring `silt run`.
+                                let innermost_fn_name: Option<&str> = e
+                                    .call_stack
+                                    .iter()
+                                    .find(|(n, _)| !n.starts_with('<'))
+                                    .map(|(n, _)| n.as_str());
+                                let (err_source, err_path): (&str, &str) =
+                                    match innermost_fn_name
+                                        .and_then(|n| module_sources.get(n))
+                                    {
+                                        Some((module_path, module_source)) => (
+                                            module_source.as_str(),
+                                            module_path
+                                                .to_str()
+                                                .unwrap_or(path.as_str()),
+                                        ),
+                                        None => (source.as_str(), path.as_str()),
+                                    };
+                                let source_err = SourceError::runtime_at(
+                                    &e.message, span, err_source, err_path,
+                                );
+                                // Indent every line of the formatted error
+                                // so multi-line SourceErrors stay aligned
+                                // with the FAIL header.
+                                let formatted = format!("{source_err}");
+                                for line in formatted.lines() {
+                                    eprintln!("    {line}");
+                                }
                                 // Mirror `silt run`: render a call stack
                                 // when the error crosses ≥2 meaningful
                                 // frames. Without this, a test that fails
@@ -1549,14 +1594,25 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                 // function that invoked it.
                                 let stack_lines = silt::vm::error::render_call_stack(
                                     &e.call_stack,
-                                    |_name, frame_span| {
+                                    |frame_name, frame_span| {
+                                        // Use module path if the frame
+                                        // belongs to an imported module.
+                                        let frame_path: &str =
+                                            match module_sources.get(frame_name) {
+                                                Some((p, _)) => {
+                                                    p.to_str().unwrap_or(path.as_str())
+                                                }
+                                                None => path.as_str(),
+                                            };
                                         if frame_span.line > 0 {
                                             format!(
                                                 "{}:{}:{}",
-                                                path, frame_span.line, frame_span.col
+                                                frame_path,
+                                                frame_span.line,
+                                                frame_span.col
                                             )
                                         } else {
-                                            format!("{path}:<unknown location>")
+                                            format!("{frame_path}:<unknown location>")
                                         }
                                     },
                                 );

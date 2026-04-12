@@ -68,12 +68,13 @@ impl SourceError {
 
     pub fn from_type_error(err: &TypeError, source: &str, file: impl Into<String>) -> Self {
         use crate::typechecker::Severity;
-        let source_line = get_source_line(source, err.span.line);
+        let span = clamp_span_to_source(err.span, source);
+        let source_line = get_source_line(source, span.line);
         let is_warning = err.severity == Severity::Warning;
         Self {
             kind: ErrorKind::Type,
             message: err.message.clone(),
-            span: err.span,
+            span,
             source_line,
             file: Some(file.into()),
             is_warning,
@@ -81,11 +82,12 @@ impl SourceError {
     }
 
     pub fn from_compile_error(err: &CompileError, source: &str, file: impl Into<String>) -> Self {
-        let source_line = get_source_line(source, err.span.line);
+        let span = clamp_span_to_source(err.span, source);
+        let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Compile,
             message: err.message.clone(),
-            span: err.span,
+            span,
             source_line,
             file: Some(file.into()),
             is_warning: false,
@@ -282,7 +284,7 @@ impl fmt::Display for SourceError {
         // Source snippet with caret
         if let Some(ref src_line) = self.source_line {
             let line_num = self.span.line;
-            let gutter_width = line_num_width(line_num + 1);
+            let gutter_width = line_num_width(line_num);
 
             // Empty gutter line
             write!(
@@ -364,8 +366,8 @@ impl fmt::Display for SourceError {
                     ("= note:", line)
                 } else {
                     // Align continuation spaces under `= note: `/`= help: `
-                    // (7-char prefix + 1-char separator = 8 cols wide).
-                    ("        ", line)
+                    // (7-char prefix matches `= note:` / `= help:` width).
+                    ("       ", line)
                 };
                 write!(
                     f,
@@ -512,5 +514,118 @@ mod tests {
         let err = SourceError::from_parse_error(&parse_err, source, "test.silt");
         assert_eq!(err.kind, ErrorKind::Parse);
         assert_eq!(err.source_line, Some("let + = 1".to_string()));
+    }
+
+    // ── L3: gutter width at decimal boundaries ────────────────────
+    #[test]
+    fn test_gutter_width_line_9_single_column() {
+        // Line 9 should get a 1-column gutter (line_num_width(9) == 1),
+        // not a 2-column gutter from the old `line_num_width(line_num + 1)`.
+        let err = SourceError {
+            kind: ErrorKind::Parse,
+            message: "oops".to_string(),
+            span: Span::with_offset(9, 1, 0),
+            source_line: Some("x".to_string()),
+            file: Some("test.silt".to_string()),
+            is_warning: false,
+        };
+        let output = format!("{err}");
+        // The source line should render as " 9 | x" with a 1-wide gutter,
+        // not " 9 | x" with a 2-wide gutter.
+        assert!(
+            output.contains(" 9 | x"),
+            "expected 1-column gutter for line 9, got:\n{output}"
+        );
+        // Make sure the wider (incorrect) gutter is NOT present.
+        assert!(
+            !output.contains("  9 | x"),
+            "line 9 should NOT have a 2-column gutter:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_gutter_width_line_10_two_columns() {
+        // Line 10 legitimately needs a 2-column gutter.
+        let err = SourceError {
+            kind: ErrorKind::Parse,
+            message: "oops".to_string(),
+            span: Span::with_offset(10, 1, 0),
+            source_line: Some("y".to_string()),
+            file: Some("test.silt".to_string()),
+            is_warning: false,
+        };
+        let output = format!("{err}");
+        assert!(
+            output.contains(" 10 | y"),
+            "expected 2-column gutter for line 10, got:\n{output}"
+        );
+    }
+
+    // ── L4: note continuation alignment ───────────────────────────
+    #[test]
+    fn test_note_continuation_alignment() {
+        // A multi-line message should align continuation lines with
+        // the first `= note:` content.
+        let err = SourceError {
+            kind: ErrorKind::Parse,
+            message: "first line\nsecond line\nthird line".to_string(),
+            span: Span::with_offset(1, 1, 0),
+            source_line: Some("x".to_string()),
+            file: Some("test.silt".to_string()),
+            is_warning: false,
+        };
+        let output = format!("{err}");
+        // Find the column where `= note:` content starts.
+        let note_line = output.lines().find(|l| l.contains("= note:")).unwrap();
+        let note_content_col = note_line.find("second").unwrap();
+        // Find the continuation line.
+        let cont_line = output.lines().find(|l| l.contains("third")).unwrap();
+        let cont_content_col = cont_line.find("third").unwrap();
+        assert_eq!(
+            note_content_col, cont_content_col,
+            "continuation content column ({cont_content_col}) should match \
+             = note: content column ({note_content_col}).\n\
+             note line: {note_line:?}\ncont line: {cont_line:?}"
+        );
+    }
+
+    // ── L6: from_type_error / from_compile_error clamp spans ──────
+    #[test]
+    fn test_from_type_error_clamps_eof_span() {
+        use crate::typechecker::Severity;
+        // Source has 2 lines but the type error span points at line 5
+        // (past EOF). After clamping, the error should have a source
+        // snippet from the last line.
+        let source = "let a = 1\nlet b = 2";
+        let type_err = TypeError {
+            message: "some type error".to_string(),
+            span: Span::with_offset(5, 1, 99),
+            severity: Severity::Error,
+        };
+        let err = SourceError::from_type_error(&type_err, source, "test.silt");
+        // Span should be clamped to line 2
+        assert_eq!(err.span.line, 2);
+        // Source line should be present (the last real line)
+        assert_eq!(err.source_line, Some("let b = 2".to_string()));
+        // The rendered output should contain the source snippet
+        let output = format!("{err}");
+        assert!(
+            output.contains("let b = 2"),
+            "expected clamped source snippet in output:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_from_compile_error_clamps_eof_span() {
+        // Same idea as above but for CompileError.
+        let source = "fn main() = 42";
+        let compile_err = CompileError {
+            message: "some compile error".to_string(),
+            span: Span::with_offset(10, 1, 99),
+        };
+        let err = SourceError::from_compile_error(&compile_err, source, "test.silt");
+        // Span should be clamped to line 1 (only line)
+        assert_eq!(err.span.line, 1);
+        assert_eq!(err.source_line, Some("fn main() = 42".to_string()));
     }
 }

@@ -673,3 +673,232 @@ fn test_b() {
         "expected '2 tests:' (plural), got: {stderr}"
     );
 }
+
+// ── Round-19 G1: silt test renders module source for cross-module errors ──
+
+/// When a test imports a module and the runtime error occurs inside that
+/// module's code, `silt test` should render the *module's* source line —
+/// not a random line from the test file at the module's line number.
+///
+/// Mutation reasoning: reverting the G1 fix (removing the
+/// `collect_module_function_sources` call and the module-aware source
+/// lookup in the per-test failure path) makes the assertion for the
+/// module source line (`a / b`) fail — the renderer would show whatever
+/// line N of the *test* file happens to be, which is wrong.
+#[test]
+fn test_silt_test_cross_module_error_renders_module_source() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_r19_g1_{n}"));
+    fs::create_dir_all(&dir).unwrap();
+
+    // Module file: calc.silt with a division function
+    let calc = dir.join("calc.silt");
+    fs::write(&calc, "pub fn divide(a, b) = a / b\n").unwrap();
+
+    // Test file that imports calc and triggers division by zero
+    let test_file = dir.join("calc_test.silt");
+    fs::write(
+        &test_file,
+        r#"import calc
+
+fn test_divide_by_zero() {
+  let r = calc.divide(10, 0)
+  r
+}
+"#,
+    )
+    .unwrap();
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg("calc_test.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected failing test to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("FAIL"),
+        "expected FAIL marker in stderr, got: {stderr}"
+    );
+    // The error snippet must contain the module's source line, not a
+    // random test-file line.
+    assert!(
+        stderr.contains("a / b") || stderr.contains("divide"),
+        "expected module source (a / b or divide) in stderr, got: {stderr}"
+    );
+    // The error path in the snippet should reference the module file,
+    // not just the test file.
+    assert!(
+        stderr.contains("calc.silt"),
+        "expected 'calc.silt' in error output, got: {stderr}"
+    );
+}
+
+// ── Round-19 G2: silt test --filter finds pub fn test_ functions ──────
+
+/// When a test file uses `pub fn test_*` instead of plain `fn test_*`,
+/// `silt test --filter` should still find and run those tests. Previously
+/// the text-scan pre-filter only tried `strip_prefix("fn ")` and missed
+/// `pub fn` variants.
+///
+/// Mutation reasoning: reverting the G2 fix (removing the
+/// `strip_prefix("pub fn ")` branch in the filter text-scan) makes the
+/// test fail — the file is skipped entirely because no `fn test_alpha`
+/// is found, so 0 tests run instead of 1.
+#[test]
+fn test_silt_test_filter_finds_pub_fn_tests() {
+    let path = temp_silt_file(
+        "pub_fn_filter_test",
+        r#"import test
+pub fn test_alpha() {
+  test.assert_eq(1, 1)
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .arg("--filter")
+        .arg("alpha")
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        output.status.success(),
+        "expected exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("1 test"),
+        "expected '1 test' in output, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("PASS"),
+        "expected PASS marker in output, got: {stderr}"
+    );
+}
+
+// ── Round-19 G3: silt disasm rejects unknown flags ────────────────────
+
+/// `silt disasm --bogus` should fail with an "unknown flag" message
+/// instead of silently treating `--bogus` as a filename.
+///
+/// Mutation reasoning: reverting the G3 fix (removing the unknown-flag
+/// validation loop before `disasm_file`) makes the assertion fail — the
+/// CLI would try to open a file called `--bogus` instead of reporting
+/// the flag error.
+#[test]
+fn test_disasm_unknown_flag() {
+    let path = temp_silt_file(
+        "disasm_unk_flag",
+        r#"fn main() {
+  println("hello")
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("disasm")
+        .arg("--bogus")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit code"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("unknown flag"),
+        "expected 'unknown flag' in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--bogus"),
+        "expected '--bogus' in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("silt disasm --help"),
+        "expected help hint in stderr, got: {stderr}"
+    );
+}
+
+// ── Round-19 L5: per-test multi-line error indentation ────────────────
+
+/// When `silt test` renders a multi-line SourceError for a failing test,
+/// every line of the error (including the `-->` locator, source snippet,
+/// and caret) should be indented with 4 spaces — not just the first
+/// line.
+///
+/// Mutation reasoning: reverting the L5 fix (replacing the per-line
+/// indent loop with the old `eprintln!("    {source_err}")`) makes the
+/// assertion fail — only the first line is indented while subsequent
+/// lines start at column 0.
+#[test]
+fn test_silt_test_multiline_error_indentation() {
+    let path = temp_silt_file(
+        "multiline_indent_test",
+        r#"import test
+
+fn test_division_error() {
+  let r = 1 / 0
+  r
+}
+"#,
+    );
+
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&path)
+        .output()
+        .expect("failed to run silt");
+
+    assert!(
+        !output.status.success(),
+        "expected failing test to exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("FAIL"),
+        "expected FAIL marker in stderr, got: {stderr}"
+    );
+
+    // Every non-empty line after the "FAIL" line that belongs to the
+    // error rendering (up to the summary line) should be indented.
+    // Specifically, the `-->`, source line, and `^` caret line must
+    // all start with at least 4 spaces of indentation.
+    let fail_idx = stderr.find("FAIL").expect("FAIL not found");
+    let after_fail = &stderr[fail_idx..];
+    let error_lines: Vec<&str> = after_fail
+        .lines()
+        .skip(1) // skip the FAIL line itself
+        .take_while(|l| !l.contains("test:") && !l.contains("tests:"))
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    assert!(
+        !error_lines.is_empty(),
+        "expected error lines after FAIL, got nothing"
+    );
+
+    for line in &error_lines {
+        // Each error-rendering line should be indented by at least 4
+        // spaces. We check that the line starts with "    " (4 spaces).
+        assert!(
+            line.starts_with("    "),
+            "expected 4-space indent on error line, got: {:?}\nfull stderr:\n{stderr}",
+            line
+        );
+    }
+}
