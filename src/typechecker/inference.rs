@@ -1477,7 +1477,24 @@ impl TypeChecker {
                                 Type::Error
                             } else if let Some((_, method_ty)) = matches.first() {
                                 self.last_field_access_was_method = true;
-                                let resolved = self.apply(method_ty);
+                                // Instantiate with fresh TyVars rather than
+                                // returning the trait declaration's template
+                                // type directly. TraitInfo.methods stores
+                                // bare Type values whose TyVars were allocated
+                                // once at register_trait_decl time and shared
+                                // across all call sites. Without instantiation,
+                                // unification at the downstream Call arm binds
+                                // those shared template TyVars in self.subst,
+                                // so a second constrained call site on a
+                                // different concrete type sees the first
+                                // site's bindings instead of polymorphic vars.
+                                // This surfaces observably when trait methods
+                                // have polymorphic return types (beyond Self):
+                                // first site binds the return TyVar to one
+                                // concrete type, second site inherits it and
+                                // produces spurious "type mismatch" errors.
+                                let instantiated = self.instantiate_method_type(method_ty);
+                                let resolved = self.apply(&instantiated);
                                 expr.ty = Some(resolved.clone());
                                 return resolved;
                             } else {
