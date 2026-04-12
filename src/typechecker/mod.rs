@@ -3252,7 +3252,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn process(x) {
-  when Ok(value) = Ok(x) else {
+  when let Ok(value) = Ok(x) else {
     return Err("failed")
   }
   Ok(value * 2)
@@ -3293,7 +3293,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn process(x) {
-  when Ok(value) = Ok(x) else {
+  when let Ok(value) = Ok(x) else {
     return Err("failed")
   }
   when value > 0 else {
@@ -3452,17 +3452,17 @@ fn main() {
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
+  when let Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
+  when let Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 
   let host = host_line |> string.replace("host=", "")
   let port_result = port_line |> string.replace("port=", "") |> int.parse()
-  when Ok(port) = port_result else {
+  when let Ok(port) = port_result else {
     return Err("invalid port number")
   }
 
@@ -4116,11 +4116,11 @@ fn main() {
 
     #[test]
     fn test_when_some_narrows_inner_type() {
-        // After `when Some(x) = opt`, x should have the inner type (Int)
+        // After `when let Some(x) = opt`, x should have the inner type (Int)
         assert_no_errors(
             r#"
 fn get_value(opt) {
-  when Some(x) = opt else {
+  when let Some(x) = opt else {
     return 0
   }
   x + 1
@@ -4135,11 +4135,11 @@ fn main() {
 
     #[test]
     fn test_when_ok_narrows_inner_type() {
-        // After `when Ok(v) = result`, v should have the ok type
+        // After `when let Ok(v) = result`, v should have the ok type
         assert_no_errors(
             r#"
 fn process(result) {
-  when Ok(v) = result else {
+  when let Ok(v) = result else {
     return 0
   }
   v + 10
@@ -4157,7 +4157,7 @@ fn main() {
         assert_no_errors(
             r#"
 fn double_or_zero(opt) {
-  when Some(n) = opt else {
+  when let Some(n) = opt else {
     return 0
   }
   n * 2

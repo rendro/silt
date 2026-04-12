@@ -2309,7 +2309,7 @@ fn format_stmt(stmt: &Stmt, depth: usize) -> String {
         } => {
             let pat = format_pattern(pattern);
             format!(
-                "{prefix}when {pat} = {} else {}",
+                "{prefix}when let {pat} = {} else {}",
                 format_expr(expr, depth),
                 format_body(else_body, depth)
             )
@@ -3722,7 +3722,7 @@ fn main() = Point { x: 1, y: 2 }
     #[test]
     fn test_format_when_pattern_stmt() {
         let source = r#"fn main() {
-  when Some(x) = Some(42) else {
+  when let Some(x) = Some(42) else {
     return 0
   }
   x

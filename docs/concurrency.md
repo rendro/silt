@@ -612,7 +612,7 @@ fn main() {
 
   -- Wait for the worker to finish
   task.join(worker)
-  when Message(status) = channel.receive(done) else { return }
+  when let Message(status) = channel.receive(done) else { return }
   println(status)
 }
 -- prints:
@@ -645,9 +645,9 @@ fn main() {
   workers |> list.each { w -> task.join(w) }
   channel.close(results)
 
-  when Message(r1) = channel.receive(results) else { return }
-  when Message(r2) = channel.receive(results) else { return }
-  when Message(r3) = channel.receive(results) else { return }
+  when let Message(r1) = channel.receive(results) else { return }
+  when let Message(r2) = channel.receive(results) else { return }
+  when let Message(r3) = channel.receive(results) else { return }
   println("results: {r1}, {r2}, {r3}")
   -- output: results: 10, 20, 30
 }

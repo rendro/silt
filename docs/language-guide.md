@@ -18,7 +18,7 @@ This guide is split into focused pages:
 - [Bindings and Functions](language/bindings-and-functions.md) -- `let`, `fn`, closures, trailing closures, early return
 - [Types](language/types.md) -- primitives, enums, generics, records, tuples, recursive types, type ascription
 - [Pattern Matching](language/pattern-matching.md) -- match, literals, constructors, tuples, records, lists, maps, or-patterns, guards, ranges, pin, when/else, exhaustiveness
-- [Error Handling](language/error-handling.md) -- Result, Option, `?` operator, when-else, Never type
+- [Error Handling](language/error-handling.md) -- Result, Option, `?` operator, when let-else, Never type
 - [Collections](language/collections.md) -- lists, maps, sets
 - [Loops, Pipes, and Other Features](language/loops-and-pipes.md) -- pipe operator, string interpolation, loop expression, ranges, comments, operators
 - [Traits](language/traits.md) -- declaration, implementation, Self type, built-in traits, where clauses

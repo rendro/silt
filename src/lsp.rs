@@ -2336,7 +2336,7 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
                         if expr.span.offset <= cursor {
                             collect_pattern_names(pattern, locals);
                             // Try to resolve types from the expression
-                            // For `when Ok(x) = expr`, if expr has type Result(T, E),
+                            // For `when let Ok(x) = expr`, if expr has type Result(T, E),
                             // then x has type T
                             resolve_when_pattern_types(pattern, expr.ty.as_ref(), locals);
                         }
@@ -2404,7 +2404,7 @@ fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mu
     }
 }
 
-/// For `when Ok(x) = expr` where expr has type Result(T, E), set x's type to T.
+/// For `when let Ok(x) = expr` where expr has type Result(T, E), set x's type to T.
 fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals: &mut [LocalVar]) {
     if let (PatternKind::Constructor(ctor, fields), Some(Type::Generic(_, args))) =
         (&pattern.kind, expr_ty)

@@ -3514,7 +3514,7 @@ fn f(m) {
         let fns = compile(
             r#"
 fn f(x) {
-    when Some(v) = x else { return 0 }
+    when let Some(v) = x else { return 0 }
     v
 }
 "#,

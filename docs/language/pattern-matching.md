@@ -186,15 +186,15 @@ match channel.select([ch1, ch2]) {
 }
 ```
 
-## `when`/`else` for Inline Assertions
+## `when let`/`else` for Inline Assertions
 
 Asserts a pattern match and binds on success, or diverges on failure:
 
 ```silt
 fn process(input) {
-  when Ok(value) = parse(input) else { return Err("parse failed") }
-  when Some(user) = find_user(value) else { return Err("not found") }
-  when Admin(perms) = user.role else { return Err("unauthorized") }
+  when let Ok(value) = parse(input) else { return Err("parse failed") }
+  when let Some(user) = find_user(value) else { return Err("not found") }
+  when let Admin(perms) = user.role else { return Err("unauthorized") }
   do_admin_thing(user, perms)
 }
 ```

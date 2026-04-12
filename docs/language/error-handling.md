@@ -31,7 +31,7 @@ fn process(input) {
 }
 ```
 
-## `when`-`else` for Custom Errors
+## `when let`-`else` for Custom Errors
 
 When you need custom error messages or destructuring beyond `?`:
 
@@ -39,15 +39,15 @@ When you need custom error messages or destructuring beyond `?`:
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
+  when let Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
   let host = host_line |> string.replace("host=", "")
 
-  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
+  when let Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
-  when Ok(port) = port_line |> string.replace("port=", "") |> int.parse() else {
+  when let Ok(port) = port_line |> string.replace("port=", "") |> int.parse() else {
     return Err("invalid port number")
   }
 
@@ -55,9 +55,9 @@ fn parse_config(text) {
 }
 ```
 
-## Choosing Between `?` and `when`-`else`
+## Choosing Between `?` and `when let`-`else`
 
-Use `?` when you want to propagate the error unchanged. Use `when`-`else`
+Use `?` when you want to propagate the error unchanged. Use `when let`-`else`
 when you need to:
 
 - Provide a custom error message
@@ -68,14 +68,14 @@ when you need to:
 -- Simple propagation: use ?
 let value = parse(input)?
 
--- Custom error message: use when-else
-when Ok(value) = parse(input) else {
+-- Custom error message: use when let-else
+when let Ok(value) = parse(input) else {
   return Err("failed to parse input: expected integer")
 }
 
 -- Mixed pattern and boolean guards
 fn process(input) {
-  when Ok(value) = parse(input) else { return Err("parse failed") }
+  when let Ok(value) = parse(input) else { return Err("parse failed") }
   when value > 0 else { return Err("must be positive") }
   Ok(value * 2)
 }

@@ -1930,7 +1930,7 @@ fn test_when_pattern_match() {
     let result = run_vm(
         r#"
             fn extract(val) {
-                when Some(n) = val else { return -1 }
+                when let Some(n) = val else { return -1 }
                 n
             }
             fn main() {
@@ -1946,7 +1946,7 @@ fn test_when_pattern_match_fails() {
     let result = run_vm(
         r#"
             fn extract(val) {
-                when Some(n) = val else { return -1 }
+                when let Some(n) = val else { return -1 }
                 n
             }
             fn main() {

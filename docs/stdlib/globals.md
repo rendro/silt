@@ -216,7 +216,7 @@ import channel
 fn main() {
     let ch = channel.new(1)
     channel.send(ch, 42)
-    when Message(v) = channel.receive(ch) else { return }
+    when let Message(v) = channel.receive(ch) else { return }
     println(v)  -- 42
 }
 ```

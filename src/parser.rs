@@ -1138,14 +1138,13 @@ impl Parser {
     fn parse_when_stmt(&mut self) -> Result<Stmt> {
         self.expect(&Token::When)?;
 
-        // Try pattern form: when <pattern> = <expr> else { <block> }
-        // If parse_pattern succeeds and is followed by `=`, it's the pattern form.
-        // Otherwise, backtrack and parse as boolean form: when <expr> else { <block> }
-        let saved = self.save();
-        if let Ok(pattern) = self.parse_pattern()
-            && self.at(&Token::Eq)
-        {
-            self.advance(); // consume `=`
+        // Pattern form: when let <pattern> = <expr> else { <block> }
+        // The `let` keyword is an unambiguous lookahead — it cannot begin
+        // a valid expression, so no backtracking is needed.
+        if self.at(&Token::Let) {
+            self.advance(); // consume `let`
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::Eq)?;
             self.skip_nl();
             // Use min_bp=11 to prevent `else` from being consumed as the
             // infix FloatElse operator (which has l_bp=10).
@@ -1160,7 +1159,6 @@ impl Parser {
         }
 
         // Boolean form: when <expr> else { <block> }
-        self.restore(saved);
         // Use min_bp=11 to prevent `else` from being consumed as the
         // infix FloatElse operator (which has l_bp=10).
         let condition = self.parse_expr_bp(11)?;
@@ -2633,7 +2631,7 @@ fn main() {
         let prog = parse(
             r#"
             fn main() {
-                when Some(x) = find(42) else {
+                when let Some(x) = find(42) else {
                     return None
                 }
                 x
@@ -2866,7 +2864,7 @@ fn main() {
         let prog = parse(
             r#"
             fn main() {
-                when Ok(value) = parse(input) else {
+                when let Ok(value) = parse(input) else {
                     return Err("failed")
                 }
                 when value > 0 else {

@@ -5,11 +5,11 @@ import string
 fn parse_config(text) {
   let lines = text
   |> string.split("\n")
-  when Some(host_line) = lines
+  when let Some(host_line) = lines
   |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
-  when Some(port_line) = lines
+  when let Some(port_line) = lines
   |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
@@ -18,7 +18,7 @@ fn parse_config(text) {
   let port_result = port_line
   |> string.replace("port=", "")
   |> int.parse()
-  when Ok(port) = port_result else {
+  when let Ok(port) = port_result else {
     return Err("invalid port number")
   }
   Ok("connecting to {host}:{port}")

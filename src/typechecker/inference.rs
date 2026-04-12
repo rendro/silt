@@ -588,7 +588,7 @@ impl TypeChecker {
                 {
                     self.error(
                         format!(
-                            "refutable pattern in `let`: constructor '{}' is only one of {} variants of enum '{}'; use a `match` or `when ... else` instead",
+                            "refutable pattern in `let`: constructor '{}' is only one of {} variants of enum '{}'; use a `match` or `when let ... else` instead",
                             name,
                             enum_info.variants.len(),
                             enum_name
@@ -2524,38 +2524,15 @@ impl TypeChecker {
                 let resolved_else = self.apply(&else_ty);
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
-                        "'when' else body must diverge — use 'return' or 'panic'".to_string(),
+                        "'when let' else body must diverge — use 'return' or 'panic'".to_string(),
                         else_body.span,
                     );
                 }
 
-                // Bind the pattern in the current scope (type narrowing)
+                // Bind the pattern in the current scope (type narrowing).
+                // bind_pattern handles all pattern kinds including constructors
+                // (enum lookup, param substitution, recursive sub-pattern binding).
                 self.bind_pattern(pattern, &expr_ty, env, expr_span);
-
-                // For constructor patterns, narrow the type
-                // e.g., when Ok(value) = expr, value has the inner type
-                if let PatternKind::Constructor(name, sub_pats) = &pattern.kind {
-                    let expr_ty = self.apply(&expr_ty);
-                    if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
-                        && let Some(enum_info) = self.enums.get(&enum_name).cloned()
-                        && let Some(var_info) = enum_info.variants.iter().find(|v| v.name == *name)
-                    {
-                        let type_args = match &expr_ty {
-                            Type::Generic(_, args) => args.clone(),
-                            _ => enum_info.params.iter().map(|_| self.fresh_var()).collect(),
-                        };
-                        for (i, sp) in sub_pats.iter().enumerate() {
-                            if i < var_info.field_types.len() {
-                                let field_ty = substitute_enum_params(
-                                    &var_info.field_types[i],
-                                    &enum_info.param_var_ids,
-                                    &type_args,
-                                );
-                                self.bind_pattern(sp, &field_ty, env, expr_span);
-                            }
-                        }
-                    }
-                }
 
                 Type::Unit
             }

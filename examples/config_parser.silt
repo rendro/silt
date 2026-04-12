@@ -142,7 +142,7 @@ fn print_config(config) {
 fn main() {
   -- Read the config file
   let file_result = io.read_file("examples/app.conf")
-  when Ok(text) = file_result else {
+  when let Ok(text) = file_result else {
     println("Error: could not read examples/app.conf")
     return ()
   }

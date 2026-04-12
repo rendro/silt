@@ -278,7 +278,7 @@ fn test_when_tuple_destructure_on_non_tuple_rejected() {
     assert_type_error(
         r#"
 fn main() {
-  when (a, b) = 42 else { return }
+  when let (a, b) = 42 else { return }
   println("{a} {b}")
 }
 "#,
@@ -291,7 +291,7 @@ fn test_when_constructor_pattern_on_non_variant_rejected() {
     assert_type_error(
         r#"
 fn main() {
-  when Ok(x) = 42 else { return }
+  when let Ok(x) = 42 else { return }
   println("{x}")
 }
 "#,
@@ -477,7 +477,7 @@ fn main() { println(check(Pair { a: 1, b: 2 })) }
 // misleading `+ Int String` at the first use of `n`). The typechecker
 // now rejects refutable Constructor patterns in `let` outright with
 // a clean, actionable diagnostic — the user must use `match` or
-// `when ... else` for multi-variant enums. Single-variant enums
+// `when let ... else` for multi-variant enums. Single-variant enums
 // (e.g. `type Wrapper { Wrap(Int) }`) remain irrefutable and are
 // allowed.
 

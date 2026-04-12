@@ -208,7 +208,7 @@ fn test_when_else() {
     let result = run_typed(
         r#"
 fn safe_div(a, b) {
-  when Ok(divisor) = if_nonzero(b) else {
+  when let Ok(divisor) = if_nonzero(b) else {
     return Err("division by zero")
   }
   Ok(a / divisor)
@@ -358,17 +358,17 @@ import string
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
-  when Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
+  when let Some(host_line) = lines |> list.find { l -> string.contains(l, "host=") } else {
     return Err("missing host in config")
   }
 
-  when Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
+  when let Some(port_line) = lines |> list.find { l -> string.contains(l, "port=") } else {
     return Err("missing port in config")
   }
 
   let host = host_line |> string.replace("host=", "")
   let port_result = port_line |> string.replace("port=", "") |> int.parse()
-  when Ok(port) = port_result else {
+  when let Ok(port) = port_result else {
     return Err("invalid port number")
   }
 
@@ -4846,7 +4846,7 @@ fn main() {
 fn test_when_bool_mixed_with_pattern() {
     let result = run(r#"
 fn process(input) {
-  when Ok(value) = input else { return "parse failed" }
+  when let Ok(value) = input else { return "parse failed" }
   when value > 0 else { return "must be positive" }
   value * 2
 }
@@ -4862,7 +4862,7 @@ fn main() {
 fn test_when_bool_mixed_pattern_fails() {
     let result = run(r#"
 fn process(input) {
-  when Ok(value) = input else { return "parse failed" }
+  when let Ok(value) = input else { return "parse failed" }
   when value > 0 else { return "must be positive" }
   value * 2
 }
@@ -4878,7 +4878,7 @@ fn main() {
 fn test_when_bool_mixed_bool_fails() {
     let result = run(r#"
 fn process(input) {
-  when Ok(value) = input else { return "parse failed" }
+  when let Ok(value) = input else { return "parse failed" }
   when value > 0 else { return "must be positive" }
   value * 2
 }
