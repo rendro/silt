@@ -216,6 +216,49 @@ proptest! {
     }
 }
 
+// ── Property tests: typechecker & compiler never panic ───────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// The typechecker must never panic on arbitrary input that lexes and
+    /// parses without errors. Type errors are fine, panics are not.
+    #[test]
+    fn typechecker_never_panics(input in "\\PC{0,200}") {
+        let tokens = match Lexer::new(&input).tokenize() {
+            Ok(t) => t,
+            Err(_) => return Ok(()),
+        };
+        let mut program = match Parser::new(tokens).parse_program() {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        // Must not panic — type errors are acceptable.
+        let _ = silt::typechecker::check(&mut program);
+    }
+
+    /// The compiler must never panic on arbitrary input that lexes, parses,
+    /// and typechecks without errors. Compile errors are fine, panics are not.
+    #[test]
+    fn compiler_never_panics(input in "\\PC{0,200}") {
+        let tokens = match Lexer::new(&input).tokenize() {
+            Ok(t) => t,
+            Err(_) => return Ok(()),
+        };
+        let mut program = match Parser::new(tokens).parse_program() {
+            Ok(p) => p,
+            Err(_) => return Ok(()),
+        };
+        let type_errors = silt::typechecker::check(&mut program);
+        if !type_errors.is_empty() {
+            return Ok(());
+        }
+        // Must not panic — compile errors are acceptable.
+        let mut compiler = silt::compiler::Compiler::new();
+        let _ = compiler.compile_program(&program);
+    }
+}
+
 // ── Property tests: expression evaluation ─────────────────────────────
 
 proptest! {

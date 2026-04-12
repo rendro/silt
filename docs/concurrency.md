@@ -107,7 +107,7 @@ Returns `Unit`.
 ### Receiving: `channel.receive(ch)`
 
 ```silt
-let Message(msg) = channel.receive(ch)
+when let Message(msg) = channel.receive(ch) else { return }
 ```
 
 `channel.receive` takes one value from the channel's buffer. It returns one of
@@ -211,7 +211,7 @@ task.spawn(fn() {
 })
 
 -- this blocks until the spawned task calls channel.send
-let Message(msg) = channel.receive(ch)
+when let Message(msg) = channel.receive(ch) else { return }
 println(msg)  -- "hello"
 ```
 
@@ -267,7 +267,7 @@ let h = task.spawn(fn() {
 })
 
 task.join(h)
-let Message(val) = channel.receive(ch)  -- val = 20
+when let Message(val) = channel.receive(ch) else { return }  -- val = 20
 ```
 
 ### Joining: `task.join(handle)`

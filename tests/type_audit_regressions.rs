@@ -1109,7 +1109,7 @@ fn main() {
   println(string.length("hi", "extra"))
 }
 "#,
-        "argument",
+        "expects 1 argument",
     );
 }
 
@@ -1202,5 +1202,42 @@ fn main() {
     assert!(
         errs.is_empty(),
         "valid loop/recur should produce no type errors, got: {errs:?}"
+    );
+}
+
+// ── B1 (round 21): receiver method call arity check allows one extra arg
+//
+// The method-call arity check had `arg_types.len() == params.len()` as a
+// disjunct, which wrongly accepted one extra explicit argument (it would
+// unify against the `self` param slot). Removed that disjunct so only
+// `arg_types.len() + 1 == params.len()` is used for method calls.
+
+#[test]
+fn test_receiver_method_extra_arg_rejected() {
+    // "hello".display() has signature (self) -> String.
+    // Passing an extra arg must be rejected.
+    assert_type_error(
+        r#"
+fn main() {
+  println("hello".display("extra"))
+}
+"#,
+        "function expects 1 argument",
+    );
+}
+
+#[test]
+fn test_receiver_method_correct_arity_accepted() {
+    // "hello".display() with zero explicit args is correct (self is implicit).
+    let errs = type_errors(
+        r#"
+fn main() {
+  println("hello".display())
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "expected no type errors for correct receiver method arity, got: {errs:?}"
     );
 }

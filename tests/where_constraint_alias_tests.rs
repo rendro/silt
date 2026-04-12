@@ -57,7 +57,7 @@ fn main() { f(42) }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("does not implement") || stderr.contains("Greetable"),
+        stderr.contains("does not implement trait 'Greetable'"),
         "expected trait-constraint error in stderr, got: {stderr}"
     );
 }
@@ -87,7 +87,7 @@ fn main() { f(42) }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("does not implement") || stderr.contains("Greetable"),
+        stderr.contains("does not implement trait 'Greetable'"),
         "expected trait-constraint error in stderr, got: {stderr}"
     );
 }

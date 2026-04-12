@@ -151,6 +151,7 @@ impl TypeChecker {
         receiver_ty: &Type,
         span: Span,
     ) -> Type {
+        self.last_field_access_was_method = true;
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
         // Unify the receiver with the method's self param so concrete
         // receiver element types flow into the impl's tyvars before the
@@ -1250,6 +1251,7 @@ impl TypeChecker {
             }
 
             ExprKind::FieldAccess(obj, field) => {
+                self.last_field_access_was_method = false;
                 let field = *field;
                 // Capture module name before mutable borrow for inference
                 let module_name = if let ExprKind::Ident(n) = &obj.kind {
@@ -1474,6 +1476,7 @@ impl TypeChecker {
                                 );
                                 Type::Error
                             } else if let Some((_, method_ty)) = matches.first() {
+                                self.last_field_access_was_method = true;
                                 let resolved = self.apply(method_ty);
                                 expr.ty = Some(resolved.clone());
                                 return resolved;
@@ -2005,7 +2008,21 @@ impl TypeChecker {
                 } else {
                     None
                 };
-                let is_method_call = matches!(&callee.kind, ExprKind::FieldAccess(..));
+                // Detect module-qualified calls (mod.fn(args)) for arity
+                // tolerance: some builtins register an optional trailing
+                // param (e.g. test.assert_eq(a, a, String)), so module
+                // calls allow args == params OR args + 1 == params.
+                let is_module_call = match &callee.kind {
+                    ExprKind::FieldAccess(obj, field) => {
+                        if let ExprKind::Ident(mod_name) = &obj.kind {
+                            let qualified = intern(&format!("{}.{field}", resolve(*mod_name)));
+                            env.lookup(qualified).is_some()
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
                 let arg_spans: Vec<Span> = args.iter().map(|a| a.span).collect();
 
                 // Option B (parser-recovery cascade fix): if the callee
@@ -2033,6 +2050,9 @@ impl TypeChecker {
 
                 // If callee is a named function, use instantiate_with_constraints
                 // to get where clause constraints with remapped type variables.
+                // Reset the method-dispatch flag so stale values from prior
+                // FieldAccess evaluations don't leak into this Call.
+                self.last_field_access_was_method = false;
                 let (callee_ty, where_constraints) = if let Some(name) = callee_fn_name {
                     if let Some(scheme) = env.lookup(name).cloned() {
                         let (ty, constraints) = self.instantiate_with_constraints(&scheme);
@@ -2046,6 +2066,10 @@ impl TypeChecker {
                     (self.apply(&ty), vec![])
                 };
 
+                // Read the method-dispatch flag BEFORE inferring args
+                // (which may trigger nested FieldAccess and overwrite it).
+                let is_method_call = self.last_field_access_was_method;
+
                 let arg_types: Vec<Type> =
                     args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
 
@@ -2056,10 +2080,15 @@ impl TypeChecker {
                         for i in 0..min_len {
                             self.unify(&arg_types[i], &params[i], arg_spans[i]);
                         }
-                        // Check arity. For method calls (obj.method(...)),
-                        // the type signature includes `self` but the call
-                        // site does not, so allow a difference of exactly 1.
+                        // Check arity:
+                        // - method call (dispatch_method_entry set the flag):
+                        //   args + 1 == params (implicit self)
+                        // - module call: args == params, or args + 1 == params
+                        //   (some builtins have an optional trailing param)
+                        // - field/normal call: args == params
                         let arity_ok = if is_method_call {
+                            arg_types.len() + 1 == params.len()
+                        } else if is_module_call {
                             arg_types.len() == params.len()
                                 || arg_types.len() + 1 == params.len()
                         } else {

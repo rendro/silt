@@ -33,15 +33,14 @@ impl TypeChecker {
             );
         }
 
-        // ── panic: a -> b where a: Display (never returns) ─────────────
+        // ── panic: a -> Never where a: Display (never returns) ─────────
         {
             let (a, av) = self.fresh_tv();
-            let (b, bv) = self.fresh_tv();
             env.define(
                 intern("panic"),
                 Scheme {
-                    vars: vec![av, bv],
-                    ty: Type::Fun(vec![a], Box::new(b)),
+                    vars: vec![av],
+                    ty: Type::Fun(vec![a], Box::new(Type::Never)),
                     constraints: vec![(av, intern("Display"))],
                 },
             );

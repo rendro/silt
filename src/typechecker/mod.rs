@@ -281,6 +281,13 @@ pub struct TypeChecker {
     /// constraints here. `generalize` then consults this map to propagate
     /// constraints into newly created schemes (e.g. `let f = constrained_fn`).
     pub(super) tyvar_trait_constraints: HashMap<TyVar, Vec<Symbol>>,
+    /// Set by the FieldAccess arm of infer_expr: `true` when the last
+    /// FieldAccess resolved via method dispatch (trait method table),
+    /// `false` when it resolved via record-field or module-qualified
+    /// lookup.  Read by the Call arm immediately after inferring the
+    /// callee to decide arity semantics (method call adds implicit self;
+    /// field/module calls do not).
+    pub(super) last_field_access_was_method: bool,
 }
 
 impl Default for TypeChecker {
@@ -316,6 +323,7 @@ impl TypeChecker {
             pending_where_constraints: Vec::new(),
             current_fn_param_tyvars: Vec::new(),
             tyvar_trait_constraints: HashMap::new(),
+            last_field_access_was_method: false,
         }
     }
 

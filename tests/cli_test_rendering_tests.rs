@@ -1068,3 +1068,4 @@ fn test_cross_module() {
         );
     }
 }
+

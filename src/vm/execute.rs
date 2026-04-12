@@ -675,6 +675,11 @@ impl Vm {
                         Ok(DispatchResult::Return(result)) => {
                             let finished_base = self.current_frame()?.base_slot;
                             self.frames.pop();
+                            // Prune tail-call elided diagnostic entries for
+                            // the just-popped frame so stale data from prior
+                            // callback iterations can't bleed into later
+                            // error reports. Mirrors execute()/execute_slice().
+                            self.prune_tco_elided(self.frames.len());
                             if self.frames.len() < saved_frame_count {
                                 return Err(VmError::new(
                                     "frame underflow in invoke_callable".into(),
@@ -694,6 +699,9 @@ impl Vm {
                             value,
                             finished_base,
                         }) => {
+                            // EarlyReturn from `?` already popped its frame;
+                            // prune tco_elided to match, same as execute()/execute_slice().
+                            self.prune_tco_elided(self.frames.len());
                             // QuestionMark popped a frame. Check if we've returned to our level.
                             if self.frames.len() <= saved_frame_count {
                                 self.stack.truncate(func_slot);

@@ -390,7 +390,12 @@ impl Chunk {
     /// Patch a previously emitted jump's u16 operand to point to the current offset.
     /// Returns an error if the jump offset exceeds the u16 limit.
     pub fn patch_jump(&mut self, patch_offset: usize) -> Result<(), String> {
-        let target = self.code.len();
+        self.patch_jump_to(patch_offset, self.code.len())
+    }
+
+    /// Patch a previously emitted jump's u16 operand to point to a specific target offset.
+    /// Returns an error if the jump offset exceeds the u16 limit.
+    pub fn patch_jump_to(&mut self, patch_offset: usize, target: usize) -> Result<(), String> {
         let jump_base = patch_offset + 2; // after the u16 operand
         let offset = target - jump_base;
         if offset > u16::MAX as usize {
