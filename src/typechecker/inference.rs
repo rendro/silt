@@ -2449,6 +2449,8 @@ impl TypeChecker {
                             self.unify(arg_ty, binding_ty, span);
                         }
                     }
+                } else {
+                    self.error("recur outside of loop".to_string(), span);
                 }
                 self.fresh_var()
             }

@@ -1167,3 +1167,40 @@ fn main() {
         "recur arity mismatch should be Error, not Warning, got: {diagnostics:?}"
     );
 }
+
+// ── Round 20 follow-up: recur outside loop ─────────────────────────
+
+#[test]
+fn test_recur_outside_loop_rejected_at_typecheck() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  loop(1, 2)
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("recur outside of loop")),
+        "expected 'recur outside of loop' error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_recur_inside_loop_still_accepted() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  loop n = 0 {
+    match n > 5 {
+      true -> n
+      false -> loop(n + 1)
+    }
+  }
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "valid loop/recur should produce no type errors, got: {errs:?}"
+    );
+}
