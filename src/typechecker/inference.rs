@@ -516,8 +516,8 @@ impl TypeChecker {
         pattern: &Pattern,
         span: Span,
     ) {
-        match pattern {
-            Pattern::Constructor(name, sub_pats) => {
+        match &pattern.kind {
+            PatternKind::Constructor(name, sub_pats) => {
                 if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
                     && let Some(enum_info) = self.enums.get(&enum_name).cloned()
                     && enum_info.variants.len() > 1
@@ -536,12 +536,12 @@ impl TypeChecker {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
             }
-            Pattern::Tuple(pats) => {
+            PatternKind::Tuple(pats) => {
                 for p in pats {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
             }
-            Pattern::List(elems, rest) => {
+            PatternKind::List(elems, rest) => {
                 for p in elems {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
@@ -549,14 +549,14 @@ impl TypeChecker {
                     self.reject_refutable_constructor_in_let(r, span);
                 }
             }
-            Pattern::Record { fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 for (_, sub_pat) in fields {
                     if let Some(p) = sub_pat {
                         self.reject_refutable_constructor_in_let(p, span);
                     }
                 }
             }
-            Pattern::Or(alts) => {
+            PatternKind::Or(alts) => {
                 for p in alts {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
@@ -581,16 +581,16 @@ impl TypeChecker {
         env: &mut TypeEnv,
         span: Span,
     ) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Ident(name) => {
+        match &pattern.kind {
+            PatternKind::Wildcard => {}
+            PatternKind::Ident(name) => {
                 env.define(*name, Scheme::mono(ty.clone()));
             }
-            Pattern::Int(_) => {}
-            Pattern::Float(_) => {}
-            Pattern::Bool(_) => {}
-            Pattern::StringLit(..) => {}
-            Pattern::Tuple(pats) => {
+            PatternKind::Int(_) => {}
+            PatternKind::Float(_) => {}
+            PatternKind::Bool(_) => {}
+            PatternKind::StringLit(..) => {}
+            PatternKind::Tuple(pats) => {
                 // BROKEN (round 15): bind_pattern Pattern::Tuple used to
                 // silently fall through to fresh vars when the scrutinee
                 // wasn't already a tuple, letting `let (a, b) = 42` slip
@@ -654,7 +654,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Pattern::Constructor(name, sub_pats) => {
+            PatternKind::Constructor(name, sub_pats) => {
                 // Look up the constructor to find inner types
                 if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
                     && let Some(enum_info) = self.enums.get(&enum_name).cloned()
@@ -662,6 +662,8 @@ impl TypeChecker {
                 {
                     if sub_pats.len() != var_info.field_types.len() {
                         let expected = var_info.field_types.len();
+                        // Fix A: point the caret at the constructor pattern
+                        // itself, not at the enclosing let/when scrutinee.
                         self.error(
                             format!(
                                 "constructor '{}' expects {} {}, but pattern has {}",
@@ -670,7 +672,7 @@ impl TypeChecker {
                                 plural(expected, "field", "fields"),
                                 sub_pats.len()
                             ),
-                            span,
+                            pattern.span,
                         );
                     }
                     // BROKEN (round 15): unify the scrutinee against
@@ -708,7 +710,7 @@ impl TypeChecker {
                     self.bind_pattern(sp, &tv, env, span);
                 }
             }
-            Pattern::List(pats, rest) => {
+            PatternKind::List(pats, rest) => {
                 let elem_ty = self.fresh_var();
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
                 self.unify(ty, &list_ty, span);
@@ -721,7 +723,7 @@ impl TypeChecker {
                     self.bind_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            Pattern::Record { name, fields, .. } => {
+            PatternKind::Record { name, fields, .. } => {
                 // BROKEN-4: `let Name { f } = v` used to silently bind `f`
                 // to a fresh TyVar when the base wasn't a record, or when
                 // the field didn't exist. Both were deferred to VM runtime
@@ -881,7 +883,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Pattern::Or(alts) => {
+            PatternKind::Or(alts) => {
                 // Validate that all alternatives bind the same set of variables.
                 if alts.len() >= 2 {
                     let first_vars: BTreeSet<Symbol> =
@@ -957,15 +959,15 @@ impl TypeChecker {
                     self.bind_pattern(first_alt, ty, env, span);
                 }
             }
-            Pattern::Range(_, _) => {
+            PatternKind::Range(_, _) => {
                 self.unify(ty, &Type::Int, span);
             }
-            Pattern::FloatRange(_, _) => {
+            PatternKind::FloatRange(_, _) => {
                 self.unify(ty, &Type::Float, span);
             }
-            Pattern::Map(entries) => {
+            PatternKind::Map(entries) => {
                 // L3: Map patterns are currently restricted to String keys at
-                // parse time — `Pattern::Map(Vec<(String, Pattern)>)` in
+                // parse time — `PatternKind::Map(Vec<(String, Pattern)>)` in
                 // src/ast.rs. If the scrutinee has a non-String key type, give
                 // a targeted error rather than the cryptic unification failure.
                 let val_ty = self.fresh_var();
@@ -989,7 +991,7 @@ impl TypeChecker {
                     self.bind_pattern(pat, &resolved_val, env, span);
                 }
             }
-            Pattern::Pin(name) => {
+            PatternKind::Pin(name) => {
                 // Pin does not introduce a new binding — it checks against an
                 // existing variable.  Look it up in the parent (pre-match) scope
                 // first, then fall back to the current scope for when/let contexts.
@@ -2427,8 +2429,8 @@ impl TypeChecker {
 
                 // Bind names in the pattern
                 // For let-polymorphism we need to bind with the generalized scheme
-                match pattern {
-                    Pattern::Ident(name) => {
+                match &pattern.kind {
+                    PatternKind::Ident(name) => {
                         env.define(*name, scheme);
                     }
                     _ => {
@@ -2467,7 +2469,7 @@ impl TypeChecker {
 
                 // For constructor patterns, narrow the type
                 // e.g., when Ok(value) = expr, value has the inner type
-                if let Pattern::Constructor(name, sub_pats) = pattern {
+                if let PatternKind::Constructor(name, sub_pats) = &pattern.kind {
                     let expr_ty = self.apply(&expr_ty);
                     if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
                         && let Some(enum_info) = self.enums.get(&enum_name).cloned()
@@ -2520,24 +2522,24 @@ impl TypeChecker {
     // ── Pattern checking (type check, not just bind) ────────────────
 
     fn check_pattern(&mut self, pattern: &Pattern, expected: &Type, env: &mut TypeEnv, span: Span) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Ident(name) => {
+        match &pattern.kind {
+            PatternKind::Wildcard => {}
+            PatternKind::Ident(name) => {
                 env.define(*name, Scheme::mono(expected.clone()));
             }
-            Pattern::Int(_) => {
+            PatternKind::Int(_) => {
                 self.unify(expected, &Type::Int, span);
             }
-            Pattern::Float(_) => {
+            PatternKind::Float(_) => {
                 self.unify(expected, &Type::Float, span);
             }
-            Pattern::Bool(_) => {
+            PatternKind::Bool(_) => {
                 self.unify(expected, &Type::Bool, span);
             }
-            Pattern::StringLit(..) => {
+            PatternKind::StringLit(..) => {
                 self.unify(expected, &Type::String, span);
             }
-            Pattern::Tuple(pats) => {
+            PatternKind::Tuple(pats) => {
                 let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
                 let tuple_ty = Type::Tuple(elem_types.clone());
                 self.unify(expected, &tuple_ty, span);
@@ -2546,7 +2548,7 @@ impl TypeChecker {
                     self.check_pattern(p, t, env, span);
                 }
             }
-            Pattern::Constructor(name, sub_pats) => {
+            PatternKind::Constructor(name, sub_pats) => {
                 // Look up the constructor type
                 if let Some(scheme) = env.lookup(*name).cloned() {
                     let ctor_ty = self.instantiate(&scheme);
@@ -2557,6 +2559,10 @@ impl TypeChecker {
                             self.unify(expected, ret, span);
                             if sub_pats.len() != params.len() {
                                 let expected = params.len();
+                                // Fix A: the arity error is about the
+                                // pattern itself — point at the
+                                // constructor pattern's own span rather
+                                // than the enclosing match scrutinee.
                                 self.error(
                                     format!(
                                         "constructor expects {} {}, but pattern has {}",
@@ -2564,7 +2570,7 @@ impl TypeChecker {
                                         plural(expected, "field", "fields"),
                                         sub_pats.len()
                                     ),
-                                    span,
+                                    pattern.span,
                                 );
                             }
                             for (i, sp) in sub_pats.iter().enumerate() {
@@ -2589,7 +2595,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Pattern::List(pats, rest) => {
+            PatternKind::List(pats, rest) => {
                 let elem_ty = self.fresh_var();
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
                 self.unify(expected, &list_ty, span);
@@ -2602,7 +2608,7 @@ impl TypeChecker {
                     self.check_pattern(rest_pat, &rest_ty, env, span);
                 }
             }
-            Pattern::Record { name, fields, .. } => {
+            PatternKind::Record { name, fields, .. } => {
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
                         let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
@@ -2671,7 +2677,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Pattern::Or(alts) => {
+            PatternKind::Or(alts) => {
                 // Validate that all alternatives bind the same set of variables.
                 if alts.len() >= 2 {
                     let first_vars: BTreeSet<Symbol> =
@@ -2737,15 +2743,15 @@ impl TypeChecker {
                     self.check_pattern(first_alt, expected, env, span);
                 }
             }
-            Pattern::Range(_, _) => {
+            PatternKind::Range(_, _) => {
                 self.unify(expected, &Type::Int, span);
             }
-            Pattern::FloatRange(_, _) => {
+            PatternKind::FloatRange(_, _) => {
                 self.unify(expected, &Type::Float, span);
             }
-            Pattern::Map(entries) => {
+            PatternKind::Map(entries) => {
                 // L3: Map patterns are restricted to String keys (parser
-                // invariant — see Pattern::Map in src/ast.rs). Give a
+                // invariant — see PatternKind::Map in src/ast.rs). Give a
                 // targeted error if the scrutinee has a non-String key type.
                 let val_ty = self.fresh_var();
                 let resolved_scrutinee = self.apply(expected);
@@ -2768,7 +2774,7 @@ impl TypeChecker {
                     self.check_pattern(pat, &resolved_val, env, span);
                 }
             }
-            Pattern::Pin(name) => {
+            PatternKind::Pin(name) => {
                 // Look up the pinned variable in the parent (pre-match) scope,
                 // falling back to current scope for when/let contexts.
                 let found = env

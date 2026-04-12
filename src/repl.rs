@@ -11,7 +11,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Context, Editor, Helper};
 
-use crate::ast::{Decl, Pattern};
+use crate::ast::{Decl, Pattern, PatternKind};
 use crate::compiler::{CompileError, Compiler};
 use crate::errors::SourceError;
 use crate::intern;
@@ -519,21 +519,21 @@ fn eval_declaration(
 
 /// Collect bound names from a pattern (for let bindings).
 fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
-    match pattern {
-        Pattern::Ident(sym) => {
+    match &pattern.kind {
+        PatternKind::Ident(sym) => {
             names.push(intern::resolve(*sym));
         }
-        Pattern::Tuple(pats) => {
+        PatternKind::Tuple(pats) => {
             for p in pats {
                 collect_pattern_names(p, names);
             }
         }
-        Pattern::Constructor(_, pats) => {
+        PatternKind::Constructor(_, pats) => {
             for p in pats {
                 collect_pattern_names(p, names);
             }
         }
-        Pattern::Record { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (field_name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, names);
@@ -543,7 +543,7 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<String>) {
                 }
             }
         }
-        Pattern::List(pats, rest) => {
+        PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_names(p, names);
             }

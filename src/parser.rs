@@ -606,10 +606,11 @@ impl Parser {
 
     fn parse_simple_param_pattern(&mut self) -> Result<Pattern> {
         self.skip_nl();
+        let start = self.span();
         match self.peek().clone() {
             Token::Ident(name) => {
                 self.advance();
-                Ok(Pattern::Ident(name))
+                Ok(Pattern::new(PatternKind::Ident(name), start))
             }
             _ => Err(ParseError {
                 message: format!("expected parameter name, found {}", self.peek()),
@@ -1981,6 +1982,7 @@ impl Parser {
 
         if guardless {
             // Guardless match: each arm's LHS is a boolean expression or `_`
+            let arm_start = self.span();
             let is_wildcard =
                 matches!(self.peek(), Token::Ident(name) if *name == intern::intern("_"));
             if is_wildcard {
@@ -1989,7 +1991,7 @@ impl Parser {
                 self.skip_nl();
                 let body = self.parse_expr()?;
                 return Ok(MatchArm {
-                    pattern: Pattern::Wildcard,
+                    pattern: Pattern::new(PatternKind::Wildcard, arm_start),
                     guard: None,
                     body,
                 });
@@ -1999,7 +2001,7 @@ impl Parser {
             self.skip_nl();
             let body = self.parse_expr()?;
             return Ok(MatchArm {
-                pattern: Pattern::Wildcard,
+                pattern: Pattern::new(PatternKind::Wildcard, arm_start),
                 guard: Some(Box::new(condition)),
                 body,
             });
@@ -2146,12 +2148,13 @@ impl Parser {
         let first = self.parse_primary_pattern()?;
         // Check for or-pattern: pat1 | pat2 | ...
         if self.at(&Token::Bar) {
+            let or_span = first.span;
             let mut alts = vec![first];
             while self.at(&Token::Bar) {
                 self.advance();
                 alts.push(self.parse_primary_pattern()?);
             }
-            Ok(Pattern::Or(alts))
+            Ok(Pattern::new(PatternKind::Or(alts), or_span))
         } else {
             Ok(first)
         }
@@ -2159,10 +2162,12 @@ impl Parser {
 
     fn parse_primary_pattern(&mut self) -> Result<Pattern> {
         self.skip_nl();
+        let start = self.span();
+        let mk = |kind: PatternKind| Pattern::new(kind, start);
         match self.peek().clone() {
             Token::Ident(ref name) if *name == intern::intern("_") => {
                 self.advance();
-                Ok(Pattern::Wildcard)
+                Ok(mk(PatternKind::Wildcard))
             }
             Token::Ident(ref name) if is_constructor(*name) => {
                 let name = *name;
@@ -2181,7 +2186,7 @@ impl Parser {
                         }
                     }
                     self.expect(&Token::RParen)?;
-                    Ok(Pattern::Constructor(name, pats))
+                    Ok(mk(PatternKind::Constructor(name, pats)))
                 } else if self.at(&Token::LBrace) {
                     // Record pattern: User { name, age, .. }
                     self.advance();
@@ -2212,18 +2217,18 @@ impl Parser {
                         }
                     }
                     self.expect(&Token::RBrace)?;
-                    Ok(Pattern::Record {
+                    Ok(mk(PatternKind::Record {
                         name: Some(name),
                         fields,
                         has_rest,
-                    })
+                    }))
                 } else {
-                    Ok(Pattern::Constructor(name, Vec::new()))
+                    Ok(mk(PatternKind::Constructor(name, Vec::new())))
                 }
             }
             Token::Ident(name) => {
                 self.advance();
-                Ok(Pattern::Ident(name))
+                Ok(mk(PatternKind::Ident(name)))
             }
             Token::Int(n) => {
                 self.advance();
@@ -2233,14 +2238,14 @@ impl Parser {
                     match self.peek().clone() {
                         Token::Int(m) => {
                             self.advance();
-                            Ok(Pattern::Range(n, m))
+                            Ok(mk(PatternKind::Range(n, m)))
                         }
                         Token::Minus => {
                             self.advance();
                             match self.peek().clone() {
                                 Token::Int(m) => {
                                     self.advance();
-                                    Ok(Pattern::Range(n, -m))
+                                    Ok(mk(PatternKind::Range(n, -m)))
                                 }
                                 _ => Err(ParseError {
                                     message: "expected integer after - in range pattern".into(),
@@ -2254,7 +2259,7 @@ impl Parser {
                         }),
                     }
                 } else {
-                    Ok(Pattern::Int(n))
+                    Ok(mk(PatternKind::Int(n)))
                 }
             }
             Token::Float(n) => {
@@ -2289,25 +2294,25 @@ impl Parser {
                             }
                         }
                     };
-                    Ok(Pattern::FloatRange(n, end))
+                    Ok(mk(PatternKind::FloatRange(n, end)))
                 } else {
-                    Ok(Pattern::Float(n))
+                    Ok(mk(PatternKind::Float(n)))
                 }
             }
             Token::Bool(b) => {
                 self.advance();
-                Ok(Pattern::Bool(b))
+                Ok(mk(PatternKind::Bool(b)))
             }
             Token::StringLit(s, triple) => {
                 self.advance();
-                Ok(Pattern::StringLit(s, triple))
+                Ok(mk(PatternKind::StringLit(s, triple)))
             }
             Token::LParen => {
                 self.advance();
                 self.skip_nl();
                 if self.at(&Token::RParen) {
                     self.advance();
-                    return Ok(Pattern::Tuple(Vec::new()));
+                    return Ok(mk(PatternKind::Tuple(Vec::new())));
                 }
                 let first = self.parse_pattern()?;
                 self.skip_nl();
@@ -2324,7 +2329,7 @@ impl Parser {
                         }
                     }
                     self.expect(&Token::RParen)?;
-                    Ok(Pattern::Tuple(pats))
+                    Ok(mk(PatternKind::Tuple(pats)))
                 } else {
                     self.expect(&Token::RParen)?;
                     // Single-element parenthesized pattern
@@ -2336,7 +2341,7 @@ impl Parser {
                 self.skip_nl();
                 if self.at(&Token::RBracket) {
                     self.advance();
-                    return Ok(Pattern::List(vec![], None)); // empty list pattern
+                    return Ok(mk(PatternKind::List(vec![], None))); // empty list pattern
                 }
                 let mut patterns = Vec::new();
                 let mut rest = None;
@@ -2368,7 +2373,7 @@ impl Parser {
                     }
                 }
                 self.expect(&Token::RBracket)?;
-                Ok(Pattern::List(patterns, rest))
+                Ok(mk(PatternKind::List(patterns, rest)))
             }
             Token::HashBrace => {
                 // Map pattern: #{ "key": pattern, ... }
@@ -2399,7 +2404,7 @@ impl Parser {
                     }
                 }
                 self.expect(&Token::RBrace)?;
-                Ok(Pattern::Map(entries))
+                Ok(mk(PatternKind::Map(entries)))
             }
             Token::Minus => {
                 // Negative number pattern
@@ -2413,14 +2418,14 @@ impl Parser {
                             match self.peek().clone() {
                                 Token::Int(m) => {
                                     self.advance();
-                                    Ok(Pattern::Range(-n, m))
+                                    Ok(mk(PatternKind::Range(-n, m)))
                                 }
                                 Token::Minus => {
                                     self.advance();
                                     match self.peek().clone() {
                                         Token::Int(m) => {
                                             self.advance();
-                                            Ok(Pattern::Range(-n, -m))
+                                            Ok(mk(PatternKind::Range(-n, -m)))
                                         }
                                         _ => Err(ParseError {
                                             message: "expected integer after - in range pattern"
@@ -2435,7 +2440,7 @@ impl Parser {
                                 }),
                             }
                         } else {
-                            Ok(Pattern::Int(-n))
+                            Ok(mk(PatternKind::Int(-n)))
                         }
                     }
                     Token::Float(n) => {
@@ -2445,14 +2450,14 @@ impl Parser {
                             match self.peek().clone() {
                                 Token::Float(m) => {
                                     self.advance();
-                                    Ok(Pattern::FloatRange(-n, m))
+                                    Ok(mk(PatternKind::FloatRange(-n, m)))
                                 }
                                 Token::Minus => {
                                     self.advance();
                                     match self.peek().clone() {
                                         Token::Float(m) => {
                                             self.advance();
-                                            Ok(Pattern::FloatRange(-n, -m))
+                                            Ok(mk(PatternKind::FloatRange(-n, -m)))
                                         }
                                         _ => Err(ParseError {
                                             message: "expected float after - in range pattern"
@@ -2467,7 +2472,7 @@ impl Parser {
                                 }),
                             }
                         } else {
-                            Ok(Pattern::Float(-n))
+                            Ok(mk(PatternKind::Float(-n)))
                         }
                     }
                     _ => Err(ParseError {
@@ -2481,7 +2486,7 @@ impl Parser {
                 match self.peek().clone() {
                     Token::Ident(name) => {
                         self.advance();
-                        Ok(Pattern::Pin(name))
+                        Ok(mk(PatternKind::Pin(name)))
                     }
                     _ => Err(ParseError {
                         message: "expected identifier after ^ in pin pattern".into(),
@@ -2948,7 +2953,7 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern, Pattern::Or(pats) if pats.len() == 3));
+                assert!(matches!(&arms[0].pattern.kind, PatternKind::Or(pats) if pats.len() == 3));
             } else {
                 panic!("expected match");
             }
@@ -2978,7 +2983,7 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern, Pattern::Range(1, 10)));
+                assert!(matches!(&arms[0].pattern.kind, PatternKind::Range(1, 10)));
             } else {
                 panic!("expected match");
             }
@@ -3009,7 +3014,7 @@ fn main() {
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
                 assert!(
-                    matches!(&arms[0].pattern, Pattern::Pin(name) if *name == intern::intern("x"))
+                    matches!(&arms[0].pattern.kind, PatternKind::Pin(name) if *name == intern::intern("x"))
                 );
             } else {
                 panic!("expected match");
@@ -3040,11 +3045,11 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let Pattern::Map(ref entries) = arms[0].pattern {
+                if let PatternKind::Map(ref entries) = arms[0].pattern.kind {
                     assert_eq!(entries.len(), 1);
                     assert_eq!(entries[0].0, "key");
                     assert!(
-                        matches!(entries[0].1, Pattern::Ident(ref v) if *v == intern::intern("v"))
+                        matches!(entries[0].1.kind, PatternKind::Ident(ref v) if *v == intern::intern("v"))
                     );
                 } else {
                     panic!("expected map pattern");
@@ -3078,10 +3083,10 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let Pattern::Constructor(ref name, ref inner) = arms[0].pattern {
+                if let PatternKind::Constructor(ref name, ref inner) = arms[0].pattern.kind {
                     assert_eq!(*name, intern::intern("Some"));
                     assert_eq!(inner.len(), 1);
-                    assert!(matches!(&inner[0], Pattern::Tuple(pats) if pats.len() == 2));
+                    assert!(matches!(&inner[0].kind, PatternKind::Tuple(pats) if pats.len() == 2));
                 } else {
                     panic!("expected constructor pattern, got {:?}", arms[0].pattern);
                 }
@@ -3114,18 +3119,18 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let Pattern::List(ref pats, ref rest) = arms[0].pattern {
+                if let PatternKind::List(ref pats, ref rest) = arms[0].pattern.kind {
                     assert_eq!(pats.len(), 1);
-                    assert!(matches!(&pats[0], Pattern::Ident(n) if *n == intern::intern("h")));
+                    assert!(matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h")));
                     assert!(rest.is_some());
                     assert!(
-                        matches!(rest.as_deref().unwrap(), Pattern::Ident(n) if *n == intern::intern("t"))
+                        matches!(&rest.as_deref().unwrap().kind, PatternKind::Ident(n) if *n == intern::intern("t"))
                     );
                 } else {
                     panic!("expected list pattern");
                 }
                 // Second arm: empty list
-                assert!(matches!(&arms[1].pattern, Pattern::List(pats, None) if pats.is_empty()));
+                assert!(matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty()));
             } else {
                 panic!("expected match");
             }
@@ -3155,11 +3160,11 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let Pattern::Record {
+                if let PatternKind::Record {
                     ref name,
                     ref fields,
                     has_rest,
-                } = arms[0].pattern
+                } = arms[0].pattern.kind
                 {
                     assert_eq!(*name, Some(intern::intern("User")));
                     assert_eq!(fields.len(), 2);
@@ -3486,7 +3491,7 @@ fn main() {
         } = prog.decls[0]
         {
             assert!(!is_pub);
-            assert!(matches!(pattern, Pattern::Ident(n) if *n == intern::intern("x")));
+            assert!(matches!(&pattern.kind, PatternKind::Ident(n) if *n == intern::intern("x")));
             assert!(matches!(&value.kind, ExprKind::Int(42)));
         } else {
             panic!("expected let decl");
@@ -3734,11 +3739,11 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                if let Pattern::Record {
+                if let PatternKind::Record {
                     ref name,
                     ref fields,
                     has_rest,
-                } = arms[0].pattern
+                } = arms[0].pattern.kind
                 {
                     assert_eq!(*name, Some(intern::intern("User")));
                     assert_eq!(fields.len(), 1);
@@ -3830,7 +3835,7 @@ fn main() {
                 _ => panic!("expected expr stmt"),
             };
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
-                assert!(matches!(&arms[0].pattern, Pattern::Range(-10, 10)));
+                assert!(matches!(&arms[0].pattern.kind, PatternKind::Range(-10, 10)));
             } else {
                 panic!("expected match");
             }

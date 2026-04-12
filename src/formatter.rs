@@ -3002,27 +3002,27 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
 }
 
 fn format_pattern(pattern: &Pattern) -> String {
-    match pattern {
-        Pattern::Wildcard => "_".to_string(),
-        Pattern::Ident(name) => resolve(*name),
-        Pattern::Int(n) => n.to_string(),
-        Pattern::Float(n) => {
+    match &pattern.kind {
+        PatternKind::Wildcard => "_".to_string(),
+        PatternKind::Ident(name) => resolve(*name),
+        PatternKind::Int(n) => n.to_string(),
+        PatternKind::Float(n) => {
             let s = n.to_string();
             if s.contains('.') { s } else { format!("{s}.0") }
         }
-        Pattern::Bool(b) => b.to_string(),
-        Pattern::StringLit(s, triple) => {
+        PatternKind::Bool(b) => b.to_string(),
+        PatternKind::StringLit(s, triple) => {
             if *triple {
                 format_triple_string(s, 0)
             } else {
                 format!("\"{}\"", escape_string(s))
             }
         }
-        Pattern::Tuple(pats) => {
+        PatternKind::Tuple(pats) => {
             let items: Vec<String> = pats.iter().map(format_pattern).collect();
             format!("({})", items.join(", "))
         }
-        Pattern::Constructor(name, pats) => {
+        PatternKind::Constructor(name, pats) => {
             if pats.is_empty() {
                 resolve(*name)
             } else {
@@ -3030,7 +3030,7 @@ fn format_pattern(pattern: &Pattern) -> String {
                 format!("{name}({})", items.join(", "))
             }
         }
-        Pattern::Record {
+        PatternKind::Record {
             name,
             fields,
             has_rest,
@@ -3051,27 +3051,27 @@ fn format_pattern(pattern: &Pattern) -> String {
                 None => format!("{{ {}{rest} }}", field_strs.join(", ")),
             }
         }
-        Pattern::List(pats, rest) => {
+        PatternKind::List(pats, rest) => {
             let mut items: Vec<String> = pats.iter().map(format_pattern).collect();
             if let Some(rest_pat) = rest {
                 items.push(format!("..{}", format_pattern(rest_pat)));
             }
             format!("[{}]", items.join(", "))
         }
-        Pattern::Or(alts) => {
+        PatternKind::Or(alts) => {
             let items: Vec<String> = alts.iter().map(format_pattern).collect();
             items.join(" | ")
         }
-        Pattern::Range(start, end) => format!("{start}..{end}"),
-        Pattern::FloatRange(start, end) => format!("{start}..{end}"),
-        Pattern::Map(entries) => {
+        PatternKind::Range(start, end) => format!("{start}..{end}"),
+        PatternKind::FloatRange(start, end) => format!("{start}..{end}"),
+        PatternKind::Map(entries) => {
             let items: Vec<String> = entries
                 .iter()
                 .map(|(key, pat)| format!("\"{key}\": {}", format_pattern(pat)))
                 .collect();
             format!("#{{ {} }}", items.join(", "))
         }
-        Pattern::Pin(name) => format!("^{name}"),
+        PatternKind::Pin(name) => format!("^{name}"),
     }
 }
 

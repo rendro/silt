@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::{
-    BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, Pattern, Program, Stmt,
+    BinOp, Decl, Expr, ExprKind, ImportTarget, ListElem, MatchArm, PatternKind, Program, Stmt,
     StringPart, TypeExpr, UnaryOp,
 };
 use crate::bytecode::{Chunk, Function, Op, UpvalueDesc, VmClosure};
@@ -479,9 +479,9 @@ impl Compiler {
                 // For non-Ident patterns, we use a hidden name and destructure after.
                 let mut param_slots = Vec::new();
                 for (i, param) in fn_decl.params.iter().enumerate() {
-                    match &param.pattern {
-                        Pattern::Ident(name) => {
-                            self.warn_if_shadows_module(*name, span);
+                    match &param.pattern.kind {
+                        PatternKind::Ident(name) => {
+                            self.warn_if_shadows_module(*name, param.pattern.span);
                             self.add_local(*name);
                             param_slots.push((i, None)); // no destructuring needed
                         }
@@ -552,8 +552,8 @@ impl Compiler {
                 let span = *span;
                 self.compile_expr(value)?;
 
-                match pattern {
-                    Pattern::Ident(name) => {
+                match &pattern.kind {
+                    PatternKind::Ident(name) => {
                         let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                         self.current_chunk().emit_op(Op::SetGlobal, span);
                         self.current_chunk().emit_u16(name_idx, span);
@@ -669,9 +669,9 @@ impl Compiler {
 
                     // Add parameters as locals.
                     for (i, param) in method.params.iter().enumerate() {
-                        match &param.pattern {
-                            Pattern::Ident(name) => {
-                                self.warn_if_shadows_module(*name, span);
+                        match &param.pattern.kind {
+                            PatternKind::Ident(name) => {
+                                self.warn_if_shadows_module(*name, param.pattern.span);
                                 self.add_local(*name);
                             }
                             _ => {
@@ -1001,9 +1001,9 @@ impl Compiler {
                     // Add parameters as locals.
                     let mut param_slots = Vec::new();
                     for (i, param) in fn_decl.params.iter().enumerate() {
-                        match &param.pattern {
-                            Pattern::Ident(name) => {
-                                self.warn_if_shadows_module(*name, fn_span);
+                        match &param.pattern.kind {
+                            PatternKind::Ident(name) => {
+                                self.warn_if_shadows_module(*name, param.pattern.span);
                                 self.add_local(*name);
                                 param_slots.push((i, None));
                             }
@@ -1139,9 +1139,9 @@ impl Compiler {
                 self.compile_expr(value)?;
                 let span = value.span;
 
-                match pattern {
-                    Pattern::Ident(name) => {
-                        self.warn_if_shadows_module(*name, span);
+                match &pattern.kind {
+                    PatternKind::Ident(name) => {
+                        self.warn_if_shadows_module(*name, pattern.span);
                         let slot = self.add_local(*name);
                         self.current_chunk().emit_op(Op::SetLocal, span);
                         self.current_chunk().emit_u16(slot, span);
@@ -1679,9 +1679,9 @@ impl Compiler {
                 // Add parameters as locals, with destructuring support.
                 let mut lambda_param_slots = Vec::new();
                 for (i, param) in params.iter().enumerate() {
-                    match &param.pattern {
-                        Pattern::Ident(name) => {
-                            self.warn_if_shadows_module(*name, span);
+                    match &param.pattern.kind {
+                        PatternKind::Ident(name) => {
+                            self.warn_if_shadows_module(*name, param.pattern.span);
                             self.add_local(*name);
                             lambda_param_slots.push(None);
                         }

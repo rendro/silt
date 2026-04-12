@@ -158,8 +158,25 @@ pub enum ListElem {
 
 // ── Patterns ─────────────────────────────────────────────────────────
 
+/// A pattern node with its source span. The span points at the pattern's
+/// own location in source so that diagnostics about pattern-internal
+/// errors (constructor arity, field typos, shadow warnings, ...) can
+/// attribute to the exact sub-pattern rather than the enclosing match
+/// scrutinee or let binding. Mirrors the `Expr`/`ExprKind` split.
 #[derive(Debug, Clone)]
-pub enum Pattern {
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+impl Pattern {
+    pub fn new(kind: PatternKind, span: Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternKind {
     Wildcard,
     Ident(Symbol),
     Int(i64),

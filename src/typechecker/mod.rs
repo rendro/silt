@@ -1010,7 +1010,7 @@ impl TypeChecker {
                 } else {
                     Scheme::mono(self.apply(&val_ty))
                 };
-                if let Pattern::Ident(name) = pattern {
+                if let PatternKind::Ident(name) = &pattern.kind {
                     // G1: top-level duplicate let binding.
                     if self.top_level_names.contains(name) {
                         self.error(
@@ -1777,8 +1777,8 @@ impl TypeChecker {
                 let first_param_name = f
                     .params
                     .first()
-                    .map(|p| match &p.pattern {
-                        Pattern::Ident(n) => resolve(*n),
+                    .map(|p| match &p.pattern.kind {
+                        PatternKind::Ident(n) => resolve(*n),
                         _ => "_".to_string(),
                     })
                     .unwrap_or_else(|| "_".to_string());
@@ -2036,7 +2036,7 @@ impl TypeChecker {
             for (i, param) in method.params.iter().enumerate() {
                 let ty = if let Some(te) = &param.ty {
                     self.resolve_type_expr(te, &mut param_map)
-                } else if i == 0 && matches!(&param.pattern, Pattern::Ident(n) if *n == self_sym) {
+                } else if i == 0 && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym) {
                     // Bare `self` parameter in a trait impl: type it as the
                     // target type so field/method accesses on `self` are
                     // properly checked against the impl's target.
@@ -2220,18 +2220,18 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
 
 /// Collect the set of variable names bound by a pattern.
 pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
-    match pat {
-        Pattern::Ident(name) => vec![*name],
-        Pattern::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
-        Pattern::List(pats, rest) => {
+    match &pat.kind {
+        PatternKind::Ident(name) => vec![*name],
+        PatternKind::Tuple(pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        PatternKind::List(pats, rest) => {
             let mut vars: Vec<Symbol> = pats.iter().flat_map(collect_pattern_vars).collect();
             if let Some(rest_pat) = rest {
                 vars.extend(collect_pattern_vars(rest_pat));
             }
             vars
         }
-        Pattern::Constructor(_, pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
-        Pattern::Record { fields, .. } => {
+        PatternKind::Constructor(_, pats) => pats.iter().flat_map(collect_pattern_vars).collect(),
+        PatternKind::Record { fields, .. } => {
             let mut vars: Vec<Symbol> = Vec::new();
             for (field_name, sub_pat) in fields {
                 if let Some(p) = sub_pat {
@@ -2243,22 +2243,22 @@ pub(super) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol> {
             }
             vars
         }
-        Pattern::Or(alts) => {
+        PatternKind::Or(alts) => {
             // Return vars from first alt (they should all be the same after validation)
             alts.first().map(collect_pattern_vars).unwrap_or_default()
         }
-        Pattern::Map(entries) => entries
+        PatternKind::Map(entries) => entries
             .iter()
             .flat_map(|(_, p)| collect_pattern_vars(p))
             .collect(),
-        Pattern::Wildcard
-        | Pattern::Int(_)
-        | Pattern::Float(_)
-        | Pattern::Bool(_)
-        | Pattern::StringLit(..)
-        | Pattern::Range(_, _)
-        | Pattern::FloatRange(_, _)
-        | Pattern::Pin(_) => vec![],
+        PatternKind::Wildcard
+        | PatternKind::Int(_)
+        | PatternKind::Float(_)
+        | PatternKind::Bool(_)
+        | PatternKind::StringLit(..)
+        | PatternKind::Range(_, _)
+        | PatternKind::FloatRange(_, _)
+        | PatternKind::Pin(_) => vec![],
     }
 }
 
@@ -2624,7 +2624,7 @@ impl ReplTypeContext {
                 } else {
                     Scheme::mono(self.checker.apply(&val_ty))
                 };
-                if let Pattern::Ident(name) = pattern {
+                if let PatternKind::Ident(name) = &pattern.kind {
                     // G1: duplicate top-level let binding within a single REPL input.
                     if self.checker.top_level_names.contains(name) {
                         self.checker.error(

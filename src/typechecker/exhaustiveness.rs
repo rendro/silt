@@ -13,6 +13,23 @@ use super::*;
 /// silently assuming the match is exhaustive.
 pub(super) const MAX_EXHAUSTIVENESS_DEPTH: usize = 20;
 
+/// A synthetic span used for patterns constructed during exhaustiveness
+/// analysis. These patterns (wildcards, tuples of wildcards, witness
+/// constructors) don't correspond to any user-written source — they're
+/// internal to the Maranget usefulness algorithm — so giving them a
+/// zero-position span is harmless. Real diagnostics for pattern errors
+/// come from the user's actual patterns in match arms, which have real
+/// spans attached by the parser.
+fn synth_span() -> Span {
+    Span::new(0, 0)
+}
+
+/// Shortcut for building synthetic patterns used by the usefulness
+/// algorithm. Keeps the body of the algorithm readable.
+fn synth(kind: PatternKind) -> Pattern {
+    Pattern::new(kind, synth_span())
+}
+
 impl TypeChecker {
     // ── Exhaustiveness checking (Maranget-style usefulness) ──────────
     //
@@ -40,7 +57,8 @@ impl TypeChecker {
         // algorithm so we can detect whether any recursive branch bailed
         // out at the depth bound.
         self.exhaustiveness_depth_exceeded.set(false);
-        let wildcard_useful = self.is_useful(&patterns, &Pattern::Wildcard, &scrutinee_ty, 0);
+        let wildcard_pat = synth(PatternKind::Wildcard);
+        let wildcard_useful = self.is_useful(&patterns, &wildcard_pat, &scrutinee_ty, 0);
         let depth_exceeded = self.exhaustiveness_depth_exceeded.get();
         // Clear the flag so `missing_description`'s internal `is_useful`
         // calls start from a clean slate (their truncation is benign — a
@@ -104,7 +122,7 @@ impl TypeChecker {
         }
 
         // Expand or-patterns in the query.
-        if let Pattern::Or(alts) = query {
+        if let PatternKind::Or(alts) = &query.kind {
             return alts
                 .iter()
                 .any(|alt| self.is_useful(matrix, alt, ty, depth));
@@ -114,7 +132,7 @@ impl TypeChecker {
         let expanded: Vec<&Pattern> = matrix.iter().flat_map(|p| Self::expand_or(p)).collect();
         let matrix = &expanded[..];
 
-        if matches!(query, Pattern::Wildcard | Pattern::Ident(_)) {
+        if matches!(query.kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
             return self.is_wildcard_useful(matrix, ty, depth);
         }
 
@@ -122,8 +140,8 @@ impl TypeChecker {
     }
 
     fn expand_or(pat: &Pattern) -> Vec<&Pattern> {
-        match pat {
-            Pattern::Or(alts) => alts.iter().flat_map(Self::expand_or).collect(),
+        match &pat.kind {
+            PatternKind::Or(alts) => alts.iter().flat_map(Self::expand_or).collect(),
             _ => vec![pat],
         }
     }
@@ -133,8 +151,8 @@ impl TypeChecker {
     fn is_wildcard_useful(&self, matrix: &[&Pattern], ty: &Type, depth: usize) -> bool {
         match ty {
             Type::Bool => {
-                let true_pat = Pattern::Bool(true);
-                let false_pat = Pattern::Bool(false);
+                let true_pat = synth(PatternKind::Bool(true));
+                let false_pat = synth(PatternKind::Bool(false));
                 self.is_useful(matrix, &true_pat, ty, depth + 1)
                     || self.is_useful(matrix, &false_pat, ty, depth + 1)
             }
@@ -142,9 +160,9 @@ impl TypeChecker {
                 if let Some(enum_info) = self.enums.get(name).cloned() {
                     for variant in &enum_info.variants {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
-                            .map(|_| Pattern::Wildcard)
+                            .map(|_| synth(PatternKind::Wildcard))
                             .collect();
-                        let ctor = Pattern::Constructor(variant.name, sub_pats.clone());
+                        let ctor = synth(PatternKind::Constructor(variant.name, sub_pats.clone()));
                         if self.is_useful(matrix, &ctor, ty, depth + 1) {
                             return true;
                         }
@@ -186,8 +204,11 @@ impl TypeChecker {
             }
             Type::Tuple(elem_tys) => {
                 // Single constructor: the tuple itself.
-                let sub_pats: Vec<Pattern> = elem_tys.iter().map(|_| Pattern::Wildcard).collect();
-                let tuple_q = Pattern::Tuple(sub_pats);
+                let sub_pats: Vec<Pattern> = elem_tys
+                    .iter()
+                    .map(|_| synth(PatternKind::Wildcard))
+                    .collect();
+                let tuple_q = synth(PatternKind::Tuple(sub_pats));
                 self.is_useful(matrix, &tuple_q, ty, depth + 1)
             }
             // Record types have a single constructor — decompose into field
@@ -202,30 +223,36 @@ impl TypeChecker {
             Type::List(_elem_ty) => {
                 let max_fixed_len = matrix
                     .iter()
-                    .filter_map(|p| match p {
-                        Pattern::List(elems, None) => Some(elems.len()),
-                        Pattern::List(elems, Some(_)) => Some(elems.len()),
+                    .filter_map(|p| match &p.kind {
+                        PatternKind::List(elems, None) => Some(elems.len()),
+                        PatternKind::List(elems, Some(_)) => Some(elems.len()),
                         _ => None,
                     })
                     .max()
                     .unwrap_or(0);
                 // Check fixed lengths 0..=max_fixed_len.
                 for len in 0..=max_fixed_len {
-                    let elems: Vec<Pattern> = (0..len).map(|_| Pattern::Wildcard).collect();
-                    let fixed = Pattern::List(elems, None);
+                    let elems: Vec<Pattern> =
+                        (0..len).map(|_| synth(PatternKind::Wildcard)).collect();
+                    let fixed = synth(PatternKind::List(elems, None));
                     if self.is_useful(matrix, &fixed, ty, depth + 1) {
                         return true;
                     }
                 }
                 // Check the open "longer than max" constructor.
-                let elems: Vec<Pattern> = (0..=max_fixed_len).map(|_| Pattern::Wildcard).collect();
-                let open = Pattern::List(elems, Some(Box::new(Pattern::Wildcard)));
+                let elems: Vec<Pattern> = (0..=max_fixed_len)
+                    .map(|_| synth(PatternKind::Wildcard))
+                    .collect();
+                let open = synth(PatternKind::List(
+                    elems,
+                    Some(Box::new(synth(PatternKind::Wildcard))),
+                ));
                 self.is_useful(matrix, &open, ty, depth + 1)
             }
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => !matrix
                 .iter()
-                .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
+                .any(|p| matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))),
         }
     }
 
@@ -237,19 +264,19 @@ impl TypeChecker {
         ty: &Type,
         depth: usize,
     ) -> bool {
-        match query {
-            Pattern::Bool(b) => {
+        match &query.kind {
+            PatternKind::Bool(b) => {
                 let specialized: Vec<&Pattern> = matrix
                     .iter()
                     .filter(|p| {
-                        matches!(p, Pattern::Bool(pb) if pb == b)
-                            || matches!(p, Pattern::Wildcard | Pattern::Ident(_))
+                        matches!(&p.kind, PatternKind::Bool(pb) if pb == b)
+                            || matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))
                     })
                     .copied()
                     .collect();
                 specialized.is_empty()
             }
-            Pattern::Constructor(name, sub_pats) => {
+            PatternKind::Constructor(name, sub_pats) => {
                 let specialized = self.specialize_constructor(matrix, *name, sub_pats.len());
                 if sub_pats.is_empty() {
                     specialized.is_empty()
@@ -258,13 +285,13 @@ impl TypeChecker {
                     let sub_query = if sub_pats.len() == 1 {
                         sub_pats[0].clone()
                     } else {
-                        Pattern::Tuple(sub_pats.clone())
+                        synth(PatternKind::Tuple(sub_pats.clone()))
                     };
                     let sub_refs: Vec<&Pattern> = specialized.iter().collect();
                     self.is_useful(&sub_refs, &sub_query, &sub_ty, depth + 1)
                 }
             }
-            Pattern::Tuple(sub_pats) => {
+            PatternKind::Tuple(sub_pats) => {
                 let arity = sub_pats.len();
                 // Specialize: keep rows with matching tuple arity, extract sub-patterns.
                 // Wildcards expand to N wildcards.
@@ -280,8 +307,8 @@ impl TypeChecker {
                     // Unwrap the single element from each specialized tuple.
                     let unwrapped: Vec<Pattern> = specialized
                         .iter()
-                        .map(|p| match p {
-                            Pattern::Tuple(ps) if !ps.is_empty() => ps[0].clone(),
+                        .map(|p| match &p.kind {
+                            PatternKind::Tuple(ps) if !ps.is_empty() => ps[0].clone(),
                             _ => p.clone(),
                         })
                         .collect();
@@ -305,15 +332,15 @@ impl TypeChecker {
             // column-by-column (Maranget specialization) and recursively
             // check whether the query's sub-patterns expose an uncovered
             // value inside the filtered matrix.
-            Pattern::List(elems, rest) => {
+            PatternKind::List(elems, rest) => {
                 let q_len = elems.len();
                 let q_has_rest = rest.is_some();
 
                 // Does `row` cover any list in the query's length set?
                 fn row_covers_query_length(row: &Pattern, q_len: usize, q_has_rest: bool) -> bool {
-                    match row {
-                        Pattern::Wildcard | Pattern::Ident(_) => true,
-                        Pattern::List(r_elems, r_rest) => {
+                    match &row.kind {
+                        PatternKind::Wildcard | PatternKind::Ident(_) => true,
+                        PatternKind::List(r_elems, r_rest) => {
                             let r_len = r_elems.len();
                             let r_has_rest = r_rest.is_some();
                             match (q_has_rest, r_has_rest) {
@@ -351,11 +378,11 @@ impl TypeChecker {
                 // get wildcards in the missing slots).
                 let mut spec_rows: Vec<Vec<Pattern>> = Vec::new();
                 for row in matrix {
-                    match row {
-                        Pattern::Wildcard | Pattern::Ident(_) => {
-                            spec_rows.push(vec![Pattern::Wildcard; q_len]);
+                    match &row.kind {
+                        PatternKind::Wildcard | PatternKind::Ident(_) => {
+                            spec_rows.push(vec![synth(PatternKind::Wildcard); q_len]);
                         }
-                        Pattern::List(r_elems, r_rest) => {
+                        PatternKind::List(r_elems, r_rest) => {
                             let r_len = r_elems.len();
                             let r_has_rest = r_rest.is_some();
                             // Filter rows by whether they could cover the
@@ -383,10 +410,10 @@ impl TypeChecker {
                                     // r_len < q_len; positions beyond r_len
                                     // are "whatever the rest absorbs" which
                                     // is a wildcard match column-wise.
-                                    cols.push(Pattern::Wildcard);
+                                    cols.push(synth(PatternKind::Wildcard));
                                 } else {
                                     // Impossible given `keeps`, but be safe.
-                                    cols.push(Pattern::Wildcard);
+                                    cols.push(synth(PatternKind::Wildcard));
                                 }
                             }
                             spec_rows.push(cols);
@@ -403,7 +430,7 @@ impl TypeChecker {
                 // to reuse its proper column-by-column Maranget algorithm.
                 let tuple_matrix: Vec<Pattern> = spec_rows
                     .iter()
-                    .map(|r| Pattern::Tuple(r.clone()))
+                    .map(|r| synth(PatternKind::Tuple(r.clone())))
                     .collect();
                 let tuple_refs: Vec<&Pattern> = tuple_matrix.iter().collect();
                 let tuple_ty = Type::Tuple(vec![elem_ty; q_len]);
@@ -411,7 +438,7 @@ impl TypeChecker {
                 self.is_tuple_useful_recursive(&tuple_refs, &query_tuple_sub, &tuple_ty, depth + 1)
             }
             // Record patterns: decompose into field columns and recurse.
-            Pattern::Record {
+            PatternKind::Record {
                 fields: q_fields, ..
             } => {
                 let resolved = self.apply(ty);
@@ -425,7 +452,7 @@ impl TypeChecker {
                                 .iter()
                                 .find(|(n, _)| n == fname)
                                 .and_then(|(_, sp)| sp.clone())
-                                .unwrap_or(Pattern::Wildcard)
+                                .unwrap_or(synth(PatternKind::Wildcard))
                         })
                         .collect();
                     self.is_record_useful_with_query(matrix, rec_fields, &query_cols, depth)
@@ -435,22 +462,24 @@ impl TypeChecker {
                     let _ = q_fields;
                     !matrix.iter().any(|p| {
                         matches!(
-                            p,
-                            Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
+                            p.kind,
+                            PatternKind::Wildcard
+                                | PatternKind::Ident(_)
+                                | PatternKind::Record { .. }
                         )
                     })
                 }
             }
             // Literal patterns — useful iff no wildcard covers them.
-            Pattern::Int(_)
-            | Pattern::Float(_)
-            | Pattern::StringLit(..)
-            | Pattern::Range(..)
-            | Pattern::FloatRange(..)
-            | Pattern::Pin(_)
-            | Pattern::Map(..) => !matrix
+            PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Pin(_)
+            | PatternKind::Map(..) => !matrix
                 .iter()
-                .any(|p| matches!(p, Pattern::Wildcard | Pattern::Ident(_))),
+                .any(|p| matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))),
             _ => false,
         }
     }
@@ -464,7 +493,10 @@ impl TypeChecker {
         rec_fields: &[(Symbol, Type)],
         depth: usize,
     ) -> bool {
-        let query_cols: Vec<Pattern> = rec_fields.iter().map(|_| Pattern::Wildcard).collect();
+        let query_cols: Vec<Pattern> = rec_fields
+            .iter()
+            .map(|_| synth(PatternKind::Wildcard))
+            .collect();
         self.is_record_useful_with_query(matrix, rec_fields, &query_cols, depth)
     }
 
@@ -484,8 +516,8 @@ impl TypeChecker {
             // Unit-like record — exhaustive iff the matrix already has a row.
             return !matrix.iter().any(|p| {
                 matches!(
-                    p,
-                    Pattern::Wildcard | Pattern::Ident(_) | Pattern::Record { .. }
+                    p.kind,
+                    PatternKind::Wildcard | PatternKind::Ident(_) | PatternKind::Record { .. }
                 )
             });
         }
@@ -495,13 +527,15 @@ impl TypeChecker {
         // that omit a field are filled with a wildcard in that column.
         let mut tuple_rows: Vec<Pattern> = Vec::new();
         for row in matrix {
-            match row {
-                Pattern::Wildcard | Pattern::Ident(_) => {
-                    let wilds: Vec<Pattern> =
-                        rec_fields.iter().map(|_| Pattern::Wildcard).collect();
-                    tuple_rows.push(Pattern::Tuple(wilds));
+            match &row.kind {
+                PatternKind::Wildcard | PatternKind::Ident(_) => {
+                    let wilds: Vec<Pattern> = rec_fields
+                        .iter()
+                        .map(|_| synth(PatternKind::Wildcard))
+                        .collect();
+                    tuple_rows.push(synth(PatternKind::Tuple(wilds)));
                 }
-                Pattern::Record {
+                PatternKind::Record {
                     fields: r_fields, ..
                 } => {
                     let mut cols: Vec<Pattern> = Vec::with_capacity(rec_fields.len());
@@ -510,10 +544,10 @@ impl TypeChecker {
                             .iter()
                             .find(|(n, _)| n == fname)
                             .and_then(|(_, sp)| sp.clone())
-                            .unwrap_or(Pattern::Wildcard);
+                            .unwrap_or(synth(PatternKind::Wildcard));
                         cols.push(pat);
                     }
-                    tuple_rows.push(Pattern::Tuple(cols));
+                    tuple_rows.push(synth(PatternKind::Tuple(cols)));
                 }
                 _ => {}
             }
@@ -544,9 +578,9 @@ impl TypeChecker {
             };
             let col_pats: Vec<&Pattern> = matrix
                 .iter()
-                .filter_map(|p| match p {
-                    Pattern::Tuple(ps) if ps.len() == 1 => Some(&ps[0]),
-                    Pattern::Wildcard | Pattern::Ident(_) => Some(*p),
+                .filter_map(|p| match &p.kind {
+                    PatternKind::Tuple(ps) if ps.len() == 1 => Some(&ps[0]),
+                    PatternKind::Wildcard | PatternKind::Ident(_) => Some(*p),
                     _ => None,
                 })
                 .collect();
@@ -565,7 +599,7 @@ impl TypeChecker {
 
         // Get the constructors to check from the first column of the query.
         let query_first = &sub_pats[0];
-        let query_rest = Pattern::Tuple(sub_pats[1..].to_vec());
+        let query_rest = synth(PatternKind::Tuple(sub_pats[1..].to_vec()));
 
         // B3: when `query_first` is a wildcard against an "infinite" scalar
         // column type (Int / Float / ExtFloat / String), the legacy
@@ -588,22 +622,22 @@ impl TypeChecker {
             Type::Int | Type::Float | Type::ExtFloat | Type::String
         );
         let query_first_is_wild =
-            matches!(query_first, Pattern::Wildcard | Pattern::Ident(_));
+            matches!(query_first.kind, PatternKind::Wildcard | PatternKind::Ident(_));
 
         if is_infinite_scalar && query_first_is_wild {
             // Collect distinct literal constructors seen in the first
             // column of the matrix.
             let mut literal_ctors: Vec<Pattern> = Vec::new();
             for pat in matrix {
-                if let Pattern::Tuple(ps) = pat
+                if let PatternKind::Tuple(ps) = &pat.kind
                     && ps.len() == arity
                 {
-                    match &ps[0] {
-                        Pattern::Int(_)
-                        | Pattern::Float(_)
-                        | Pattern::StringLit(..)
-                        | Pattern::Range(..)
-                        | Pattern::FloatRange(..) => {
+                    match ps[0].kind {
+                        PatternKind::Int(_)
+                        | PatternKind::Float(_)
+                        | PatternKind::StringLit(..)
+                        | PatternKind::Range(..)
+                        | PatternKind::FloatRange(..) => {
                             let c = ps[0].clone();
                             if !literal_ctors
                                 .iter()
@@ -620,16 +654,18 @@ impl TypeChecker {
             for ctor in &literal_ctors {
                 let mut specialized_rest: Vec<Pattern> = Vec::new();
                 for pat in matrix {
-                    match pat {
-                        Pattern::Tuple(ps) if ps.len() == arity => {
+                    match &pat.kind {
+                        PatternKind::Tuple(ps) if ps.len() == arity => {
                             if Self::first_col_matches(&ps[0], ctor) {
-                                specialized_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                                specialized_rest
+                                    .push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                             }
                         }
-                        Pattern::Wildcard | Pattern::Ident(_) => {
-                            let wilds: Vec<Pattern> =
-                                (0..arity - 1).map(|_| Pattern::Wildcard).collect();
-                            specialized_rest.push(Pattern::Tuple(wilds));
+                        PatternKind::Wildcard | PatternKind::Ident(_) => {
+                            let wilds: Vec<Pattern> = (0..arity - 1)
+                                .map(|_| synth(PatternKind::Wildcard))
+                                .collect();
+                            specialized_rest.push(synth(PatternKind::Tuple(wilds)));
                         }
                         _ => {}
                     }
@@ -643,16 +679,17 @@ impl TypeChecker {
             // first column is already wildcard/ident survive.
             let mut witness_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
-                match pat {
-                    Pattern::Tuple(ps) if ps.len() == arity => {
-                        if matches!(ps[0], Pattern::Wildcard | Pattern::Ident(_)) {
-                            witness_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                match &pat.kind {
+                    PatternKind::Tuple(ps) if ps.len() == arity => {
+                        if matches!(ps[0].kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
+                            witness_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                         }
                     }
-                    Pattern::Wildcard | Pattern::Ident(_) => {
-                        let wilds: Vec<Pattern> =
-                            (0..arity - 1).map(|_| Pattern::Wildcard).collect();
-                        witness_rest.push(Pattern::Tuple(wilds));
+                    PatternKind::Wildcard | PatternKind::Ident(_) => {
+                        let wilds: Vec<Pattern> = (0..arity - 1)
+                            .map(|_| synth(PatternKind::Wildcard))
+                            .collect();
+                        witness_rest.push(synth(PatternKind::Tuple(wilds)));
                     }
                     _ => {}
                 }
@@ -673,16 +710,17 @@ impl TypeChecker {
             // replace with the remaining columns.
             let mut specialized_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
-                match pat {
-                    Pattern::Tuple(ps) if ps.len() == arity => {
+                match &pat.kind {
+                    PatternKind::Tuple(ps) if ps.len() == arity => {
                         if Self::first_col_matches(&ps[0], ctor) {
-                            specialized_rest.push(Pattern::Tuple(ps[1..].to_vec()));
+                            specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                         }
                     }
-                    Pattern::Wildcard | Pattern::Ident(_) => {
-                        let wilds: Vec<Pattern> =
-                            (0..arity - 1).map(|_| Pattern::Wildcard).collect();
-                        specialized_rest.push(Pattern::Tuple(wilds));
+                    PatternKind::Wildcard | PatternKind::Ident(_) => {
+                        let wilds: Vec<Pattern> = (0..arity - 1)
+                            .map(|_| synth(PatternKind::Wildcard))
+                            .collect();
+                        specialized_rest.push(synth(PatternKind::Tuple(wilds)));
                     }
                     _ => {}
                 }
@@ -699,39 +737,44 @@ impl TypeChecker {
     /// when deduping distinct first-column literals from the matrix. Only
     /// meaningful for the literal variants enumerated at the call site.
     fn patterns_first_col_equal(a: &Pattern, b: &Pattern) -> bool {
-        match (a, b) {
-            (Pattern::Int(x), Pattern::Int(y)) => x == y,
-            (Pattern::Float(x), Pattern::Float(y)) => x == y,
-            (Pattern::StringLit(x, _), Pattern::StringLit(y, _)) => x == y,
-            (Pattern::Range(a1, b1), Pattern::Range(a2, b2)) => a1 == a2 && b1 == b2,
-            (Pattern::FloatRange(a1, b1), Pattern::FloatRange(a2, b2)) => a1 == a2 && b1 == b2,
+        match (&a.kind, &b.kind) {
+            (PatternKind::Int(x), PatternKind::Int(y)) => x == y,
+            (PatternKind::Float(x), PatternKind::Float(y)) => x == y,
+            (PatternKind::StringLit(x, _), PatternKind::StringLit(y, _)) => x == y,
+            (PatternKind::Range(a1, b1), PatternKind::Range(a2, b2)) => a1 == a2 && b1 == b2,
+            (PatternKind::FloatRange(a1, b1), PatternKind::FloatRange(a2, b2)) => {
+                a1 == a2 && b1 == b2
+            }
             _ => false,
         }
     }
 
     /// Get the set of constructors to check for a query pattern against a type.
     fn constructors_for_query(&self, query: &Pattern, ty: &Type) -> Vec<Pattern> {
-        match query {
-            Pattern::Wildcard | Pattern::Ident(_) => {
+        match &query.kind {
+            PatternKind::Wildcard | PatternKind::Ident(_) => {
                 // Need to enumerate all constructors of the type.
                 match ty {
-                    Type::Bool => vec![Pattern::Bool(true), Pattern::Bool(false)],
+                    Type::Bool => vec![
+                        synth(PatternKind::Bool(true)),
+                        synth(PatternKind::Bool(false)),
+                    ],
                     Type::Generic(name, _) => {
                         if let Some(info) = self.enums.get(name) {
                             info.variants
                                 .iter()
                                 .map(|v| {
                                     let sub_pats: Vec<Pattern> = (0..v.field_types.len())
-                                        .map(|_| Pattern::Wildcard)
+                                        .map(|_| synth(PatternKind::Wildcard))
                                         .collect();
-                                    Pattern::Constructor(v.name, sub_pats)
+                                    synth(PatternKind::Constructor(v.name, sub_pats))
                                 })
                                 .collect()
                         } else {
-                            vec![Pattern::Wildcard]
+                            vec![synth(PatternKind::Wildcard)]
                         }
                     }
-                    _ => vec![Pattern::Wildcard],
+                    _ => vec![synth(PatternKind::Wildcard)],
                 }
             }
             // Specific constructor: just check itself.
@@ -741,15 +784,15 @@ impl TypeChecker {
 
     /// Check if a pattern in the first column matches a specific constructor.
     fn first_col_matches(pat: &Pattern, ctor: &Pattern) -> bool {
-        match (pat, ctor) {
+        match (&pat.kind, &ctor.kind) {
             // Wildcards/idents match anything.
-            (Pattern::Wildcard | Pattern::Ident(_), _) => true,
+            (PatternKind::Wildcard | PatternKind::Ident(_), _) => true,
             // A wildcard constructor means "anything" — all patterns match.
-            (_, Pattern::Wildcard | Pattern::Ident(_)) => true,
-            (Pattern::Bool(a), Pattern::Bool(b)) => a == b,
-            (Pattern::Constructor(a, _), Pattern::Constructor(b, _)) => a == b,
-            (Pattern::Int(a), Pattern::Int(b)) => a == b,
-            (Pattern::StringLit(a, _), Pattern::StringLit(b, _)) => a == b,
+            (_, PatternKind::Wildcard | PatternKind::Ident(_)) => true,
+            (PatternKind::Bool(a), PatternKind::Bool(b)) => a == b,
+            (PatternKind::Constructor(a, _), PatternKind::Constructor(b, _)) => a == b,
+            (PatternKind::Int(a), PatternKind::Int(b)) => a == b,
+            (PatternKind::StringLit(a, _), PatternKind::StringLit(b, _)) => a == b,
             _ => false,
         }
     }
@@ -763,20 +806,25 @@ impl TypeChecker {
     ) -> Vec<Pattern> {
         let mut result = Vec::new();
         for pat in matrix {
-            match pat {
-                Pattern::Constructor(name, sub_pats) if *name == ctor_name => {
+            match &pat.kind {
+                PatternKind::Constructor(name, sub_pats) if *name == ctor_name => {
                     if arity <= 1 {
-                        result.push(sub_pats.first().cloned().unwrap_or(Pattern::Wildcard));
+                        result.push(
+                            sub_pats
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| synth(PatternKind::Wildcard)),
+                        );
                     } else {
-                        result.push(Pattern::Tuple(sub_pats.clone()));
+                        result.push(synth(PatternKind::Tuple(sub_pats.clone())));
                     }
                 }
-                Pattern::Wildcard | Pattern::Ident(_) => {
+                PatternKind::Wildcard | PatternKind::Ident(_) => {
                     if arity <= 1 {
-                        result.push(Pattern::Wildcard);
+                        result.push(synth(PatternKind::Wildcard));
                     } else {
-                        let wilds = (0..arity).map(|_| Pattern::Wildcard).collect();
-                        result.push(Pattern::Tuple(wilds));
+                        let wilds = (0..arity).map(|_| synth(PatternKind::Wildcard)).collect();
+                        result.push(synth(PatternKind::Tuple(wilds)));
                     }
                 }
                 _ => {}
@@ -789,13 +837,13 @@ impl TypeChecker {
     fn specialize_tuple(&self, matrix: &[&Pattern], arity: usize) -> Vec<Pattern> {
         let mut result = Vec::new();
         for pat in matrix {
-            match pat {
-                Pattern::Tuple(sub_pats) if sub_pats.len() == arity => {
-                    result.push(Pattern::Tuple(sub_pats.clone()));
+            match &pat.kind {
+                PatternKind::Tuple(sub_pats) if sub_pats.len() == arity => {
+                    result.push(synth(PatternKind::Tuple(sub_pats.clone())));
                 }
-                Pattern::Wildcard | Pattern::Ident(_) => {
-                    let wilds = (0..arity).map(|_| Pattern::Wildcard).collect();
-                    result.push(Pattern::Tuple(wilds));
+                PatternKind::Wildcard | PatternKind::Ident(_) => {
+                    let wilds = (0..arity).map(|_| synth(PatternKind::Wildcard)).collect();
+                    result.push(synth(PatternKind::Tuple(wilds)));
                 }
                 _ => {}
             }
@@ -858,9 +906,9 @@ impl TypeChecker {
                     let mut missing = Vec::new();
                     for variant in &enum_info.variants {
                         let sub_pats: Vec<Pattern> = (0..variant.field_types.len())
-                            .map(|_| Pattern::Wildcard)
+                            .map(|_| synth(PatternKind::Wildcard))
                             .collect();
-                        let ctor = Pattern::Constructor(variant.name, sub_pats);
+                        let ctor = synth(PatternKind::Constructor(variant.name, sub_pats));
                         if self.is_useful(patterns, &ctor, ty, 0) {
                             missing.push(format!("{}", variant.name));
                         }
@@ -907,10 +955,10 @@ impl TypeChecker {
     }
 
     fn covers_bool(pat: &Pattern, val: bool) -> bool {
-        match pat {
-            Pattern::Bool(b) => *b == val,
-            Pattern::Wildcard | Pattern::Ident(_) => true,
-            Pattern::Or(alts) => alts.iter().any(|a| Self::covers_bool(a, val)),
+        match &pat.kind {
+            PatternKind::Bool(b) => *b == val,
+            PatternKind::Wildcard | PatternKind::Ident(_) => true,
+            PatternKind::Or(alts) => alts.iter().any(|a| Self::covers_bool(a, val)),
             _ => false,
         }
     }
@@ -1258,16 +1306,20 @@ fn main() { area(Circle(1.0)) }
         // surfaces a "could not verify" warning via the interior flag.
         let span = Span::new(1, 1);
         let body = Expr::new(crate::ast::ExprKind::Int(0), span);
+        let wild = || Pattern::new(PatternKind::Wildcard, span);
         let arms = vec![
             MatchArm {
-                pattern: Pattern::Constructor(leaf_name, vec![Pattern::Wildcard]),
+                pattern: Pattern::new(
+                    PatternKind::Constructor(leaf_name, vec![wild()]),
+                    span,
+                ),
                 guard: None,
                 body: body.clone(),
             },
             MatchArm {
-                pattern: Pattern::Constructor(
-                    pair_name,
-                    vec![Pattern::Wildcard, Pattern::Wildcard],
+                pattern: Pattern::new(
+                    PatternKind::Constructor(pair_name, vec![wild(), wild()]),
+                    span,
                 ),
                 guard: None,
                 body: body.clone(),

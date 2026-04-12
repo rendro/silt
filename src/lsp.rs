@@ -894,11 +894,15 @@ impl Server {
                     });
                 }
                 Decl::Let {
-                    pattern: Pattern::Ident(name),
+                    pattern,
                     span,
                     value,
                     ..
-                } => {
+                } if matches!(pattern.kind, PatternKind::Ident(_)) => {
+                    let name = match &pattern.kind {
+                        PatternKind::Ident(n) => *n,
+                        _ => unreachable!(),
+                    };
                     let detail = value.ty.as_ref().map(|t| format!("{t}"));
                     symbols.push(DocumentSymbol {
                         name: name.to_string(),
@@ -1045,19 +1049,21 @@ fn build_definitions(program: &Program) -> HashMap<Symbol, DefInfo> {
                 );
             }
             Decl::Let {
-                pattern: Pattern::Ident(name),
+                pattern,
                 span,
                 value,
                 ..
-            } => {
-                defs.insert(
-                    *name,
-                    DefInfo {
-                        span: *span,
-                        ty: value.ty.clone(),
-                        params: vec![],
-                    },
-                );
+            } if matches!(pattern.kind, PatternKind::Ident(_)) => {
+                if let PatternKind::Ident(name) = &pattern.kind {
+                    defs.insert(
+                        *name,
+                        DefInfo {
+                            span: *span,
+                            ty: value.ty.clone(),
+                            params: vec![],
+                        },
+                    );
+                }
             }
             _ => {}
         }
@@ -1083,7 +1089,7 @@ fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> 
                 // before the body start.
                 let params_search_end = body_start;
                 for param in &f.params {
-                    if let Pattern::Ident(name) = &param.pattern {
+                    if let PatternKind::Ident(name) = &param.pattern.kind {
                         let name_str = resolve(*name);
                         if let Some(off) =
                             find_ident_in_range(source, f.span.offset, params_search_end, &name_str)
@@ -1117,7 +1123,7 @@ fn collect_local_bindings(program: &Program, source: &str) -> Vec<LocalBinding> 
                     let body_start = method.body.span.offset;
                     let (body_end, _) = expr_extent(&method.body, source);
                     for param in &method.params {
-                        if let Pattern::Ident(name) = &param.pattern {
+                        if let PatternKind::Ident(name) = &param.pattern.kind {
                             let name_str = resolve(*name);
                             if let Some(off) = find_ident_in_range(
                                 source,
@@ -1168,7 +1174,7 @@ fn collect_local_bindings_in_expr(
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
                         let value_start = value.span.offset;
-                        if let Pattern::Ident(name) = pattern {
+                        if let PatternKind::Ident(name) = &pattern.kind {
                             let name_str = resolve(*name);
                             if let Some(off) =
                                 find_ident_in_range(source, scope_start, value_start, &name_str)
@@ -1255,7 +1261,7 @@ fn collect_local_bindings_in_expr(
             let body_start = body.span.offset;
             let (body_end, _) = expr_extent(body, source);
             for p in params {
-                if let Pattern::Ident(name) = &p.pattern {
+                if let PatternKind::Ident(name) = &p.pattern.kind {
                     let name_str = resolve(*name);
                     if let Some(off) =
                         find_ident_in_range(source, scope_start, body_start, &name_str)
@@ -1339,8 +1345,8 @@ fn collect_pattern_bindings(
     scope_end: usize,
     bindings: &mut Vec<LocalBinding>,
 ) {
-    match pattern {
-        Pattern::Ident(name) if resolve(*name) != "_" => {
+    match &pattern.kind {
+        PatternKind::Ident(name) if resolve(*name) != "_" => {
             let name_str = resolve(*name);
             if let Some(off) = find_ident_in_range(source, search_start, search_end, &name_str) {
                 bindings.push(LocalBinding {
@@ -1353,7 +1359,7 @@ fn collect_pattern_bindings(
                 });
             }
         }
-        Pattern::Tuple(pats) | Pattern::Or(pats) => {
+        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
             for p in pats {
                 collect_pattern_bindings(
                     p,
@@ -1366,7 +1372,7 @@ fn collect_pattern_bindings(
                 );
             }
         }
-        Pattern::Constructor(ctor, fields) => {
+        PatternKind::Constructor(ctor, fields) => {
             // For Ok/Err/Some, try to propagate the inner type.
             let inner_ty: Option<Type> = match (resolve(*ctor).as_str(), expr_ty) {
                 ("Ok", Some(Type::Generic(_, args))) => args.first().cloned(),
@@ -1386,7 +1392,7 @@ fn collect_pattern_bindings(
                 );
             }
         }
-        Pattern::Record { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_bindings(
@@ -1415,7 +1421,7 @@ fn collect_pattern_bindings(
                 }
             }
         }
-        Pattern::List(pats, rest) => {
+        PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_bindings(
                     p,
@@ -1632,8 +1638,8 @@ fn binding_range(source: &str, offset: usize, len: usize) -> Option<Range> {
 fn fn_param_names(f: &FnDecl) -> Vec<String> {
     f.params
         .iter()
-        .map(|p| match &p.pattern {
-            Pattern::Ident(name) => name.to_string(),
+        .map(|p| match &p.pattern.kind {
+            PatternKind::Ident(name) => name.to_string(),
             _ => "_".to_string(),
         })
         .collect()
@@ -1654,7 +1660,7 @@ fn build_fn_type(f: &FnDecl) -> Option<Type> {
         .params
         .iter()
         .filter_map(|p| {
-            if let Pattern::Ident(name) = &p.pattern {
+            if let PatternKind::Ident(name) = &p.pattern.kind {
                 Some(*name)
             } else {
                 None
@@ -2185,24 +2191,24 @@ fn locals_at_offset(program: &Program, cursor: usize) -> Vec<LocalVar> {
 
 /// Extract variable names from a pattern (for let/when bindings and params).
 fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
-    match pattern {
-        Pattern::Ident(name) if resolve(*name) != "_" => {
+    match &pattern.kind {
+        PatternKind::Ident(name) if resolve(*name) != "_" => {
             locals.push(LocalVar {
                 name: name.to_string(),
                 ty: None,
             });
         }
-        Pattern::Constructor(_, fields) => {
+        PatternKind::Constructor(_, fields) => {
             for p in fields {
                 collect_pattern_names(p, locals);
             }
         }
-        Pattern::Tuple(pats) => {
+        PatternKind::Tuple(pats) => {
             for p in pats {
                 collect_pattern_names(p, locals);
             }
         }
-        Pattern::Record { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (name, sub) in fields {
                 if let Some(p) = sub {
                     collect_pattern_names(p, locals);
@@ -2214,7 +2220,7 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 }
             }
         }
-        Pattern::List(pats, rest) => {
+        PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_names(p, locals);
             }
@@ -2306,8 +2312,8 @@ fn collect_locals_in_expr(expr: &Expr, cursor: usize, locals: &mut Vec<LocalVar>
 
 /// Like collect_pattern_names but attaches the type from the value expression.
 fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mut Vec<LocalVar>) {
-    match pattern {
-        Pattern::Ident(name) if resolve(*name) != "_" => {
+    match &pattern.kind {
+        PatternKind::Ident(name) if resolve(*name) != "_" => {
             locals.push(LocalVar {
                 name: name.to_string(),
                 ty: ty.cloned(),
@@ -2319,7 +2325,9 @@ fn collect_pattern_names_typed(pattern: &Pattern, ty: Option<&Type>, locals: &mu
 
 /// For `when Ok(x) = expr` where expr has type Result(T, E), set x's type to T.
 fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals: &mut [LocalVar]) {
-    if let (Pattern::Constructor(ctor, fields), Some(Type::Generic(_, args))) = (pattern, expr_ty) {
+    if let (PatternKind::Constructor(ctor, fields), Some(Type::Generic(_, args))) =
+        (&pattern.kind, expr_ty)
+    {
         // Result(T, E): Ok(x) → x has type T, Err(x) → x has type E
         // Option(T): Some(x) → x has type T
         let ctor_str = resolve(*ctor);
@@ -2331,7 +2339,7 @@ fn resolve_when_pattern_types(pattern: &Pattern, expr_ty: Option<&Type>, locals:
         };
         if let Some(ty) = inner_ty {
             for field_pat in fields {
-                if let Pattern::Ident(name) = field_pat {
+                if let PatternKind::Ident(name) = &field_pat.kind {
                     // Update the last local with this name to have the resolved type
                     let name_str = name.to_string();
                     if let Some(local) = locals.iter_mut().rev().find(|l| l.name == name_str) {

@@ -860,3 +860,164 @@ fn main() { takes_two(1) }
     );
 }
 
+// ── Pattern span refactor: constructor arity caret attribution ──────
+//
+// Before the Pattern→PatternKind split, `Pattern` carried no source
+// span, so `check_pattern` / `bind_pattern` had to fall back to the
+// enclosing scrutinee span when reporting constructor arity errors.
+// The caret rendered against `Some(1)` (scrutinee) even though the
+// offending pattern was `Some(x, y)` one line below. The refactor
+// threads `pattern.span` through and these tests pin the
+// post-refactor attribution so a regression can't silently revert.
+
+#[test]
+fn test_constructor_arity_caret_lands_on_pattern_not_scrutinee() {
+    // Fix A (check_pattern / match arm): arity error caret must land
+    // on the `Some(x, y)` pattern (line 5), not on the `Some(1)`
+    // scrutinee (line 4).
+    let errs = type_errors_full(
+        r#"
+type Option { Some(Int), None }
+fn main() {
+  match Some(1) {
+    Some(x, y) -> println(x)
+    None -> println(0)
+  }
+}
+"#,
+    );
+    let arity: Vec<_> = errs
+        .iter()
+        .filter(|(m, _)| m.contains("constructor") && m.contains("1 field"))
+        .collect();
+    assert!(
+        !arity.is_empty(),
+        "expected a constructor arity error, got: {errs:?}"
+    );
+    for (msg, span) in &arity {
+        assert_eq!(
+            span.line, 5,
+            "expected constructor arity caret on line 5 (the Some(x, y) pattern), \
+             got line {} for '{msg}'",
+            span.line
+        );
+    }
+}
+
+#[test]
+fn test_let_destructure_constructor_arity_caret_lands_on_pattern() {
+    // Fix A (bind_pattern / let-destructure): in
+    // `let Some(x, y) = some_int_value`, the arity error must attribute
+    // to the `Some(x, y)` pattern on the LHS, not to the RHS scrutinee.
+    // The refutable-variant error uses the scrutinee span by design
+    // (that's a shape problem, not a pattern-internal one), so we only
+    // pin the arity error's span here.
+    let errs = type_errors_full(
+        r#"
+type Option { Some(Int), None }
+fn main() {
+  let some_int_value = Some(1)
+  let Some(x, y) = some_int_value
+  println(x)
+}
+"#,
+    );
+    // Filter to the arity diagnostic specifically (not the refutable
+    // pattern diagnostic emitted by reject_refutable_constructor_in_let,
+    // which uses the scrutinee span on purpose).
+    let arity: Vec<_> = errs
+        .iter()
+        .filter(|(m, _)| m.contains("expects 1") && m.contains("pattern has 2"))
+        .collect();
+    assert!(
+        !arity.is_empty(),
+        "expected a constructor arity error, got: {errs:?}"
+    );
+    for (msg, span) in &arity {
+        assert_eq!(
+            span.line, 5,
+            "expected let-destructure arity caret on line 5 (the Some(x, y) pattern), \
+             got line {} for '{msg}'",
+            span.line
+        );
+        // The pattern starts at column 7 (`  let Some(x, y)`), not
+        // column 20 (the `some_int_value` scrutinee). Pin that too.
+        assert_eq!(
+            span.col, 7,
+            "expected let-destructure arity caret at column 7 (start of 'Some' pattern), \
+             got column {} for '{msg}'",
+            span.col
+        );
+    }
+}
+
+// ── Pattern span refactor: shadow-warning binding-site attribution ──
+//
+// Fix B (compile_pattern_bind Pattern::Ident): the shadow warning
+// for a binding introduced by a nested pattern used to use the
+// enclosing match-arm / let statement span, so the caret landed on
+// a line above the actual binding. Now the binding's own span (from
+// the parser's Pattern::new capture) is passed to
+// warn_if_shadows_module, so the caret lands on the identifier
+// itself.
+
+#[test]
+fn test_pattern_binding_shadow_warning_span_on_binding_not_arm() {
+    // Minimal repro distilled from examples/concurrent_processor.silt.
+    // The tuple pattern `(_, Message(result))` in a match arm binds
+    // `result`, which shadows the `result` module imported above.
+    // Before Fix B the warning's span pointed at the match-arm scrutinee
+    // line; after Fix B it points at the `result` binding inside
+    // `Message(result)`.
+    let tokens = silt::lexer::Lexer::new(
+        r#"
+import result
+type Outcome { Wrap(Int), Finish }
+fn run(o) {
+  match (1, o) {
+    (_, Wrap(result)) -> result
+    (_, Finish) -> 0
+  }
+}
+fn main() { run(Finish) }
+"#,
+    )
+    .tokenize()
+    .expect("lexer error");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse error");
+    // The shadow warning is emitted by the compiler, not the
+    // typechecker, so run `Compiler::compile_program` and collect
+    // warnings via `Compiler::warnings()`.
+    let _tc_errs = typechecker::check(&mut program);
+    let mut compile = silt::compiler::Compiler::new();
+    let _ = compile
+        .compile_program(&program)
+        .expect("compile should succeed");
+    let warnings = compile.warnings();
+    let shadow: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.message.contains("shadows the builtin 'result' module"))
+        .collect();
+    assert!(
+        !shadow.is_empty(),
+        "expected a shadow warning for 'result', got warnings: {:?}",
+        warnings
+            .iter()
+            .map(|w| w.message.clone())
+            .collect::<Vec<_>>()
+    );
+    for w in &shadow {
+        // The `result` binding sits at line 6 inside the
+        // `(_, Message(result))` pattern of the first match arm.
+        // The enclosing match-arm head is line 5, which is what the
+        // pre-refactor warning reported.
+        assert_eq!(
+            w.span.line, 6,
+            "expected shadow warning on line 6 (the `result` binding), \
+             got line {} — warning message: {}",
+            w.span.line, w.message
+        );
+    }
+}
