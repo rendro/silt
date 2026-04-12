@@ -130,6 +130,21 @@ pub(super) struct MethodEntry {
     /// for auto-derived entries (Showable on every type, etc.) that
     /// don't participate in user-visible coherence rules.
     pub(super) trait_name: Option<Symbol>,
+    /// Trait constraints that must hold at every call site of this
+    /// method. Accumulated from:
+    ///
+    /// (a) impl-level `where` clauses on the trait-impl header
+    ///     (`trait Greet for Box(a) where a: Greet { ... }`) — attached
+    ///     to every method in the impl.
+    /// (b) method-level `where` clauses on individual impl methods
+    ///     (`fn greet(self) -> String where a: Greet { ... }`) — where
+    ///     `a` is either an impl-level binder or a method param binder.
+    ///
+    /// TyVars here live in the same TyVar space as `method_type`, so
+    /// `instantiate_method_entry` can substitute both through a shared
+    /// mapping. Empty for auto-derived entries and for impls with no
+    /// where clauses (which is every impl today prior to this feature).
+    pub(super) method_constraints: Vec<(TyVar, Symbol)>,
 }
 
 /// A deferred where-clause obligation captured at a call site whose
@@ -565,6 +580,51 @@ impl TypeChecker {
         substitute_vars(&ty, &mapping)
     }
 
+    /// Instantiate a `MethodEntry`'s template type AND its where-clause
+    /// constraints through a single shared substitution, so the returned
+    /// `(Type, Vec<(TyVar, Symbol)>)` pair uses consistent fresh TyVars.
+    ///
+    /// Constraint TyVars that appear in `method_type`'s free-var set map
+    /// through the same fresh-var substitution as the type itself; any
+    /// constraint TyVars not in the free set (edge case: a constraint on
+    /// a binder that doesn't appear in the method's signature — possible
+    /// in principle for phantom binders, but not reachable today) get
+    /// their own fresh substitution so downstream handling stays uniform.
+    ///
+    /// Callers push the returned constraints into `pending_where_constraints`
+    /// with the current call-site span; the finalize pass then checks each
+    /// obligation against concrete types and caller-active constraints,
+    /// same as fn-call sites registered at the Call arm of `infer_expr`.
+    pub(super) fn instantiate_method_entry(
+        &mut self,
+        entry: &MethodEntry,
+    ) -> (Type, Vec<(TyVar, Symbol)>) {
+        let ty = self.apply(&entry.method_type);
+        let mut fvs: Vec<TyVar> = free_vars_in(&ty);
+        for (tv, _) in &entry.method_constraints {
+            if !fvs.contains(tv) {
+                fvs.push(*tv);
+            }
+        }
+        if fvs.is_empty() {
+            return (ty, entry.method_constraints.clone());
+        }
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        for v in fvs {
+            mapping.insert(v, self.fresh_var());
+        }
+        let new_ty = substitute_vars(&ty, &mapping);
+        let new_constraints: Vec<(TyVar, Symbol)> = entry
+            .method_constraints
+            .iter()
+            .map(|(tv, trait_name)| match mapping.get(tv) {
+                Some(Type::Var(new_tv)) => (*new_tv, *trait_name),
+                _ => (*tv, *trait_name),
+            })
+            .collect();
+        (new_ty, new_constraints)
+    }
+
     /// Instantiate a scheme and remap its where clause constraints.
     /// Returns (instantiated_type, remapped_constraints).
     pub(super) fn instantiate_with_constraints(
@@ -754,6 +814,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -777,6 +838,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -800,6 +862,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -826,6 +889,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -995,9 +1059,29 @@ impl TypeChecker {
                     // Write the body-inferred type back into method_table so
                     // that downstream call sites see the concrete return
                     // type instead of the still-polymorphic template.
+                    //
+                    // Remap any impl/method-level where-clause constraints
+                    // from the pre-body-check tyvar space to the new
+                    // body-inferred tyvar space via align_tyvars — same
+                    // structural walk used for scheme narrowing at round 17
+                    // F1. Without this, dispatch_method_entry sees two
+                    // disjoint fresh-var groups (one from free_vars on
+                    // the body-inferred method_type, one from stale
+                    // constraint tyvars) and produces inconsistent
+                    // substitutions at call sites.
                     if let Some(ty) = constrained
                         && let Some(entry) = self.method_table.get_mut(&(target, method_name))
                     {
+                        if !entry.method_constraints.is_empty() {
+                            let remap = align_tyvars(&entry.method_type, &ty);
+                            entry.method_constraints = entry
+                                .method_constraints
+                                .iter()
+                                .filter_map(|(old_tv, trait_name)| {
+                                    remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                })
+                                .collect();
+                        }
                         entry.method_type = ty;
                     }
                 }
@@ -1083,6 +1167,16 @@ impl TypeChecker {
                                 && let Some(entry) =
                                     self.method_table.get_mut(&(target, method_name))
                             {
+                                if !entry.method_constraints.is_empty() {
+                                    let remap = align_tyvars(&entry.method_type, &ty);
+                                    entry.method_constraints = entry
+                                        .method_constraints
+                                        .iter()
+                                        .filter_map(|(old_tv, trait_name)| {
+                                            remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                        })
+                                        .collect();
+                                }
                                 entry.method_type = ty;
                             }
                         }
@@ -1438,6 +1532,7 @@ impl TypeChecker {
                     span: dummy_span,
                     is_auto_derived: true,
                     trait_name: None,
+                    method_constraints: Vec::new(),
                 },
             );
         }
@@ -1800,8 +1895,13 @@ impl TypeChecker {
 
         // Construct the self_type. Three cases:
         //   1. Bare-target form (`trait X for Int`): target_type_args is
-        //      empty. Fall through to the primitive-or-Generic(name, [])
-        //      path via type_from_name — preserves round-13+ behaviour.
+        //      empty. For primitive types, fall through to type_from_name.
+        //      For parameterized user types, synthesize fresh-var args to
+        //      match the record's / enum's arity — otherwise the receiver-
+        //      unify step in dispatch_method_entry would fail with arity
+        //      mismatch when the caller passes a concrete instantiation
+        //      like `Box { value: 42 }` (Generic("Box", [Int])) against a
+        //      zero-arg self_type (Generic("Box", [])).
         //   2. Parameterized user type (`trait X for Box(a)`): resolve
         //      each arg through impl_param_map. Arity enforced against
         //      the record's param_var_ids or the enum's declared params.
@@ -1809,7 +1909,18 @@ impl TypeChecker {
         //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
         //      already; reuse it.
         let self_type = if ti.target_type_args.is_empty() {
-            Self::type_from_name(ti.target_type)
+            let user_arity = self
+                .record_param_var_ids
+                .get(&ti.target_type)
+                .map(|v| v.len())
+                .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()))
+                .unwrap_or(0);
+            if user_arity == 0 {
+                Self::type_from_name(ti.target_type)
+            } else {
+                let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
+                Type::Generic(ti.target_type, args)
+            }
         } else {
             // Arity check for user-declared record/enum targets.
             let expected_arity = self
@@ -1862,6 +1973,56 @@ impl TypeChecker {
                 _ => Type::Generic(ti.target_type, resolved_args),
             }
         };
+
+        // Resolve impl-level where clauses (e.g. `trait X for Box(a) where
+        // a: Show`) to `(TyVar, trait)` pairs against the impl_param_map.
+        // These apply to every method in the impl and are appended to
+        // both the method's scheme (so active_constraints in the body see
+        // them during check_fn_body_with_name) and its MethodEntry (so
+        // external call sites defer the obligation via pending_where).
+        //
+        // Multi-trait bounds (`where a: Show + Hash`) arrive pre-flattened
+        // from parse_where_clauses_opt as separate (tv, trait) entries
+        // sharing a type_var, so the resolution loop handles both forms
+        // with a single path.
+        let mut impl_level_constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        for (type_param, trait_name) in &ti.where_clauses {
+            if !self.traits.contains_key(trait_name) {
+                self.error(
+                    format!(
+                        "unknown trait '{}' in where clause on trait impl '{} for {}'",
+                        resolve(*trait_name),
+                        resolve(ti.trait_name),
+                        resolve(ti.target_type)
+                    ),
+                    ti.span,
+                );
+                continue;
+            }
+            match impl_param_map.get(type_param) {
+                Some(ty) => {
+                    let resolved = self.apply(ty);
+                    if let Type::Var(tv) = resolved {
+                        impl_level_constraints.push((tv, *trait_name));
+                    }
+                    // If resolved is concrete (shouldn't happen — impl_param_map
+                    // only inserts fresh Var entries) treat it as a tautology.
+                }
+                None => {
+                    self.error(
+                        format!(
+                            "type variable '{}' in impl-level where clause is not declared in the target type arguments; \
+                             declare it as a target parameter: `trait {} for {}({}, ...)`",
+                            resolve(*type_param),
+                            resolve(ti.trait_name),
+                            resolve(ti.target_type),
+                            resolve(*type_param)
+                        ),
+                        ti.span,
+                    );
+                }
+            }
+        }
 
         let self_sym = intern("self");
         for method in &ti.methods {
@@ -1918,10 +2079,64 @@ impl TypeChecker {
                 );
             }
 
-            // New: populate method_table. Store the raw template type —
-            // lookup sites wrap it in a scheme and instantiate to get fresh
-            // type variables per call (otherwise the first call would
-            // permanently bind polymorphic params via unification).
+            // Collect constraints for this method:
+            //   (a) every impl-level constraint, verbatim (they reference
+            //       impl_param_map TyVars which are also visible to the
+            //       method's fn_type because param_map was cloned from
+            //       impl_param_map);
+            //   (b) every method-level `where` clause, resolved through
+            //       the method's param_map — which sees BOTH impl-level
+            //       binders (from the clone) AND method-local type annos.
+            //
+            // Method-level where clauses on trait-impl methods were
+            // silently ignored by prior rounds — `register_trait_impl`
+            // never consulted `method.where_clauses`. The impl-level
+            // follow-up folds that latent gap into the same code path.
+            let mut method_constraints = impl_level_constraints.clone();
+            for (type_param, trait_name) in &method.where_clauses {
+                if !self.traits.contains_key(trait_name) {
+                    self.error(
+                        format!(
+                            "unknown trait '{}' in where clause on '{}.{}'",
+                            resolve(*trait_name),
+                            resolve(ti.target_type),
+                            resolve(method.name)
+                        ),
+                        method.span,
+                    );
+                    continue;
+                }
+                match param_map.get(type_param) {
+                    Some(ty) => {
+                        let resolved = self.apply(ty);
+                        if let Type::Var(tv) = resolved {
+                            method_constraints.push((tv, *trait_name));
+                        }
+                    }
+                    None => {
+                        // Give the user the full "declare it in the sig or
+                        // target" hint — this is the same spirit as the
+                        // register_fn_decl error at mod.rs:1690.
+                        self.error(
+                            format!(
+                                "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
+                                 arguments or in the method's parameter annotations",
+                                resolve(*type_param),
+                                resolve(ti.target_type),
+                                resolve(method.name)
+                            ),
+                            method.span,
+                        );
+                    }
+                }
+            }
+
+            // Populate method_table. Store BOTH the raw template type
+            // AND the collected constraints so receiver-method dispatch
+            // sites can instantiate both through a shared substitution
+            // via instantiate_method_entry, then push the instantiated
+            // constraints into pending_where_constraints for the
+            // finalize-pass check.
             self.method_table.insert(
                 (ti.target_type, method.name),
                 MethodEntry {
@@ -1929,12 +2144,18 @@ impl TypeChecker {
                     span: ti.span,
                     is_auto_derived: false,
                     trait_name: Some(ti.trait_name),
+                    method_constraints: method_constraints.clone(),
                 },
             );
 
             // Legacy: register in TypeEnv as "TypeName.method_name".
+            // Attach the same constraints to the scheme so the method
+            // body's check_fn_body_with_name sees them as active.
             let key = intern(&format!("{}.{}", ti.target_type, method.name));
-            let scheme = self.generalize(env, &fn_type);
+            let mut scheme = self.generalize(env, &fn_type);
+            for (tv, trait_name) in &method_constraints {
+                scheme.constraints.push((*tv, *trait_name));
+            }
             env.define(key, scheme);
         }
     }
@@ -2209,6 +2430,7 @@ impl ReplTypeContext {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2232,6 +2454,7 @@ impl ReplTypeContext {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2254,6 +2477,7 @@ impl ReplTypeContext {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2277,6 +2501,7 @@ impl ReplTypeContext {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2445,6 +2670,16 @@ impl ReplTypeContext {
                         && let Some(entry) =
                             self.checker.method_table.get_mut(&(target, method_name))
                     {
+                        if !entry.method_constraints.is_empty() {
+                            let remap = align_tyvars(&entry.method_type, &ty);
+                            entry.method_constraints = entry
+                                .method_constraints
+                                .iter()
+                                .filter_map(|(old_tv, trait_name)| {
+                                    remap.get(old_tv).map(|&new_tv| (new_tv, *trait_name))
+                                })
+                                .collect();
+                        }
                         entry.method_type = ty;
                     }
                 }

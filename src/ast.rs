@@ -302,6 +302,15 @@ pub struct TraitImpl {
     /// see `a` as a concrete (but polymorphic) tyvar instead of a lexical
     /// ident. Empty for the bare-target form.
     pub target_param_names: Vec<Symbol>,
+    /// Impl-level `where` clauses on the target's type parameters, e.g.
+    /// `trait Greet for Box(a) where a: Greet { ... }`. Each clause is
+    /// `(type_var_name, trait_name)` — multi-trait bounds via `+` are
+    /// flattened into separate entries sharing a type_var. Constraints
+    /// here apply to every method in the impl, and the typechecker
+    /// appends them to each method's scheme during register_trait_impl.
+    /// The `where` clause syntax matches fn-decl syntax exactly,
+    /// including multi-trait bounds via `+`.
+    pub where_clauses: Vec<(Symbol, Symbol)>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }

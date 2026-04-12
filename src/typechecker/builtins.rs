@@ -2840,6 +2840,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2892,6 +2893,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2944,6 +2946,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -2996,6 +2999,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3048,6 +3052,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3100,6 +3105,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3152,6 +3158,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3204,6 +3211,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3256,6 +3264,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3308,6 +3317,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3360,6 +3370,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3412,6 +3423,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3464,6 +3476,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3516,6 +3529,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3568,6 +3582,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3620,6 +3635,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3672,6 +3688,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3724,6 +3741,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3776,6 +3794,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3828,6 +3847,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3880,6 +3900,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3932,6 +3953,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -3984,6 +4006,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4036,6 +4059,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4088,6 +4112,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4140,6 +4165,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4192,6 +4218,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4244,6 +4271,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4296,6 +4324,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4348,6 +4377,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4400,6 +4430,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4452,6 +4483,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4504,6 +4536,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4556,6 +4589,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4608,6 +4642,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4660,6 +4695,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4712,6 +4748,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4764,6 +4801,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4816,6 +4854,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4868,6 +4907,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4920,6 +4960,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -4972,6 +5013,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5024,6 +5066,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5076,6 +5119,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5128,6 +5172,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5180,6 +5225,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5232,6 +5278,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5284,6 +5331,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5336,6 +5384,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5388,6 +5437,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5440,6 +5490,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5492,6 +5543,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5544,6 +5596,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5596,6 +5649,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5648,6 +5702,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5700,6 +5755,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }
@@ -5752,6 +5808,7 @@ impl TypeChecker {
                             span: dummy_span,
                             is_auto_derived: true,
                             trait_name: None,
+                            method_constraints: Vec::new(),
                         },
                     );
                 }

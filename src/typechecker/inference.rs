@@ -54,6 +54,88 @@ impl TypeChecker {
         false
     }
 
+    /// Dispatch a method lookup through a `MethodEntry`, returning the
+    /// instantiated method type AND plumbing any impl- or method-level
+    /// where-clause constraints into `pending_where_constraints` for
+    /// the finalize-pass check.
+    ///
+    /// Receiver-method syntax (`receiver.method(...)`) goes through
+    /// `method_table` rather than `env`, so prior rounds' fn-call where
+    /// enforcement never fired on it. This helper is the single place
+    /// that lifts method_table dispatch into the same constraint-check
+    /// machinery used by ordinary fn calls: each constraint tyvar gets
+    /// a fresh substitution via `instantiate_method_entry`, and the
+    /// caller's span + active_constraints get snapshotted for finalize.
+    ///
+    /// The `receiver_ty` is unified with the method's first parameter
+    /// (the `self` slot) BEFORE the constraint check, so impl-level
+    /// where clauses see the concrete receiver-element type when the
+    /// caller passes a monomorphic receiver. Without this unification,
+    /// the impl's `a_fresh` TyVar would stay unbound through the rest of
+    /// inference — the Call arm applies args to `params[1..]` only on
+    /// method calls, so the `self` param is the one slot no other path
+    /// touches.
+    ///
+    /// For concrete-receiver call sites, the constraint fires immediately
+    /// via `type_name_for_impl`; for unresolved-tyvar receivers it defers
+    /// via `pending_where_constraints` and resolves during
+    /// `finalize_deferred_checks` after all Calls have unified args.
+    pub(super) fn dispatch_method_entry(
+        &mut self,
+        entry: &MethodEntry,
+        method_name: Symbol,
+        receiver_ty: &Type,
+        span: Span,
+    ) -> Type {
+        let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
+        // Unify the receiver with the method's self param so concrete
+        // receiver element types flow into the impl's tyvars before the
+        // constraint check below.
+        if let Type::Fun(params, _) = &instantiated_ty
+            && let Some(self_param) = params.first()
+        {
+            self.unify(receiver_ty, self_param, span);
+        }
+        for (tv, trait_name) in constraints {
+            let resolved = self.apply(&Type::Var(tv));
+            match &resolved {
+                Type::Error | Type::Never | Type::Unit => {}
+                Type::Var(v) => {
+                    // Still a fresh tyvar — either the caller will unify
+                    // it with a concrete receiver (handled by finalize)
+                    // or the enclosing fn already declared the same
+                    // constraint via its own where clause (handled now).
+                    if !self.covered_by_active_constraint(&resolved, trait_name) {
+                        self.pending_where_constraints
+                            .push(PendingWhereConstraint {
+                                tyvar: *v,
+                                trait_name,
+                                callee_fn_name: Some(method_name),
+                                span,
+                                active_snapshot: self.active_constraints.clone(),
+                                param_tyvars: self.current_fn_param_tyvars.clone(),
+                            });
+                    }
+                }
+                _ => {
+                    // Concrete receiver — check trait impl exists now.
+                    if let Some(type_name) = self.type_name_for_impl(&resolved)
+                        && !self.trait_impl_set.contains(&(trait_name, type_name))
+                    {
+                        self.error(
+                            format!(
+                                "type '{}' does not implement trait '{}'",
+                                type_name, trait_name
+                            ),
+                            span,
+                        );
+                    }
+                }
+            }
+        }
+        self.apply(&instantiated_ty)
+    }
+
     // ── Check function body ─────────────────────────────────────────
 
     pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
@@ -229,7 +311,7 @@ impl TypeChecker {
                     }
                     // Also check the method table for trait methods.
                     if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
-                        let instantiated = self.instantiate_method_type(&entry.method_type);
+                        let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                         let method_ty = self.apply(&instantiated);
                         // Method types include `self` as the first param.
                         // When the call site originally saw this field
@@ -1154,7 +1236,7 @@ impl TypeChecker {
                         } else if let Some(entry) =
                             self.method_table.get(&(*rec_name, field)).cloned()
                         {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1208,7 +1290,7 @@ impl TypeChecker {
                         }
                         // Check method table (trait methods)
                         if let Some(entry) = self.method_table.get(&(*type_name, field)).cloned() {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1239,7 +1321,7 @@ impl TypeChecker {
                             _ => unreachable!(),
                         };
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1255,7 +1337,7 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("List"), field)).cloned()
                         {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1267,7 +1349,7 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("Tuple"), field)).cloned()
                         {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1278,7 +1360,7 @@ impl TypeChecker {
                     Type::Map(_, _) => {
                         if let Some(entry) = self.method_table.get(&(intern("Map"), field)).cloned()
                         {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1289,7 +1371,7 @@ impl TypeChecker {
                     Type::Set(_) => {
                         if let Some(entry) = self.method_table.get(&(intern("Set"), field)).cloned()
                         {
-                            let instantiated = self.instantiate_method_type(&entry.method_type);
+                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;

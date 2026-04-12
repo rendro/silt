@@ -83,11 +83,13 @@ Rules:
   to `trait X for Box(_)` — useful when the method bodies never observe
   the element type.
 
-### Recursive trait dispatch on the inner type
+### Impl-level where clauses
 
 To call a trait method on an impl-bound type variable, declare the
-constraint on the **method signature** using a `where` clause. Impl-level
-`where` clauses are not supported today; method-level is:
+constraint on the **impl header** using a `where` clause. The constraint
+applies to every method in the impl and is also enforced at every call
+site — passing a `Box(v)` where `v`'s type does not implement the
+required trait is a compile-time error:
 
 ```silt
 type Box(T) { Box(T) }
@@ -100,16 +102,52 @@ trait Greet for Int {
   fn greet(self) -> String { "int-greet" }
 }
 
-trait Greet for Box(a) {
-  fn greet(self) -> String where a: Greet {
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
     match self {
       Box(inner) -> inner.greet()
     }
   }
 }
 
-Box(5).greet()   -- "int-greet"
+Box(5).greet()            -- "int-greet"
+Box("hello").greet()      -- error: type 'String' does not implement trait 'Greet'
 ```
+
+Multi-trait bounds use `+` (or comma-separated clauses) — identical to
+fn-level `where`:
+
+```silt
+trait Greet for Box(a) where a: Greet + Loud {
+  fn greet(self) -> String {
+    match self { Box(inner) -> "{inner.greet()}-{inner.loud()}" }
+  }
+}
+
+-- equivalent:
+trait Greet for Box(a) where a: Greet, a: Loud {
+  fn greet(self) -> String { ... }
+}
+```
+
+### Method-level where clauses
+
+Method-level `where` clauses on trait-impl methods also work and have
+the same semantics as fn-level `where`. Use them when only **one**
+method in the impl needs the constraint; put it on the impl header
+when every method needs it:
+
+```silt
+trait Wrap for Box(a) {
+  fn wrap(self) -> Int { 1 }
+  fn greet(self) -> String where a: Greet {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+```
+
+`Box("hello").wrap()` works (no constraint); `Box("hello").greet()`
+fails at the call site against the method-level `where a: Greet`.
 
 Field access on a type-var field in a record works the same way:
 
@@ -119,10 +157,8 @@ type Cell(T) { value: T }
 trait Peek { fn peek(self) -> Int }
 trait Peek for Int { fn peek(self) -> Int { self } }
 
-trait Peek for Cell(a) {
-  fn peek(self) -> Int where a: Peek {
-    self.value.peek()
-  }
+trait Peek for Cell(a) where a: Peek {
+  fn peek(self) -> Int { self.value.peek() }
 }
 ```
 

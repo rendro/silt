@@ -368,32 +368,7 @@ impl Parser {
             None
         };
 
-        let where_clauses = if self.peek_skip_nl() == &Token::Where {
-            self.advance(); // consume 'where'
-            let mut clauses = Vec::new();
-            loop {
-                self.skip_nl();
-                let (type_param, _) = self.expect_ident()?;
-                self.expect(&Token::Colon)?;
-                let (trait_name, _) = self.expect_ident()?;
-                clauses.push((type_param, trait_name));
-                // Support multi-trait bounds: `where a: Equal + Hash`
-                while self.at(&Token::Plus) {
-                    self.advance(); // consume '+'
-                    let (trait_name, _) = self.expect_ident()?;
-                    clauses.push((type_param, trait_name));
-                }
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            clauses
-        } else {
-            Vec::new()
-        };
+        let where_clauses = self.parse_where_clauses_opt()?;
 
         self.skip_nl();
         let body = if self.at(&Token::Eq) {
@@ -762,6 +737,43 @@ impl Parser {
         Ok(TypeBody::Enum(variants))
     }
 
+    /// Parse an optional `where` clause list. Consumes the `where` token
+    /// if present. Supports comma-separated clauses and `+`-separated
+    /// multi-trait bounds per clause (`where a: Equal + Hash, b: Show`).
+    /// Returns an empty Vec if no `where` token is present.
+    ///
+    /// Shared between `parse_fn_decl`'s non-recovering path and the new
+    /// trait-impl parser. The recovery-variant fn-decl parser at
+    /// `parse_fn_decl_tail` keeps its inline copy because each failure
+    /// site must emit a recovery stub instead of propagating the error.
+    fn parse_where_clauses_opt(&mut self) -> Result<Vec<(Symbol, Symbol)>> {
+        if self.peek_skip_nl() != &Token::Where {
+            return Ok(Vec::new());
+        }
+        self.advance(); // consume 'where'
+        let mut clauses = Vec::new();
+        loop {
+            self.skip_nl();
+            let (type_param, _) = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let (trait_name, _) = self.expect_ident()?;
+            clauses.push((type_param, trait_name));
+            // Multi-trait bounds: `where a: Equal + Hash`
+            while self.at(&Token::Plus) {
+                self.advance();
+                let (trait_name, _) = self.expect_ident()?;
+                clauses.push((type_param, trait_name));
+            }
+            self.skip_nl();
+            if self.at(&Token::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Ok(clauses)
+    }
+
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
         let span = self.span();
         self.expect(&Token::Trait)?;
@@ -849,6 +861,13 @@ impl Parser {
             }
 
             self.skip_nl();
+            // Optional impl-level where clauses:
+            //   trait Greet for Box(a) where a: Greet { ... }
+            // Constraints here apply to every method in the impl body
+            // (appended to each method's scheme during register_trait_impl).
+            // Multi-trait bounds via `+` are supported: `where a: Show + Hash`.
+            let where_clauses = self.parse_where_clauses_opt()?;
+            self.skip_nl();
             self.expect(&Token::LBrace)?;
             let mut methods = Vec::new();
             self.skip_nl();
@@ -862,6 +881,7 @@ impl Parser {
                 target_type: target,
                 target_type_args,
                 target_param_names,
+                where_clauses,
                 methods,
                 span,
             }))

@@ -361,3 +361,267 @@ trait First for Pair(a, b) {
     let twice = silt::formatter::format(&once).expect("format error");
     assert_eq!(once, twice, "format not idempotent");
 }
+
+// ── Impl-level where clauses ────────────────────────────────────────
+
+#[test]
+fn test_trait_impl_level_where_clause_propagates_to_method_body() {
+    // Impl-level `where a: Greet` must make the constraint visible
+    // inside every method body in the impl, so `inner.greet()` on
+    // `inner: a` dispatches via active_constraints without requiring
+    // a method-level duplicate of the where clause.
+    let v = run(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int-greet" } }
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() -> String {
+  Box(5).greet()
+}
+"#,
+    );
+    match v {
+        Value::String(s) => assert_eq!(s.as_str(), "int-greet"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_trait_impl_level_where_rejects_concrete_violator_at_call_site() {
+    // `Box("hello").greet()` must be rejected because the impl-level
+    // `where a: Greet` requires the element type to implement Greet,
+    // and String does not. Before the method_table constraint plumbing
+    // landed, this call was silently accepted because receiver-method
+    // dispatch never consulted method_constraints — the constraint
+    // only ran inside the method body, which was never re-checked per
+    // call site.
+    let errs = type_errors(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() {
+  let b = Box("hello")
+  println(b.greet())
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
+        "expected rejection, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_trait_impl_level_where_accepts_conforming_call_site() {
+    // Sanity check the positive path — `Box(5).greet()` passes the
+    // where-clause check because Int impls Greet. This test catches
+    // false positives from the call-site rejection path: a bug that
+    // rejects all receiver-method calls instead of just the violating
+    // ones would fail this test.
+    let v = run(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Box(a) where a: Greet {
+  fn greet(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() -> String {
+  Box(5).greet()
+}
+"#,
+    );
+    match v {
+        Value::String(s) => assert_eq!(s.as_str(), "int"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+// ── Multi-trait bounds via `+` ──────────────────────────────────────
+
+#[test]
+fn test_trait_impl_level_where_with_multi_constraint_plus_syntax() {
+    // `where a: Greet + Loud` must flatten to two separate (tv, trait)
+    // entries sharing a type var, both propagating to method bodies
+    // via active_constraints. Body uses BOTH `.greet()` and `.loud()`
+    // on the inner value.
+    let v = run(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Greet for Box(a) where a: Greet + Loud {
+  fn greet(self) -> String {
+    match self {
+      Box(inner) -> "{inner.greet()}-{inner.loud()}"
+    }
+  }
+}
+fn main() -> String {
+  Box(42).greet()
+}
+"#,
+    );
+    match v {
+        Value::String(s) => assert_eq!(s.as_str(), "int-INT"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_trait_impl_level_multi_constraint_rejects_partial_impl() {
+    // If the caller's element type implements ONE of the two `+`-bound
+    // traits but not the other, the call must be rejected at the
+    // unsatisfied constraint. Here Int impls Greet but NOT Loud, so
+    // the call should fail against the Loud half of `a: Greet + Loud`.
+    let errs = type_errors(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Greet for Box(a) where a: Greet + Loud {
+  fn greet(self) -> String {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() {
+  let b = Box(5)
+  println(b.greet())
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("does not implement trait 'Loud'")),
+        "expected Loud rejection, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_trait_impl_level_where_with_comma_separated_clauses() {
+    // Comma-separated form: `where a: Greet, a: Loud` must be
+    // equivalent to `where a: Greet + Loud`. Both syntactic forms
+    // flatten to the same (tv, trait) pairs in the parser.
+    let v = run(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Loud { fn loud(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Loud for Int { fn loud(self) -> String { "INT" } }
+trait Greet for Box(a) where a: Greet, a: Loud {
+  fn greet(self) -> String {
+    match self {
+      Box(inner) -> "{inner.greet()}/{inner.loud()}"
+    }
+  }
+}
+fn main() -> String {
+  Box(7).greet()
+}
+"#,
+    );
+    match v {
+        Value::String(s) => assert_eq!(s.as_str(), "int/INT"),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+// ── Impl-level where clause validation ──────────────────────────────
+
+#[test]
+fn test_trait_impl_level_where_rejects_undeclared_binder() {
+    // The type variable in an impl-level where clause must be declared
+    // in the target type arguments. Referencing `b` when the target is
+    // `Box(a)` is a hard error pointing the user at the target header.
+    let errs = type_errors(
+        r#"
+type Box(T) { Box(T) }
+trait Show { fn show(self) -> String }
+trait Show for Box(a) where b: Show {
+  fn show(self) -> String {
+    match self { Box(inner) -> "x" }
+  }
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("'b'")
+                && e.contains("not declared in the target type arguments")
+        }),
+        "expected undeclared-binder error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_trait_impl_level_where_rejects_unknown_trait() {
+    let errs = type_errors(
+        r#"
+type Box(T) { Box(T) }
+trait Show { fn show(self) -> String }
+trait Show for Box(a) where a: NotARealTrait {
+  fn show(self) -> String {
+    match self { Box(inner) -> "x" }
+  }
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("unknown trait 'NotARealTrait'")),
+        "expected unknown-trait error, got: {errs:?}"
+    );
+}
+
+// ── Method-level where on impl methods (previously silently ignored) ─
+
+#[test]
+fn test_method_level_where_on_trait_impl_method_now_enforced() {
+    // Prior to this feature, register_trait_impl never consulted
+    // method.where_clauses at all, so a method-level `where a: Greet`
+    // was a no-op. If the method body then dispatched a method on `a`
+    // that wasn't actually part of any trait, the typechecker would
+    // emit a downstream error — but if the body WAS correct, the
+    // constraint simply never took effect at call sites.
+    //
+    // After the fix, method-level where clauses attach to the method's
+    // scheme and also flow through method_constraints for call-site
+    // enforcement, so a call like `Box("hello").unwrap()` now fails
+    // against the method-level `where a: Greet` requirement.
+    let errs = type_errors(
+        r#"
+type Box(T) { Box(T) }
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+trait Wrap { fn unwrap(self) -> String }
+trait Wrap for Box(a) {
+  fn unwrap(self) -> String where a: Greet {
+    match self { Box(inner) -> inner.greet() }
+  }
+}
+fn main() {
+  let b = Box("hello")
+  println(b.unwrap())
+}
+"#,
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
+        "expected method-level where violation, got: {errs:?}"
+    );
+}
