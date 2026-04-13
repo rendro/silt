@@ -50,8 +50,14 @@ struct SchedulerInner {
     shutdown: AtomicBool,
     /// Number of tasks that haven't yet completed (active + blocked + queued).
     live_tasks: AtomicUsize,
-    /// Number of tasks currently parked (blocked on channel/join).
+    /// Number of tasks currently parked (blocked on channel/join/io).
     blocked_tasks: AtomicUsize,
+    /// Number of tasks currently parked on external I/O (a strict subset of
+    /// `blocked_tasks`). These do not count toward deadlock detection because
+    /// an external waker (I/O pool completion) will unblock them — the
+    /// scheduler can't prove the graph is stuck while work is in flight.
+    /// Matches Go's philosophy: netpoll-blocked goroutines are not deadlocked.
+    io_blocked_tasks: AtomicUsize,
     /// Set to true once a deadlock has been detected and reported.
     deadlock_detected: AtomicBool,
     /// Handles of tasks that are currently blocked. When deadlock is detected,
@@ -75,6 +81,7 @@ impl Scheduler {
                 shutdown: AtomicBool::new(false),
                 live_tasks: AtomicUsize::new(0),
                 blocked_tasks: AtomicUsize::new(0),
+                io_blocked_tasks: AtomicUsize::new(0),
                 deadlock_detected: AtomicBool::new(false),
                 blocked_handles: Mutex::new(Vec::new()),
             }),
@@ -109,16 +116,20 @@ impl Scheduler {
         self.inner.deadlock_detected.load(Ordering::SeqCst)
     }
 
-    /// Snapshot `(live_tasks, blocked_tasks)` used by the main-thread
+    /// Snapshot `(live_tasks, internal_blocked)` used by the main-thread
     /// channel watchdog to decide whether any scheduled task could still
-    /// make progress. When `live > blocked`, at least one task is either
-    /// queued or running and may unblock a channel the main thread is
-    /// waiting on. When `live == 0` or `live <= blocked`, there is no
-    /// scheduled counterparty.
+    /// make progress. `internal_blocked` excludes I/O-blocked tasks — an
+    /// external waker (I/O pool completion) will eventually unblock them
+    /// and they might then reach the channel the main thread is waiting on.
+    /// When `live > internal_blocked`, at least one task is either queued,
+    /// running, or parked on external I/O; when `live <= internal_blocked`,
+    /// no scheduled counterparty can make progress.
     pub fn progress_snapshot(&self) -> (usize, usize) {
+        let blocked = self.inner.blocked_tasks.load(Ordering::SeqCst);
+        let io_blocked = self.inner.io_blocked_tasks.load(Ordering::SeqCst);
         (
             self.inner.live_tasks.load(Ordering::SeqCst),
-            self.inner.blocked_tasks.load(Ordering::SeqCst),
+            blocked.saturating_sub(io_blocked),
         )
     }
 
@@ -175,9 +186,16 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 // Use a timeout so we can periodically check for deadlock.
                 let wait_result = inner.condvar.wait_for(&mut queue, Duration::from_secs(1));
                 if wait_result.timed_out() {
+                    // Deadlock fires only when all live tasks are blocked on
+                    // INTERNAL graph edges (channels, joins). I/O-blocked
+                    // tasks have external wakers and are not deadlocked in
+                    // any sense the scheduler can prove — matches Go's
+                    // netpoll exemption.
                     let live = inner.live_tasks.load(Ordering::SeqCst);
                     let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
-                    if live > 0 && blocked >= live && queue.is_empty() {
+                    let io_blocked = inner.io_blocked_tasks.load(Ordering::SeqCst);
+                    let internal_blocked = blocked.saturating_sub(io_blocked);
+                    if live > 0 && internal_blocked >= live && queue.is_empty() {
                         // Double-check: release lock, yield, re-acquire, check again
                         // to avoid TOCTOU false positives.
                         drop(queue);
@@ -185,7 +203,9 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         queue = inner.run_queue.lock();
                         let live2 = inner.live_tasks.load(Ordering::SeqCst);
                         let blocked2 = inner.blocked_tasks.load(Ordering::SeqCst);
-                        if live2 > 0 && blocked2 >= live2 && queue.is_empty() {
+                        let io_blocked2 = inner.io_blocked_tasks.load(Ordering::SeqCst);
+                        let internal_blocked2 = blocked2.saturating_sub(io_blocked2);
+                        if live2 > 0 && internal_blocked2 >= live2 && queue.is_empty() {
                             // Confirmed deadlock — all live tasks are blocked
                             // with no runnable work.
                             if !inner.deadlock_detected.swap(true, Ordering::SeqCst) {
@@ -240,10 +260,18 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 let task_slot: Arc<Mutex<Option<Task>>> =
                     Arc::new(Mutex::new(Some(Task { id, vm, handle })));
 
+                // Track whether this block is on external I/O. I/O blocks
+                // bump `io_blocked_tasks` in addition to `blocked_tasks` so
+                // the deadlock detector can exclude them.
+                let was_io = matches!(reason, Some(BlockReason::Io(_)));
+
                 // Track that this task is now blocked (unless no block reason,
                 // which is treated as a yield and re-enqueued immediately).
                 if reason.is_some() {
                     inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
+                    if was_io {
+                        inner.io_blocked_tasks.fetch_add(1, Ordering::SeqCst);
+                    }
                     // Store the handle so we can complete it on deadlock.
                     // SAFETY: task_slot was just created with Some(Task{..}) above.
                     let handle_for_registry = task_slot
@@ -276,6 +304,9 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // path is unreachable once we drop the task, so
                         // live_tasks would otherwise leak).
                         cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                        if was_io {
+                            cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                        }
                         cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                         let mut handles = cancel_inner.blocked_handles.lock();
                         if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
@@ -290,7 +321,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let inner2 = inner.clone();
                         ch.register_recv_waker(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task);
+                                requeue(&inner2, task, false);
                             }
                         }));
                     }
@@ -299,7 +330,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let inner2 = inner.clone();
                         ch.register_send_waker(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task);
+                                requeue(&inner2, task, false);
                             }
                         }));
                     }
@@ -318,7 +349,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                 }
                                 if let Some(task) = slot.lock().take() {
                                     cancelled2.store(true, Ordering::Release);
-                                    requeue(&inner2, task);
+                                    requeue(&inner2, task, false);
                                 }
                             });
                             match kind {
@@ -332,7 +363,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let inner2 = inner.clone();
                         target_handle.register_join_waker(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task);
+                                requeue(&inner2, task, false);
                             }
                         }));
                     }
@@ -341,7 +372,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let inner2 = inner.clone();
                         completion.register_waker(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task);
+                                requeue(&inner2, task, true);
                             }
                         }));
                     }
@@ -360,8 +391,15 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 }
 
 /// Re-enqueue a parked task on the scheduler's run queue.
-fn requeue(inner: &Arc<SchedulerInner>, task: Task) {
+///
+/// `was_io` indicates whether the task was parked on external I/O (so
+/// `io_blocked_tasks` needs decrementing) or on an internal graph edge
+/// (channel/select/join). The waker site knows which arm it's in.
+fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
     inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+    if was_io {
+        inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+    }
     // Remove this task's handle from the blocked registry.
     {
         let task_id = task.id;
@@ -518,6 +556,67 @@ mod tests {
     }
 
     // ── Deadlock detection ─────────────────────────────────────────
+
+    #[test]
+    fn test_progress_snapshot_excludes_io_blocked_tasks() {
+        // Unit-level invariant: progress_snapshot returns `(live,
+        // internal_blocked)` where internal_blocked = blocked - io_blocked.
+        // I/O-blocked tasks have external wakers and must not count toward
+        // a deadlock-style "no progress possible" signal.
+        let scheduler = Scheduler::new();
+        // Simulate: 3 live tasks, 3 blocked total, 2 of which are on I/O.
+        scheduler.inner.live_tasks.store(3, Ordering::SeqCst);
+        scheduler.inner.blocked_tasks.store(3, Ordering::SeqCst);
+        scheduler.inner.io_blocked_tasks.store(2, Ordering::SeqCst);
+        let (live, internal_blocked) = scheduler.progress_snapshot();
+        assert_eq!(live, 3);
+        assert_eq!(
+            internal_blocked, 1,
+            "internal_blocked should exclude I/O tasks: 3 - 2 = 1"
+        );
+        // Sanity: if io_blocked == blocked, internal_blocked should be 0.
+        scheduler.inner.io_blocked_tasks.store(3, Ordering::SeqCst);
+        let (_, internal_blocked) = scheduler.progress_snapshot();
+        assert_eq!(internal_blocked, 0);
+        // Reset so the Drop path doesn't see non-zero counters.
+        scheduler.inner.live_tasks.store(0, Ordering::SeqCst);
+        scheduler.inner.blocked_tasks.store(0, Ordering::SeqCst);
+        scheduler.inner.io_blocked_tasks.store(0, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_io_blocked_task_does_not_trigger_deadlock() {
+        // Regression lock for the channel-only deadlock split: a task that
+        // performs real I/O should complete successfully, and the scheduler
+        // must NOT have marked the session as deadlocked during the I/O
+        // park window. Tests the I/O path end-to-end through the counter
+        // bookkeeping changes in requeue/cancel_cleanup.
+        let scheduler = Scheduler::new();
+        // Write a fixture file (small, completes fast).
+        let path = std::env::temp_dir().join("silt_sched_io_block_test.txt");
+        std::fs::write(&path, "hello").unwrap();
+        let src = format!(
+            r#"
+import io
+fn main() {{
+  match io.read_file("{}") {{
+    Ok(s) -> s
+    Err(_) -> "fail"
+  }}
+}}
+        "#,
+            path.display()
+        );
+        let (task, handle) = make_task(1, &src);
+        scheduler.submit(task).unwrap();
+        let result = handle.join();
+        assert_eq!(result.ok(), Some(Value::String("hello".into())));
+        assert!(
+            !scheduler.deadlock_detected(),
+            "I/O-blocked task must not trigger deadlock detection"
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn test_deadlock_detected_flag() {
