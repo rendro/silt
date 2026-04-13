@@ -192,6 +192,10 @@ silt update                -- update silt to the latest release
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically re-run on `.silt` file changes.
 
+### Staying up to date
+
+Run `silt update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, and atomically swaps the binary in place — no need to re-run the install script. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
+
 ## What's next
 
 - **[Language Guide](language-guide.md)** — complete coverage of every feature
