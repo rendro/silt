@@ -47,6 +47,18 @@ pub(crate) enum DeadlineSource {
     Task,
 }
 
+impl DeadlineSource {
+    /// User-visible message surfaced as the inner String of the `Err`
+    /// variant when an I/O times out. Silt-side match arms pattern on
+    /// this exact text, so it is part of the public contract.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            DeadlineSource::Global => "I/O timeout (SILT_IO_TIMEOUT exceeded)",
+            DeadlineSource::Task => "I/O timeout (task.deadline exceeded)",
+        }
+    }
+}
+
 /// An entry in the I/O watchdog registry. When the watchdog thread
 /// scans and finds an entry whose `deadline <= now`, it fires
 /// `completion.complete(Err(...))` to unblock the task with a timeout
@@ -114,15 +126,10 @@ impl WatchdogRegistry {
                 return true; // not overdue, keep watching
             }
             if let Some(completion) = entry.completion.upgrade() {
-                let msg = match entry.source {
-                    DeadlineSource::Global => {
-                        "I/O timeout (SILT_IO_TIMEOUT exceeded)".to_string()
-                    }
-                    DeadlineSource::Task => {
-                        "I/O timeout (task.deadline exceeded)".to_string()
-                    }
-                };
-                let err_value = Value::Variant("Err".into(), vec![Value::String(msg)]);
+                let err_value = Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(entry.source.message().to_string())],
+                );
                 if completion.complete(err_value) {
                     fired += 1;
                 }
@@ -214,16 +221,18 @@ impl Scheduler {
         let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
             .ok()
             .and_then(|s| parse_duration(&s));
-        // Watchdog scan interval: env override, else a reasonable default
-        // based on the global timeout (or 1s if only task.deadline is in
-        // use). Floored at 10ms to avoid pathological busy-scanning.
+        // Watchdog scan interval: env override, else a reasonable default.
+        // When SILT_IO_TIMEOUT is set, scale to timeout/4 (capped at 1s).
+        // Without SILT_IO_TIMEOUT, task.deadline is the only consumer —
+        // default to 100ms so sub-second deadlines fire promptly.
+        // Floored at 10ms to avoid pathological busy-scanning.
         let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
             .ok()
             .and_then(|s| parse_duration(&s))
             .unwrap_or_else(|| {
                 global_io_timeout
                     .map(|t| (t / 4).min(Duration::from_secs(1)))
-                    .unwrap_or(Duration::from_secs(1))
+                    .unwrap_or(Duration::from_millis(100))
             })
             .max(Duration::from_millis(10));
         let watchdog = Arc::new(WatchdogRegistry::new(interval));
@@ -256,7 +265,8 @@ impl Scheduler {
             .unwrap_or(4)
             .max(2); // At least 2 workers to avoid deadlocks
 
-        let mut handles = Vec::with_capacity(num_workers);
+        // Capacity: num_workers + 1 for the watchdog thread.
+        let mut handles = Vec::with_capacity(num_workers + 1);
         for _ in 0..num_workers {
             let inner = self.inner.clone();
             handles.push(thread::spawn(move || {

@@ -510,11 +510,13 @@ impl IoCompletion {
         self.result.lock().clone()
     }
 
-    /// Blocking wait (for main thread).
+    /// Blocking wait (for main thread). Clones the result rather than
+    /// taking it, so the first-writer-wins invariant on `complete` is
+    /// preserved: a subsequent `try_get` still observes the same value.
     pub fn wait(&self) -> Value {
         let mut guard = self.result.lock();
         loop {
-            if let Some(result) = guard.take() {
+            if let Some(result) = guard.clone() {
                 return result;
             }
             self.condvar.wait(&mut guard);

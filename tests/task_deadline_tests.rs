@@ -133,6 +133,60 @@ fn main() {{
 }
 
 #[test]
+fn test_watchdog_fired_pending_io_does_not_leak_to_next_call() {
+    // Regression lock for B1: when an I/O submit yields, the watchdog
+    // fires Err into pending_io, the task resumes, and the builtin
+    // short-circuits via deadline_exceeded() — the reconcile path must
+    // consume pending_io first, otherwise a subsequent I/O call outside
+    // the deadline scope would read the stale watchdog Err.
+    //
+    // Setup: SILT_IO_TIMEOUT=50ms forces the watchdog to fire quickly.
+    // task.spawn_until(50ms) does an I/O that yields (real file,
+    // watchdog wins the race). After deadline-Err surfaces, a second
+    // I/O in the SAME spawned task (post-deadline) must see its own
+    // fresh result (Err on missing file), not the stale deadline Err.
+    let fixture = std::env::temp_dir().join("silt_td_b1_ok.txt");
+    std::fs::write(&fixture, "ok").unwrap();
+    let src = format!(
+        r#"
+import io
+import task
+import time
+
+fn main() {{
+  -- First I/O inside deadline that times out mid-park.
+  let first = task.deadline(time.ms(1), fn() {{
+    io.read_file("{}")
+  }})
+  -- Second I/O AFTER the deadline scope — must NOT reuse
+  -- the stale pending_io from the first call.
+  let second = io.read_file("{}")
+  match first {{
+    Ok(s) -> println("first=ok:" )
+    Err(m) -> println("first=err")
+  }}
+  match second {{
+    Ok(s) -> println("second=" )
+    Err(m) -> println("second=err:leak")
+  }}
+}}
+"#,
+        fixture.display(),
+        fixture.display()
+    );
+    let (stdout, _stderr, code) = run_silt(&src);
+    let _ = std::fs::remove_file(&fixture);
+    assert_eq!(code, 0);
+    // The second I/O must succeed (or get a clean fs error) — it must
+    // NOT return the stale watchdog-fired Err.
+    assert!(
+        stdout.contains("second=")
+            && !stdout.contains("second=err:leak"),
+        "second I/O must not reuse stale pending_io; got: {stdout}"
+    );
+}
+
+#[test]
 fn test_task_spawn_until_zero_ms_child_io_times_out() {
     // task.spawn_until installs a deadline on the child task. With 0ms,
     // every I/O in the child returns Err immediately at entry.

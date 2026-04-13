@@ -109,12 +109,13 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
 /// return when the current task.deadline has already elapsed at entry.
 /// Shape matches the watchdog-fired timeout so silt-side match arms
 /// don't have to distinguish between "timed out at entry" and "timed
-/// out while parked".
+/// out while parked". Single source of truth for the message text
+/// lives on `scheduler::DeadlineSource`.
 pub(crate) fn deadline_exceeded_err_value() -> Value {
     Value::Variant(
         "Err".into(),
         vec![Value::String(
-            "I/O timeout (task.deadline exceeded)".to_string(),
+            crate::scheduler::DeadlineSource::Task.message().to_string(),
         )],
     )
 }

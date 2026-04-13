@@ -22,14 +22,12 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("io.read_file requires a string path".into()));
             };
 
-            // task.deadline check works on both main thread and
-            // scheduled tasks: if the deadline is already past at entry,
-            // short-circuit with the same Err the watchdog fires.
-            if let Some(err) = vm.deadline_exceeded() {
-                return Ok(err);
-            }
             if vm.is_scheduled_task {
-                // Check for pending completion from a previous yield
+                // Check for pending completion from a previous yield.
+                // This MUST run before deadline_exceeded() so a
+                // watchdog-fired Err gets consumed cleanly; otherwise
+                // the stale pending_io would leak into later I/O calls
+                // outside the deadline scope.
                 if let Some(completion) = vm.pending_io.take() {
                     if let Some(result) = completion.try_get() {
                         return Ok(result);
@@ -41,6 +39,12 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                         vm.push(arg.clone());
                     }
                     return Err(VmError::yield_signal());
+                }
+                // Fresh call (no pending I/O): short-circuit if the
+                // task.deadline has already elapsed — don't submit to
+                // the I/O pool at all.
+                if let Some(err) = vm.deadline_exceeded() {
+                    return Ok(err);
                 }
                 // First call — submit to I/O pool
                 let path = path.clone();
@@ -63,6 +67,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::yield_signal());
             }
             // Main thread: synchronous fallback
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             match std::fs::read_to_string(path) {
                 Ok(content) => Ok(Value::Variant("Ok".into(), vec![Value::String(content)])),
                 Err(e) => Ok(Value::Variant(
@@ -81,22 +88,21 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             };
 
-            if let Some(err) = vm.deadline_exceeded() {
-                return Ok(err);
-            }
             if vm.is_scheduled_task {
-                // Check for pending completion from a previous yield
+                // Reconcile pending I/O first — see read_file note.
                 if let Some(completion) = vm.pending_io.take() {
                     if let Some(result) = completion.try_get() {
                         return Ok(result);
                     }
-                    // Not ready yet — re-park
                     vm.pending_io = Some(completion.clone());
                     vm.block_reason = Some(BlockReason::Io(completion));
                     for arg in args {
                         vm.push(arg.clone());
                     }
                     return Err(VmError::yield_signal());
+                }
+                if let Some(err) = vm.deadline_exceeded() {
+                    return Ok(err);
                 }
                 // First call — submit to I/O pool
                 let path = path.clone();
@@ -118,6 +124,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::yield_signal());
             }
             // Main thread: synchronous fallback
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             match std::fs::write(path, content) {
                 Ok(()) => Ok(Value::Variant("Ok".into(), vec![Value::Unit])),
                 Err(e) => Ok(Value::Variant(
@@ -127,22 +136,21 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "read_line" => {
-            if let Some(err) = vm.deadline_exceeded() {
-                return Ok(err);
-            }
             if vm.is_scheduled_task {
-                // Check for pending completion from a previous yield
+                // Reconcile pending I/O first — see read_file note.
                 if let Some(completion) = vm.pending_io.take() {
                     if let Some(result) = completion.try_get() {
                         return Ok(result);
                     }
-                    // Not ready yet — re-park
                     vm.pending_io = Some(completion.clone());
                     vm.block_reason = Some(BlockReason::Io(completion));
                     for arg in args {
                         vm.push(arg.clone());
                     }
                     return Err(VmError::yield_signal());
+                }
+                if let Some(err) = vm.deadline_exceeded() {
+                    return Ok(err);
                 }
                 // First call — submit to I/O pool
                 let completion = vm.runtime.io_pool.submit(move || {
@@ -166,6 +174,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::yield_signal());
             }
             // Main thread: synchronous fallback
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
                 // Ok(0) means EOF — surface as Err so calling programs can

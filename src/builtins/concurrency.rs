@@ -341,6 +341,63 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
     }
 }
 
+/// Spawn a child task with an optional scoped wall-clock deadline.
+/// Shared by `task.spawn` (deadline = None) and `task.spawn_until`
+/// (deadline = Some(now + dur)). Returns the Handle wrapping the
+/// spawned task; propagates scheduler.submit errors unchanged.
+fn spawn_with_deadline(
+    vm: &mut Vm,
+    closure: &Arc<crate::bytecode::VmClosure>,
+    deadline: Option<Instant>,
+) -> Result<Value, VmError> {
+    let task_id = vm.next_task_id();
+    let handle = Arc::new(TaskHandle::new(task_id));
+
+    let child_closure = closure.clone();
+    let mut child_vm = vm.spawn_child();
+    child_vm.current_deadline = deadline;
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::vm::CallFrame;
+        let child_handle = handle.clone();
+        child_vm.stack = vec![Value::Unit];
+        child_vm.frames = vec![CallFrame {
+            closure: child_closure,
+            ip: 0,
+            base_slot: 1,
+        }];
+        match child_vm.execute() {
+            Ok(val) => child_handle.complete(Ok(val)),
+            Err(e) => child_handle.complete(Err(child_vm.enrich_error(e))),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use crate::scheduler::Task;
+        use crate::vm::CallFrame;
+        child_vm.stack = vec![Value::Unit];
+        child_vm.frames = vec![CallFrame {
+            closure: child_closure,
+            ip: 0,
+            base_slot: 1,
+        }];
+        child_vm.is_scheduled_task = true;
+
+        let scheduler = vm.get_or_create_scheduler();
+        scheduler
+            .submit(Task {
+                id: task_id,
+                vm: child_vm,
+                handle: handle.clone(),
+            })
+            .map_err(VmError::new)?;
+    }
+
+    Ok(Value::Handle(handle))
+}
+
 /// Dispatch `task.<name>(args)`.
 pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -355,53 +412,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn requires a function argument".into(),
                 ));
             };
-            let task_id = vm.next_task_id();
-            let handle = Arc::new(TaskHandle::new(task_id));
-
-            let child_closure = closure.clone();
-            let mut child_vm = vm.spawn_child();
-
-            #[cfg(target_arch = "wasm32")]
-            {
-                // WASM: run synchronously (no threads available).
-                use crate::vm::CallFrame;
-                let child_handle = handle.clone();
-                child_vm.stack = vec![Value::Unit];
-                child_vm.frames = vec![CallFrame {
-                    closure: child_closure,
-                    ip: 0,
-                    base_slot: 1,
-                }];
-                match child_vm.execute() {
-                    Ok(val) => child_handle.complete(Ok(val)),
-                    Err(e) => child_handle.complete(Err(child_vm.enrich_error(e))),
-                }
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                use crate::scheduler::Task;
-                use crate::vm::CallFrame;
-                // M:N scheduler: submit task to the shared thread pool.
-                child_vm.stack = vec![Value::Unit];
-                child_vm.frames = vec![CallFrame {
-                    closure: child_closure,
-                    ip: 0,
-                    base_slot: 1,
-                }];
-                child_vm.is_scheduled_task = true;
-
-                let scheduler = vm.get_or_create_scheduler();
-                scheduler
-                    .submit(Task {
-                        id: task_id,
-                        vm: child_vm,
-                        handle: handle.clone(),
-                    })
-                    .map_err(VmError::new)?;
-            }
-
-            Ok(Value::Handle(handle))
+            spawn_with_deadline(vm, closure, None)
         }
         "join" => {
             if args.len() != 1 {
@@ -456,15 +467,9 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         }
         "spawn_until" => {
             // task.spawn_until(dur, fn) — spawn a task that runs with a
-            // scoped wall-clock deadline of `dur` from now. Equivalent
-            // to `task.spawn(fn() { task.deadline(dur, fn) })` but
-            // without the closure-wrapping boilerplate and without the
-            // extra stack frame. Same semantics as task.deadline:
-            //   - I/O operations inside the spawned task return
-            //     `Err("I/O timeout (task.deadline exceeded)")` once
-            //     the deadline elapses (either at entry or during
-            //     an I/O block via the watchdog).
-            //   - CPU-bound work is NOT interrupted.
+            // scoped wall-clock deadline. Equivalent to
+            // `task.spawn(fn() { task.deadline(dur, fn) })` minus the
+            // closure-wrapping boilerplate.
             if args.len() != 2 {
                 return Err(VmError::new(
                     "task.spawn_until takes 2 arguments (duration, fn)".into(),
@@ -481,56 +486,9 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn_until requires a function argument".into(),
                 ));
             };
-            let task_id = vm.next_task_id();
-            let handle = Arc::new(TaskHandle::new(task_id));
-
-            let child_closure = closure.clone();
-            let mut child_vm = vm.spawn_child();
-            // Install the deadline on the child VM before scheduling
-            // (or executing, on wasm). The child's I/O builtins and the
-            // scheduler's watchdog both consult current_deadline.
-            child_vm.current_deadline =
+            let deadline =
                 Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
-
-            #[cfg(target_arch = "wasm32")]
-            {
-                use crate::vm::CallFrame;
-                let child_handle = handle.clone();
-                child_vm.stack = vec![Value::Unit];
-                child_vm.frames = vec![CallFrame {
-                    closure: child_closure,
-                    ip: 0,
-                    base_slot: 1,
-                }];
-                match child_vm.execute() {
-                    Ok(val) => child_handle.complete(Ok(val)),
-                    Err(e) => child_handle.complete(Err(child_vm.enrich_error(e))),
-                }
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                use crate::scheduler::Task;
-                use crate::vm::CallFrame;
-                child_vm.stack = vec![Value::Unit];
-                child_vm.frames = vec![CallFrame {
-                    closure: child_closure,
-                    ip: 0,
-                    base_slot: 1,
-                }];
-                child_vm.is_scheduled_task = true;
-
-                let scheduler = vm.get_or_create_scheduler();
-                scheduler
-                    .submit(Task {
-                        id: task_id,
-                        vm: child_vm,
-                        handle: handle.clone(),
-                    })
-                    .map_err(VmError::new)?;
-            }
-
-            Ok(Value::Handle(handle))
+            spawn_with_deadline(vm, closure, deadline)
         }
         "deadline" => {
             // task.deadline(dur, fn) — runs `fn` with a scoped wall-clock
@@ -587,8 +545,14 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     // I/O builtin's entry check both observe it.
                 }
                 _ => {
-                    // Scope ending — pop the deadline we pushed.
-                    vm.current_deadline = vm.deadline_stack.pop().unwrap_or(None);
+                    // Scope ending — pop the deadline we pushed. An empty
+                    // stack here means push/pop got unbalanced (a bug in
+                    // the scope-entry logic or is_resume detection), so
+                    // surface it loudly rather than silently clearing.
+                    vm.current_deadline = vm
+                        .deadline_stack
+                        .pop()
+                        .expect("deadline_stack underflow — push/pop unbalanced in task.deadline");
                 }
             }
             result
