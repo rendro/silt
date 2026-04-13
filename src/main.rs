@@ -1260,17 +1260,31 @@ fn vm_run_file(path: &str) {
                 }
             }
         } else if is_missing_main_error(&e) {
-            // Detect test-only files so we can nudge the user toward `silt test`
-            // instead of the generic "add a main()" error. We do a conservative
-            // text scan for `fn test_` function definitions or top-level `test.`
-            // builtin calls — both strong signals the user meant `silt test`.
-            if looks_like_test_file(&source) {
-                eprintln!(
-                    "{path}: program has no main() function. This looks like a test file — run it with 'silt test {path}' instead."
-                );
+            // Round-24 B-fix: wrap the missing-main message in a real
+            // SourceError so it renders with the canonical
+            // `error[compile]:` header consistent with every other
+            // file-level diagnostic. Previously this was a plain
+            // `eprintln!` with no header / no `-->` locator — the only
+            // diagnostic in the codebase that broke the rustc-style
+            // shape. Lock: tests/empty_program_diagnostic_tests.rs.
+            //
+            // We use Span::new(0, 0) because there's no source location
+            // for "the file has no main()" — the Display impl omits the
+            // `-->` line when span.line == 0 but still emits the header.
+            //
+            // Detect test-only files so we can nudge the user toward
+            // `silt test` instead of the generic "add a main()" error.
+            // The body line below the header is rendered as a `= note:`
+            // continuation, matching the multi-line message convention.
+            let msg = if looks_like_test_file(&source) {
+                format!(
+                    "program has no main() function\nThis looks like a test file — run it with 'silt test {path}' instead."
+                )
             } else {
-                eprintln!("{path}: program has no main() function — add one as the entry point");
-            }
+                "program has no main() function\nadd one as the entry point".to_string()
+            };
+            let source_err = SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
+            eprintln!("{source_err}");
         } else {
             eprintln!("{path}: {e}");
         }
@@ -1306,13 +1320,51 @@ fn check_file(path: &str, format: OutputFormat) {
     // will resolve, but keep every other diagnostic so real errors still
     // surface. See `reportable_type_errors` for the rationale.
     let reportable_types = reportable_type_errors(&result);
-    let errors: Vec<&SourceError> = result
+    let mut errors: Vec<&SourceError> = result
         .parse_errors
         .iter()
         .chain(reportable_types.iter().copied())
         .chain(result.compile_errors.iter())
         .chain(result.compile_warnings.iter())
         .collect();
+
+    // Round-24 B-fix: if compilation succeeded but the program defines no
+    // `main` function AND the file doesn't look like a library module
+    // (`pub fn ...`) or a test file (`fn test_...`), surface the same
+    // canonical missing-main diagnostic that `silt run` emits — exit 1
+    // with `error[compile]: program has no main() function`. Without
+    // this, an empty / no-main "script" file would pass `silt check`
+    // cleanly and then fail at `silt run`, which is off-spec.
+    //
+    // We deliberately exclude library modules (identified by any
+    // `pub fn`) and test files (identified by `fn test_*` / `test.*`)
+    // because those files legitimately never define `main` and are
+    // consumed by importers / by `silt test` respectively. The
+    // `silt run` path still flags both with its own nudge — `check`
+    // is the "does this file compile standalone" answer, and neither
+    // a library nor a test file should be invoked standalone.
+    //
+    // Lock: tests/empty_program_diagnostic_tests.rs and
+    // tests/examples_check.rs (every_example_type_checks_and_has_no_warnings).
+    let missing_main_err: Option<SourceError> = if errors.is_empty()
+        && result.functions.is_some()
+        && !program_has_main(&result.source)
+        && !looks_like_library_module(&result.source)
+        && !looks_like_test_file(&result.source)
+    {
+        let msg = "program has no main() function\nadd one as the entry point".to_string();
+        Some(SourceError::compile_error_at(
+            msg,
+            silt::lexer::Span::new(0, 0),
+            &result.source,
+            path,
+        ))
+    } else {
+        None
+    };
+    if let Some(ref err) = missing_main_err {
+        errors.push(err);
+    }
 
     if format == OutputFormat::Json {
         print_json_errors(&errors);
@@ -1329,10 +1381,52 @@ fn check_file(path: &str, format: OutputFormat) {
     let has_real_type_error = reportable_types.iter().any(|e| !e.is_warning);
     let has_real_hard_errors = !result.parse_errors.is_empty()
         || !result.compile_errors.is_empty()
-        || has_real_type_error;
+        || has_real_type_error
+        || missing_main_err.is_some();
     if has_real_hard_errors {
         process::exit(1);
     }
+}
+
+/// Conservative text scan: does `source` look like a library module
+/// (has at least one `pub fn ...` definition)?  Used by `silt check` to
+/// suppress the missing-main diagnostic on files that are intended to
+/// be imported rather than run directly.
+fn looks_like_library_module(source: &str) -> bool {
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.starts_with("pub fn ") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Conservative text scan for whether `source` defines a top-level `main`
+/// function. We match lines whose trimmed prefix is `fn main(` / `fn main `
+/// / `fn main{` or the `pub fn` variants. Must be conservative — a false
+/// positive here would suppress the missing-main diagnostic for a program
+/// that actually needs it.
+fn program_has_main(source: &str) -> bool {
+    for line in source.lines() {
+        let t = line.trim_start();
+        let rest = if let Some(r) = t.strip_prefix("pub fn ") {
+            r
+        } else if let Some(r) = t.strip_prefix("fn ") {
+            r
+        } else {
+            continue;
+        };
+        // Match `main` followed by a non-identifier character.
+        if let Some(after) = rest.strip_prefix("main") {
+            match after.chars().next() {
+                Some(c) if !(c.is_alphanumeric() || c == '_') => return true,
+                None => return true,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 fn print_json_errors(errors: &[&SourceError]) {

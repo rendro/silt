@@ -1,0 +1,157 @@
+import io
+import json
+import list
+import map
+import string
+
+-- Interactive key-value store with GET, SET, DEL, KEYS, COUNT, SAVE, and LOAD commands.
+-- Persists data as JSON.
+
+let db_path = "examples/data/kvstore.json"
+
+fn handle_get(store, parts) {
+  match list.get(parts, 1) {
+    None -> {
+      println("Usage: GET <key>")
+      store
+    }
+    Some(key) -> {
+      match map.get(store, key) {
+        Some(value) -> println(value)
+        None -> println("(nil) - key not found: {key}")
+      }
+      store
+    }
+  }
+}
+
+fn handle_set(store, parts) {
+  let key = list.get(parts, 1)
+  let value_parts = list.drop(parts, 2)
+  match (key, list.length(value_parts) > 0) {
+    (Some(k), true) -> {
+      let value = value_parts
+      |> string.join(" ")
+      let new_store = map.set(store, k, value)
+      println("OK")
+      new_store
+    }
+    _ -> {
+      println("Usage: SET <key> <value>")
+      store
+    }
+  }
+}
+
+fn handle_del(store, parts) {
+  match list.get(parts, 1) {
+    None -> {
+      println("Usage: DEL <key>")
+      store
+    }
+    Some(key) -> {
+      match map.contains(store, key) {
+        true -> {
+          let new_store = map.delete(store, key)
+          println("OK - deleted: {key}")
+          new_store
+        }
+        _ -> {
+          println("(nil) - key not found: {key}")
+          store
+        }
+      }
+    }
+  }
+}
+
+fn handle_keys(store) {
+  let keys = map.keys(store)
+  match list.length(keys) {
+    0 -> println("(empty)")
+    _ -> keys
+    |> list.each { k -> println("  {k}") }
+  }
+  store
+}
+
+fn handle_count(store) {
+  println("{map.length(store)}")
+  store
+}
+
+fn handle_save(store) {
+  let json_str = json.stringify(store)
+  match io.write_file(db_path, json_str) {
+    Ok(_) -> println("OK - saved {map.length(store)} entries to {db_path}")
+    Err(e) -> println("Error saving: {e}")
+  }
+  store
+}
+
+fn handle_load() {
+  match io.read_file(db_path) {
+    Err(e) -> {
+      println("Error loading: {e}")
+      println("Starting with empty store.")
+      #{}
+    }
+    Ok(content) -> {
+      match json.parse_map(String, content) {
+        Ok(loaded) -> {
+          println("OK - loaded {map.length(loaded)} entries from {db_path}")
+          loaded
+        }
+        Err(e) -> {
+          println("Error parsing JSON: {e}")
+          println("Starting with empty store.")
+          #{}
+        }
+      }
+    }
+  }
+}
+
+fn main() {
+  println("=== Key-Value Store ===")
+  println("Commands: GET <key>, SET <key> <value>, DEL <key>, KEYS, COUNT, SAVE, LOAD, QUIT")
+  println("")
+  loop store = #{} {
+    print("kvstore> ")
+    match io.read_line() {
+      Err(_) -> {
+        println("Goodbye!")
+      }
+      Ok(line) -> {
+        let trimmed = string.trim(line)
+        match string.is_empty(trimmed) {
+          true -> loop(store)
+          _ -> {
+            let parts = string.split(trimmed, " ")
+            match list.get(parts, 0) {
+              None -> loop(store)
+              Some(cmd) -> {
+                let command = string.to_upper(cmd)
+                match command {
+                  "QUIT" -> println("Goodbye!")
+                  "GET" -> loop(handle_get(store, parts))
+                  "SET" -> loop(handle_set(store, parts))
+                  "DEL" -> loop(handle_del(store, parts))
+                  "KEYS" -> loop(handle_keys(store))
+                  "COUNT" -> loop(handle_count(store))
+                  "SAVE" -> loop(handle_save(store))
+                  "LOAD" -> loop(handle_load())
+                  _ -> {
+                    println("Unknown command: {command}")
+                    println("Commands: GET, SET, DEL, KEYS, COUNT, SAVE, LOAD, QUIT")
+                    loop(store)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

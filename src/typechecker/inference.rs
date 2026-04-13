@@ -190,7 +190,7 @@ impl TypeChecker {
         for (tv, trait_name) in constraints {
             let resolved = self.apply(&Type::Var(tv));
             match &resolved {
-                Type::Error | Type::Never | Type::Unit => {}
+                Type::Error | Type::Never => {}
                 Type::Var(v) => {
                     // Still a fresh tyvar — either the caller will unify
                     // it with a concrete receiver (handled by finalize)

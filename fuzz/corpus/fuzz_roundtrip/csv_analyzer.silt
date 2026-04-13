@@ -1,0 +1,230 @@
+import float
+import int
+import io
+import list
+import map
+import option
+import result
+import string
+
+-- CSV data analyzer that parses student records and computes statistics,
+-- rankings, honor roll filtering, and grade distribution.
+-- Record type for a student row
+
+type Student {
+  name: String,
+  age: Int,
+  score: Int,
+  grade: String,
+}
+
+-- Parse a CSV line into a Student record
+
+fn parse_student(line) {
+  let fields = line
+  |> string.split(",")
+  let name = fields
+  |> list.get(0)
+  |> option.unwrap_or("")
+  let age = fields
+  |> list.get(1)
+  |> option.unwrap_or("0")
+  |> int.parse()
+  |> result.unwrap_or(0)
+  let score = fields
+  |> list.get(2)
+  |> option.unwrap_or("0")
+  |> int.parse()
+  |> result.unwrap_or(0)
+  let grade = fields
+  |> list.get(3)
+  |> option.unwrap_or("")
+  Student { name: name, age: age, score: score, grade: grade }
+}
+
+-- Compute sum of a list of integers
+
+fn sum(nums) {
+  nums
+  |> list.fold(0) { acc, x -> acc + x }
+}
+
+-- Compute min of a list of integers
+
+fn min_val(nums) {
+  match list.head(nums) {
+    Some(first) -> nums
+    |> list.fold(first) { acc, x -> match {
+      x < acc -> x
+      _ -> acc
+    } }
+    None -> 0
+  }
+}
+
+-- Compute max of a list of integers
+
+fn max_val(nums) {
+  match list.head(nums) {
+    Some(first) -> nums
+    |> list.fold(first) { acc, x -> match {
+      x > acc -> x
+      _ -> acc
+    } }
+    None -> 0
+  }
+}
+
+-- Compute average as a float
+
+fn avg(nums) {
+  let total = sum(nums)
+  let count = list.length(nums)
+  match {
+    count == 0 -> 0.0
+    _ -> int.to_float(total) / int.to_float(count) else 0.0
+  }
+}
+
+-- Print a row with column alignment
+
+fn print_row(col1, col2, col3, col4, col5) {
+  let c1 = col1
+  |> string.pad_right(10, " ")
+  let c2 = col2
+  |> string.pad_left(6, " ")
+  let c3 = col3
+  |> string.pad_left(8, " ")
+  let c4 = col4
+  |> string.pad_left(8, " ")
+  let c5 = col5
+  |> string.pad_left(8, " ")
+  println("{c1}{c2}{c3}{c4}{c5}")
+}
+
+-- Print a separator line
+
+fn print_separator() {
+  println(string.repeat("-", 42))
+}
+
+fn main() {
+  -- Read and parse CSV using match with Never-typed panic in Err arm
+  let content = match io.read_file("examples/data.csv") {
+    Ok(text) -> text
+    Err(e) -> panic("Error reading data.csv: {e}")
+  }
+  let lines = content
+  |> string.split("\n")
+  |> list.filter { l -> !string.is_empty(l) }
+  let data_lines = lines
+  |> list.drop(1)
+  let students = data_lines
+  |> list.map { l -> parse_student(l) }
+  -- Extract numeric columns
+  let ages = students
+  |> list.map { s -> s.age }
+  let scores = students
+  |> list.map { s -> s.score }
+  -- Print all students table
+  println("=== Student Data ===\n")
+  print_row("Name", "Age", "Score", "Grade", "")
+  print_separator()
+  students
+  |> list.each { s -> print_row(s.name, int.to_string(s.age), int.to_string(s.score), s.grade, "") }
+  -- Print column statistics
+  println("\n=== Column Statistics ===\n")
+  let stat_header_c1 = "Stat"
+  |> string.pad_right(10, " ")
+  let stat_header_c2 = "Age"
+  |> string.pad_left(10, " ")
+  let stat_header_c3 = "Score"
+  |> string.pad_left(10, " ")
+  println("{stat_header_c1}{stat_header_c2}{stat_header_c3}")
+  println(string.repeat("-", 30))
+  let age_sum = sum(ages)
+  let score_sum = sum(scores)
+  let r1c1 = "Sum"
+  |> string.pad_right(10, " ")
+  let r1c2 = int.to_string(age_sum)
+  |> string.pad_left(10, " ")
+  let r1c3 = int.to_string(score_sum)
+  |> string.pad_left(10, " ")
+  println("{r1c1}{r1c2}{r1c3}")
+  let age_min = min_val(ages)
+  let score_min = min_val(scores)
+  let r2c1 = "Min"
+  |> string.pad_right(10, " ")
+  let r2c2 = int.to_string(age_min)
+  |> string.pad_left(10, " ")
+  let r2c3 = int.to_string(score_min)
+  |> string.pad_left(10, " ")
+  println("{r2c1}{r2c2}{r2c3}")
+  let age_max = max_val(ages)
+  let score_max = max_val(scores)
+  let r3c1 = "Max"
+  |> string.pad_right(10, " ")
+  let r3c2 = int.to_string(age_max)
+  |> string.pad_left(10, " ")
+  let r3c3 = int.to_string(score_max)
+  |> string.pad_left(10, " ")
+  println("{r3c1}{r3c2}{r3c3}")
+  let age_avg = avg(ages)
+  let score_avg = avg(scores)
+  let r4c1 = "Avg"
+  |> string.pad_right(10, " ")
+  let r4c2 = float.to_string(age_avg, 1)
+  |> string.pad_left(10, " ")
+  let r4c3 = float.to_string(score_avg, 1)
+  |> string.pad_left(10, " ")
+  println("{r4c1}{r4c2}{r4c3}")
+  -- Filter: students with score >= 85 (honor roll)
+  println("\n=== Honor Roll (Score >= 85) ===\n")
+  let honor = students
+  |> list.filter { s -> s.score >= 85 }
+  print_row("Name", "Age", "Score", "Grade", "")
+  print_separator()
+  honor
+  |> list.each { s -> print_row(s.name, int.to_string(s.age), int.to_string(s.score), s.grade, "") }
+  println("\nTotal honor students: {list.length(honor)}")
+  -- Sort: all students by score descending
+  println("\n=== Students Sorted by Score (Descending) ===\n")
+  let sorted = students
+  |> list.sort_by { s -> -s.score }
+  print_row("Rank", "Name", "Score", "Grade", "")
+  print_separator()
+  sorted
+  |> list.enumerate
+  |> list.each { pair ->
+    let (i, s) = pair
+    let rank = int.to_string(i + 1)
+    print_row(rank, s.name, int.to_string(s.score), s.grade, "")
+  }
+  -- Grade distribution
+  println("\n=== Grade Distribution ===\n")
+  let grade_groups = students
+  |> list.group_by { s -> s.grade }
+  let grade_header_c1 = "Grade"
+  |> string.pad_right(10, " ")
+  let grade_header_c2 = "Count"
+  |> string.pad_left(8, " ")
+  let grade_header_c3 = "Students"
+  |> string.pad_left(8, " ")
+  println("{grade_header_c1}{grade_header_c2}  {grade_header_c3}")
+  println(string.repeat("-", 40))
+  let sorted_grades = ["A", "B", "C", "D", "F"]
+  sorted_grades
+  |> list.each { g ->
+    let group = map.get(grade_groups, g)
+    |> option.unwrap_or([])
+    let count = list.length(group)
+    let names = group
+    |> list.map { s -> s.name }
+    |> string.join(", ")
+    let gc1 = g
+    |> string.pad_right(10, " ")
+    let gc2 = int.to_string(count)
+    |> string.pad_left(8, " ")
+    println("{gc1}{gc2}  {names}")
+  }
+}

@@ -1,0 +1,35 @@
+import list
+
+type User {
+  name: String,
+  age: Int,
+  active: Bool,
+}
+
+fn birthday(user: User) -> User {
+  user.{ age: user.age + 1 }
+}
+
+fn greet(user: User) -> String {
+  let status = match {
+    user.active -> "active"
+    _ -> "inactive"
+  }
+  "{user.name} (age {user.age}, {status})"
+}
+
+fn main() {
+  let users = [User { name: "Alice", age: 30, active: true }, User { name: "Bob", age: 25, active: false }, User { name: "Carol", age: 28, active: true }]
+  println("-- All users --")
+  users
+  |> list.each { u -> println(greet(u)) }
+  println("\n-- Active users after birthday --")
+  users
+  |> list.filter { u -> u.active }
+  |> list.map { u -> birthday(u) }
+  |> list.each { u -> println("{u.name} is now {u.age}") }
+  let total_age = users
+  |> list.fold(0) { acc, u -> acc + u.age }
+  println("\nTotal age: {total_age}")
+  println("Number of users: {list.length(users)}")
+}

@@ -1,0 +1,15 @@
+import list
+
+fn fizzbuzz(n) {
+  match (n % 3, n % 5) {
+    (0, 0) -> "FizzBuzz"
+    (0, _) -> "Fizz"
+    (_, 0) -> "Buzz"
+    _ -> "{n}"
+  }
+}
+
+fn main() {
+  1..21
+  |> list.each { n -> println(fizzbuzz(n)) }
+}

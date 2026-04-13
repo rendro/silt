@@ -40,12 +40,16 @@ pub(super) fn levenshtein(a: &str, b: &str) -> usize {
 /// Threshold policy:
 /// - Exact matches to `typo` are filtered out (never suggest yourself).
 /// - For a pair (typo, candidate), define `max = typo.len().max(cand.len())`.
-/// - Short pairs (`max <= 5`) accept Levenshtein distance `<= 2`.
-///   This matches `pintln` → `println` (d=1), `lenght` → `length` (d=2),
-///   and still rejects `xyz` → `let` (d=3).
+/// - Short pairs (`max <= 5`) accept Levenshtein distance `<= 1`.
+///   Round-24 tightened this from `<= 2` after the audit surfaced
+///   low-signal hits like `foo` → `Bool` (d=2). Genuine 1-edit typos
+///   on very short names still pass (`fo` → `for`, `namee` → `name`).
+///   Two-edit typos on slightly longer names remain covered by the
+///   scaled rule below: `pintln` → `println` (d=1, max=7, 1*3 <= 7),
+///   `lenght` → `length` (d=2, max=6, 2*3 <= 6).
 /// - Longer pairs accept `d * 3 <= max`, i.e. up to ~33% of the longer
 ///   string may change. Scales with length so 20-character names don't
-///   get stuck at the absolute-2 threshold.
+///   get stuck at the absolute-1 threshold.
 ///
 /// Among accepted candidates the smallest edit distance wins; ties break
 /// lexicographically to keep the hint deterministic.
@@ -66,7 +70,7 @@ where
         let d = levenshtein(typo, c);
         let max = typo.chars().count().max(c.chars().count());
         let accept = if max <= 5 {
-            d <= 2
+            d <= 1
         } else {
             d.saturating_mul(3) <= max
         };
@@ -117,8 +121,13 @@ mod tests {
         // `xyzzy_completely_unrelated` is too far from anything in the
         // candidate set — don't offer a misleading hint.
         assert_eq!(suggest_similar("xyzzy_completely_unrelated", cands.iter()), None);
-        // `xyz` → `abc` is distance 3, max 3 — over the absolute-2 cap.
+        // `xyz` → `abc` is distance 3, max 3 — over the absolute-1 cap.
         assert_eq!(suggest_similar("xyz", ["abc"].iter()), None);
+        // `foo` → `Bool` is distance 2, max 4. Under the tightened
+        // short-pair cap (d <= 1) this must NOT produce a hint — it
+        // was the canonical low-signal suggestion the old d<=2 cap
+        // surfaced. Lock: tests/suggest_threshold_tests.rs.
+        assert_eq!(suggest_similar("foo", ["Bool"].iter()), None);
     }
 
     #[test]

@@ -1,0 +1,37 @@
+import http
+import json
+import list
+import string
+
+-- Fetch GitHub repos for a user and display the top 5 by stars.
+
+type Repo {
+  name: String,
+  description: String,
+  stargazers_count: Int,
+  language: String,
+}
+
+fn fetch_repos(user) {
+  let resp = http.get("https://api.github.com/users/{user}/repos")?
+  json.parse_list(Repo, resp.body)
+}
+
+fn main() {
+  match fetch_repos("torvalds") {
+    Ok(repos) -> {
+      println("Top repos by stars:\n")
+      repos
+      |> list.sort_by { r -> -r.stargazers_count }
+      |> list.take(5)
+      |> list.each { r ->
+        let lang = match string.is_empty(r.language) {
+          true -> "n/a"
+          false -> r.language
+        }
+        println("  {r.name} ({lang}): {r.stargazers_count} stars")
+      }
+    }
+    Err(e) -> println("Error: {e}")
+  }
+}

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 
 use crate::bytecode;
 use crate::vm::VmError;
@@ -34,6 +34,15 @@ pub(crate) fn checked_range_len(lo: i64, hi: i64) -> Result<usize, String> {
 /// A boxed callback that re-enqueues a parked task.
 /// Called by Channel::try_send / Channel::close when data becomes available.
 pub type Waker = Box<dyn FnOnce() + Send>;
+
+/// Identifier returned by `register_recv_waker` / `register_send_waker` so
+/// a caller (notably `channel.select`) can later deregister its sibling
+/// waker entries via `remove_recv_waker` / `remove_send_waker`. Without
+/// this, select on multiple channels leaks wakers into every non-firing
+/// channel's waker queue and permanently inflates `waiting_receivers` /
+/// `waiting_senders`, breaking rendezvous handshake semantics.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct WakerId(pub u64);
 
 #[derive(Clone)]
 pub enum Value {
@@ -73,11 +82,18 @@ pub struct Channel {
     /// Notified when a value is sent or the channel is closed.
     condvar: Condvar,
     /// Wakers to call when a value is sent or the channel is closed
-    /// (wakes tasks blocked on receive/select/each).
-    recv_wakers: Mutex<VecDeque<Waker>>,
+    /// (wakes tasks blocked on receive/select/each). Each waker carries
+    /// a `WakerId` so that `channel.select` can deregister siblings on
+    /// the channels that did NOT fire, avoiding leaked waker closures
+    /// and a permanently-inflated `waiting_receivers` counter.
+    recv_wakers: Mutex<VecDeque<(WakerId, Waker)>>,
     /// Wakers to call when buffer space becomes available
     /// (wakes tasks blocked on send when buffer was full).
-    send_wakers: Mutex<VecDeque<Waker>>,
+    send_wakers: Mutex<VecDeque<(WakerId, Waker)>>,
+    /// Monotonic counter for minting `WakerId`s on this channel. A `u64`
+    /// at 1 ns per increment overflows in ~585 years, so overflow is
+    /// not a practical concern.
+    next_waker_id: AtomicU64,
     /// For rendezvous (capacity == 0): a parked sender places its value here.
     /// The receiver takes it directly, completing the handshake.
     handoff: Mutex<Option<Value>>,
@@ -110,9 +126,37 @@ impl Channel {
             condvar: Condvar::new(),
             recv_wakers: Mutex::new(VecDeque::new()),
             send_wakers: Mutex::new(VecDeque::new()),
+            next_waker_id: AtomicU64::new(0),
             handoff: Mutex::new(None),
             waiting_receivers: AtomicUsize::new(0),
         }
+    }
+
+    /// Mint a fresh `WakerId` for a new registration.
+    fn mint_waker_id(&self) -> WakerId {
+        WakerId(self.next_waker_id.fetch_add(1, AtomicOrdering::Relaxed))
+    }
+
+    /// Test/introspection accessor: number of receive-side waiters
+    /// currently counted toward the `waiting_receivers` atomic. Used by
+    /// regression tests that verify `channel.select` deregisters stale
+    /// wakers from sibling channels.
+    pub fn waiting_receivers_count(&self) -> usize {
+        self.waiting_receivers.load(AtomicOrdering::Acquire)
+    }
+
+    /// Test/introspection accessor: length of the pending `recv_wakers`
+    /// queue. Complements `waiting_receivers_count` when testing that
+    /// select's sibling deregistration removed the waker closures
+    /// themselves (not just the counter decrement).
+    pub fn recv_waker_queue_len(&self) -> usize {
+        self.recv_wakers.lock().len()
+    }
+
+    /// Test/introspection accessor: length of the pending `send_wakers`
+    /// queue. See `recv_waker_queue_len`.
+    pub fn send_waker_queue_len(&self) -> usize {
+        self.send_wakers.lock().len()
     }
 
     /// True if this is a rendezvous (unbuffered) channel.
@@ -263,9 +307,15 @@ impl Channel {
     /// re-checks data availability (or closed state). If the channel became
     /// readable between the caller's `try_receive` and this registration,
     /// the waker fires immediately.
-    pub fn register_recv_waker(&self, waker: Waker) {
+    ///
+    /// Returns a `WakerId` so callers (notably `channel.select`) can later
+    /// deregister this entry via `remove_recv_waker` when a sibling
+    /// channel fires first. Callers that never deregister (simple
+    /// `channel.receive`, `channel.each`) may ignore the returned id.
+    pub fn register_recv_waker(&self, waker: Waker) -> WakerId {
+        let id = self.mint_waker_id();
         self.waiting_receivers.fetch_add(1, AtomicOrdering::Release);
-        self.recv_wakers.lock().push_back(waker);
+        self.recv_wakers.lock().push_back((id, waker));
         // Double-check: if data is now available or channel closed, wake immediately.
         let has_data_or_closed = if self.is_rendezvous() {
             self.handoff.lock().is_some() || self.closed.load(AtomicOrdering::Acquire)
@@ -275,12 +325,12 @@ impl Channel {
         };
         if has_data_or_closed {
             // Drain and fire all recv wakers — the channel state changed.
-            let wakers: VecDeque<Waker> = {
+            let wakers: VecDeque<(WakerId, Waker)> = {
                 let mut guard = self.recv_wakers.lock();
                 std::mem::take(&mut *guard)
             };
             let count = wakers.len();
-            for w in wakers {
+            for (_, w) in wakers {
                 w();
             }
             self.waiting_receivers
@@ -291,6 +341,7 @@ impl Channel {
         if self.is_rendezvous() {
             self.wake_send();
         }
+        id
     }
 
     /// Register a waker to be called when buffer space becomes available.
@@ -298,8 +349,11 @@ impl Channel {
     /// Uses a double-check pattern to avoid lost wakeups: after registering,
     /// re-checks buffer space availability. If space opened up between the
     /// caller's `try_send` and this registration, the waker fires immediately.
-    pub fn register_send_waker(&self, waker: Waker) {
-        self.send_wakers.lock().push_back(waker);
+    ///
+    /// Returns a `WakerId` (see `register_recv_waker` for rationale).
+    pub fn register_send_waker(&self, waker: Waker) -> WakerId {
+        let id = self.mint_waker_id();
+        self.send_wakers.lock().push_back((id, waker));
         // Double-check: if we can now proceed or channel closed, wake immediately.
         let has_space_or_closed = if self.is_rendezvous() {
             // For rendezvous, sender can proceed if a receiver is waiting and
@@ -313,20 +367,61 @@ impl Channel {
         };
         if has_space_or_closed {
             // Drain and fire all send wakers — the channel state changed.
-            let wakers: VecDeque<Waker> = {
+            let wakers: VecDeque<(WakerId, Waker)> = {
                 let mut guard = self.send_wakers.lock();
                 std::mem::take(&mut *guard)
             };
-            for w in wakers {
+            for (_, w) in wakers {
                 w();
             }
+        }
+        id
+    }
+
+    /// Remove a previously-registered recv waker by id, decrementing
+    /// `waiting_receivers` if the entry was still pending. Returns
+    /// `true` if the entry was found and removed. Used by
+    /// `channel.select` to clean up sibling registrations when one
+    /// branch fires first — without this, the counter permanently
+    /// inflates and rendezvous `try_send` falsely sees a phantom
+    /// receiver, placing a value in the handoff slot and returning
+    /// `Sent` with no real counterparty.
+    ///
+    /// If the entry has already been drained (e.g. the waker already
+    /// fired via `wake_recv`), this is a no-op returning `false`.
+    /// That matches the existing accounting: `wake_recv` /
+    /// `wake_all_recv` already decremented the counter when they
+    /// popped the entry.
+    pub fn remove_recv_waker(&self, id: WakerId) -> bool {
+        let mut guard = self.recv_wakers.lock();
+        if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
+            guard.remove(pos);
+            drop(guard);
+            self.waiting_receivers
+                .fetch_sub(1, AtomicOrdering::Release);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a previously-registered send waker by id. Returns `true`
+    /// if the entry was found and removed, `false` if it had already
+    /// been drained. See `remove_recv_waker` for rationale.
+    pub fn remove_send_waker(&self, id: WakerId) -> bool {
+        let mut guard = self.send_wakers.lock();
+        if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
+            guard.remove(pos);
+            true
+        } else {
+            false
         }
     }
 
     /// Wake one task blocked on receive (FIFO — oldest waiter first).
     fn wake_recv(&self) {
         let waker = self.recv_wakers.lock().pop_front();
-        if let Some(w) = waker {
+        if let Some((_, w)) = waker {
             self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
             w();
         }
@@ -334,12 +429,12 @@ impl Channel {
 
     /// Wake all tasks blocked on receive (used when channel is closed).
     fn wake_all_recv(&self) {
-        let wakers: VecDeque<Waker> = {
+        let wakers: VecDeque<(WakerId, Waker)> = {
             let mut guard = self.recv_wakers.lock();
             std::mem::take(&mut *guard)
         };
         let count = wakers.len();
-        for w in wakers {
+        for (_, w) in wakers {
             w();
         }
         self.waiting_receivers
@@ -349,18 +444,18 @@ impl Channel {
     /// Wake one task blocked on send (FIFO — oldest waiter first).
     fn wake_send(&self) {
         let waker = self.send_wakers.lock().pop_front();
-        if let Some(w) = waker {
+        if let Some((_, w)) = waker {
             w();
         }
     }
 
     /// Wake all tasks blocked on send (used when channel is closed).
     fn wake_all_send(&self) {
-        let wakers: VecDeque<Waker> = {
+        let wakers: VecDeque<(WakerId, Waker)> = {
             let mut guard = self.send_wakers.lock();
             std::mem::take(&mut *guard)
         };
-        for w in wakers {
+        for (_, w) in wakers {
             w();
         }
     }

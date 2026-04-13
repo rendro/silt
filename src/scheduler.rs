@@ -12,7 +12,7 @@ use std::sync::Weak;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::value::{IoCompletion, TaskHandle, Value};
+use crate::value::{Channel, IoCompletion, TaskHandle, Value, WakerId};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
@@ -524,25 +524,133 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     }
                     Some(BlockReason::Select(ops)) => {
                         // Register waker on ALL channels. First waker to fire
-                        // wakes the task; the rest check the cancel token and
-                        // return early, dropping their Arc references promptly.
+                        // wakes the task AND deregisters the other siblings'
+                        // wakers — this prevents a leaked `waiting_receivers`
+                        // increment on the non-firing channels. Without this
+                        // cleanup a rendezvous sender on a sibling channel
+                        // would later see `waiting_receivers > 0` in
+                        // `try_send`, place a value into the handoff slot,
+                        // and return `Sent` with no real receiver waiting —
+                        // a broken rendezvous handshake.
                         let cancelled = Arc::new(AtomicBool::new(false));
-                        for (ch, kind) in &ops {
+                        // Shared table of (channel, kind, minted WakerId).
+                        // Wakers capture this table so that when one wins
+                        // the task, it iterates and deregisters the others.
+                        type SelectEntry = (Arc<Channel>, SelectOpKind, Option<WakerId>);
+                        let entries: Arc<Mutex<Vec<SelectEntry>>> = Arc::new(Mutex::new(
+                            ops.iter()
+                                .map(|(ch, kind)| (ch.clone(), kind.clone(), None))
+                                .collect(),
+                        ));
+                        // Cleanup closure: deregister every sibling still
+                        // present in its channel's queue. `winning_idx`
+                        // identifies the entry whose waker is firing; that
+                        // entry is skipped because it's already been
+                        // popped by `wake_recv` / `wake_send` (and the
+                        // counter was decremented there). `None` means
+                        // "remove ALL entries" — used by cancel cleanup
+                        // when the task is cancelled while blocked.
+                        let cleanup_entries = entries.clone();
+                        let cleanup = Arc::new(move |winning_idx: Option<usize>| {
+                            let drained: Vec<(Arc<Channel>, SelectOpKind, WakerId)> = {
+                                let mut guard = cleanup_entries.lock();
+                                let mut out = Vec::with_capacity(guard.len());
+                                for (i, entry) in guard.iter_mut().enumerate() {
+                                    if Some(i) == winning_idx {
+                                        entry.2 = None;
+                                        continue;
+                                    }
+                                    if let Some(wid) = entry.2.take() {
+                                        out.push((entry.0.clone(), entry.1.clone(), wid));
+                                    }
+                                }
+                                out
+                            };
+                            for (ch, kind, wid) in drained {
+                                match kind {
+                                    SelectOpKind::Receive => {
+                                        ch.remove_recv_waker(wid);
+                                    }
+                                    SelectOpKind::Send => {
+                                        ch.remove_send_waker(wid);
+                                    }
+                                }
+                            }
+                        });
+                        // Replace the generic cancel_cleanup (set above)
+                        // with a select-aware version: same counter
+                        // bookkeeping, plus sibling-waker removal. Select
+                        // is never I/O, so `was_io` is false here.
+                        let select_slot = task_slot.clone();
+                        let select_inner = inner.clone();
+                        let select_task_id = id;
+                        let select_cleanup_for_cancel = cleanup.clone();
+                        let cancelled_for_cancel = cancelled.clone();
+                        let handle_for_select = task_slot
+                            .lock()
+                            .as_ref()
+                            .expect("task_slot just initialized")
+                            .handle
+                            .clone();
+                        handle_for_select.set_cancel_cleanup(Box::new(move || {
+                            if select_slot.lock().take().is_none() {
+                                return;
+                            }
+                            // Prevent any still-racing waker from acting.
+                            cancelled_for_cancel.store(true, Ordering::Release);
+                            select_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                            select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                            let mut handles = select_inner.blocked_handles.lock();
+                            if let Some(pos) =
+                                handles.iter().position(|h| h.id == select_task_id)
+                            {
+                                handles.swap_remove(pos);
+                            }
+                            drop(handles);
+                            // Remove every still-pending waker.
+                            select_cleanup_for_cancel(None);
+                        }));
+                        for (idx, (ch, kind)) in ops.iter().enumerate() {
+                            if cancelled.load(Ordering::Acquire) {
+                                // An earlier iteration's waker fired
+                                // inline during its double-check. Don't
+                                // register further wakers that would
+                                // leak into the channel queue.
+                                break;
+                            }
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
                             let cancelled2 = cancelled.clone();
+                            let cleanup2 = cleanup.clone();
                             let waker = Box::new(move || {
                                 if cancelled2.load(Ordering::Acquire) {
                                     return; // Another waker already fired
                                 }
                                 if let Some(task) = slot.lock().take() {
                                     cancelled2.store(true, Ordering::Release);
+                                    // Deregister sibling wakers before
+                                    // requeuing. Our own entry (`idx`)
+                                    // is skipped inside cleanup — it
+                                    // was popped from its channel by
+                                    // `wake_recv` / `wake_send`.
+                                    cleanup2(Some(idx));
                                     requeue(&inner2, task, false);
                                 }
                             });
-                            match kind {
+                            let wid = match kind {
                                 SelectOpKind::Receive => ch.register_recv_waker(waker),
                                 SelectOpKind::Send => ch.register_send_waker(waker),
+                            };
+                            // Record the minted id in the shared table
+                            // only if the waker didn't already fire
+                            // inline during registration's double-check.
+                            // Inline-fire has already run cleanup for
+                            // its winning index, so our entry's slot
+                            // stays None.
+                            if !cancelled.load(Ordering::Acquire) {
+                                entries.lock()[idx].2 = Some(wid);
+                            } else {
+                                break;
                             }
                         }
                     }

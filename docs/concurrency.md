@@ -768,6 +768,44 @@ Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
 fires, and the error message identifies the source so silt code can
 distinguish them.
 
+#### Caveat: I/O threads continue after timeout
+
+The watchdog is cooperative on the task side only. When the deadline
+elapses, the scheduler writes `Err("I/O timeout (SILT_IO_TIMEOUT
+exceeded)")` into the pending completion and wakes the parked task so
+it resumes with the timeout error. The OS thread in the I/O pool that
+dispatched the blocking syscall (for example `io.read_file`,
+`http.get`, or an `io.write_file`) is **not** interrupted -- it
+continues executing the syscall until the kernel returns, then
+discards the result.
+
+Consequences:
+
+- The timeout error surfaces promptly to silt code, but the underlying
+  file-descriptor or socket work keeps running in the background.
+- Under aggressive timeout workloads (many concurrent I/O calls that
+  routinely overrun their deadline), the I/O pool can saturate with
+  zombie work -- threads that are still blocked on a syscall whose
+  result nobody will read. New I/O submissions queue behind them.
+- The I/O pool is sized at VM startup (currently `min(available
+  parallelism, 4)`, floor 2) and has no tuning knob today; making it
+  larger requires rebuilding silt with a different cap.
+
+Mitigations:
+
+- Prefer scoped `task.deadline` / `task.spawn_until` over a tight
+  process-wide `SILT_IO_TIMEOUT` when only a few call sites need a
+  deadline; this keeps the rest of the program on the
+  unbounded-but-non-zombie path.
+- Do not set `SILT_IO_TIMEOUT` shorter than the realistic completion
+  time of your slowest I/O call. A timeout that fires routinely is a
+  zombie-thread source; a timeout that fires only on genuine hangs is
+  a safety net.
+- If you need aggressive timeouts on truly blocking operations, split
+  the work into shorter-bounded steps (smaller reads, chunked writes,
+  per-request HTTP timeouts configured at the peer) so a fired
+  watchdog is also close to the syscall boundary.
+
 ### Blocking operations
 
 | Operation | Parks when |

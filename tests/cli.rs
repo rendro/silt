@@ -1147,9 +1147,14 @@ fn test_module_runtime_error_with_name_collision_renders_correct_file() {
 //
 // Each test pins the exact handled behavior observed at lock time:
 //
-//   silt run    : exit 1 with "program has no main() function" — the
-//                 entry-point check catches the empty program cleanly.
-//   silt check  : exit 0 (empty program has zero type errors).
+//   silt run    : exit 1 with `error[compile]: program has no main() function`
+//                 — the entry-point check catches the empty program cleanly.
+//                 (Round-24 B: now rendered with the canonical compile-error
+//                 header, not a bare `{path}: ...` line.)
+//   silt check  : exit 1 with same `error[compile]: program has no main()`
+//                 diagnostic — `silt check` mirrors `silt run`.
+//                 (Round-24 B: was previously exit 0 silent, which meant
+//                 `silt check` passed programs that `silt run` rejected.)
 //   silt fmt    : exit 0 (formatting empty source is a no-op).
 //   silt test   : exit 0 with "0 tests: 0 passed, 0 failed, 0 skipped".
 //   silt disasm : exit 0 (disassembles the implicit script frame).
@@ -1203,11 +1208,14 @@ fn test_check_empty_file() {
         .output()
         .expect("failed to run silt");
 
-    // `silt check` only runs lex/parse/typecheck. An empty program has
-    // zero type errors, so this must be a clean exit 0.
+    // Round-24 B: `silt check` now surfaces the same missing-main
+    // diagnostic as `silt run`, so the canonical outcome is exit 1
+    // with `error[compile]: program has no main() function`. Without
+    // this alignment, `silt check` would pass a program that
+    // `silt run` rejects — off-spec.
     assert!(
-        output.status.success(),
-        "expected exit 0 for empty file under `silt check`, stderr: {}",
+        !output.status.success(),
+        "expected non-zero exit for empty file under `silt check`, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1216,8 +1224,12 @@ fn test_check_empty_file() {
         "stderr should not contain a Rust panic, got: {stderr}"
     );
     assert!(
-        !stderr.contains("error["),
-        "stderr should not contain an error[ line, got: {stderr}"
+        stderr.contains("error[compile]:"),
+        "expected canonical `error[compile]:` header, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("program has no main() function"),
+        "expected missing-main payload, got: {stderr}"
     );
 }
 

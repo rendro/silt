@@ -1,0 +1,78 @@
+import list
+import map
+import option
+
+-- Search algorithms using loop
+--
+-- Demonstrates why loop is preferred over fold_until for search:
+-- loop can return a different type (e.g., Option) than the iteration state,
+-- while fold_until requires Stop and Continue to carry the same type.
+-- Breadth-first search on a graph represented as an adjacency list (Map of Int -> List(Int)).
+-- Returns Some(goal) if reachable from start, None otherwise.
+
+fn bfs(graph, start, goal) {
+  loop queue = [start], visited = [start] {
+    match queue {
+      [] -> None
+      [node, ..rest] -> match node == goal {
+        true -> Some(node)
+        _ -> {
+          let neighbors = map.get(graph, node)
+          |> option.unwrap_or([])
+          let new = neighbors
+          |> list.filter { n -> !list.contains(visited, n) }
+          loop(list.concat(rest, new), list.concat(visited, new))
+        }
+      }
+    }
+  }
+}
+
+-- Depth-first search (same graph representation).
+-- Uses the queue as a stack (prepend instead of append) for DFS order.
+
+fn dfs(graph, start, goal) {
+  loop stack = [start], visited = [start] {
+    match stack {
+      [] -> None
+      [node, ..rest] -> match node == goal {
+        true -> Some(node)
+        _ -> {
+          let neighbors = map.get(graph, node)
+          |> option.unwrap_or([])
+          let new = neighbors
+          |> list.filter { n -> !list.contains(visited, n) }
+          loop(list.concat(new, rest), list.concat(visited, new))
+        }
+      }
+    }
+  }
+}
+
+fn main() {
+  -- Build a small graph:
+  --   1 -- 2 -- 4
+  --   |    |
+  --   3 -- 5 -- 6
+  let graph = #{ 1: [2, 3], 2: [1, 4, 5], 3: [1, 5], 4: [2], 5: [2, 3, 6], 6: [5] }
+  -- BFS: find node 6 starting from 1
+  match bfs(graph, 1, 6) {
+    Some(n) -> println("BFS found node {n}")
+    None -> println("BFS: not reachable")
+  }
+  -- BFS: search for a node that doesn't exist
+  match bfs(graph, 1, 99) {
+    Some(n) -> println("BFS found node {n}")
+    None -> println("BFS: node 99 not reachable")
+  }
+  -- DFS: find node 6 starting from 1
+  match dfs(graph, 1, 6) {
+    Some(n) -> println("DFS found node {n}")
+    None -> println("DFS: not reachable")
+  }
+  -- DFS: search for a node that doesn't exist
+  match dfs(graph, 1, 99) {
+    Some(n) -> println("DFS found node {n}")
+    None -> println("DFS: node 99 not reachable")
+  }
+}

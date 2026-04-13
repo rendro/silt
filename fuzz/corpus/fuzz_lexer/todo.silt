@@ -1,0 +1,196 @@
+import int
+import io
+import json
+import list
+import option
+import string
+
+-- Interactive todo list manager with add, done, remove, save, and load commands.
+-- Persists todos to a JSON file.
+
+type Todo {
+  id: Int,
+  text: String,
+  done: Bool,
+}
+
+fn next_id(todos) {
+  todos
+  |> list.fold(0) { acc, t -> int.max(acc, t.id) }
+  |> fn(n) {
+    n + 1
+  }
+}
+
+fn add_todo(todos, text) {
+  let id = next_id(todos)
+  let todo = Todo { id: id, text: text, done: false }
+  list.append(todos, todo)
+}
+
+fn mark_done(todos, id) {
+  todos
+  |> list.map { t -> match t.id == id {
+    true -> t.{ done: true }
+    _ -> t
+  } }
+}
+
+fn remove_todo(todos, id) {
+  todos
+  |> list.filter { t -> t.id != id }
+}
+
+fn show_todos(todos) {
+  match list.length(todos) {
+    0 -> println("  (no todos)")
+    _ -> {
+      todos
+      |> list.each { t ->
+        let check = match t.done {
+          true -> "x"
+          _ -> " "
+        }
+        println("  [{check}] {t.id}: {t.text}")
+      }
+    }
+  }
+}
+
+fn save_todos(todos, path) {
+  let content = json.stringify(todos)
+  match io.write_file(path, content) {
+    Ok(_) -> println("  Saved {list.length(todos)} todo(s) to {path}")
+    Err(e) -> println("  Error saving: {e}")
+  }
+}
+
+fn load_todos(path) {
+  match io.read_file(path) {
+    Ok(content) -> match string.trim(content) {
+      "" -> {
+        println("  Loaded 0 todo(s) from {path}")
+        []
+      }
+      trimmed -> match json.parse_list(Todo, trimmed) {
+        Ok(todos) -> {
+          println("  Loaded {list.length(todos)} todo(s) from {path}")
+          todos
+        }
+        Err(e) -> {
+          println("  Error parsing: {e}")
+          []
+        }
+      }
+    }
+    Err(e) -> {
+      println("  Error loading: {e}")
+      []
+    }
+  }
+}
+
+fn parse_command(input) {
+  let trimmed = string.trim(input)
+  let parts = string.split(trimmed, " ")
+  let cmd = list.get(parts, 0)
+  |> option.unwrap_or("")
+  let rest = parts
+  |> list.drop(1)
+  |> string.join(" ")
+  (cmd, rest)
+}
+
+fn print_help() {
+  println("Commands:")
+  println("  add <text>    - Add a new todo")
+  println("  list          - Show all todos")
+  println("  done <id>     - Mark a todo as done")
+  println("  remove <id>   - Remove a todo")
+  println("  save [file]   - Save todos to file (default: todos.json)")
+  println("  load [file]   - Load todos from file (default: todos.json)")
+  println("  help          - Show this help")
+  println("  quit          - Exit")
+}
+
+let default_file = "todos.json"
+
+fn main() {
+  println("=== Todo List Manager ===")
+  print_help()
+  println("")
+  loop todos = [] {
+    print("todo> ")
+    match io.read_line() {
+      Ok(input) -> {
+        let (cmd, rest) = parse_command(input)
+        match cmd {
+          "add" -> match rest {
+            "" -> {
+              println("  Usage: add <text>")
+              loop(todos)
+            }
+            _ -> {
+              let new_todos = add_todo(todos, rest)
+              println("  Added: {rest}")
+              loop(new_todos)
+            }
+          }
+          "list" -> {
+            show_todos(todos)
+            loop(todos)
+          }
+          "done" -> match int.parse(rest) {
+            Ok(id) -> {
+              let new_todos = mark_done(todos, id)
+              println("  Marked #{id} as done")
+              loop(new_todos)
+            }
+            _ -> {
+              println("  Usage: done <id>")
+              loop(todos)
+            }
+          }
+          "remove" -> match int.parse(rest) {
+            Ok(id) -> {
+              let new_todos = remove_todo(todos, id)
+              println("  Removed #{id}")
+              loop(new_todos)
+            }
+            _ -> {
+              println("  Usage: remove <id>")
+              loop(todos)
+            }
+          }
+          "save" -> {
+            let file = match rest {
+              "" -> default_file
+              _ -> rest
+            }
+            save_todos(todos, file)
+            loop(todos)
+          }
+          "load" -> {
+            let file = match rest {
+              "" -> default_file
+              _ -> rest
+            }
+            let new_todos = load_todos(file)
+            loop(new_todos)
+          }
+          "help" -> {
+            print_help()
+            loop(todos)
+          }
+          "quit" -> println("Goodbye!")
+          "" -> loop(todos)
+          _ -> {
+            println("  Unknown command: {cmd}. Type 'help' for commands.")
+            loop(todos)
+          }
+        }
+      }
+      Err(_) -> println("Goodbye!")
+    }
+  }
+}

@@ -1,0 +1,164 @@
+import time
+
+fn main() {
+  -- ── Validated construction ──────────────────────────────────────────
+  let date = time.date(2024, 3, 15)
+  match date {
+    Ok(d) -> println("date: {d}")
+    Err(e) -> println("date error: {e}")
+  }
+  let bad_date = time.date(2024, 13, 1)
+  match bad_date {
+    Ok(d) -> println("bad date: {d}")
+    Err(e) -> println("bad date: {e}")
+  }
+  let t = time.time(14, 30, 0)
+  match t {
+    Ok(tm) -> println("time: {tm}")
+    Err(e) -> println("time error: {e}")
+  }
+  let bad_time = time.time(25, 0, 0)
+  match bad_time {
+    Ok(tm) -> println("bad time: {tm}")
+    Err(e) -> println("bad time: {e}")
+  }
+  -- Compose date + time into datetime
+  let d = match time.date(2024, 6, 15) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let tod = match time.time(9, 30, 0) {
+    Ok(t) -> t
+    Err(e) -> panic("time error: {e}")
+  }
+  let dt = time.datetime(d, tod)
+  println("datetime: {dt}")
+  -- ── Current time ────────────────────────────────────────────────────
+  let now = time.now()
+  println("now: {now}")
+  let today = time.today()
+  println("today: {today}")
+  -- ── Formatting ──────────────────────────────────────────────────────
+  let dt2_date = match time.date(2024, 12, 25) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let dt2_time = match time.time(18, 0, 0) {
+    Ok(t) -> t
+    Err(e) -> panic("time error: {e}")
+  }
+  let dt2 = time.datetime(dt2_date, dt2_time)
+  println("formatted: {dt2
+  |> time.format("%A, %B %d, %Y at %H:%M")}")
+  println("date formatted: {d
+  |> time.format_date("%d/%m/%Y")}")
+  -- ── Parsing ─────────────────────────────────────────────────────────
+  let parsed = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
+  match parsed {
+    Ok(dt) -> println("parsed: {dt}")
+    Err(e) -> println("parse error: {e}")
+  }
+  let parsed_date = time.parse_date("2024-07-04", "%Y-%m-%d")
+  match parsed_date {
+    Ok(d) -> println("parsed date: {d}")
+    Err(e) -> println("parse date error: {e}")
+  }
+  let bad_parse = time.parse("not-a-date", "%Y-%m-%d")
+  match bad_parse {
+    Ok(dt) -> println("bad parse: {dt}")
+    Err(e) -> println("bad parse: {e}")
+  }
+  -- ── Date arithmetic ─────────────────────────────────────────────────
+  let future = today
+  |> time.add_days(90)
+  println("90 days from now: {future}")
+  let past = today
+  |> time.add_days(-30)
+  println("30 days ago: {past}")
+  -- Month arithmetic with end-of-month clamping
+  let jan31 = match time.date(2024, 1, 31) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let feb_result = jan31
+  |> time.add_months(1)
+  println("Jan 31 + 1 month = {feb_result}")
+  let mar31 = match time.date(2024, 3, 31) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let prev = mar31
+  |> time.add_months(-1)
+  println("Mar 31 - 1 month = {prev}")
+  -- ── Duration constructors ───────────────────────────────────────────
+  println("1 hour: {time.hours(1)}")
+  println("30 minutes: {time.minutes(30)}")
+  println("5 seconds: {time.seconds(5)}")
+  println("500 ms: {time.ms(500)}")
+  -- Duration arithmetic
+  let timeout = time.minutes(5)
+  let half = Duration { ns: timeout.ns / 2 }
+  println("half of 5m: {half}")
+  -- ── Instant arithmetic ──────────────────────────────────────────────
+  let start = time.now()
+  let later = start
+  |> time.add(time.seconds(60))
+  let elapsed = time.since(start, later)
+  println("added 60s: {elapsed}")
+  -- ── Conversion (instant <-> datetime) ───────────────────────────────
+  let utc_dt = now
+  |> time.to_utc
+  println("UTC: {utc_dt}")
+  let roundtrip = utc_dt
+  |> time.from_utc
+  println("roundtrip epoch_ns matches: {roundtrip.epoch_ns == now.epoch_ns}")
+  -- With offset (UTC+9 for Tokyo)
+  let tokyo_dt = now
+  |> time.to_datetime(540)
+  println("Tokyo: {tokyo_dt}")
+  -- ── Queries ─────────────────────────────────────────────────────────
+  let weekday = time.weekday(today)
+  println("today is: {weekday}")
+  let d_start = match time.date(2024, 1, 1) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let d_end = match time.date(2024, 12, 31) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let days = time.days_between(d_start, d_end)
+  println("days in 2024: {days}")
+  println("days in Feb 2024: {time.days_in_month(2024, 2)}")
+  println("days in Feb 2023: {time.days_in_month(2023, 2)}")
+  println("2024 leap year: {time.is_leap_year(2024)}")
+  println("1900 leap year: {time.is_leap_year(1900)}")
+  println("2000 leap year: {time.is_leap_year(2000)}")
+  -- ── Comparison ──────────────────────────────────────────────────────
+  let d1 = match time.date(2024, 1, 31) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  let d2 = match time.date(2024, 2, 1) {
+    Ok(d) -> d
+    Err(e) -> panic("date error: {e}")
+  }
+  println("Jan 31 < Feb 1: {d1 < d2}")
+  println("Feb 1 > Jan 31: {d2 > d1}")
+  println("Jan 31 == Jan 31: {d1 == d1}")
+  -- ── Pipe composition ────────────────────────────────────────────────
+  let day_name = time.today()
+  |> time.add_days(90)
+  |> time.weekday
+  println("90 days from now is a: {day_name}")
+  -- ── Weekday comparison ──────────────────────────────────────────────
+  println("Monday < Friday: {Monday < Friday}")
+  println("Sunday > Monday: {Sunday > Monday}")
+  -- ── Sleep ───────────────────────────────────────────────────────────
+  let before = time.now()
+  time.sleep(time.ms(50))
+  let after = time.now()
+  let slept = time.since(before, after)
+  println("slept: {slept}")
+  println("done!")
+}

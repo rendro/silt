@@ -1627,6 +1627,14 @@ fn docs_mention_silt_io_timeout_env_var() {
 }
 
 #[test]
+fn docs_mention_watchdog_zombie_limitation() {
+    let doc = std::fs::read_to_string("docs/concurrency.md").unwrap();
+    assert!(doc.contains("SILT_IO_TIMEOUT") &&
+            (doc.contains("zombie") || doc.contains("not cancelled") || doc.contains("continues to completion")),
+            "docs/concurrency.md must document watchdog-zombie limitation near SILT_IO_TIMEOUT");
+}
+
+#[test]
 fn docs_mention_silt_run_disassemble_flag() {
     // The `silt run --disassemble` flag was previously only visible via
     // `silt run --help`. Pin a mention in user-facing docs so it stays

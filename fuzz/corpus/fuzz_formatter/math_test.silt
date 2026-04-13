@@ -1,0 +1,28 @@
+import list
+import string
+import test
+
+-- Simple test file demonstrating the built-in test runner.
+-- Run with: silt test examples/math_test.silt
+
+fn test_addition() {
+  test.assert_eq(2 + 3, 5)
+}
+
+fn test_multiplication() {
+  test.assert_eq(6 * 7, 42)
+}
+
+fn test_integer_division() {
+  test.assert_eq(10 / 3, 3)
+}
+
+fn test_negative_numbers() {
+  test.assert_eq(-3 + 5, 2, "negative plus positive")
+  test.assert_eq(-4 * -2, 8, "negative times negative")
+}
+
+fn test_comparison() {
+  test.assert(10 > 5, "10 should be greater than 5")
+  test.assert_ne(1, 2)
+}

@@ -112,17 +112,6 @@ impl SourceError {
         }
     }
 
-    pub fn runtime(message: impl Into<String>, file: Option<String>) -> Self {
-        Self {
-            kind: ErrorKind::Runtime,
-            message: message.into(),
-            span: Span::new(0, 0),
-            source_line: None,
-            file,
-            is_warning: false,
-        }
-    }
-
     pub fn runtime_at(
         message: impl Into<String>,
         span: Span,
@@ -133,6 +122,31 @@ impl SourceError {
         let source_line = get_source_line(source, span.line);
         Self {
             kind: ErrorKind::Runtime,
+            message: message.into(),
+            span,
+            source_line,
+            file: Some(file.into()),
+            is_warning: false,
+        }
+    }
+
+    /// Construct a compile-kind diagnostic directly from a message + span.
+    /// Used for file-level issues (e.g. missing `main`) that don't have an
+    /// underlying `CompileError` struct to lift from. Callers that have
+    /// no real span should pass `Span::new(0, 0)` — the Display impl will
+    /// omit the `-->` locator when `span.line == 0`, but still renders
+    /// the canonical `error[compile]:` header for consistency with every
+    /// other compile-phase diagnostic.
+    pub fn compile_error_at(
+        message: impl Into<String>,
+        span: Span,
+        source: &str,
+        file: impl Into<String>,
+    ) -> Self {
+        let span = clamp_span_to_source(span, source);
+        let source_line = get_source_line(source, span.line);
+        Self {
+            kind: ErrorKind::Compile,
             message: message.into(),
             span,
             source_line,
@@ -483,14 +497,48 @@ mod tests {
         assert!(output.contains("type mismatch"));
     }
 
+    // Round-24 B-fix lock: the span-less `SourceError::runtime`
+    // shortcut was deleted. All runtime diagnostics must go through
+    // `runtime_at` with a real (or explicitly synthesized) span so
+    // they render with the canonical `error[runtime]:` header and a
+    // `-->` locator. This test doubles as a static check: if a
+    // caller tries to re-add a span-less shortcut the code won't
+    // compile until they thread a span through the error path.
     #[test]
-    fn test_source_error_runtime_no_span() {
-        let err = SourceError::runtime("division by zero", Some("test.silt".to_string()));
+    fn test_runtime_at_is_the_sole_runtime_constructor() {
+        let source = "fn main() = 42";
+        let err = SourceError::runtime_at(
+            "division by zero",
+            Span::with_offset(1, 1, 0),
+            source,
+            "test.silt",
+        );
         let output = format!("{err}");
         assert!(output.contains("error[runtime]"));
         assert!(output.contains("division by zero"));
-        // No source line or location for runtime errors without spans
-        assert!(!output.contains("-->"));
+        assert!(output.contains("-->"));
+        assert!(output.contains("test.silt:1:1"));
+    }
+
+    // Round-24 B-fix: compile_error_at is the new span-synthesizing
+    // entry point used by the `silt run` / `silt check` missing-main
+    // diagnostic. Verifies the rendered shape matches every other
+    // compile-phase error: `error[compile]:` header + locator when
+    // the span is non-zero.
+    #[test]
+    fn test_compile_error_at_renders_canonical_shape() {
+        let err = SourceError::compile_error_at(
+            "program has no main() function",
+            Span::new(0, 0),
+            "",
+            "empty.silt",
+        );
+        let output = format!("{err}");
+        assert!(
+            output.contains("error[compile]"),
+            "expected canonical error[compile] header, got: {output}"
+        );
+        assert!(output.contains("program has no main() function"));
     }
 
     #[test]

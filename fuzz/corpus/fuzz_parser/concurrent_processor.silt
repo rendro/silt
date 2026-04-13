@@ -1,0 +1,136 @@
+import channel
+import io
+import list
+import regex
+import string
+import task
+
+-- Parallel file processor using channels and tasks.
+-- Spawns worker tasks that read files, extract stats, and send results
+-- back through channels for aggregation.
+
+fn count_lines(content) {
+  content
+  |> string.split("\n")
+  |> list.filter { l -> !string.is_empty(l) }
+  |> list.length
+}
+
+fn count_words(content) {
+  content
+  |> string.split("\n")
+  |> list.filter { l -> !string.is_empty(l) }
+  |> list.map { line -> regex.split("\\s+", line)
+  |> list.filter { w -> !string.is_empty(w) }
+  |> list.length }
+  |> list.fold(0) { acc, n -> acc + n }
+}
+
+fn extract_field(content, field_name) {
+  let lines = content
+  |> string.split("\n")
+  let found = lines
+  |> list.find { l -> string.starts_with(l, field_name) }
+  match found {
+    Some(line) -> {
+      let parts = line
+      |> string.split(": ")
+      match list.get(parts, 1) {
+        Some(val) -> string.trim(val)
+        None -> "N/A"
+      }
+    }
+    None -> "N/A"
+  }
+}
+
+fn worker(id, jobs, results) {
+  channel.each(jobs) { path ->
+    let outcome = match io.read_file(path) {
+      Ok(content) -> {
+        let lines = count_lines(content)
+        let words = count_words(content)
+        let dept = extract_field(content, "Department")
+        let revenue = extract_field(content, "Revenue")
+        Ok((path, lines, words, dept, revenue))
+      }
+      Err(e) -> Err((path, e))
+    }
+    channel.send(results, (id, outcome))
+  }
+}
+
+fn main() {
+  let file_paths = ["examples/data/report_q1.txt", "examples/data/report_q2.txt", "examples/data/report_q3.txt", "examples/data/report_q4.txt"]
+  let num_workers = 3
+  let num_files = list.length(file_paths)
+  -- Channels for distributing work and collecting results
+  let jobs = channel.new(10)
+  let results_1 = channel.new(10)
+  let results_2 = channel.new(10)
+  -- Spawn 3 workers: 2 sending to results_1, 1 sending to results_2
+  -- This lets us demonstrate channel.select with wildcard matching
+  let w1 = task.spawn {  -> worker(1, jobs, results_1) }
+  let w2 = task.spawn {  -> worker(2, jobs, results_1) }
+  let w3 = task.spawn {  -> worker(3, jobs, results_2) }
+  -- Send all file paths to the jobs channel
+  file_paths
+  |> list.each { path -> channel.send(jobs, path) }
+  -- Close jobs channel to signal workers: no more work
+  channel.close(jobs)
+  -- Collect all results using channel.select with wildcard arm
+  -- to multiplex results from two result channels
+  println("=== Concurrent File Processor ===")
+  println("Workers: {num_workers}")
+  println("Files to process: {num_files}")
+  println("")
+  let summary = loop collected = 0, successes = 0, failures = 0 {
+    match collected >= num_files {
+      true -> (successes, failures)
+      _ -> {
+        match channel.select([results_1, results_2]) {
+          (_, Message(result)) -> {
+            let (worker_id, outcome) = result
+            match outcome {
+              Ok(info) -> {
+                let (path, lines, words, dept, revenue) = info
+                println("[Worker {worker_id}] {path}")
+                println("  Lines: {lines}, Words: {words}, Dept: {dept}, Revenue: {revenue}")
+                loop(collected + 1, successes + 1, failures)
+              }
+              Err(err_info) -> {
+                let (path, err) = err_info
+                println("[Worker {worker_id}] FAILED {path}: {err}")
+                loop(collected + 1, successes, failures + 1)
+              }
+            }
+          }
+          (_, Closed) -> {
+            println("All result channels closed unexpectedly")
+            (successes, failures)
+          }
+          _ -> {
+            println("Unexpected select result")
+            (successes, failures)
+          }
+        }
+      }
+    }
+  }
+  -- Use channel.select to wait on both result channels
+  -- Wait for all workers to finish
+  task.join(w1)
+  task.join(w2)
+  task.join(w3)
+  -- Close result channels for graceful shutdown
+  channel.close(results_1)
+  channel.close(results_2)
+  -- Print summary
+  let (total_ok, total_err) = summary
+  println("")
+  println("=== Summary ===")
+  println("Total files processed: {num_files}")
+  println("Successes: {total_ok}")
+  println("Failures: {total_err}")
+  println("All workers shut down gracefully.")
+}

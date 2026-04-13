@@ -1,0 +1,302 @@
+import io
+import list
+import regex
+import string
+
+-- Unix-pipe-style text processing pipeline.
+-- Reads a log file and applies 15 different transformation chains using
+-- the pipe operator, higher-order function factories, and regex.
+-- ============================================================
+-- Pipeline utility functions
+-- ============================================================
+-- grep: keep lines that contain a pattern
+
+fn grep(lines, pattern) {
+  lines
+  |> list.filter { line -> string.contains(line, pattern) }
+}
+
+-- uppercase: convert all lines to uppercase
+
+fn uppercase(lines) {
+  lines
+  |> list.map { line -> string.to_upper(line) }
+}
+
+-- numbered: prepend line numbers to each line
+
+fn numbered(lines) {
+  lines
+  |> list.enumerate
+  |> list.map { pair ->
+    let (i, line) = pair
+    "{i + 1}: {line}"
+  }
+}
+
+-- sort_by_length: sort lines by their character length
+
+fn sort_by_length(lines) {
+  lines
+  |> list.sort_by { line -> string.length(line) }
+}
+
+-- word_count: replace each line with "N words: <line>"
+-- Uses regex.split to correctly split on runs of whitespace
+
+fn word_count(lines) {
+  lines
+  |> list.map { line ->
+    let words = regex.split("\\s+", string.trim(line))
+    let count = list.length(words)
+    "{count} words: {line}"
+  }
+}
+
+-- uniq: remove consecutive duplicate lines
+
+fn uniq(lines) {
+  lines
+  |> list.fold([]) { acc, line -> match list.last(acc) {
+    Some(prev) -> match prev == line {
+      true -> acc
+      _ -> list.append(acc, line)
+    }
+    None -> [line]
+  } }
+}
+
+-- reject: remove lines that contain a pattern
+
+fn reject(lines, pattern) {
+  lines
+  |> list.filter { line -> !string.contains(line, pattern) }
+}
+
+-- redact: replace all matches of a regex pattern with "[REDACTED]" in each line
+
+fn redact(lines, pattern) {
+  lines
+  |> list.map { line -> regex.replace_all(pattern, line, "[REDACTED]") }
+}
+
+-- ============================================================
+-- Higher-order function factories
+-- ============================================================
+-- make_grep: returns a closure that greps for a specific pattern
+
+fn make_grep(pattern) {
+  fn(lines) {
+    grep(lines, pattern)
+  }
+}
+
+-- make_reject: returns a closure that rejects lines matching a pattern
+
+fn make_reject(pattern) {
+  fn(lines) {
+    reject(lines, pattern)
+  }
+}
+
+-- make_prefix: returns a closure that adds a prefix to every line
+
+fn make_prefix(prefix) {
+  fn(lines) {
+    lines
+    |> list.map { line -> "{prefix}{line}" }
+  }
+}
+
+-- make_contains_any: returns a closure that keeps lines matching any of the given patterns
+
+fn make_contains_any(patterns) {
+  fn(lines) {
+    lines
+    |> list.filter { line -> patterns
+    |> list.any { pat -> string.contains(line, pat) } }
+  }
+}
+
+-- make_truncate: returns a closure that truncates lines to max_len chars with "..."
+
+fn make_truncate(max_len) {
+  fn(lines) {
+    lines
+    |> list.map { line -> match string.length(line) > max_len {
+      true -> "{string.slice(line, 0, max_len)}..."
+      _ -> line
+    } }
+  }
+}
+
+-- make_replace: returns a closure that applies regex.replace_all_with to each line
+
+fn make_replace(pattern, transform) {
+  fn(lines) {
+    lines
+    |> list.map { line -> regex.replace_all_with(pattern, line, transform) }
+  }
+}
+
+-- ============================================================
+-- Helper to print a section header and results
+-- ============================================================
+
+fn print_section(title, lines) {
+  println("")
+  println("=== {title} ===")
+  lines
+  |> list.each { line -> println(line) }
+}
+
+-- ============================================================
+-- Main entry point
+-- ============================================================
+
+fn main() {
+  -- Read the log file; return now works in match arms (Never type)
+  let content = match io.read_file("examples/log.txt") {
+    Ok(c) -> c
+    Err(e) -> return println("Error reading log file: {e}")
+  }
+  let lines = content
+  |> string.split("\n")
+  |> list.filter { line -> !string.is_empty(line) }
+  println("Loaded {list.length(lines)} log lines")
+  -- --------------------------------------------------------
+  -- Pipeline 1: grep for ERROR lines
+  -- --------------------------------------------------------
+  let error_lines = lines
+  |> grep("ERROR")
+  print_section("Pipeline 1: grep ERROR", error_lines)
+  -- --------------------------------------------------------
+  -- Pipeline 2: grep for INFO lines, then uppercase
+  -- --------------------------------------------------------
+  let result2 = lines
+  |> grep("INFO")
+  |> uppercase
+  print_section("Pipeline 2: INFO lines uppercased", result2)
+  -- --------------------------------------------------------
+  -- Pipeline 3: reject DEBUG lines, then number them
+  -- --------------------------------------------------------
+  let result3 = lines
+  |> reject("DEBUG")
+  |> numbered
+  print_section("Pipeline 3: non-DEBUG lines numbered", result3)
+  -- --------------------------------------------------------
+  -- Pipeline 4: grep WARN, sort by length, add word count
+  -- --------------------------------------------------------
+  let result4 = lines
+  |> grep("WARN")
+  |> sort_by_length
+  |> word_count
+  print_section("Pipeline 4: WARN sorted by length with word count", result4)
+  -- --------------------------------------------------------
+  -- Pipeline 5: higher-order factory -- make_grep
+  -- --------------------------------------------------------
+  let grep_error = make_grep("ERROR")
+  let result5 = lines
+  |> grep_error
+  |> numbered
+  print_section("Pipeline 5: make_grep factory for ERROR", result5)
+  -- --------------------------------------------------------
+  -- Pipeline 6: higher-order factory -- make_reject + uppercase
+  -- --------------------------------------------------------
+  let reject_debug = make_reject("DEBUG")
+  let reject_info = make_reject("INFO")
+  let result6 = lines
+  |> reject_debug
+  |> reject_info
+  |> uppercase
+  |> numbered
+  print_section("Pipeline 6: reject DEBUG & INFO, uppercase, numbered", result6)
+  -- --------------------------------------------------------
+  -- Pipeline 7: sort all lines by length, take top 5 shortest
+  -- --------------------------------------------------------
+  let result7 = lines
+  |> sort_by_length
+  |> list.take(5)
+  |> numbered
+  print_section("Pipeline 7: 5 shortest lines", result7)
+  -- --------------------------------------------------------
+  -- Pipeline 8: make_contains_any factory for ERROR or WARN
+  -- --------------------------------------------------------
+  let filter_problems = make_contains_any(["ERROR", "WARN"])
+  let result8 = lines
+  |> filter_problems
+  |> sort_by_length
+  |> word_count
+  print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
+  -- --------------------------------------------------------
+  -- Pipeline 9: extract log levels using regex.split on whitespace, unique + sort
+  -- --------------------------------------------------------
+  let result9 = lines
+  |> list.map { line ->
+    let parts = regex.split("\\s+", line)
+    match list.get(parts, 2) {
+      Some(level) -> level
+      None -> "UNKNOWN"
+    }
+  }
+  |> list.sort
+  |> uniq
+  print_section("Pipeline 9: unique log levels (sorted)", result9)
+  -- --------------------------------------------------------
+  -- Pipeline 10: make_truncate factory, truncate long lines
+  -- --------------------------------------------------------
+  let truncate_50 = make_truncate(50)
+  let result10 = lines
+  |> grep("ERROR")
+  |> truncate_50
+  |> numbered
+  print_section("Pipeline 10: ERROR lines truncated to 50 chars", result10)
+  -- --------------------------------------------------------
+  -- Pipeline 11: make_prefix factory + word count pipeline
+  -- --------------------------------------------------------
+  let add_arrow = make_prefix(">> ")
+  let result11 = lines
+  |> grep("INFO")
+  |> list.take(3)
+  |> add_arrow
+  |> word_count
+  print_section("Pipeline 11: first 3 INFO lines with prefix and word count", result11)
+  -- --------------------------------------------------------
+  -- Pipeline 12: full pipeline -- filter, transform, sort, number
+  -- --------------------------------------------------------
+  let grep_conn = make_grep("connection")
+  let result12 = lines
+  |> list.map { line -> string.to_lower(line) }
+  |> grep_conn
+  |> sort_by_length
+  |> uppercase
+  |> numbered
+  print_section("Pipeline 12: connection-related lines, lowered, grepped, sorted, uppered, numbered", result12)
+  -- --------------------------------------------------------
+  -- Pipeline 13: regex.replace_all_with -- upcase log levels in-place
+  -- --------------------------------------------------------
+  let result13 = lines
+  |> list.take(5)
+  |> list.map { line -> regex.replace_all_with("(INFO|DEBUG|WARN|ERROR)", line) { m -> "[{string.to_upper(m)}]" } }
+  |> numbered
+  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  -- --------------------------------------------------------
+  -- Pipeline 14: make_replace factory -- redact timestamps with callback
+  -- --------------------------------------------------------
+  let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""") { m -> "XX:XX:XX" }
+  let result14 = lines
+  |> grep("ERROR")
+  |> censor_times
+  |> numbered
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  -- --------------------------------------------------------
+  -- Pipeline 15: redact IP-like patterns and hostnames, word count
+  -- --------------------------------------------------------
+  let result15 = lines
+  |> grep("connection")
+  |> redact("localhost:\\d+")
+  |> word_count
+  print_section("Pipeline 15: connection lines with host:port redacted", result15)
+  println("")
+  println("All 15 pipelines completed successfully.")
+}

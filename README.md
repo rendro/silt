@@ -25,17 +25,13 @@ fn main() {
 The only way to branch. Define your types, then match on their shape. The compiler verifies every case is handled.
 
 ```silt
-type Expr {
-  Num(Int),
-  Add(Expr, Expr),
-  Mul(Expr, Expr)
-}
+type Shape { Circle(Int), Square(Int), Triangle(Int, Int) }
 
-fn eval(expr) {
-  match expr {
-    Num(n) -> n
-    Add(a, b) -> eval(a) + eval(b)
-    Mul(a, b) -> eval(a) * eval(b)
+fn area(s: Shape) -> Int {
+  match s {
+    Circle(r) -> 3 * r * r
+    Square(w) -> w * w
+    Triangle(b, h) -> b * h / 2
   }
 }
 ```

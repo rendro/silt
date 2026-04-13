@@ -1,0 +1,147 @@
+import float
+import int
+import io
+import list
+import map
+import option
+import regex
+import string
+
+-- Text file statistics: line count, word count, character count, unique words,
+-- average word length, longest/shortest words, and top-N frequency table.
+
+let default_file = "examples/sample_text.txt"
+
+let top_n = 10
+
+fn get_filename() {
+  let user_args = io.args()
+  |> list.drop(3)
+  match user_args {
+    [file, ..rest] -> file
+    _ -> default_file
+  }
+}
+
+fn get_words(text) {
+  text
+  |> string.split("\n")
+  |> list.flat_map { line -> regex.split("""\s+""", line)
+  |> list.filter { w -> !string.is_empty(w) } }
+}
+
+fn normalize_word(word) {
+  word
+  |> string.to_lower
+  |> string.trim
+}
+
+fn count_frequencies(words) {
+  words
+  |> list.fold(#{}) { acc, word -> map.update(acc, word, 0) { n -> n + 1 } }
+}
+
+fn find_longest(words) {
+  words
+  |> list.fold("") { longest, word -> match string.length(word) > string.length(longest) {
+    true -> word
+    _ -> longest
+  } }
+}
+
+fn find_shortest(words) {
+  match words {
+    [] -> ""
+    [first, ..rest] -> rest
+    |> list.fold(first) { shortest, word -> match string.length(word) < string.length(shortest) {
+      true -> word
+      _ -> shortest
+    } }
+  }
+}
+
+fn total_word_length(words) {
+  words
+  |> list.fold(0) { acc, word -> acc + string.length(word) }
+}
+
+fn top_frequent(freq_map, n) {
+  freq_map
+  |> map.entries
+  |> list.sort_by { (_, count) -> -count }
+  |> list.take(n)
+}
+
+fn pad_right(s, width) {
+  string.pad_right(s, width, " ")
+}
+
+fn pad_left(s, width) {
+  string.pad_left(s, width, " ")
+}
+
+fn print_header(title) {
+  println("")
+  println(string.repeat("=", 50))
+  println("  {title}")
+  println(string.repeat("=", 50))
+}
+
+fn print_row(label, value) {
+  println("  {pad_right(label, 25)}{value}")
+}
+
+fn main() {
+  let filename = get_filename()
+  match io.read_file(filename) {
+    Err(e) -> {
+      println("Error reading file '{filename}': {e}")
+    }
+    Ok(content) -> {
+      let lines = content
+      |> string.split("\n")
+      |> list.filter { l -> !string.is_empty(l) }
+      let line_count = list.length(lines)
+      let char_count = string.length(content)
+      let words = get_words(content)
+      let normalized = words
+      |> list.map { w -> normalize_word(w) }
+      let word_count = list.length(normalized)
+      let unique_words = normalized
+      |> list.unique
+      let unique_count = list.length(unique_words)
+      let total_len = total_word_length(normalized)
+      let avg_len = match word_count > 0 {
+        true -> int.to_float(total_len) / int.to_float(word_count) else 0.0
+        _ -> 0.0
+      }
+      let longest = find_longest(normalized)
+      let shortest = find_shortest(normalized)
+      let freq = count_frequencies(normalized)
+      let top = top_frequent(freq, top_n)
+      print_header("Text File Statistics")
+      println("")
+      print_row("File:", filename)
+      print_row("Lines:", "{line_count}")
+      print_row("Words:", "{word_count}")
+      print_row("Characters:", "{char_count}")
+      print_row("Unique words:", "{unique_count}")
+      print_row("Avg word length:", float.to_string(avg_len, 2))
+      print_row("Longest word:", longest)
+      print_row("Shortest word:", shortest)
+      print_header("Top {top_n} Most Frequent Words")
+      println("")
+      println("  {pad_right("Rank", 8)}{pad_right("Word", 20)}{pad_left("Count", 6)}")
+      println("  {string.repeat("-", 34)}")
+      top
+      |> list.enumerate
+      |> list.each { (i, (word, count)) ->
+        let rank = "{i + 1}."
+        println("  {pad_right(rank, 8)}{pad_right(word, 20)}{pad_left("{count}", 6)}")
+      }
+      println("")
+      println(string.repeat("=", 50))
+    }
+  }
+  -- Print results
+}
