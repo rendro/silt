@@ -133,6 +133,63 @@ fn main() {{
 }
 
 #[test]
+fn test_task_spawn_until_zero_ms_child_io_times_out() {
+    // task.spawn_until installs a deadline on the child task. With 0ms,
+    // every I/O in the child returns Err immediately at entry.
+    let (stdout, _stderr, code) = run_silt(
+        r#"
+import io
+import task
+import time
+
+fn main() {
+  let handle = task.spawn_until(time.ms(0), fn() {
+    match io.read_file("/tmp/silt_spawn_until_noent") {
+      Ok(s) -> s
+      Err(msg) -> msg
+    }
+  })
+  println(task.join(handle))
+}
+"#,
+    );
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("I/O timeout (task.deadline exceeded)"),
+        "child should timeout at I/O entry; got stdout={stdout:?}"
+    );
+}
+
+#[test]
+fn test_task_spawn_until_slack_completes_normally() {
+    // Generous deadline — child completes with real result.
+    let path = std::env::temp_dir().join("silt_td_spawn_slack.txt");
+    std::fs::write(&path, "done").unwrap();
+    let src = format!(
+        r#"
+import io
+import task
+import time
+
+fn main() {{
+  let handle = task.spawn_until(time.seconds(60), fn() {{
+    match io.read_file("{}") {{
+      Ok(s) -> s
+      Err(msg) -> msg
+    }}
+  }})
+  println(task.join(handle))
+}}
+"#,
+        path.display()
+    );
+    let (stdout, _stderr, code) = run_silt(&src);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(code, 0);
+    assert_eq!(stdout.trim(), "done");
+}
+
+#[test]
 fn test_task_deadline_nested_synchronous_tightens() {
     // Outer deadline 60s; inner deadline 0ms. Inner's tighter deadline
     // wins inside the inner scope.

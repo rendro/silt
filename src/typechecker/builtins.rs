@@ -381,6 +381,27 @@ impl TypeChecker {
             );
         }
 
+        // task.spawn_until: (Duration, () -> a) -> Handle(a)
+        // Spawns a task that runs with a scoped wall-clock deadline.
+        // Equivalent to `task.spawn(fn() { task.deadline(dur, fn) })`
+        // but with one less closure wrapper.
+        {
+            let (a, av) = self.fresh_tv();
+            let duration_ty =
+                Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+            env.define(
+                intern("task.spawn_until"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![duration_ty, Type::Fun(vec![], Box::new(a.clone()))],
+                        Box::new(Type::Generic(intern("Handle"), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+
         // ── regex module ────────────────────────────────────────────────
 
         // regex.is_match: (String, String) -> Bool
