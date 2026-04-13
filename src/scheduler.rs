@@ -8,14 +8,131 @@ use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Weak;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crate::value::{TaskHandle, Value};
+use crate::value::{IoCompletion, TaskHandle, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
 const MAX_TASKS: usize = 100_000;
+
+/// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
+/// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
+/// treats `None` as "no timeout configured" (infinite wait).
+fn parse_duration(s: &str) -> Option<Duration> {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("none") || s.eq_ignore_ascii_case("off") {
+        return None;
+    }
+    let unit_start = s.find(|c: char| c.is_alphabetic())?;
+    let (num_part, unit) = s.split_at(unit_start);
+    let n: u64 = num_part.trim().parse().ok()?;
+    match unit.trim().to_lowercase().as_str() {
+        "ms" => Some(Duration::from_millis(n)),
+        "s" | "sec" | "secs" => Some(Duration::from_secs(n)),
+        "m" | "min" | "mins" => Some(Duration::from_secs(n.checked_mul(60)?)),
+        "h" | "hr" | "hrs" => Some(Duration::from_secs(n.checked_mul(3600)?)),
+        _ => None,
+    }
+}
+
+/// An entry in the I/O watchdog registry. When the watchdog thread scans
+/// and finds an entry whose `blocked_since.elapsed() >= timeout`, it
+/// fires `completion.complete(Err(...))` to unblock the task with a
+/// timeout error. The `Weak` reference ensures a dropped task's
+/// completion doesn't keep the watchdog holding memory.
+struct WatchdogEntry {
+    task_id: usize,
+    completion: Weak<IoCompletion>,
+    blocked_since: Instant,
+}
+
+/// Registry of in-flight I/O operations watched for timeout. Only
+/// populated when `SILT_IO_TIMEOUT` is set to a parseable duration.
+struct WatchdogRegistry {
+    entries: Mutex<Vec<WatchdogEntry>>,
+    /// How long an I/O block may remain outstanding before the watchdog
+    /// fires an `Err("timeout ...")` into the completion.
+    timeout: Duration,
+    /// How frequently the watchdog thread scans the registry. Defaults
+    /// to min(1s, timeout / 4); overridden by `SILT_IO_WATCHDOG_INTERVAL`.
+    interval: Duration,
+    shutdown: AtomicBool,
+}
+
+impl WatchdogRegistry {
+    fn new(timeout: Duration, interval: Duration) -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+            timeout,
+            interval,
+            shutdown: AtomicBool::new(false),
+        }
+    }
+
+    fn add(&self, task_id: usize, completion: &Arc<IoCompletion>) {
+        self.entries.lock().push(WatchdogEntry {
+            task_id,
+            completion: Arc::downgrade(completion),
+            blocked_since: Instant::now(),
+        });
+    }
+
+    fn remove(&self, task_id: usize) {
+        let mut entries = self.entries.lock();
+        if let Some(pos) = entries.iter().position(|e| e.task_id == task_id) {
+            entries.swap_remove(pos);
+        }
+    }
+
+    /// Scan the registry for overdue entries. For each one, fire an
+    /// `Err("I/O timeout after ...")` into the completion (no-op if the
+    /// real I/O already wrote a result — `IoCompletion::complete` is
+    /// first-writer-wins). Returns the number of timeouts fired for
+    /// test introspection.
+    fn scan_and_fire(&self) -> usize {
+        let mut entries = self.entries.lock();
+        let now = Instant::now();
+        let timeout = self.timeout;
+        let mut fired = 0;
+        entries.retain(|entry| {
+            if now.saturating_duration_since(entry.blocked_since) < timeout {
+                return true; // not overdue, keep watching
+            }
+            // Overdue: fire timeout if the completion is still alive and
+            // hasn't already been completed by the real I/O. The Err
+            // variant shape matches what I/O builtins return on failure.
+            if let Some(completion) = entry.completion.upgrade() {
+                let err_value = Value::Variant(
+                    "Err".into(),
+                    vec![Value::String(format!(
+                        "I/O timeout after {}s (SILT_IO_TIMEOUT)",
+                        timeout.as_secs_f64()
+                    ))],
+                );
+                if completion.complete(err_value) {
+                    fired += 1;
+                }
+            }
+            false // remove from registry regardless (won't fire again)
+        });
+        fired
+    }
+}
+
+/// Watchdog worker loop. Wakes every `interval`, scans registry, fires
+/// timeouts on overdue entries. Exits cleanly on shutdown signal.
+fn watchdog_loop(registry: Arc<WatchdogRegistry>) {
+    while !registry.shutdown.load(Ordering::SeqCst) {
+        thread::sleep(registry.interval);
+        if registry.shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        registry.scan_and_fire();
+    }
+}
 
 /// Result of running a task's VM for one time slice.
 pub enum SliceResult {
@@ -63,6 +180,10 @@ struct SchedulerInner {
     /// Handles of tasks that are currently blocked. When deadlock is detected,
     /// all of these are completed with a deadlock error so joiners unblock.
     blocked_handles: Mutex<Vec<Arc<TaskHandle>>>,
+    /// Optional I/O watchdog registry. Populated when `SILT_IO_TIMEOUT`
+    /// is set to a parseable duration; `None` otherwise (I/O waits
+    /// indefinitely, matching Go's default behavior).
+    watchdog: Option<Arc<WatchdogRegistry>>,
 }
 
 impl Default for Scheduler {
@@ -74,6 +195,21 @@ impl Default for Scheduler {
 impl Scheduler {
     /// Create a new scheduler (does NOT start worker threads yet).
     pub fn new() -> Self {
+        // Parse the optional I/O timeout. When unset, the watchdog is
+        // disabled and I/O waits indefinitely (Go's default).
+        let watchdog = std::env::var("SILT_IO_TIMEOUT")
+            .ok()
+            .and_then(|s| parse_duration(&s))
+            .map(|timeout| {
+                // Scan interval: env override, else min(1s, timeout/4),
+                // floored at 10ms to avoid pathological busy-scanning.
+                let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
+                    .ok()
+                    .and_then(|s| parse_duration(&s))
+                    .unwrap_or_else(|| (timeout / 4).min(Duration::from_secs(1)));
+                let interval = interval.max(Duration::from_millis(10));
+                Arc::new(WatchdogRegistry::new(timeout, interval))
+            });
         Scheduler {
             inner: Arc::new(SchedulerInner {
                 run_queue: Mutex::new(VecDeque::new()),
@@ -84,6 +220,7 @@ impl Scheduler {
                 io_blocked_tasks: AtomicUsize::new(0),
                 deadlock_detected: AtomicBool::new(false),
                 blocked_handles: Mutex::new(Vec::new()),
+                watchdog,
             }),
             workers: Mutex::new(None),
         }
@@ -106,6 +243,15 @@ impl Scheduler {
             let inner = self.inner.clone();
             handles.push(thread::spawn(move || {
                 worker_loop(inner);
+            }));
+        }
+        // Start watchdog thread when timeout is configured. Fires
+        // `Err("I/O timeout ...")` into any completion that has been
+        // blocked longer than `SILT_IO_TIMEOUT` — invisible to silt
+        // code, which just sees the normal I/O Err variant.
+        if let Some(registry) = self.inner.watchdog.clone() {
+            handles.push(thread::spawn(move || {
+                watchdog_loop(registry);
             }));
         }
         *guard = Some(handles);
@@ -156,6 +302,9 @@ impl Scheduler {
 impl Drop for Scheduler {
     fn drop(&mut self) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
+        if let Some(registry) = &self.inner.watchdog {
+            registry.shutdown.store(true, Ordering::SeqCst);
+        }
         self.inner.condvar.notify_all();
         if let Some(workers) = self.workers.lock().take() {
             for w in workers {
@@ -306,6 +455,9 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                         if was_io {
                             cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                            if let Some(registry) = &cancel_inner.watchdog {
+                                registry.remove(cancel_task_id);
+                            }
                         }
                         cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                         let mut handles = cancel_inner.blocked_handles.lock();
@@ -368,6 +520,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Io(completion)) => {
+                        // Register with the watchdog so a lingering I/O
+                        // past SILT_IO_TIMEOUT gets an Err timeout fired
+                        // into its completion (unblocking the task).
+                        if let Some(registry) = &inner.watchdog {
+                            registry.add(id, &completion);
+                        }
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         completion.register_waker(Box::new(move || {
@@ -393,12 +551,16 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 /// Re-enqueue a parked task on the scheduler's run queue.
 ///
 /// `was_io` indicates whether the task was parked on external I/O (so
-/// `io_blocked_tasks` needs decrementing) or on an internal graph edge
+/// `io_blocked_tasks` needs decrementing and the watchdog registry
+/// needs its entry cleared) or on an internal graph edge
 /// (channel/select/join). The waker site knows which arm it's in.
 fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
     inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
     if was_io {
         inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+        if let Some(registry) = &inner.watchdog {
+            registry.remove(task.id);
+        }
     }
     // Remove this task's handle from the blocked registry.
     {
@@ -616,6 +778,140 @@ fn main() {{
             "I/O-blocked task must not trigger deadlock detection"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    // ── I/O watchdog (SILT_IO_TIMEOUT) ────────────────────────────
+
+    #[test]
+    fn test_parse_duration_variants() {
+        assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
+        assert_eq!(parse_duration("500ms"), Some(Duration::from_millis(500)));
+        assert_eq!(parse_duration("5m"), Some(Duration::from_secs(300)));
+        assert_eq!(parse_duration("2h"), Some(Duration::from_secs(7200)));
+        assert_eq!(parse_duration(" 30 s "), Some(Duration::from_secs(30)));
+        assert_eq!(parse_duration("100 ms"), Some(Duration::from_millis(100)));
+        assert_eq!(parse_duration("none"), None);
+        assert_eq!(parse_duration("OFF"), None);
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("30"), None, "bare number — no unit");
+        assert_eq!(parse_duration("30x"), None, "unknown unit");
+        assert_eq!(parse_duration("abc"), None);
+    }
+
+    #[test]
+    fn test_watchdog_fires_timeout_on_overdue_entry() {
+        // Unit-level watchdog test: add an entry with a past
+        // `blocked_since`, run scan, verify the completion gets an Err
+        // fired into it.
+        let registry = WatchdogRegistry::new(
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+        );
+        let completion = IoCompletion::new();
+        registry.add(1, &completion);
+        // Backdate the entry so it's already overdue.
+        {
+            let mut entries = registry.entries.lock();
+            entries[0].blocked_since = Instant::now() - Duration::from_secs(1);
+        }
+        let fired = registry.scan_and_fire();
+        assert_eq!(fired, 1, "one timeout should fire");
+        let result = completion.try_get().expect("completion should be set");
+        match result {
+            Value::Variant(name, fields) => {
+                assert_eq!(name.as_str(), "Err");
+                let Value::String(msg) = &fields[0] else {
+                    panic!("expected String in Err");
+                };
+                assert!(msg.contains("I/O timeout"), "unexpected: {msg}");
+            }
+            other => panic!("expected Err variant, got {other:?}"),
+        }
+        // Entry should be removed after firing.
+        assert!(registry.entries.lock().is_empty());
+    }
+
+    #[test]
+    fn test_watchdog_does_not_fire_on_fresh_entry() {
+        // Fresh entry should not fire — duration hasn't elapsed.
+        let registry = WatchdogRegistry::new(
+            Duration::from_secs(10),
+            Duration::from_millis(10),
+        );
+        let completion = IoCompletion::new();
+        registry.add(1, &completion);
+        let fired = registry.scan_and_fire();
+        assert_eq!(fired, 0);
+        assert!(completion.try_get().is_none());
+        assert_eq!(registry.entries.lock().len(), 1);
+    }
+
+    #[test]
+    fn test_watchdog_does_not_clobber_completed_io() {
+        // Real I/O already wrote a result; watchdog fires late; the
+        // first-writer-wins contract on IoCompletion ensures the real
+        // Ok result is preserved.
+        let registry = WatchdogRegistry::new(
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+        );
+        let completion = IoCompletion::new();
+        registry.add(1, &completion);
+        // Real I/O writes Ok first.
+        let ok_val = Value::Variant("Ok".into(), vec![Value::String("real".into())]);
+        assert!(completion.complete(ok_val));
+        // Backdate and scan.
+        {
+            let mut entries = registry.entries.lock();
+            entries[0].blocked_since = Instant::now() - Duration::from_secs(1);
+        }
+        let fired = registry.scan_and_fire();
+        assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
+        // Ok preserved.
+        let result = completion.try_get().expect("should still have Ok");
+        match result {
+            Value::Variant(name, fields) => {
+                assert_eq!(name.as_str(), "Ok");
+                assert_eq!(fields[0], Value::String("real".into()));
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_watchdog_disabled_when_env_unset() {
+        // SAFETY: test binary is single-threaded with respect to env
+        // manipulation within this test body. Removing the var before
+        // constructing the scheduler reflects the user-facing default.
+        // SAFETY: env var mutation is safe in tests since Rust 1.80+
+        // uses thread-local env caches, and this test does not spawn
+        // concurrent env readers. Required because Scheduler::new reads
+        // the env once at construction time.
+        unsafe { std::env::remove_var("SILT_IO_TIMEOUT") };
+        let scheduler = Scheduler::new();
+        assert!(
+            scheduler.inner.watchdog.is_none(),
+            "watchdog should be disabled when SILT_IO_TIMEOUT unset"
+        );
+    }
+
+    #[test]
+    fn test_watchdog_registry_removal_on_requeue() {
+        // When a task's I/O completes normally, its watchdog entry
+        // should be cleared so the registry doesn't grow unbounded.
+        let registry = WatchdogRegistry::new(
+            Duration::from_secs(30),
+            Duration::from_secs(1),
+        );
+        let c1 = IoCompletion::new();
+        let c2 = IoCompletion::new();
+        registry.add(1, &c1);
+        registry.add(2, &c2);
+        assert_eq!(registry.entries.lock().len(), 2);
+        registry.remove(1);
+        let entries = registry.entries.lock();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task_id, 2);
     }
 
     #[test]

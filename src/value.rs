@@ -481,10 +481,17 @@ impl IoCompletion {
         })
     }
 
-    /// Store the I/O result and notify all waiters.
-    pub fn complete(&self, value: Value) {
+    /// Store the I/O result and notify all waiters. First-writer-wins:
+    /// once a result is stored, subsequent calls are no-ops. Returns
+    /// `true` if this call stored the result, `false` if a previous
+    /// caller already did. This lets the scheduler watchdog set a
+    /// timeout error without racing against a late-arriving real result.
+    pub fn complete(&self, value: Value) -> bool {
         {
             let mut guard = self.result.lock();
+            if guard.is_some() {
+                return false;
+            }
             *guard = Some(value);
         }
         self.condvar.notify_all();
@@ -495,6 +502,7 @@ impl IoCompletion {
         for w in wakers {
             w();
         }
+        true
     }
 
     /// Non-blocking poll.
