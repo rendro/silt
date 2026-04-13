@@ -4,8 +4,10 @@
 //! returns the standard `Err(String)` when the deadline elapses, without
 //! any language-surface change.
 
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 fn silt_bin() -> PathBuf {
     let target = std::env::var("CARGO_BIN_EXE_silt").ok();
@@ -133,18 +135,19 @@ fn main() {{
 }
 
 #[test]
-fn test_watchdog_fired_pending_io_does_not_leak_to_next_call() {
-    // Regression lock for B1: when an I/O submit yields, the watchdog
-    // fires Err into pending_io, the task resumes, and the builtin
-    // short-circuits via deadline_exceeded() — the reconcile path must
-    // consume pending_io first, otherwise a subsequent I/O call outside
-    // the deadline scope would read the stale watchdog Err.
+fn test_deadline_exceeded_pending_io_does_not_leak_to_next_call() {
+    // Regression lock for B1: when task.deadline elapses before the
+    // inner I/O completes, the deadline-exceeded early-exit path must
+    // clear pending_io so that a subsequent I/O call (outside the
+    // scope) does not reuse the stale completion.
     //
-    // Setup: SILT_IO_TIMEOUT=50ms forces the watchdog to fire quickly.
-    // task.spawn_until(50ms) does an I/O that yields (real file,
-    // watchdog wins the race). After deadline-Err surfaces, a second
-    // I/O in the SAME spawned task (post-deadline) must see its own
-    // fresh result (Err on missing file), not the stale deadline Err.
+    // Note: this test covers the *task.deadline early-exit* path, not
+    // the SILT_IO_TIMEOUT watchdog-thread path — see
+    // `test_watchdog_env_var_fires_pending_io_surfaces_timeout_err`
+    // for the watchdog-writes-Err-to-completion variant. The helper
+    // `run_silt()` deliberately does NOT set SILT_IO_TIMEOUT, so the
+    // watchdog registry is None and the watchdog thread never runs
+    // here; only `task.deadline` imposes a scope.
     let fixture = std::env::temp_dir().join("silt_td_b1_ok.txt");
     std::fs::write(&fixture, "ok").unwrap();
     let src = format!(
@@ -270,6 +273,134 @@ fn main() {
     assert!(
         stdout.contains("I/O timeout (task.deadline exceeded)"),
         "http.get must respect task.deadline at entry; got stdout={stdout:?}"
+    );
+}
+
+/// Run `silt run <tmp>` with `SILT_IO_TIMEOUT=<val>` set and stdin
+/// held open (piped, never written) so that a spawned task calling
+/// `io.read_line()` parks inside the I/O pool long enough for the
+/// real watchdog thread to fire. Bounded wall-clock wait guards
+/// against a hang if the watchdog path regresses.
+///
+/// Returns (stdout, stderr, exit_code). On timeout the child is
+/// killed and the function panics with a clear diagnostic.
+fn run_silt_with_io_timeout_stdin_piped(
+    src: &str,
+    io_timeout: &str,
+    wait: Duration,
+) -> (String, String, i32) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let tmp = std::env::temp_dir().join(format!(
+        "silt_td_wd_{}_{n}.silt",
+        std::process::id()
+    ));
+    std::fs::write(&tmp, src).unwrap();
+
+    let mut child = Command::new(silt_bin())
+        .arg("run")
+        .arg(&tmp)
+        .env("SILT_IO_TIMEOUT", io_timeout)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn silt");
+
+    // Hold stdin open (never write, never drop it before exit) so
+    // io.read_line in the spawned task parks in the kernel until
+    // the watchdog fires.
+    let stdin_handle = child.stdin.take();
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let _ = std::fs::remove_file(&tmp);
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut s) = child.stdout.take() {
+                    let _ = s.read_to_string(&mut stdout);
+                }
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut stderr);
+                }
+                drop(stdin_handle);
+                return (stdout, stderr, status.code().unwrap_or(-1));
+            }
+            Ok(None) => {
+                if start.elapsed() >= wait {
+                    let _ = child.kill();
+                    let _ = std::fs::remove_file(&tmp);
+                    panic!(
+                        "silt run did not exit within {wait:?} — watchdog path likely regressed"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                panic!("try_wait failed: {e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_watchdog_env_var_fires_pending_io_surfaces_timeout_err() {
+    // Regression lock for the SILT_IO_TIMEOUT watchdog-thread path:
+    // when an I/O submit parks in the I/O pool and does NOT complete
+    // before the global timeout, the watchdog thread must write the
+    // canonical Err ("I/O timeout (SILT_IO_TIMEOUT exceeded)") into
+    // the completion slot, and the parked task must resume with that
+    // Err instead of hanging forever.
+    //
+    // Setup: stdin is piped open (never closed, never written) so
+    // io.read_line inside the spawned task parks in the I/O pool's
+    // blocking read until the watchdog fires.
+    //
+    // This complements `test_deadline_exceeded_pending_io_does_not_leak_to_next_call`
+    // (which exercises the *task.deadline early-exit* path — no
+    // watchdog thread running). Here the real watchdog thread runs
+    // because SILT_IO_TIMEOUT is set via Command::env(); without this
+    // test, the watchdog-writes-Err-to-completion path is covered
+    // only by scheduler unit tests, never end-to-end.
+    //
+    // NOTE: ignored pending prod fix — see #[ignore] message above.
+    // The test body is correct and should pass once the scheduler
+    // deadlock is resolved. Keeping the body live (rather than
+    // deleted) preserves the regression lock so the fix can un-ignore
+    // and verify in a single step.
+    let src = r#"
+import io
+import task
+
+fn main() {
+  let handle = task.spawn(fn() {
+    match io.read_line() {
+      Ok(_) -> "unexpected_ok"
+      Err(msg) -> msg
+    }
+  })
+  println(task.join(handle))
+}
+"#;
+    let (stdout, stderr, code) =
+        run_silt_with_io_timeout_stdin_piped(src, "50ms", Duration::from_secs(15));
+    assert_eq!(
+        code, 0,
+        "silt should exit 0 (watchdog Err surfaces as a value, not a VM error); \
+         stdout={stdout:?} stderr={stderr:?}"
+    );
+    // Canonical message from DeadlineSource::Global in src/scheduler.rs:
+    // "I/O timeout (SILT_IO_TIMEOUT exceeded)". Assert on the two
+    // load-bearing substrings so a non-substantive wording tweak
+    // doesn't flap this regression lock.
+    assert!(
+        stdout.contains("I/O timeout") && stdout.contains("SILT_IO_TIMEOUT"),
+        "expected watchdog Err message with 'I/O timeout' and 'SILT_IO_TIMEOUT'; \
+         got stdout={stdout:?} stderr={stderr:?}"
     );
 }
 

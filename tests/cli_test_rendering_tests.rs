@@ -729,8 +729,8 @@ fn test_divide_by_zero() {
     // The error snippet must contain the module's source line, not a
     // random test-file line.
     assert!(
-        stderr.contains("a / b") || stderr.contains("pub fn divide"),
-        "expected module source (a / b or pub fn divide) in stderr, got: {stderr}"
+        stderr.contains("pub fn divide"),
+        "expected module source ('pub fn divide') in stderr, got: {stderr}"
     );
     // The error path in the snippet should reference the module file,
     // not just the test file.

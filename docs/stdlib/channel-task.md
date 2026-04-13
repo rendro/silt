@@ -236,8 +236,10 @@ fixed thread pool and run in parallel. They communicate through channels.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `cancel` | `(Handle) -> ()` | Cancel a running task |
+| `deadline` | `(Duration, () -> a) -> a` | Run a callback with a scoped I/O deadline |
 | `join` | `(Handle) -> a` | Wait for a task to complete |
 | `spawn` | `(() -> a) -> Handle` | Spawn a new lightweight task |
+| `spawn_until` | `(Duration, () -> a) -> Handle(a)` | Spawn a task scoped by a deadline |
 
 
 ## `task.cancel`
@@ -298,5 +300,74 @@ fn main() {
     })
     let answer = task.join(h)
     println(answer)  -- 42
+}
+```
+
+
+## `task.deadline`
+
+```
+task.deadline(dur: Duration, f: () -> a) -> a
+```
+
+Runs `f` with a scoped I/O deadline. If any blocking I/O builtin inside `f`
+(see [Concurrency: Blocking operations](../concurrency.md#blocking-operations))
+runs longer than `dur`, the builtin returns `Err("I/O timeout (task.deadline
+exceeded)")` instead of its normal result -- the surrounding silt code
+handles it through the usual `Result` match. No exception is raised, and the
+deadline does not preempt pure CPU work; it only applies to I/O.
+
+The deadline is *scoped*: it nests cleanly with an outer `SILT_IO_TIMEOUT`
+or a surrounding `task.deadline`, whichever elapses first fires. The error
+message distinguishes the source so silt code can tell scoped timeouts from
+the global one.
+
+```silt
+-- noexec
+import io
+import task
+import time
+
+fn main() {
+    let outcome = task.deadline(time.ms(200), fn() {
+        io.read_file("/var/log/slow.log")
+    })
+    match outcome {
+        Ok(contents) -> println(contents)
+        Err(msg) -> println(msg)  -- "I/O timeout (task.deadline exceeded)"
+    }
+}
+```
+
+
+## `task.spawn_until`
+
+```
+task.spawn_until(dur: Duration, f: () -> a) -> Handle(a)
+```
+
+Spawns `f` as a task with a bounded wall-clock deadline. Equivalent to
+`task.spawn(fn() { task.deadline(dur, f) })` but with one less closure
+wrapper. The returned handle resolves to the function's result if it
+finishes in time, or to the deadline error inside any I/O builtin it
+was blocked on when the deadline fired.
+
+Useful for fan-out patterns where each child task must bound its own
+runtime -- e.g. racing N replicas and dropping stragglers.
+
+```silt
+-- noexec
+import io
+import task
+import time
+
+fn main() {
+    let h = task.spawn_until(time.seconds(2), fn() {
+        io.read_file("/tmp/maybe_slow.txt")
+    })
+    match task.join(h) {
+        Ok(contents) -> println(contents)
+        Err(msg) -> println(msg)
+    }
 }
 ```

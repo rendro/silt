@@ -1132,6 +1132,22 @@ impl Ord for Value {
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
+            // Handle / VmClosure / BuiltinFn / VariantConstructor: PartialEq
+            // returns `false` for every pair (catch-all `_ => false` arm at
+            // ~line 1028), so Ord must never return `Equal` for distinct
+            // instances either — otherwise BTreeSet / BTreeMap silently drop
+            // what they see as duplicates (Ord contract: a == b ⇒ cmp == Equal,
+            // contrapositively a != b ⇒ cmp != Equal). We order by identity
+            // (`id` field for TaskHandle, Arc pointer address for VmClosure)
+            // and by contents (name / arity) for the name-carrying variants.
+            (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
+            (Value::VmClosure(a), Value::VmClosure(b)) => {
+                (Arc::as_ptr(a) as usize).cmp(&(Arc::as_ptr(b) as usize))
+            }
+            (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a.cmp(b),
+            (Value::VariantConstructor(na, aa), Value::VariantConstructor(nb, ab)) => {
+                na.cmp(nb).then_with(|| aa.cmp(ab))
+            }
             _ => Ordering::Equal,
         }
     }

@@ -10,6 +10,13 @@ use crate::value::{MAX_RANGE_MATERIALIZE, Value, checked_range_len};
 use super::runtime::{BuiltinAcc, CallFrame, SuspendedBuiltin, SuspendedInvoke};
 use super::{Vm, VmError};
 
+/// Maximum number of call frames the VM will allocate before reporting a
+/// stack-overflow error. Exceeding this cap aborts the offending call with
+/// a user-facing message that points at tail-call position as a remedy.
+/// Consulted by both `call_value` (normal Silt calls) and
+/// `invoke_callable` (higher-order builtins re-entering user code).
+const MAX_FRAMES: usize = 100_000;
+
 /// Language-level equality for the `==` / `!=` operators.
 ///
 /// For almost all value kinds this delegates to `PartialEq for Value`, but
@@ -559,7 +566,6 @@ impl Vm {
         argc: usize,
         func_slot: usize,
     ) -> Result<(), VmError> {
-        const MAX_FRAMES: usize = 100_000;
         match func_val {
             Value::VmClosure(closure) => {
                 if argc != closure.function.arity as usize {
@@ -641,7 +647,6 @@ impl Vm {
                         args.len()
                     )));
                 }
-                const MAX_FRAMES: usize = 100_000;
                 if self.frames.len() >= MAX_FRAMES {
                     return Err(VmError::new(format!(
                         "stack overflow: recursion depth exceeded {} frames (tip: put the recursive call in tail position to avoid this limit)",
@@ -1701,14 +1706,17 @@ impl Vm {
                 if let Value::Tuple(elems) = val {
                     let elem = elems.get(index).ok_or_else(|| {
                         VmError::new(format!(
-                            "DestructTuple index {} out of bounds (len {})",
-                            index,
+                            "tuple destructure: expected at least {} elements, got {}",
+                            index + 1,
                             elems.len()
                         ))
                     })?;
                     self.push(elem.clone());
                 } else {
-                    return Err(VmError::new("DestructTuple on non-tuple".into()));
+                    return Err(VmError::new(format!(
+                        "tuple destructure: expected tuple, got {}",
+                        self.type_name(&val)
+                    )));
                 }
             }
             Op::DestructVariant => {
@@ -1717,25 +1725,28 @@ impl Vm {
                 if let Value::Variant(_, fields) = val {
                     let field = fields.get(index).ok_or_else(|| {
                         VmError::new(format!(
-                            "DestructVariant index {} out of bounds (len {})",
+                            "variant destructure: field index {} out of bounds (variant has {} fields)",
                             index,
                             fields.len()
                         ))
                     })?;
                     self.push(field.clone());
                 } else {
-                    return Err(VmError::new("DestructVariant on non-variant".into()));
+                    return Err(VmError::new(format!(
+                        "variant destructure: expected variant, got {}",
+                        self.type_name(&val)
+                    )));
                 }
             }
             Op::DestructList => {
                 let index = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 match val {
-                    Value::List(xs) => {
+                    Value::List(ref xs) => {
                         let elem = xs.get(index).ok_or_else(|| {
                             VmError::new(format!(
-                                "DestructList index {} out of bounds (len {})",
-                                index,
+                                "list destructure: expected at least {} elements, got {}",
+                                index + 1,
                                 xs.len()
                             ))
                         })?;
@@ -1750,17 +1761,22 @@ impl Vm {
                         }
                         self.push(Value::Int(i));
                     }
-                    _ => return Err(VmError::new("DestructList on non-list".into())),
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "list destructure: expected list, got {}",
+                            self.type_name(&val)
+                        )));
+                    }
                 }
             }
             Op::DestructListRest => {
                 let start = self.read_u8()? as usize;
                 let val = self.peek()?.clone();
                 match val {
-                    Value::List(xs) => {
+                    Value::List(ref xs) => {
                         if start > xs.len() {
                             return Err(VmError::new(format!(
-                                "DestructListRest start {} out of bounds (len {})",
+                                "list destructure: rest pattern start {} exceeds list length {}",
                                 start,
                                 xs.len()
                             )));
@@ -1781,7 +1797,12 @@ impl Vm {
                             self.push(Value::Range(new_lo, hi));
                         }
                     }
-                    _ => return Err(VmError::new("DestructListRest on non-list".into())),
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "list destructure: expected list, got {}",
+                            self.type_name(&val)
+                        )));
+                    }
                 }
             }
             Op::DestructRecordField => {
@@ -1795,7 +1816,10 @@ impl Vm {
                         .ok_or_else(|| VmError::new(format!("record has no field '{name}'")))?;
                     self.push(field);
                 } else {
-                    return Err(VmError::new("DestructRecordField on non-record".into()));
+                    return Err(VmError::new(format!(
+                        "record destructure: expected record, got {}",
+                        self.type_name(&val)
+                    )));
                 }
             }
             Op::TestRecordTag => {
@@ -1826,7 +1850,10 @@ impl Vm {
                         .ok_or_else(|| VmError::new(format!("map has no key '{key_name}'")))?;
                     self.push(value);
                 } else {
-                    return Err(VmError::new("DestructMapValue on non-map".into()));
+                    return Err(VmError::new(format!(
+                        "map destructure: expected map, got {}",
+                        self.type_name(&val)
+                    )));
                 }
             }
             Op::LoopSetup => {

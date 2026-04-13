@@ -77,6 +77,32 @@ pub(super) fn format_unknown_module_function_message(
     }
 }
 
+/// GAP (round 23 #3): append a "did you mean `<cand>`?" hint to an
+/// "unknown method '<field>' on <Type>" diagnostic when the method table
+/// has a close edit-distance match for the given type name. The
+/// method_table is keyed on `(type_name, method_name)`; we walk it once
+/// to collect every method registered on the target type and feed them
+/// to the existing `suggest::suggest_similar` policy.
+pub(super) fn format_unknown_method_message(
+    field: Symbol,
+    display_type_name: &str,
+    method_table: &HashMap<(Symbol, Symbol), MethodEntry>,
+    table_key: Symbol,
+) -> String {
+    let field_str = resolve(field);
+    let base = format!("unknown method '{field_str}' on {display_type_name}");
+    let candidates: Vec<String> = method_table
+        .keys()
+        .filter(|(ty, _)| *ty == table_key)
+        .map(|(_, m)| resolve(*m).to_string())
+        .collect();
+    if let Some(hint) = suggest_similar(&field_str, candidates.iter()) {
+        format!("{base}\nhelp: did you mean `{hint}`?")
+    } else {
+        base
+    }
+}
+
 impl TypeChecker {
     /// B4 helper: does the enclosing function's active where-clause
     /// constraints cover `trait_name` for the type variable at the
@@ -667,6 +693,20 @@ impl TypeChecker {
                 // orderings differ because unify's tuple-tuple arm puts
                 // the first arg as "expected", while its fallback
                 // general-mismatch arm puts the second arg as "expected".
+                //
+                // BROKEN (round 23 #1): the empty-tuple pattern `()` is
+                // the unit pattern. `resolve_type_expr` normalizes the
+                // empty tuple type expr to `Type::Unit` (mod.rs around
+                // the `TypeExpr::Tuple` arm). Unifying the scrutinee
+                // against `Type::Tuple(vec![])` instead of `Type::Unit`
+                // produced a nonsense "expected (), got ()" diagnostic
+                // because the two types render identically but aren't
+                // equal. Match the type-expr side of the language and
+                // unify against `Type::Unit` when `pats.is_empty()`.
+                if pats.is_empty() {
+                    self.unify(ty, &Type::Unit, span);
+                    return;
+                }
                 let resolved_pre = self.apply(ty);
                 if let Type::Tuple(scrutinee_elems) = &resolved_pre {
                     if scrutinee_elems.len() == pats.len() {
@@ -1396,8 +1436,20 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
+                        // GAP (round 23 #3): append "did you mean ...?"
+                        // when a near edit-distance method is registered
+                        // on this type. Keep the existing "on type <Name>"
+                        // header so prior-lock tests that match only the
+                        // header prefix still pass; the hint is appended
+                        // on its own `help:` line.
+                        let display = format!("type {type_name}");
                         self.error(
-                            format!("unknown method '{field}' on type {type_name}"),
+                            format_unknown_method_message(
+                                field,
+                                &display,
+                                &self.method_table,
+                                type_name,
+                            ),
                             span,
                         );
                         Type::Error
@@ -1412,7 +1464,15 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(format!("unknown method '{field}' on List"), span);
+                        self.error(
+                            format_unknown_method_message(
+                                field,
+                                "List",
+                                &self.method_table,
+                                intern("List"),
+                            ),
+                            span,
+                        );
                         Type::Error
                     }
                     Type::Tuple(_) => {
@@ -1424,7 +1484,15 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(format!("unknown method '{field}' on Tuple"), span);
+                        self.error(
+                            format_unknown_method_message(
+                                field,
+                                "Tuple",
+                                &self.method_table,
+                                intern("Tuple"),
+                            ),
+                            span,
+                        );
                         Type::Error
                     }
                     Type::Map(_, _) => {
@@ -1435,7 +1503,15 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(format!("unknown method '{field}' on Map"), span);
+                        self.error(
+                            format_unknown_method_message(
+                                field,
+                                "Map",
+                                &self.method_table,
+                                intern("Map"),
+                            ),
+                            span,
+                        );
                         Type::Error
                     }
                     Type::Set(_) => {
@@ -1446,7 +1522,15 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(format!("unknown method '{field}' on Set"), span);
+                        self.error(
+                            format_unknown_method_message(
+                                field,
+                                "Set",
+                                &self.method_table,
+                                intern("Set"),
+                            ),
+                            span,
+                        );
                         Type::Error
                     }
                     Type::Var(v) => {
@@ -2355,8 +2439,62 @@ impl TypeChecker {
                     handled = true;
                 }
                 if !handled {
-                    for (_, field_expr) in &mut *fields {
-                        let _ft = self.infer_expr(field_expr, env);
+                    // BROKEN (round 23 #2): when the receiver is still a
+                    // bare type variable (e.g. `fn f(r) { r.{ aeg: ... } }`)
+                    // we used to silently infer each field expr and drop
+                    // the field name on the floor — the typo `aeg` would
+                    // crash the VM at runtime or, worse, silently corrupt
+                    // the record.
+                    //
+                    // Two-pronged fix:
+                    //  a) Push each (base, field_name) pair to the B4
+                    //     `pending_field_accesses` pool so that when the
+                    //     base DOES narrow to a concrete record (e.g. via
+                    //     scheme narrowing or re-check), the standard
+                    //     finalize path validates the field.
+                    //  b) Eagerly reject field names that aren't declared
+                    //     on ANY record type in the program. For truly
+                    //     polymorphic bases this is the only compile-time
+                    //     signal we get — if the field name is a typo
+                    //     that doesn't match any declared record field,
+                    //     no call-site narrowing can rescue it. This is
+                    //     narrow enough to avoid false positives on
+                    //     valid polymorphic updates like `r.{ age: n }`
+                    //     (age IS declared on at least one record).
+                    let is_var_base = matches!(resolved, Type::Var(_));
+                    // Collect the set of field names across all declared
+                    // records once so the per-field check is O(1). A
+                    // HashSet keeps this independent of record count.
+                    let known_record_fields: std::collections::HashSet<Symbol> = if is_var_base {
+                        self.records
+                            .values()
+                            .flat_map(|r| r.fields.iter().map(|(n, _)| *n))
+                            .collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    };
+                    for (field_name, field_expr) in &mut *fields {
+                        let ft = self.infer_expr(field_expr, env);
+                        if is_var_base {
+                            self.pending_field_accesses.push((
+                                base_ty.clone(),
+                                *field_name,
+                                ft,
+                                span,
+                            ));
+                            if !known_record_fields.contains(field_name) {
+                                // Typo guaranteed: no record in the
+                                // program has a field with this name,
+                                // so regardless of how `r` narrows at
+                                // call sites, this update would fail.
+                                self.error(
+                                    format!(
+                                        "unknown field '{field_name}' — not declared on any record type in scope"
+                                    ),
+                                    span,
+                                );
+                            }
+                        }
                     }
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
                         self.error(
@@ -2630,12 +2768,19 @@ impl TypeChecker {
                 self.unify(expected, &Type::String, span);
             }
             PatternKind::Tuple(pats) => {
-                let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                let tuple_ty = Type::Tuple(elem_types.clone());
-                self.unify(expected, &tuple_ty, span);
+                // BROKEN (round 23 #1): mirror bind_pattern — `()` is the
+                // unit pattern, not a zero-arity tuple. See the comment on
+                // PatternKind::Tuple in bind_pattern for background.
+                if pats.is_empty() {
+                    self.unify(expected, &Type::Unit, span);
+                } else {
+                    let elem_types: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
+                    let tuple_ty = Type::Tuple(elem_types.clone());
+                    self.unify(expected, &tuple_ty, span);
 
-                for (p, t) in pats.iter().zip(elem_types.iter()) {
-                    self.check_pattern(p, t, env, span);
+                    for (p, t) in pats.iter().zip(elem_types.iter()) {
+                        self.check_pattern(p, t, env, span);
+                    }
                 }
             }
             PatternKind::Constructor(name, sub_pats) => {
@@ -2673,6 +2818,26 @@ impl TypeChecker {
                             // Zero-arg constructor
                             if sub_pats.is_empty() {
                                 self.unify(expected, &ctor_ty, span);
+                            } else if self.records.contains_key(name) {
+                                // GAP (round 23 #4): the user wrote
+                                // `Circle(r)` where `Circle` is a record
+                                // type, not an enum constructor. The old
+                                // error said "expects 0 fields, but
+                                // pattern has N", which is misleading —
+                                // record types DO have fields, they just
+                                // use `Circle { radius: r }` pattern
+                                // syntax. Surface the real issue and
+                                // point at the correct shape.
+                                self.error(
+                                    format!(
+                                        "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
+                                    ),
+                                    pattern.span,
+                                );
+                                for sp in sub_pats {
+                                    let tv = self.fresh_var();
+                                    self.check_pattern(sp, &tv, env, span);
+                                }
                             } else {
                                 self.error(
                                     format!("constructor '{}' expects 0 fields, but pattern has {}", name, sub_pats.len()),

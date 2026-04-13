@@ -1340,6 +1340,8 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // send/receive, and task scheduling is non-deterministic
         // under subprocess timing. Blocks using these are doc-only.
         "task.spawn",
+        "task.spawn_until",
+        "task.deadline",
         "task.sleep",
         "channel.new",
         "channel.send",
@@ -1567,5 +1569,74 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         total_fn_main_blocks,
         skipped,
         failures.join("\n---\n")
+    );
+}
+
+// ─── Round-23 audit (agent G): doc presence lock-in tests ────────────────
+//
+// The walker tests above exercise any fn-main block inside a silt code
+// fence, but they don't guarantee the surrounding prose still exists.
+// These tests pin the *documentation* itself — if someone deletes the
+// section, these fail. Keep them narrow (substring matches on stable
+// anchors) so they aren't tripped by legitimate prose edits.
+
+#[test]
+fn docs_mention_task_deadline_builtin() {
+    let doc = std::fs::read_to_string("docs/stdlib/channel-task.md")
+        .expect("docs/stdlib/channel-task.md must be readable");
+    assert!(
+        doc.contains("## `task.deadline`"),
+        "docs/stdlib/channel-task.md must have a `## ` task.deadline section"
+    );
+    assert!(
+        doc.contains("task.deadline(dur: Duration"),
+        "task.deadline docs should show the (Duration, () -> a) -> a signature"
+    );
+    assert!(
+        doc.contains("I/O timeout (task.deadline exceeded)"),
+        "task.deadline docs should quote the exact error message silt emits"
+    );
+}
+
+#[test]
+fn docs_mention_task_spawn_until_builtin() {
+    let doc = std::fs::read_to_string("docs/stdlib/channel-task.md")
+        .expect("docs/stdlib/channel-task.md must be readable");
+    assert!(
+        doc.contains("## `task.spawn_until`"),
+        "docs/stdlib/channel-task.md must have a `## ` task.spawn_until section"
+    );
+    assert!(
+        doc.contains("task.spawn_until(dur: Duration"),
+        "task.spawn_until docs should show the (Duration, () -> a) -> Handle(a) signature"
+    );
+}
+
+#[test]
+fn docs_mention_silt_io_timeout_env_var() {
+    let doc = std::fs::read_to_string("docs/concurrency.md")
+        .expect("docs/concurrency.md must be readable");
+    assert!(
+        doc.contains("SILT_IO_TIMEOUT"),
+        "docs/concurrency.md must document the SILT_IO_TIMEOUT env var"
+    );
+    assert!(
+        doc.contains("I/O timeout (SILT_IO_TIMEOUT exceeded)"),
+        "concurrency docs should quote the exact error silt emits when the global timeout fires"
+    );
+}
+
+#[test]
+fn docs_mention_silt_run_disassemble_flag() {
+    // The `silt run --disassemble` flag was previously only visible via
+    // `silt run --help`. Pin a mention in user-facing docs so it stays
+    // discoverable.
+    let getting_started = std::fs::read_to_string("docs/getting-started.md")
+        .expect("docs/getting-started.md must be readable");
+    let readme = std::fs::read_to_string("README.md")
+        .expect("README.md must be readable");
+    assert!(
+        getting_started.contains("--disassemble") || readme.contains("--disassemble"),
+        "either docs/getting-started.md or README.md must mention the `silt run --disassemble` flag"
     );
 }

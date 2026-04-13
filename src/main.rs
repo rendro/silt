@@ -399,7 +399,7 @@ fn main() {
                 }
                 if !has_positional {
                     let banner = match sub {
-                        "run" => "Usage: silt run [--watch] <file.silt>",
+                        "run" => "Usage: silt run [--watch] [--disassemble] <file.silt>",
                         // Keep in sync with check_usage_banner().
                         "check" => "Usage: silt check [--format json] [--watch] <file.silt>",
                         "disasm" => "Usage: silt disasm <file.silt>",
@@ -468,7 +468,7 @@ fn main() {
                 process::exit(0);
             }
             if args.len() < 3 {
-                eprintln!("Usage: silt run <file.silt>");
+                eprintln!("Usage: silt run [--watch] [--disassemble] <file.silt>");
                 process::exit(1);
             }
             let mut disasm = false;
@@ -490,7 +490,7 @@ fn main() {
                 }
             }
             let Some(file) = file else {
-                eprintln!("Usage: silt run <file.silt>");
+                eprintln!("Usage: silt run [--watch] [--disassemble] <file.silt>");
                 process::exit(1);
             };
             if disasm {

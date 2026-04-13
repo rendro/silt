@@ -738,6 +738,36 @@ worker. If you spawn fewer long CPU-bound tasks than you have workers, the
 remaining workers simply stay idle; the scheduler does not migrate a running
 task off a busy worker.
 
+### I/O timeouts (`SILT_IO_TIMEOUT`)
+
+Silt's I/O builtins (see the [Blocking operations](#blocking-operations) table
+below) normally block indefinitely while they wait on the OS. For deployments
+where a stuck syscall or hung remote peer must not freeze a task forever, the
+scheduler runs a watchdog that can surface a timeout error to any I/O builtin
+that blocks for too long.
+
+The `SILT_IO_TIMEOUT` environment variable enables this watchdog globally.
+Setting `SILT_IO_TIMEOUT=5000` (or `SILT_IO_TIMEOUT=5s`) makes every I/O
+builtin that blocks longer than that duration return
+`Err("I/O timeout (SILT_IO_TIMEOUT exceeded)")` instead of its normal value.
+The deadline is *invisible* -- no language-surface changes, no new
+syntax -- because all blocking I/O builtins already return `Result`.
+
+Accepted formats: bare integer (milliseconds), or a suffixed duration
+`5s`, `500ms`, `2m`, `1h`.
+
+```sh
+# Any I/O that stalls > 5s surfaces an Err(...) to the caller.
+SILT_IO_TIMEOUT=5s silt run server.silt
+```
+
+For scoped, per-call deadlines rather than a process-wide cap, use
+[`task.deadline(dur, fn)`](stdlib/channel-task.md#taskdeadline) or
+[`task.spawn_until(dur, fn)`](stdlib/channel-task.md#taskspawn_until).
+Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
+fires, and the error message identifies the source so silt code can
+distinguish them.
+
 ### Blocking operations
 
 | Operation | Parks when |

@@ -117,25 +117,38 @@ impl WatchdogRegistry {
     /// `Err("...")` into the completion (no-op if the real I/O already
     /// wrote a result — `IoCompletion::complete` is first-writer-wins).
     /// Returns the number of timeouts fired for test introspection.
+    ///
+    /// The firing happens *outside* the `entries` lock: `completion.complete`
+    /// drains registered wakers synchronously, and the I/O waker's requeue
+    /// path calls back into `WatchdogRegistry::remove` — which re-acquires
+    /// `self.entries.lock()`. Holding the lock across the completion would
+    /// deadlock the watchdog thread on the same parking_lot mutex. So we
+    /// drain overdue entries into a local vec under the lock, release the
+    /// lock, then fire completions.
     fn scan_and_fire(&self) -> usize {
-        let mut entries = self.entries.lock();
-        let now = Instant::now();
+        let to_fire: Vec<(Weak<IoCompletion>, &'static str)> = {
+            let mut entries = self.entries.lock();
+            let now = Instant::now();
+            let mut drained = Vec::new();
+            entries.retain(|entry| {
+                if now < entry.deadline {
+                    return true; // not overdue, keep watching
+                }
+                drained.push((entry.completion.clone(), entry.source.message()));
+                false // remove from registry regardless (won't fire again)
+            });
+            drained
+        }; // lock released here
         let mut fired = 0;
-        entries.retain(|entry| {
-            if now < entry.deadline {
-                return true; // not overdue, keep watching
-            }
-            if let Some(completion) = entry.completion.upgrade() {
-                let err_value = Value::Variant(
-                    "Err".into(),
-                    vec![Value::String(entry.source.message().to_string())],
-                );
+        for (weak_completion, msg) in to_fire {
+            if let Some(completion) = weak_completion.upgrade() {
+                let err_value =
+                    Value::Variant("Err".into(), vec![Value::String(msg.to_string())]);
                 if completion.complete(err_value) {
                     fired += 1;
                 }
             }
-            false // remove from registry regardless (won't fire again)
-        });
+        }
         fired
     }
 }

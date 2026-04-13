@@ -1445,6 +1445,62 @@ impl TypeChecker {
                         );
                     }
 
+                    // Round-23 GAP #2: detect cross-enum variant name
+                    // collisions. Previously `type A { Red }` followed by
+                    // `type B { Red }` silently overwrote the owning-enum
+                    // entry, so later `match x: A { Red -> ... }` resolved
+                    // `Red` to `B` and produced misleading "expected B,
+                    // got A" errors. The same hazard applies when a user
+                    // `type Result { ... }` shadows the builtin Result,
+                    // because builtins populate variant_to_enum first.
+                    // Emit a warning (not a hard error: the language
+                    // allows this and resolves by most-recent-wins, but
+                    // the user should know the prior variant is now
+                    // unreachable). Same-enum duplicates are caught
+                    // above as a hard error (G3).
+                    //
+                    // The shadowing case breaks into two sub-cases:
+                    //   a. prev_owner != td.name — two distinct enums,
+                    //      whether user/user or user/builtin (e.g. user
+                    //      `type X { Ok, Err }` vs builtin Result).
+                    //   b. prev_owner == td.name — same Symbol but the
+                    //      previously-registered enum entry is a builtin
+                    //      we're about to overwrite (e.g. user
+                    //      `type Result { ... }` replacing builtin Result).
+                    //      We detect this by the presence of a prior
+                    //      `self.enums[td.name]` entry at this point; the
+                    //      insert for the *current* td happens below, so
+                    //      any existing key must be a prior registration.
+                    //      Collisions with another user decl are already
+                    //      flagged as a hard error by top_level_names, so
+                    //      anything we see here is a builtin shadow.
+                    if let Some(prev_owner) = self.variant_to_enum.get(&variant.name).copied() {
+                        if prev_owner != td.name {
+                            self.warning(
+                                format!(
+                                    "variant '{}' of enum '{}' shadows same-named variant of enum '{}'; \
+                                     earlier variant is no longer resolvable by bare name",
+                                    resolve(variant.name),
+                                    resolve(td.name),
+                                    resolve(prev_owner)
+                                ),
+                                td.span,
+                            );
+                        } else if self.enums.contains_key(&td.name) {
+                            // Sub-case (b): user type shadowing a builtin
+                            // of the same name.
+                            self.warning(
+                                format!(
+                                    "variant '{}' of enum '{}' shadows same-named variant of builtin enum '{}'; \
+                                     builtin variant is no longer resolvable by bare name",
+                                    resolve(variant.name),
+                                    resolve(td.name),
+                                    resolve(prev_owner)
+                                ),
+                                td.span,
+                            );
+                        }
+                    }
                     self.variant_to_enum.insert(variant.name, td.name);
                 }
 
@@ -1972,6 +2028,50 @@ impl TypeChecker {
         //   3. Built-in parameterized form (`trait X for List(a)`):
         //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
         //      already; reuse it.
+        //
+        // Round-23 GAP #1: reject trait impls whose target type was never
+        // declared. Previously `trait Greet for Widget { ... }` with no
+        // `type Widget` anywhere silently fell through to
+        // `Type::Generic("Widget", vec![])` (see type_from_name) and
+        // produced no diagnostic — `silt check` reported success even
+        // though the impl attached methods to a phantom type. This is
+        // distinct from the round-17 `type_name_for_impl` fix (which
+        // mapped Fn→Some("Fun")): here we're validating that the target
+        // name refers to *something real* at all.
+        //
+        // The check applies only to uppercase target names. Lowercase
+        // names like `trait Display for a { ... }` are the generic
+        // trait-impl form — `a` is a type variable, not a declared
+        // type, and must continue to type-check.
+        {
+            let name_str = resolve(ti.target_type);
+            let first_char = name_str.chars().next().unwrap_or('A');
+            let is_lowercase_tyvar = first_char.is_lowercase();
+            let is_primitive = matches!(
+                name_str.as_str(),
+                "Int" | "Float" | "ExtFloat" | "Bool" | "String" | "()" | "Unit"
+            );
+            let is_builtin_container = matches!(
+                name_str.as_str(),
+                "List" | "Map" | "Set" | "Channel" | "Tuple" | "Fn" | "Fun" | "Handle"
+            );
+            let is_user_record = self.records.contains_key(&ti.target_type);
+            let is_user_enum = self.enums.contains_key(&ti.target_type);
+            if !is_lowercase_tyvar
+                && !is_primitive
+                && !is_builtin_container
+                && !is_user_record
+                && !is_user_enum
+            {
+                self.error(
+                    format!(
+                        "trait impl target '{name_str}' is not a declared type"
+                    ),
+                    ti.span,
+                );
+            }
+        }
+
         let self_type = if ti.target_type_args.is_empty() {
             let user_arity = self
                 .record_param_var_ids

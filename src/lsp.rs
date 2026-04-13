@@ -1931,11 +1931,13 @@ fn find_field_type_at_offset(
     let mut result: Option<(String, Type)> = None;
     for decl in &program.decls {
         match decl {
-            Decl::Fn(f) => find_field_in_expr(&f.body, source, cursor, &mut result),
-            Decl::Let { value, .. } => find_field_in_expr(value, source, cursor, &mut result),
+            Decl::Fn(f) => find_field_in_expr(&f.body, source, cursor, program, &mut result),
+            Decl::Let { value, .. } => {
+                find_field_in_expr(value, source, cursor, program, &mut result)
+            }
             Decl::TraitImpl(ti) => {
                 for method in &ti.methods {
-                    find_field_in_expr(&method.body, source, cursor, &mut result);
+                    find_field_in_expr(&method.body, source, cursor, program, &mut result);
                 }
             }
             _ => {}
@@ -1948,6 +1950,7 @@ fn find_field_in_expr(
     expr: &Expr,
     source: &str,
     cursor: usize,
+    program: &Program,
     result: &mut Option<(String, Type)>,
 ) {
     if let ExprKind::FieldAccess(receiver, field) = &expr.kind {
@@ -1975,7 +1978,8 @@ fn find_field_in_expr(
                 if cursor >= field_start && cursor < field_end {
                     // Cursor is on the field name — look up the field type
                     if let Some(receiver_ty) = &receiver.ty
-                        && let Some(field_ty) = get_field_type(receiver_ty, *field)
+                        && let Some(field_ty) =
+                            get_field_type_resolved(receiver_ty, *field, program)
                     {
                         *result = Some((field_str, field_ty));
                         return;
@@ -1983,113 +1987,115 @@ fn find_field_in_expr(
                 }
             }
         }
-        find_field_in_expr(receiver, source, cursor, result);
+        find_field_in_expr(receiver, source, cursor, program, result);
     } else {
         // Recurse into children
         match &expr.kind {
             ExprKind::Binary(l, _, r) | ExprKind::Pipe(l, r) | ExprKind::Range(l, r) => {
-                find_field_in_expr(l, source, cursor, result);
-                find_field_in_expr(r, source, cursor, result);
+                find_field_in_expr(l, source, cursor, program, result);
+                find_field_in_expr(r, source, cursor, program, result);
             }
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Ascription(e, _)
             | ExprKind::Return(Some(e)) => {
-                find_field_in_expr(e, source, cursor, result);
+                find_field_in_expr(e, source, cursor, program, result);
             }
             ExprKind::Call(callee, args) => {
-                find_field_in_expr(callee, source, cursor, result);
+                find_field_in_expr(callee, source, cursor, program, result);
                 for a in args {
-                    find_field_in_expr(a, source, cursor, result);
+                    find_field_in_expr(a, source, cursor, program, result);
                 }
             }
-            ExprKind::Lambda { body, .. } => find_field_in_expr(body, source, cursor, result),
+            ExprKind::Lambda { body, .. } => {
+                find_field_in_expr(body, source, cursor, program, result)
+            }
             ExprKind::Match { expr, arms } => {
                 if let Some(e) = expr {
-                    find_field_in_expr(e, source, cursor, result);
+                    find_field_in_expr(e, source, cursor, program, result);
                 }
                 for arm in arms {
                     if let Some(ref g) = arm.guard {
-                        find_field_in_expr(g, source, cursor, result);
+                        find_field_in_expr(g, source, cursor, program, result);
                     }
-                    find_field_in_expr(&arm.body, source, cursor, result);
+                    find_field_in_expr(&arm.body, source, cursor, program, result);
                 }
             }
             ExprKind::Block(stmts) => {
                 for stmt in stmts {
                     match stmt {
                         Stmt::Let { value, .. } => {
-                            find_field_in_expr(value, source, cursor, result)
+                            find_field_in_expr(value, source, cursor, program, result)
                         }
-                        Stmt::Expr(e) => find_field_in_expr(e, source, cursor, result),
+                        Stmt::Expr(e) => find_field_in_expr(e, source, cursor, program, result),
                         Stmt::When {
                             expr, else_body, ..
                         } => {
-                            find_field_in_expr(expr, source, cursor, result);
-                            find_field_in_expr(else_body, source, cursor, result);
+                            find_field_in_expr(expr, source, cursor, program, result);
+                            find_field_in_expr(else_body, source, cursor, program, result);
                         }
                         Stmt::WhenBool {
                             condition,
                             else_body,
                         } => {
-                            find_field_in_expr(condition, source, cursor, result);
-                            find_field_in_expr(else_body, source, cursor, result);
+                            find_field_in_expr(condition, source, cursor, program, result);
+                            find_field_in_expr(else_body, source, cursor, program, result);
                         }
                     }
                 }
             }
             ExprKind::RecordCreate { fields, .. } => {
                 for (_, v) in fields {
-                    find_field_in_expr(v, source, cursor, result);
+                    find_field_in_expr(v, source, cursor, program, result);
                 }
             }
             ExprKind::RecordUpdate { expr, fields, .. } => {
-                find_field_in_expr(expr, source, cursor, result);
+                find_field_in_expr(expr, source, cursor, program, result);
                 for (_, v) in fields {
-                    find_field_in_expr(v, source, cursor, result);
+                    find_field_in_expr(v, source, cursor, program, result);
                 }
             }
             ExprKind::Loop { bindings, body } => {
                 for (_, init) in bindings {
-                    find_field_in_expr(init, source, cursor, result);
+                    find_field_in_expr(init, source, cursor, program, result);
                 }
-                find_field_in_expr(body, source, cursor, result);
+                find_field_in_expr(body, source, cursor, program, result);
             }
             ExprKind::List(elems) => {
                 for elem in elems {
                     match elem {
                         ListElem::Single(e) | ListElem::Spread(e) => {
-                            find_field_in_expr(e, source, cursor, result)
+                            find_field_in_expr(e, source, cursor, program, result)
                         }
                     }
                 }
             }
             ExprKind::Map(entries) => {
                 for (k, v) in entries {
-                    find_field_in_expr(k, source, cursor, result);
-                    find_field_in_expr(v, source, cursor, result);
+                    find_field_in_expr(k, source, cursor, program, result);
+                    find_field_in_expr(v, source, cursor, program, result);
                 }
             }
             ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
                 for e in elems {
-                    find_field_in_expr(e, source, cursor, result);
+                    find_field_in_expr(e, source, cursor, program, result);
                 }
             }
             ExprKind::Recur(args) => {
                 for a in args {
-                    find_field_in_expr(a, source, cursor, result);
+                    find_field_in_expr(a, source, cursor, program, result);
                 }
             }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
-                        find_field_in_expr(e, source, cursor, result);
+                        find_field_in_expr(e, source, cursor, program, result);
                     }
                 }
             }
             ExprKind::FloatElse(expr, fallback) => {
-                find_field_in_expr(expr, source, cursor, result);
-                find_field_in_expr(fallback, source, cursor, result);
+                find_field_in_expr(expr, source, cursor, program, result);
+                find_field_in_expr(fallback, source, cursor, program, result);
             }
             _ => {}
         }
@@ -2109,6 +2115,30 @@ fn get_field_type(ty: &Type, field_name: Symbol) -> Option<Type> {
             .and_then(|i| elems.get(i).cloned()),
         _ => None,
     }
+}
+
+/// Look up a field's type, resolving `Type::Generic(record_name, _)` against
+/// the program's type declarations.  In practice, the typechecker annotates
+/// intermediate nodes of a chained field access like `o.inner.val` with
+/// `Type::Generic(<record_name>, [])` rather than `Type::Record(...)`
+/// (see `typechecker::inference::type_from_name`), so the bare
+/// `get_field_type` cannot resolve anything past the leftmost dot.  This
+/// wrapper falls back to `lookup_record_fields` for named records.
+fn get_field_type_resolved(ty: &Type, field_name: Symbol, program: &Program) -> Option<Type> {
+    if let Some(t) = get_field_type(ty, field_name) {
+        return Some(t);
+    }
+    if let Type::Generic(name, _) = ty {
+        let field_str = resolve(field_name);
+        if let Some(fields) = lookup_record_fields(program, *name) {
+            for (n, ft) in fields {
+                if n == field_str {
+                    return Some(ft);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Find the identifier name at the cursor byte offset.
@@ -3807,7 +3837,8 @@ mod tests {
         // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
         let cursor_on_value = 8;
         let mut result = None;
-        find_field_in_expr(&outer_access, source, cursor_on_value, &mut result);
+        let program = Program { decls: vec![] };
+        find_field_in_expr(&outer_access, source, cursor_on_value, &program, &mut result);
 
         assert!(
             result.is_some(),
@@ -3857,7 +3888,8 @@ mod tests {
         // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"
         let cursor_on_inner = 2;
         let mut result = None;
-        find_field_in_expr(&outer_access, source, cursor_on_inner, &mut result);
+        let program = Program { decls: vec![] };
+        find_field_in_expr(&outer_access, source, cursor_on_inner, &program, &mut result);
 
         assert!(
             result.is_some(),

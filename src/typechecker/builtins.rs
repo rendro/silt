@@ -1508,8 +1508,9 @@ impl TypeChecker {
         // the 2-arg form formats with a fixed number of decimal places.
         // Registering the 2-arg form lets the typechecker validate both
         // arguments; the 1-arg call still passes the arity check because
-        // module-qualified calls go through FieldAccess which permits ±1,
-        // and the runtime honours that tolerance to match.
+        // module-qualified calls go through FieldAccess which permits one
+        // fewer argument (for optional trailing params on test.assert* and
+        // float.to_string), and the runtime honours that tolerance to match.
         env.define(
             intern("float.to_string"),
             Scheme::mono(Type::Fun(
