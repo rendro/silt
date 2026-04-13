@@ -258,22 +258,41 @@ fn usage_text() -> String {
     // marker is present regardless of whether the feature is compiled in —
     // that way `silt --help` is identical across builds and the user can
     // see what a richer build would offer.
+    //
+    // Alignment is structural: each row is `  <signature (padded to SIG_WIDTH)>  <desc>`.
+    // Widen SIG_WIDTH if a new signature exceeds it — the help-row
+    // alignment test in tests/cli_test_rendering_tests.rs will fail
+    // otherwise.
+    const SIG_WIDTH: usize = 46;
+    let line = |sig: &str, desc: &str| format!("  {sig:<SIG_WIDTH$}  {desc}\n");
+    let run_desc: String = {
+        let mut d = String::from("Run a program");
+        if !cfg!(feature = "watch") {
+            d.push_str("  [--watch requires feature: watch]");
+        }
+        d
+    };
     let mut out = String::new();
     out.push_str("silt — a statically-typed, expression-based language\n");
     out.push('\n');
     out.push_str("Usage:\n");
-    out.push_str("  silt run [--watch] <file.silt>    Run a program");
-    if !cfg!(feature = "watch") {
-        out.push_str("  [--watch requires feature: watch]");
-    }
-    out.push('\n');
-    out.push_str("  silt check [--watch] <file.silt>  Type-check without running\n");
-    out.push_str("  silt test [--watch] [path]        Run test functions\n");
-    out.push_str("  silt fmt [--check] [files...]     Format source code\n");
-    out.push_str("  silt repl                         Interactive REPL  [feature: repl]\n");
-    out.push_str("  silt init                         Create a new main.silt\n");
-    out.push_str("  silt lsp                          Start the language server  [feature: lsp]\n");
-    out.push_str("  silt disasm <file.silt>           Show bytecode disassembly\n");
+    out.push_str(&line(
+        "silt run [--watch] [--disassemble] <file.silt>",
+        &run_desc,
+    ));
+    out.push_str(&line(
+        "silt check [--watch] <file.silt>",
+        "Type-check without running",
+    ));
+    out.push_str(&line("silt test [--watch] [path]", "Run test functions"));
+    out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
+    out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
+    out.push_str(&line("silt init", "Create a new main.silt"));
+    out.push_str(&line(
+        "silt lsp",
+        "Start the language server  [feature: lsp]",
+    ));
+    out.push_str(&line("silt disasm <file.silt>", "Show bytecode disassembly"));
     out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
     out

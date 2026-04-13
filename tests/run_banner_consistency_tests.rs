@@ -184,3 +184,45 @@ fn test_silt_run_banner_exit_codes() {
         "watcher banner must not appear when watch loop was short-circuited, stderr: {stderr}"
     );
 }
+
+// ── Round-25 GAP: top-level `silt --help` advertises --disassemble ─
+//
+// The four subcommand-level banners (silt run / silt run --help /
+// silt run --watch / silt run --watch --disassemble) are already
+// locked to include `[--watch] [--disassemble]` by the tests above.
+//
+// Before round 25, the TOP-LEVEL `silt --help` summary line for
+// `silt run` showed only `[--watch]`, so users reading the main
+// help screen never discovered the `--disassemble` flag. Fix: add
+// `[--disassemble]` to the summary line in src/main.rs usage_text().
+// This test locks the summary line so it can't drift back.
+
+#[test]
+fn test_silt_top_level_help_run_line_advertises_disassemble() {
+    let wait = Duration::from_secs(3);
+    let (code, stdout, stderr) =
+        run_silt_with_timeout(&["--help"], wait).expect("silt --help hung");
+    assert_eq!(
+        code,
+        Some(0),
+        "expected exit 0 for `silt --help`, stderr: {stderr}"
+    );
+    // Find the summary line for `silt run` in the top-level help.
+    let run_line = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with("silt run "))
+        .unwrap_or_else(|| {
+            panic!(
+                "no `silt run` summary line in top-level help output\nstdout: {stdout}\nstderr: {stderr}"
+            )
+        });
+    assert!(
+        run_line.contains("[--watch]"),
+        "top-level `silt --help` run line must advertise [--watch], got: {run_line}"
+    );
+    assert!(
+        run_line.contains("[--disassemble]"),
+        "top-level `silt --help` run line must advertise [--disassemble] so users \
+         can discover the flag from the main help screen (round-25 GAP lock), got: {run_line}"
+    );
+}
