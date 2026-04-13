@@ -292,7 +292,14 @@ fn usage_text() -> String {
         "silt lsp",
         "Start the language server  [feature: lsp]",
     ));
-    out.push_str(&line("silt disasm <file.silt>", "Show bytecode disassembly"));
+    out.push_str(&line(
+        "silt disasm <file.silt>",
+        "Show bytecode disassembly",
+    ));
+    out.push_str(&line(
+        "silt update [--dry-run] [--force]",
+        "Update silt to the latest release",
+    ));
     out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
     out
@@ -645,9 +652,7 @@ fn main() {
                 if arg == "--help" || arg == "-h" {
                     println!("Usage: silt lsp");
                     println!();
-                    println!(
-                        "Start the silt language server. Communicates over stdio using the"
-                    );
+                    println!("Start the silt language server. Communicates over stdio using the");
                     println!(
                         "Language Server Protocol — invoked automatically by editor extensions"
                     );
@@ -806,6 +811,42 @@ fn main() {
                 }
             }
             init_project();
+        }
+        "update" => {
+            let mut dry_run = false;
+            let mut force = false;
+            for arg in &args[2..] {
+                match arg.as_str() {
+                    "--help" | "-h" => {
+                        println!("Usage: silt update [--dry-run] [--force]");
+                        println!();
+                        println!("Download the latest release binary and replace this one.");
+                        println!();
+                        println!("Options:");
+                        println!("  --dry-run    Show the latest version without downloading");
+                        println!("  --force      Reinstall even when already up to date");
+                        process::exit(0);
+                    }
+                    "--dry-run" => dry_run = true,
+                    "--force" => force = true,
+                    other => {
+                        let suggestion = match other {
+                            "--dryrun" | "-n" => " (did you mean --dry-run?)",
+                            "-f" | "--reinstall" => " (did you mean --force?)",
+                            "--h" | "-help" => " (did you mean --help?)",
+                            _ => "",
+                        };
+                        eprintln!("silt update: unknown flag '{other}'{suggestion}");
+                        eprintln!("Run 'silt update --help' for usage.");
+                        process::exit(1);
+                    }
+                }
+            }
+            if let Err(e) = silt::update::run_update(silt::update::UpdateOptions { dry_run, force })
+            {
+                eprintln!("  error: {e}");
+                process::exit(1);
+            }
         }
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => {
@@ -1041,8 +1082,9 @@ fn collect_module_function_sources(
     // function sharing one of these names is ambiguous w.r.t. the VM's
     // bare-name call frame, so we exclude it from the map and let the
     // renderer fall back to the main source.
-    let main_fn_names: HashSet<String> =
-        extract_top_level_fn_names(main_source).into_iter().collect();
+    let main_fn_names: HashSet<String> = extract_top_level_fn_names(main_source)
+        .into_iter()
+        .collect();
 
     // First pass: walk the import graph, recording every (fn_name,
     // module_file, module_source) tuple we encounter. We can't decide
@@ -1302,7 +1344,8 @@ fn vm_run_file(path: &str) {
             } else {
                 "program has no main() function\nadd one as the entry point".to_string()
             };
-            let source_err = SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
+            let source_err =
+                SourceError::compile_error_at(msg, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");
         } else {
             eprintln!("{path}: {e}");
@@ -1591,7 +1634,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         if !parse_errors.is_empty() {
             eprintln!("{path}: failed to compile — parse errors:");
             for (i, e) in parse_errors.iter().enumerate() {
-                if i > 0 { eprintln!(); }
+                if i > 0 {
+                    eprintln!();
+                }
                 let source_err = SourceError::from_parse_error(e, &source, path.as_str());
                 eprintln!("{source_err}");
             }
@@ -1615,7 +1660,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             if is_unknown_module_warning(&source_err) {
                 continue;
             }
-            if printed_type_errors > 0 { eprintln!(); }
+            if printed_type_errors > 0 {
+                eprintln!();
+            }
             eprintln!("{source_err}");
             printed_type_errors += 1;
             if te.severity == typechecker::Severity::Error {
@@ -1698,31 +1745,26 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     .map(|(n, _)| n.as_str());
                 let (err_source, err_path): (&str, String) =
                     match innermost_fn_name.and_then(|n| module_sources.get(n)) {
-                        Some((module_path, module_source)) => (
-                            module_source.as_str(),
-                            normalize_path(module_path),
-                        ),
+                        Some((module_path, module_source)) => {
+                            (module_source.as_str(), normalize_path(module_path))
+                        }
                         None => (source.as_str(), normalize_path(Path::new(path))),
                     };
-                let source_err =
-                    SourceError::runtime_at(&e.message, span, err_source, &err_path);
+                let source_err = SourceError::runtime_at(&e.message, span, err_source, &err_path);
                 eprintln!("{path}: setup error:");
                 eprintln!("{source_err}");
-                let stack_lines = silt::vm::error::render_call_stack(
-                    &e.call_stack,
-                    |frame_name, frame_span| {
-                        let frame_path: String =
-                            match module_sources.get(frame_name) {
-                                Some((p, _)) => normalize_path(p),
-                                None => normalize_path(Path::new(path)),
-                            };
+                let stack_lines =
+                    silt::vm::error::render_call_stack(&e.call_stack, |frame_name, frame_span| {
+                        let frame_path: String = match module_sources.get(frame_name) {
+                            Some((p, _)) => normalize_path(p),
+                            None => normalize_path(Path::new(path)),
+                        };
                         if frame_span.line > 0 {
                             format!("{}:{}:{}", frame_path, frame_span.line, frame_span.col)
                         } else {
                             format!("{frame_path}:<unknown location>")
                         }
-                    },
-                );
+                    });
                 if !stack_lines.is_empty() {
                     eprintln!("\ncall stack:");
                     for line in stack_lines {
@@ -1775,13 +1817,10 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                     .find(|(n, _)| !n.starts_with('<') || n.starts_with("<module:"))
                                     .map(|(n, _)| n.as_str());
                                 let (err_source, err_path): (&str, String) =
-                                    match innermost_fn_name
-                                        .and_then(|n| module_sources.get(n))
-                                    {
-                                        Some((module_path, module_source)) => (
-                                            module_source.as_str(),
-                                            normalize_path(module_path),
-                                        ),
+                                    match innermost_fn_name.and_then(|n| module_sources.get(n)) {
+                                        Some((module_path, module_source)) => {
+                                            (module_source.as_str(), normalize_path(module_path))
+                                        }
                                         None => (source.as_str(), path.to_string()),
                                     };
                                 let source_err = SourceError::runtime_at(
@@ -1816,9 +1855,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                         if frame_span.line > 0 {
                                             format!(
                                                 "{}:{}:{}",
-                                                frame_path,
-                                                frame_span.line,
-                                                frame_span.col
+                                                frame_path, frame_span.line, frame_span.col
                                             )
                                         } else {
                                             format!("{frame_path}:<unknown location>")

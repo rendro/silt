@@ -187,6 +187,7 @@ silt repl                  -- interactive REPL
 silt init                  -- create a new main.silt
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
+silt update                -- update silt to the latest release
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically re-run on `.silt` file changes.

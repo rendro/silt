@@ -34,6 +34,7 @@ pub mod repl;
 pub mod scheduler;
 pub mod typechecker;
 pub mod types;
+pub mod update;
 pub mod value;
 pub mod vm;
 #[cfg(feature = "watch")]
