@@ -1544,7 +1544,8 @@ impl Parser {
                     ))
                 } else if !self.has_newline_before()
                     && self.at(&Token::LBrace)
-                    && !self.in_match_scrutinee
+                    && (!self.in_match_scrutinee
+                        || self.scrutinee_lbrace_is_record_literal())
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
@@ -1852,6 +1853,32 @@ impl Parser {
             i += 1;
         }
         false
+    }
+
+    /// In match-scrutinee position, the `{` after a bare constructor is
+    /// normally suppressed so the match-body `{` isn't consumed as part
+    /// of the scrutinee expression. But a record literal
+    /// `Ctor { field: v, ... }` is syntactically distinct from a match
+    /// body `{ pattern -> body }`: the former has `Ident Colon`
+    /// immediately after `{`; the latter has `Pattern Arrow`. This
+    /// bounded lookahead lets a record literal through inside scrutinee
+    /// position without breaking match-body suppression.
+    fn scrutinee_lbrace_is_record_literal(&self) -> bool {
+        if self.peek() != &Token::LBrace {
+            return false;
+        }
+        let mut i = self.pos + 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        if !matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Ident(_))) {
+            return false;
+        }
+        i += 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        matches!(self.tokens.get(i).map(|t| &t.0), Some(Token::Colon))
     }
 
     fn parse_trailing_closure(&mut self) -> Result<Expr> {
