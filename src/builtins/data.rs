@@ -1913,21 +1913,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.get requires a String url".into()));
                 };
 
+                if let Some(r) = vm.io_entry_guard(args)? {
+                    return Ok(r);
+                }
                 if vm.is_scheduled_task {
-                    // Check for pending completion from a previous yield
-                    if let Some(completion) = vm.pending_io.take() {
-                        if let Some(result) = completion.try_get() {
-                            return Ok(result);
-                        }
-                        // Not ready yet — re-park
-                        vm.pending_io = Some(completion.clone());
-                        vm.block_reason = Some(BlockReason::Io(completion));
-                        for arg in args {
-                            vm.push(arg.clone());
-                        }
-                        return Err(VmError::yield_signal());
-                    }
-                    // First call — submit to I/O pool
                     let url = url.clone();
                     let completion = vm.runtime.io_pool.submit(move || do_http_get(&url));
                     vm.pending_io = Some(completion.clone());
@@ -1937,7 +1926,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                     return Err(VmError::yield_signal());
                 }
-                // Main thread: synchronous fallback
+                // Main thread: synchronous fallback.
                 Ok(do_http_get(url))
             }
             #[cfg(not(feature = "http"))]
@@ -1973,21 +1962,10 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.request: headers must be a Map".into()));
                 };
 
+                if let Some(r) = vm.io_entry_guard(args)? {
+                    return Ok(r);
+                }
                 if vm.is_scheduled_task {
-                    // Check for pending completion from a previous yield
-                    if let Some(completion) = vm.pending_io.take() {
-                        if let Some(result) = completion.try_get() {
-                            return Ok(result);
-                        }
-                        // Not ready yet — re-park
-                        vm.pending_io = Some(completion.clone());
-                        vm.block_reason = Some(BlockReason::Io(completion));
-                        for arg in args {
-                            vm.push(arg.clone());
-                        }
-                        return Err(VmError::yield_signal());
-                    }
-                    // First call — submit to I/O pool
                     let method_tag = method_tag.clone();
                     let url = url.clone();
                     let body = body.clone();

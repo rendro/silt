@@ -134,6 +134,41 @@ impl Vm {
         }
     }
 
+    /// Run the shared I/O builtin entry guard:
+    ///   1. If a pending I/O completion exists (we're resuming after a
+    ///      yield), consume it — return `Ok(Some(result))` if ready,
+    ///      else re-park via yield.
+    ///   2. If the current task.deadline has already elapsed (fresh
+    ///      call, no pending), return `Ok(Some(Err(timeout)))`.
+    ///   3. Otherwise `Ok(None)` — caller proceeds with a fresh submit
+    ///      (or main-thread sync call).
+    ///
+    /// The `args` slice is pushed back onto the stack on re-park so the
+    /// CallBuiltin opcode can re-read them when the task resumes.
+    pub(crate) fn io_entry_guard(
+        &mut self,
+        args: &[Value],
+    ) -> Result<Option<Value>, VmError> {
+        use crate::vm::runtime::BlockReason;
+        if self.is_scheduled_task
+            && let Some(completion) = self.pending_io.take()
+        {
+            if let Some(result) = completion.try_get() {
+                return Ok(Some(result));
+            }
+            self.pending_io = Some(completion.clone());
+            self.block_reason = Some(BlockReason::Io(completion));
+            for arg in args {
+                self.push(arg.clone());
+            }
+            return Err(VmError::yield_signal());
+        }
+        if let Some(err) = self.deadline_exceeded() {
+            return Ok(Some(err));
+        }
+        Ok(None)
+    }
+
     pub fn new() -> Self {
         let mut vm = Vm {
             runtime: Arc::new(Runtime {

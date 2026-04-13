@@ -244,6 +244,36 @@ fn main() {{
 }
 
 #[test]
+fn test_task_deadline_covers_http_get_at_entry() {
+    // task.deadline with an already-past deadline must short-circuit
+    // http.get without submitting the request to the I/O pool. Same
+    // contract as io.read_file — the shared vm.io_entry_guard is what
+    // makes this work uniformly across every I/O builtin.
+    let (stdout, _stderr, code) = run_silt(
+        r#"
+import http
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(0), fn() {
+    http.get("http://127.0.0.1:1/does-not-exist")
+  })
+  match outcome {
+    Ok(resp) -> println("unexpected ok")
+    Err(msg) -> println(msg)
+  }
+}
+"#,
+    );
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("I/O timeout (task.deadline exceeded)"),
+        "http.get must respect task.deadline at entry; got stdout={stdout:?}"
+    );
+}
+
+#[test]
 fn test_task_deadline_nested_synchronous_tightens() {
     // Outer deadline 60s; inner deadline 0ms. Inner's tighter deadline
     // wins inside the inner scope.
