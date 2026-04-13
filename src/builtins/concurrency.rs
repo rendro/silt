@@ -2,6 +2,7 @@
 
 use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
@@ -452,6 +453,67 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             handle.complete(Err(VmError::new("cancelled".to_string())));
             Ok(Value::Unit)
+        }
+        "deadline" => {
+            // task.deadline(dur, fn) — runs `fn` with a scoped wall-clock
+            // deadline of `dur` from now. I/O inside the callback is
+            // watched by the scheduler's I/O watchdog; if the deadline
+            // elapses while parked on I/O, the in-flight I/O is
+            // cancelled with `Err("I/O timeout (task.deadline exceeded)")`.
+            // I/O builtins also check at entry and return the same Err
+            // immediately if the deadline is already past.
+            //
+            // Pure-CPU work inside the callback is NOT interrupted — this
+            // matches Go's context.WithDeadline semantics. If you need to
+            // bound CPU work, have the callback periodically yield via
+            // I/O.
+            //
+            // Synchronously-nested task.deadline tightens the deadline
+            // (earliest wins); a looser inner deadline cannot extend an
+            // outer one. Resumption across yields is supported for the
+            // common single-scope case.
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "task.deadline takes 2 arguments (duration, fn)".into(),
+                ));
+            }
+            // First entry sets up the scope; a resume (when this same
+            // CallBuiltin is re-executed after the callback yielded)
+            // must not push again. `suspended_invoke.is_some()` is the
+            // signal that we're resuming a paused invoke_callable.
+            let is_resume = vm.suspended_invoke.is_some();
+            if !is_resume {
+                let dur_ns = crate::builtins::data::extract_duration(&args[0])?;
+                if dur_ns < 0 {
+                    return Err(VmError::new(
+                        "task.deadline: duration must be non-negative".into(),
+                    ));
+                }
+                let new_deadline = Instant::now()
+                    .checked_add(Duration::from_nanos(dur_ns as u64));
+                let prev = vm.current_deadline;
+                vm.deadline_stack.push(prev);
+                // Tighten: earliest of current and new wins.
+                let effective = match (prev, new_deadline) {
+                    (Some(a), Some(b)) if a <= b => Some(a),
+                    (Some(_), Some(b)) => Some(b),
+                    (None, x) | (x, None) => x,
+                };
+                vm.current_deadline = effective;
+            }
+            let result = vm.invoke_callable_resumable(&args[1], &[], args);
+            match &result {
+                Err(e) if e.is_yield => {
+                    // Leave the deadline installed across the park so
+                    // the scheduler's I/O watchdog registration and the
+                    // I/O builtin's entry check both observe it.
+                }
+                _ => {
+                    // Scope ending — pop the deadline we pushed.
+                    vm.current_deadline = vm.deadline_stack.pop().unwrap_or(None);
+                }
+            }
+            result
         }
         _ => Err(VmError::new(format!("unknown task function: {name}"))),
     }

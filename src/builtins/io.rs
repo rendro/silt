@@ -22,6 +22,12 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("io.read_file requires a string path".into()));
             };
 
+            // task.deadline check works on both main thread and
+            // scheduled tasks: if the deadline is already past at entry,
+            // short-circuit with the same Err the watchdog fires.
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             if vm.is_scheduled_task {
                 // Check for pending completion from a previous yield
                 if let Some(completion) = vm.pending_io.take() {
@@ -75,6 +81,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             };
 
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             if vm.is_scheduled_task {
                 // Check for pending completion from a previous yield
                 if let Some(completion) = vm.pending_io.take() {
@@ -118,6 +127,9 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "read_line" => {
+            if let Some(err) = vm.deadline_exceeded() {
+                return Ok(err);
+            }
             if vm.is_scheduled_task {
                 // Check for pending completion from a previous yield
                 if let Some(completion) = vm.pending_io.take() {

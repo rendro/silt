@@ -406,7 +406,7 @@ fn extract_instant(v: &Value) -> Result<i64, VmError> {
 }
 
 /// Extract ns from a Duration record.
-fn extract_duration(v: &Value) -> Result<i64, VmError> {
+pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
     let Value::Record(name, fields) = v else {
         return Err(VmError::new("expected a Duration record".into()));
     };

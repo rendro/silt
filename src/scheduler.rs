@@ -38,45 +38,59 @@ fn parse_duration(s: &str) -> Option<Duration> {
     }
 }
 
-/// An entry in the I/O watchdog registry. When the watchdog thread scans
-/// and finds an entry whose `blocked_since.elapsed() >= timeout`, it
-/// fires `completion.complete(Err(...))` to unblock the task with a
-/// timeout error. The `Weak` reference ensures a dropped task's
-/// completion doesn't keep the watchdog holding memory.
+/// Source of an I/O watchdog deadline — determines the error message
+/// the watchdog fires. `Global` comes from `SILT_IO_TIMEOUT`; `Task`
+/// comes from a scoped `task.deadline(dur, fn)` block.
+#[derive(Clone, Copy)]
+pub(crate) enum DeadlineSource {
+    Global,
+    Task,
+}
+
+/// An entry in the I/O watchdog registry. When the watchdog thread
+/// scans and finds an entry whose `deadline <= now`, it fires
+/// `completion.complete(Err(...))` to unblock the task with a timeout
+/// error. The `Weak` reference ensures a dropped task's completion
+/// doesn't keep the watchdog holding memory.
 struct WatchdogEntry {
     task_id: usize,
     completion: Weak<IoCompletion>,
-    blocked_since: Instant,
+    deadline: Instant,
+    source: DeadlineSource,
 }
 
-/// Registry of in-flight I/O operations watched for timeout. Only
-/// populated when `SILT_IO_TIMEOUT` is set to a parseable duration.
-struct WatchdogRegistry {
+/// Registry of in-flight I/O operations watched for timeout. Populated
+/// whenever a task blocks on I/O with an effective deadline — either
+/// from `SILT_IO_TIMEOUT` (global) or `task.deadline` (per-task scope).
+pub(crate) struct WatchdogRegistry {
     entries: Mutex<Vec<WatchdogEntry>>,
-    /// How long an I/O block may remain outstanding before the watchdog
-    /// fires an `Err("timeout ...")` into the completion.
-    timeout: Duration,
-    /// How frequently the watchdog thread scans the registry. Defaults
-    /// to min(1s, timeout / 4); overridden by `SILT_IO_WATCHDOG_INTERVAL`.
+    /// How frequently the watchdog thread scans the registry.
+    /// Controlled by `SILT_IO_WATCHDOG_INTERVAL`, defaulted below.
     interval: Duration,
     shutdown: AtomicBool,
 }
 
 impl WatchdogRegistry {
-    fn new(timeout: Duration, interval: Duration) -> Self {
+    fn new(interval: Duration) -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
-            timeout,
             interval,
             shutdown: AtomicBool::new(false),
         }
     }
 
-    fn add(&self, task_id: usize, completion: &Arc<IoCompletion>) {
+    fn add(
+        &self,
+        task_id: usize,
+        completion: &Arc<IoCompletion>,
+        deadline: Instant,
+        source: DeadlineSource,
+    ) {
         self.entries.lock().push(WatchdogEntry {
             task_id,
             completion: Arc::downgrade(completion),
-            blocked_since: Instant::now(),
+            deadline,
+            source,
         });
     }
 
@@ -88,30 +102,27 @@ impl WatchdogRegistry {
     }
 
     /// Scan the registry for overdue entries. For each one, fire an
-    /// `Err("I/O timeout after ...")` into the completion (no-op if the
-    /// real I/O already wrote a result — `IoCompletion::complete` is
-    /// first-writer-wins). Returns the number of timeouts fired for
-    /// test introspection.
+    /// `Err("...")` into the completion (no-op if the real I/O already
+    /// wrote a result — `IoCompletion::complete` is first-writer-wins).
+    /// Returns the number of timeouts fired for test introspection.
     fn scan_and_fire(&self) -> usize {
         let mut entries = self.entries.lock();
         let now = Instant::now();
-        let timeout = self.timeout;
         let mut fired = 0;
         entries.retain(|entry| {
-            if now.saturating_duration_since(entry.blocked_since) < timeout {
+            if now < entry.deadline {
                 return true; // not overdue, keep watching
             }
-            // Overdue: fire timeout if the completion is still alive and
-            // hasn't already been completed by the real I/O. The Err
-            // variant shape matches what I/O builtins return on failure.
             if let Some(completion) = entry.completion.upgrade() {
-                let err_value = Value::Variant(
-                    "Err".into(),
-                    vec![Value::String(format!(
-                        "I/O timeout after {}s (SILT_IO_TIMEOUT)",
-                        timeout.as_secs_f64()
-                    ))],
-                );
+                let msg = match entry.source {
+                    DeadlineSource::Global => {
+                        "I/O timeout (SILT_IO_TIMEOUT exceeded)".to_string()
+                    }
+                    DeadlineSource::Task => {
+                        "I/O timeout (task.deadline exceeded)".to_string()
+                    }
+                };
+                let err_value = Value::Variant("Err".into(), vec![Value::String(msg)]);
                 if completion.complete(err_value) {
                     fired += 1;
                 }
@@ -180,10 +191,15 @@ struct SchedulerInner {
     /// Handles of tasks that are currently blocked. When deadlock is detected,
     /// all of these are completed with a deadlock error so joiners unblock.
     blocked_handles: Mutex<Vec<Arc<TaskHandle>>>,
-    /// Optional I/O watchdog registry. Populated when `SILT_IO_TIMEOUT`
-    /// is set to a parseable duration; `None` otherwise (I/O waits
-    /// indefinitely, matching Go's default behavior).
-    watchdog: Option<Arc<WatchdogRegistry>>,
+    /// Always-on I/O watchdog registry. Entries are added only when an
+    /// I/O block has an effective deadline (from SILT_IO_TIMEOUT or
+    /// task.deadline). If neither is in effect for a given block, no
+    /// entry is added and the wait is indefinite.
+    watchdog: Arc<WatchdogRegistry>,
+    /// Global I/O timeout from `SILT_IO_TIMEOUT`. When set, every I/O
+    /// block registers with `now + global_io_timeout` as its deadline
+    /// unless a tighter task.deadline is in effect.
+    global_io_timeout: Option<Duration>,
 }
 
 impl Default for Scheduler {
@@ -195,21 +211,22 @@ impl Default for Scheduler {
 impl Scheduler {
     /// Create a new scheduler (does NOT start worker threads yet).
     pub fn new() -> Self {
-        // Parse the optional I/O timeout. When unset, the watchdog is
-        // disabled and I/O waits indefinitely (Go's default).
-        let watchdog = std::env::var("SILT_IO_TIMEOUT")
+        let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
+            .ok()
+            .and_then(|s| parse_duration(&s));
+        // Watchdog scan interval: env override, else a reasonable default
+        // based on the global timeout (or 1s if only task.deadline is in
+        // use). Floored at 10ms to avoid pathological busy-scanning.
+        let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
             .ok()
             .and_then(|s| parse_duration(&s))
-            .map(|timeout| {
-                // Scan interval: env override, else min(1s, timeout/4),
-                // floored at 10ms to avoid pathological busy-scanning.
-                let interval = std::env::var("SILT_IO_WATCHDOG_INTERVAL")
-                    .ok()
-                    .and_then(|s| parse_duration(&s))
-                    .unwrap_or_else(|| (timeout / 4).min(Duration::from_secs(1)));
-                let interval = interval.max(Duration::from_millis(10));
-                Arc::new(WatchdogRegistry::new(timeout, interval))
-            });
+            .unwrap_or_else(|| {
+                global_io_timeout
+                    .map(|t| (t / 4).min(Duration::from_secs(1)))
+                    .unwrap_or(Duration::from_secs(1))
+            })
+            .max(Duration::from_millis(10));
+        let watchdog = Arc::new(WatchdogRegistry::new(interval));
         Scheduler {
             inner: Arc::new(SchedulerInner {
                 run_queue: Mutex::new(VecDeque::new()),
@@ -221,6 +238,7 @@ impl Scheduler {
                 deadlock_detected: AtomicBool::new(false),
                 blocked_handles: Mutex::new(Vec::new()),
                 watchdog,
+                global_io_timeout,
             }),
             workers: Mutex::new(None),
         }
@@ -245,15 +263,14 @@ impl Scheduler {
                 worker_loop(inner);
             }));
         }
-        // Start watchdog thread when timeout is configured. Fires
-        // `Err("I/O timeout ...")` into any completion that has been
-        // blocked longer than `SILT_IO_TIMEOUT` — invisible to silt
-        // code, which just sees the normal I/O Err variant.
-        if let Some(registry) = self.inner.watchdog.clone() {
-            handles.push(thread::spawn(move || {
-                watchdog_loop(registry);
-            }));
-        }
+        // Always start the watchdog thread. The registry is empty
+        // unless something (SILT_IO_TIMEOUT or task.deadline) supplies
+        // a deadline on I/O block — the scan loop is a cheap
+        // `thread::sleep(interval)` in steady state.
+        let registry = self.inner.watchdog.clone();
+        handles.push(thread::spawn(move || {
+            watchdog_loop(registry);
+        }));
         *guard = Some(handles);
     }
 
@@ -302,9 +319,7 @@ impl Scheduler {
 impl Drop for Scheduler {
     fn drop(&mut self) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
-        if let Some(registry) = &self.inner.watchdog {
-            registry.shutdown.store(true, Ordering::SeqCst);
-        }
+        self.inner.watchdog.shutdown.store(true, Ordering::SeqCst);
         self.inner.condvar.notify_all();
         if let Some(workers) = self.workers.lock().take() {
             for w in workers {
@@ -455,9 +470,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                         if was_io {
                             cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
-                            if let Some(registry) = &cancel_inner.watchdog {
-                                registry.remove(cancel_task_id);
-                            }
+                            cancel_inner.watchdog.remove(cancel_task_id);
                         }
                         cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                         let mut handles = cancel_inner.blocked_handles.lock();
@@ -520,11 +533,31 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Io(completion)) => {
-                        // Register with the watchdog so a lingering I/O
-                        // past SILT_IO_TIMEOUT gets an Err timeout fired
-                        // into its completion (unblocking the task).
-                        if let Some(registry) = &inner.watchdog {
-                            registry.add(id, &completion);
+                        // Register with the watchdog if anything imposes
+                        // a deadline: either SILT_IO_TIMEOUT (global) or
+                        // a scoped task.deadline (per-task). The earlier
+                        // deadline wins. If neither applies, the I/O
+                        // waits indefinitely — no registration, no
+                        // scan overhead.
+                        let now = Instant::now();
+                        let global_deadline = inner
+                            .global_io_timeout
+                            .and_then(|t| now.checked_add(t))
+                            .map(|d| (d, DeadlineSource::Global));
+                        let task_deadline = task_slot
+                            .lock()
+                            .as_ref()
+                            .and_then(|t| t.vm.current_deadline)
+                            .map(|d| (d, DeadlineSource::Task));
+                        let effective = match (global_deadline, task_deadline) {
+                            (Some((a, sa)), Some((b, sb))) => {
+                                if a <= b { Some((a, sa)) } else { Some((b, sb)) }
+                            }
+                            (Some(x), None) | (None, Some(x)) => Some(x),
+                            (None, None) => None,
+                        };
+                        if let Some((deadline, source)) = effective {
+                            inner.watchdog.add(id, &completion, deadline, source);
                         }
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
@@ -558,9 +591,7 @@ fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
     inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
     if was_io {
         inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
-        if let Some(registry) = &inner.watchdog {
-            registry.remove(task.id);
-        }
+        inner.watchdog.remove(task.id);
     }
     // Remove this task's handle from the blocked registry.
     {
@@ -800,20 +831,11 @@ fn main() {{
 
     #[test]
     fn test_watchdog_fires_timeout_on_overdue_entry() {
-        // Unit-level watchdog test: add an entry with a past
-        // `blocked_since`, run scan, verify the completion gets an Err
-        // fired into it.
-        let registry = WatchdogRegistry::new(
-            Duration::from_millis(50),
-            Duration::from_millis(10),
-        );
+        let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        registry.add(1, &completion);
-        // Backdate the entry so it's already overdue.
-        {
-            let mut entries = registry.entries.lock();
-            entries[0].blocked_since = Instant::now() - Duration::from_secs(1);
-        }
+        // Add an entry whose deadline is already in the past.
+        let past = Instant::now() - Duration::from_secs(1);
+        registry.add(1, &completion, past, DeadlineSource::Global);
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 1, "one timeout should fire");
         let result = completion.try_get().expect("completion should be set");
@@ -824,22 +846,35 @@ fn main() {{
                     panic!("expected String in Err");
                 };
                 assert!(msg.contains("I/O timeout"), "unexpected: {msg}");
+                assert!(msg.contains("SILT_IO_TIMEOUT"), "unexpected: {msg}");
             }
             other => panic!("expected Err variant, got {other:?}"),
         }
-        // Entry should be removed after firing.
         assert!(registry.entries.lock().is_empty());
     }
 
     #[test]
-    fn test_watchdog_does_not_fire_on_fresh_entry() {
-        // Fresh entry should not fire — duration hasn't elapsed.
-        let registry = WatchdogRegistry::new(
-            Duration::from_secs(10),
-            Duration::from_millis(10),
-        );
+    fn test_watchdog_fires_with_task_source_message() {
+        let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        registry.add(1, &completion);
+        let past = Instant::now() - Duration::from_secs(1);
+        registry.add(1, &completion, past, DeadlineSource::Task);
+        registry.scan_and_fire();
+        let Value::Variant(_, fields) = completion.try_get().unwrap() else {
+            panic!("expected variant");
+        };
+        let Value::String(msg) = &fields[0] else {
+            panic!("expected String");
+        };
+        assert!(msg.contains("task.deadline"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn test_watchdog_does_not_fire_on_fresh_entry() {
+        let registry = WatchdogRegistry::new(Duration::from_millis(10));
+        let completion = IoCompletion::new();
+        let future = Instant::now() + Duration::from_secs(60);
+        registry.add(1, &completion, future, DeadlineSource::Global);
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 0);
         assert!(completion.try_get().is_none());
@@ -848,26 +883,14 @@ fn main() {{
 
     #[test]
     fn test_watchdog_does_not_clobber_completed_io() {
-        // Real I/O already wrote a result; watchdog fires late; the
-        // first-writer-wins contract on IoCompletion ensures the real
-        // Ok result is preserved.
-        let registry = WatchdogRegistry::new(
-            Duration::from_millis(50),
-            Duration::from_millis(10),
-        );
+        let registry = WatchdogRegistry::new(Duration::from_millis(10));
         let completion = IoCompletion::new();
-        registry.add(1, &completion);
-        // Real I/O writes Ok first.
+        let past = Instant::now() - Duration::from_secs(1);
+        registry.add(1, &completion, past, DeadlineSource::Global);
         let ok_val = Value::Variant("Ok".into(), vec![Value::String("real".into())]);
         assert!(completion.complete(ok_val));
-        // Backdate and scan.
-        {
-            let mut entries = registry.entries.lock();
-            entries[0].blocked_since = Instant::now() - Duration::from_secs(1);
-        }
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 0, "no timeout should fire — I/O already completed");
-        // Ok preserved.
         let result = completion.try_get().expect("should still have Ok");
         match result {
             Value::Variant(name, fields) => {
@@ -879,10 +902,7 @@ fn main() {{
     }
 
     #[test]
-    fn test_watchdog_disabled_when_env_unset() {
-        // SAFETY: test binary is single-threaded with respect to env
-        // manipulation within this test body. Removing the var before
-        // constructing the scheduler reflects the user-facing default.
+    fn test_watchdog_global_timeout_none_when_env_unset() {
         // SAFETY: env var mutation is safe in tests since Rust 1.80+
         // uses thread-local env caches, and this test does not spawn
         // concurrent env readers. Required because Scheduler::new reads
@@ -890,23 +910,19 @@ fn main() {{
         unsafe { std::env::remove_var("SILT_IO_TIMEOUT") };
         let scheduler = Scheduler::new();
         assert!(
-            scheduler.inner.watchdog.is_none(),
-            "watchdog should be disabled when SILT_IO_TIMEOUT unset"
+            scheduler.inner.global_io_timeout.is_none(),
+            "global_io_timeout should be None when SILT_IO_TIMEOUT unset"
         );
     }
 
     #[test]
     fn test_watchdog_registry_removal_on_requeue() {
-        // When a task's I/O completes normally, its watchdog entry
-        // should be cleared so the registry doesn't grow unbounded.
-        let registry = WatchdogRegistry::new(
-            Duration::from_secs(30),
-            Duration::from_secs(1),
-        );
+        let registry = WatchdogRegistry::new(Duration::from_secs(1));
         let c1 = IoCompletion::new();
         let c2 = IoCompletion::new();
-        registry.add(1, &c1);
-        registry.add(2, &c2);
+        let d = Instant::now() + Duration::from_secs(30);
+        registry.add(1, &c1, d, DeadlineSource::Global);
+        registry.add(2, &c2, d, DeadlineSource::Global);
         assert_eq!(registry.entries.lock().len(), 2);
         registry.remove(1);
         let entries = registry.entries.lock();

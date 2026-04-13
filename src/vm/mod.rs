@@ -17,6 +17,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use crate::builtins::data::FieldType;
 use crate::bytecode::{Chunk, Function, VmClosure};
@@ -46,6 +47,22 @@ pub struct Vm {
     pub(crate) is_scheduled_task: bool,
     /// Pending I/O completion handle (persists across yield/re-execute).
     pub(crate) pending_io: Option<Arc<IoCompletion>>,
+    /// Scoped wall-clock deadline in effect for this task. Set by
+    /// `task.deadline(dur, fn)` for the duration of the callback; the
+    /// scheduler's I/O watchdog consults this when the task parks on
+    /// I/O, and I/O builtins check it at entry so a call made past the
+    /// deadline returns `Err(...)` immediately without submitting to
+    /// the I/O pool. Nested `task.deadline` calls use the earlier
+    /// deadline (monotonic tightening).
+    pub(crate) current_deadline: Option<Instant>,
+    /// LIFO stack of outer deadlines, pushed by each task.deadline call
+    /// on its first entry and popped on non-yield return. Lets nested
+    /// synchronous `task.deadline` scopes correctly restore the outer
+    /// deadline when an inner scope exits. Across yields, the stack is
+    /// preserved (not touched on yield return), so the first-entry
+    /// check `suspended_invoke.is_none()` distinguishes fresh entry
+    /// from a resume.
+    pub(crate) deadline_stack: Vec<Option<Instant>>,
     /// Saved state from an `invoke_callable` that was interrupted by a yield.
     pub(crate) suspended_invoke: Option<runtime::SuspendedInvoke>,
     /// Saved iteration state for a higher-order builtin (e.g. `list.map`)
@@ -88,7 +105,34 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
     Ok(Value::Float(if f == 0.0 { 0.0 } else { f }))
 }
 
+/// Build the task-deadline-exceeded `Err` Value that I/O builtins
+/// return when the current task.deadline has already elapsed at entry.
+/// Shape matches the watchdog-fired timeout so silt-side match arms
+/// don't have to distinguish between "timed out at entry" and "timed
+/// out while parked".
+pub(crate) fn deadline_exceeded_err_value() -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::String(
+            "I/O timeout (task.deadline exceeded)".to_string(),
+        )],
+    )
+}
+
 impl Vm {
+    /// If the current task.deadline has already elapsed, return the
+    /// standard `Err` Value; otherwise `None`. I/O builtins call this
+    /// at entry so a call made past the deadline short-circuits into
+    /// a clean `Err` without submitting to the I/O pool.
+    pub(crate) fn deadline_exceeded(&self) -> Option<Value> {
+        let deadline = self.current_deadline?;
+        if Instant::now() >= deadline {
+            Some(deadline_exceeded_err_value())
+        } else {
+            None
+        }
+    }
+
     pub fn new() -> Self {
         let mut vm = Vm {
             runtime: Arc::new(Runtime {
@@ -111,6 +155,8 @@ impl Vm {
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
+            current_deadline: None,
+            deadline_stack: Vec::new(),
             suspended_invoke: None,
             suspended_builtin: None,
             regex_cache: RegexCache::new(),
@@ -259,6 +305,8 @@ impl Vm {
             block_reason: None,
             is_scheduled_task: false,
             pending_io: None,
+            current_deadline: None,
+            deadline_stack: Vec::new(),
             suspended_invoke: None,
             suspended_builtin: None,
             regex_cache: RegexCache::new(),

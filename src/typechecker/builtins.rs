@@ -358,6 +358,29 @@ impl TypeChecker {
             );
         }
 
+        // task.deadline: (Duration, () -> a) -> a
+        // Runs the callback with a scoped I/O deadline. Returns whatever
+        // the callback returns. If an I/O operation inside the callback
+        // exceeds the deadline, it returns `Err(String)` with a
+        // "I/O timeout (task.deadline exceeded)" message — silt code
+        // already handles that via the normal Result matching.
+        {
+            let (a, av) = self.fresh_tv();
+            let duration_ty =
+                Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+            env.define(
+                intern("task.deadline"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![duration_ty, Type::Fun(vec![], Box::new(a.clone()))],
+                        Box::new(a),
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+
         // ── regex module ────────────────────────────────────────────────
 
         // regex.is_match: (String, String) -> Bool
