@@ -109,18 +109,28 @@ pub(crate) enum BlockReason {
 
 // ── Timer manager (shared single-thread timer wheel) ────────────
 
-/// Manages all pending channel timeouts on a single background thread.
-/// Instead of spawning one OS thread per `channel.timeout`, all deadlines
-/// are submitted here and fired from a single long-lived thread.
+/// Target to fire when a scheduled deadline expires. Channel targets are
+/// closed (used by `channel.timeout`); Completion targets are marked
+/// complete with `Value::Unit` (used by `time.sleep`).
+pub(crate) enum TimerTarget {
+    Channel(Arc<Channel>),
+    Completion(Arc<IoCompletion>),
+}
+
+/// Manages all pending timer deadlines on a single background thread.
+/// Instead of spawning one OS thread per `channel.timeout` or `time.sleep`,
+/// all deadlines are submitted here and fired from a single long-lived
+/// thread. This keeps timer cost O(1) threads regardless of how many
+/// concurrent sleepers/timeouts exist.
 pub(crate) struct TimerManager {
-    sender: parking_lot::Mutex<std::sync::mpsc::Sender<(Instant, Arc<Channel>)>>,
+    sender: parking_lot::Mutex<std::sync::mpsc::Sender<(Instant, TimerTarget)>>,
 }
 
 impl TimerManager {
     pub(super) fn new() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel::<(Instant, Arc<Channel>)>();
+        let (tx, rx) = std::sync::mpsc::channel::<(Instant, TimerTarget)>();
         std::thread::spawn(move || {
-            let mut deadlines: BTreeMap<Instant, Vec<Arc<Channel>>> = BTreeMap::new();
+            let mut deadlines: BTreeMap<Instant, Vec<TimerTarget>> = BTreeMap::new();
             loop {
                 // Calculate how long to sleep until the next deadline.
                 let timeout = deadlines
@@ -130,20 +140,28 @@ impl TimerManager {
 
                 // Wait for a new timeout request or until the next deadline fires.
                 match rx.recv_timeout(timeout) {
-                    Ok((deadline, ch)) => {
-                        deadlines.entry(deadline).or_default().push(ch);
+                    Ok((deadline, target)) => {
+                        deadlines.entry(deadline).or_default().push(target);
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
 
-                // Fire all expired deadlines.
+                // Fire all expired deadlines. The timer thread owns its own
+                // BTreeMap and holds no scheduler locks here, so firing
+                // `completion.complete(...)` (which runs wakers → requeue →
+                // watchdog.remove) is safe in a disjoint lock domain.
                 let now = Instant::now();
                 let expired: Vec<Instant> = deadlines.range(..=now).map(|(k, _)| *k).collect();
                 for key in expired {
-                    if let Some(channels) = deadlines.remove(&key) {
-                        for ch in channels {
-                            ch.close();
+                    if let Some(targets) = deadlines.remove(&key) {
+                        for target in targets {
+                            match target {
+                                TimerTarget::Channel(ch) => ch.close(),
+                                TimerTarget::Completion(c) => {
+                                    c.complete(Value::Unit);
+                                }
+                            }
                         }
                     }
                 }
@@ -157,10 +175,28 @@ impl TimerManager {
     /// Schedule a channel to be closed after `delay`.
     pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
         let deadline = Instant::now() + delay;
-        if let Err(e) = self.sender.lock().send((deadline, ch)) {
+        if let Err(e) = self.sender.lock().send((deadline, TimerTarget::Channel(ch))) {
             debug_assert!(false, "TimerManager worker thread is gone: {e}");
             eprintln!(
                 "silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire"
+            );
+        }
+    }
+
+    /// Schedule an `IoCompletion` to be completed with `Value::Unit` after
+    /// `delay`. Used by `time.sleep` to cooperatively park a scheduled task
+    /// without consuming an I/O worker thread. Multiple concurrent sleepers
+    /// all share the single timer thread.
+    pub(crate) fn schedule_completion(&self, delay: Duration, completion: Arc<IoCompletion>) {
+        let deadline = Instant::now() + delay;
+        if let Err(e) = self
+            .sender
+            .lock()
+            .send((deadline, TimerTarget::Completion(completion)))
+        {
+            debug_assert!(false, "TimerManager worker thread is gone: {e}");
+            eprintln!(
+                "silt: TimerManager worker thread unreachable ({e}); time.sleep will not fire"
             );
         }
     }

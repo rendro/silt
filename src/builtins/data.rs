@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use crate::value::{TaskHandle, Value, checked_range_len};
+use crate::value::{IoCompletion, TaskHandle, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -1655,20 +1655,32 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             if dur_ns <= 0 {
                 return Ok(Value::Unit);
             }
-            let dur_ms = dur_ns / 1_000_000;
-            let target_ms = vm.epoch_ms()? + dur_ms;
-            while vm.epoch_ms()? < target_ms {
-                let remaining_ms = target_ms - vm.epoch_ms()?;
-                if remaining_ms <= 0 {
-                    break;
-                }
-                // On native, sleep in small increments to stay responsive
+            // Sync (non-task) call: block the caller thread. Correct
+            // semantics on the main thread, and keeps tests/examples that
+            // use `time.sleep` outside of a spawned task working.
+            if !vm.is_scheduled_task {
                 #[cfg(not(target_arch = "wasm32"))]
-                std::thread::sleep(std::time::Duration::from_millis(
-                    (remaining_ms as u64).min(1),
-                ));
+                std::thread::sleep(std::time::Duration::from_nanos(dur_ns as u64));
+                return Ok(Value::Unit);
             }
-            Ok(Value::Unit)
+            // Resume path: if we previously parked on a sleep completion,
+            // io_entry_guard returns the completion's Unit result.
+            if let Some(r) = vm.io_entry_guard(args)? {
+                return Ok(r);
+            }
+            // Fresh scheduled-task call: submit to the shared timer thread
+            // (NOT the I/O pool — we don't want to burn a worker thread
+            // per sleeper) and park cooperatively.
+            let completion = IoCompletion::new();
+            vm.runtime
+                .timer
+                .schedule_completion(std::time::Duration::from_nanos(dur_ns as u64), completion.clone());
+            vm.pending_io = Some(completion.clone());
+            vm.block_reason = Some(BlockReason::Io(completion));
+            for arg in args {
+                vm.push(arg.clone());
+            }
+            Err(VmError::yield_signal())
         }
 
         _ => Err(VmError::new(format!("unknown time function: {name}"))),
