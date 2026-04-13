@@ -194,7 +194,7 @@ The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically
 
 ### Staying up to date
 
-Run `silt update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, and atomically swaps the binary in place — no need to re-run the install script. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
+Run `silt update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
 
 ## What's next
 

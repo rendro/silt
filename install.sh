@@ -26,7 +26,9 @@ main() {
         err "could not determine latest version"
     fi
 
-    url="$BASE_URL/download/$version/silt-${version}-${target}.${ext}"
+    asset="silt-${version}-${target}.${ext}"
+    url="$BASE_URL/download/$version/$asset"
+    sums_url="$BASE_URL/download/$version/silt-${version}-SHA256SUMS"
 
     printf "  Installing silt %s (%s)\n" "$version" "$target"
     printf "  Target: %s\n\n" "$INSTALL_DIR/$bin"
@@ -35,13 +37,15 @@ main() {
     trap 'rm -rf "$tmpdir"' EXIT
 
     printf "  Downloading %s\n" "$url"
-    if command -v curl > /dev/null 2>&1; then
-        curl -fsSL "$url" -o "$tmpdir/silt.$ext"
-    elif command -v wget > /dev/null 2>&1; then
-        wget -q "$url" -O "$tmpdir/silt.$ext"
-    else
-        err "need curl or wget to download"
-    fi
+    fetch "$url" "$tmpdir/silt.$ext"
+
+    printf "  Downloading %s\n" "$sums_url"
+    fetch "$sums_url" "$tmpdir/SHA256SUMS" \
+        || err "failed to download SHA256SUMS — refusing to install unverified binary"
+
+    printf "  Verifying SHA-256 checksum\n"
+    verify_sha256 "$tmpdir/silt.$ext" "$tmpdir/SHA256SUMS" "$asset" \
+        || err "checksum verification failed — refusing to install"
 
     printf "  Extracting\n"
     if [ "$ext" = "tar.gz" ]; then
@@ -81,6 +85,58 @@ detect_arch() {
         aarch64|arm64) echo "aarch64" ;;
         *) err "unsupported architecture: $(uname -m)" ;;
     esac
+}
+
+fetch() {
+    # fetch <url> <dest> — exits non-zero if the download fails so callers
+    # can fail closed on missing files (e.g. SHA256SUMS).
+    _url="$1"
+    _dest="$2"
+    if command -v curl > /dev/null 2>&1; then
+        curl -fsSL "$_url" -o "$_dest"
+    elif command -v wget > /dev/null 2>&1; then
+        wget -q "$_url" -O "$_dest"
+    else
+        err "need curl or wget to download"
+    fi
+}
+
+verify_sha256() {
+    # verify_sha256 <file> <SHA256SUMS> <asset-name>
+    # Extract the hash for <asset-name>, recompute from <file>, bail on
+    # mismatch. Accepts both "hash  name" (sha256sum) and "hash *name"
+    # (binary-mode) entries, tolerates comment/blank lines.
+    _file="$1"
+    _sums="$2"
+    _asset="$3"
+    _expected="$(awk -v a="$_asset" '
+        /^[[:space:]]*#/ { next }
+        NF == 0 { next }
+        {
+            name = $2
+            sub(/^\*/, "", name)
+            if (name == a) { print $1; exit }
+        }
+    ' "$_sums")"
+    if [ -z "$_expected" ]; then
+        printf "  error: no SHA256SUMS entry for %s\n" "$_asset" >&2
+        return 1
+    fi
+    if command -v sha256sum > /dev/null 2>&1; then
+        _actual="$(sha256sum "$_file" | awk '{print $1}')"
+    elif command -v shasum > /dev/null 2>&1; then
+        _actual="$(shasum -a 256 "$_file" | awk '{print $1}')"
+    else
+        printf "  error: need sha256sum or shasum to verify download\n" >&2
+        return 1
+    fi
+    if [ "$_expected" != "$_actual" ]; then
+        printf "  error: sha256 mismatch for %s\n" "$_asset" >&2
+        printf "    expected %s\n" "$_expected" >&2
+        printf "    got      %s\n" "$_actual" >&2
+        return 1
+    fi
+    return 0
 }
 
 get_latest_version() {

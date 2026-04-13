@@ -146,6 +146,8 @@ fn main() {
 curl -fsSL https://silt-lang.com/install.sh | sh
 ```
 
+The installer verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted or tampered archive can't land on disk. To upgrade an existing install without re-running the curl pipe, use `silt update` (which performs the same verification).
+
 Or build from source:
 
 ```sh

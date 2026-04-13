@@ -9,8 +9,11 @@
 
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use sha2::{Digest, Sha256};
 
 const REPO: &str = "rendro/silt";
 
@@ -53,12 +56,31 @@ pub fn run_update(opts: UpdateOptions) -> Result<(), String> {
 
     let asset = format!("silt-{latest}-{target}.{ext}");
     let url = format!("https://github.com/{REPO}/releases/download/{latest}/{asset}");
+    let sums_url =
+        format!("https://github.com/{REPO}/releases/download/{latest}/silt-{latest}-SHA256SUMS");
 
     let tmpdir = mkdtemp()?;
     let archive = tmpdir.join(format!("silt.{ext}"));
+    let sums_file = tmpdir.join("SHA256SUMS");
 
     eprintln!("  Downloading {url}");
     download(&url, &archive)?;
+
+    eprintln!("  Downloading {sums_url}");
+    if let Err(e) = download(&sums_url, &sums_file) {
+        let _ = fs::remove_dir_all(&tmpdir);
+        return Err(format!(
+            "failed to download SHA256SUMS — refusing to install unverified binary: {e}"
+        ));
+    }
+
+    eprintln!("  Verifying SHA-256 checksum");
+    if let Err(e) = verify_archive(&archive, &sums_file, &asset) {
+        let _ = fs::remove_dir_all(&tmpdir);
+        return Err(format!(
+            "checksum verification failed — refusing to install: {e}"
+        ));
+    }
 
     eprintln!("  Extracting");
     extract(&archive, &tmpdir, ext)?;
@@ -145,6 +167,73 @@ fn parse_location_version(headers: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Verify `archive` against the entry for `asset_name` in a SHA256SUMS file.
+///
+/// Fails closed: any problem (missing entry, unreadable file, hash mismatch)
+/// returns Err. The caller is expected to abort installation on error.
+fn verify_archive(archive: &Path, sums_file: &Path, asset_name: &str) -> Result<(), String> {
+    let sums =
+        fs::read_to_string(sums_file).map_err(|e| format!("read SHA256SUMS: {e}"))?;
+    let expected = find_expected_hash(&sums, asset_name).ok_or_else(|| {
+        format!("no SHA256SUMS entry for {asset_name} — release is missing this asset or sums file is malformed")
+    })?;
+    let actual = sha256_hex(archive)?;
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "sha256 mismatch for {asset_name}: expected {expected}, got {actual}"
+        ))
+    }
+}
+
+/// Scan a SHA256SUMS body (one `<hash>  <name>` line per entry — both the
+/// two-space GNU `sha256sum` format and the one-space `shasum` format are
+/// accepted) and return the hash for the matching asset name.
+fn find_expected_hash<'a>(sums: &'a str, asset_name: &str) -> Option<&'a str> {
+    for line in sums.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Split on whitespace — handles both "hash  name" (sha256sum) and
+        // "hash *name" (binary-mode sha256sum, where the leading char is *).
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let hash = parts.next()?.trim();
+        let rest = parts.next()?.trim();
+        // Drop a leading '*' (binary-mode marker) before the filename.
+        let name = rest.strip_prefix('*').unwrap_or(rest);
+        if name == asset_name {
+            return Some(hash);
+        }
+    }
+    None
+}
+
+/// Compute the SHA-256 of `path` as a lowercase hex string.
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write;
+        write!(&mut hex, "{:02x}", byte).expect("write to String never fails");
+    }
+    Ok(hex)
 }
 
 fn download(url: &str, dest: &Path) -> Result<(), String> {
@@ -334,5 +423,110 @@ mod tests {
     fn returns_none_for_missing_location() {
         let headers = "HTTP/2 200\r\nContent-Type: text/html\r\n";
         assert_eq!(parse_location_version(headers), None);
+    }
+
+    #[test]
+    fn finds_expected_hash_in_gnu_sha256sum_format() {
+        // GNU sha256sum default uses two spaces between hash and filename.
+        let sums = "aaaa  silt-v0.5.1-x86_64-unknown-linux-gnu.tar.gz\n\
+                    bbbb  silt-v0.5.1-aarch64-apple-darwin.tar.gz\n";
+        assert_eq!(
+            find_expected_hash(sums, "silt-v0.5.1-x86_64-unknown-linux-gnu.tar.gz"),
+            Some("aaaa")
+        );
+        assert_eq!(
+            find_expected_hash(sums, "silt-v0.5.1-aarch64-apple-darwin.tar.gz"),
+            Some("bbbb")
+        );
+    }
+
+    #[test]
+    fn finds_expected_hash_with_binary_mode_marker() {
+        // sha256sum -b prefixes the filename with `*`; shasum's -a 256 -b does
+        // the same. We strip it before comparing so both formats verify.
+        let sums = "cccc *silt-v0.5.1-x86_64-pc-windows-msvc.zip\n";
+        assert_eq!(
+            find_expected_hash(sums, "silt-v0.5.1-x86_64-pc-windows-msvc.zip"),
+            Some("cccc")
+        );
+    }
+
+    #[test]
+    fn ignores_comments_and_blank_lines_in_sums() {
+        let sums = "\n\
+                    # generated by ci\n\
+                    \n\
+                    dddd  silt-v0.5.1-x86_64-unknown-linux-gnu.tar.gz\n";
+        assert_eq!(
+            find_expected_hash(sums, "silt-v0.5.1-x86_64-unknown-linux-gnu.tar.gz"),
+            Some("dddd")
+        );
+    }
+
+    #[test]
+    fn returns_none_when_asset_missing_from_sums() {
+        let sums = "eeee  silt-v0.5.1-aarch64-apple-darwin.tar.gz\n";
+        assert_eq!(
+            find_expected_hash(sums, "silt-v0.5.1-x86_64-unknown-linux-gnu.tar.gz"),
+            None
+        );
+    }
+
+    #[test]
+    fn sha256_hex_matches_known_vector() {
+        // "abc" → SHA-256 known vector from NIST.
+        let dir = tempdir();
+        let path = dir.join("abc");
+        fs::write(&path, b"abc").expect("write");
+        let hex = sha256_hex(&path).expect("hash");
+        assert_eq!(
+            hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn verify_archive_rejects_tampered_file() {
+        let dir = tempdir();
+        let archive = dir.join("silt.tar.gz");
+        fs::write(&archive, b"fake archive").expect("write");
+        let real_hash = sha256_hex(&archive).expect("hash");
+        // Assume an attacker swapped the archive after the sums file was
+        // generated — the sums file still references the old hash.
+        let wrong_hash = "0".repeat(64);
+        assert_ne!(real_hash, wrong_hash);
+        let sums = format!("{wrong_hash}  silt-test.tar.gz\n");
+        let sums_path = dir.join("SHA256SUMS");
+        fs::write(&sums_path, &sums).expect("write");
+        let err = verify_archive(&archive, &sums_path, "silt-test.tar.gz")
+            .expect_err("expected mismatch");
+        assert!(err.contains("sha256 mismatch"), "got: {err}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn verify_archive_accepts_matching_hash() {
+        let dir = tempdir();
+        let archive = dir.join("silt.tar.gz");
+        fs::write(&archive, b"hello world").expect("write");
+        let hash = sha256_hex(&archive).expect("hash");
+        let sums_path = dir.join("SHA256SUMS");
+        fs::write(&sums_path, format!("{hash}  silt-test.tar.gz\n")).expect("write");
+        verify_archive(&archive, &sums_path, "silt-test.tar.gz").expect("should verify");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn tempdir() -> PathBuf {
+        let dir = env::temp_dir().join(format!(
+            "silt-update-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).expect("mkdir");
+        dir
     }
 }

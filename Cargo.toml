@@ -1,6 +1,6 @@
 [package]
 name = "silt"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 description = "A minimal, statically-typed, expression-based language with CSP concurrency"
 license = "MIT"
@@ -36,6 +36,7 @@ regex = "1"
 rustyline = { version = "15", optional = true }
 parking_lot = "0.12"
 serde_json = "1"
+sha2 = "0.10"
 ureq = { version = "3", optional = true }
 tiny_http = { version = "0.12", optional = true }
 

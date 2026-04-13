@@ -85,6 +85,17 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # Generate a single SHA256SUMS file covering every archive. install.sh
+      # and `silt update` both fetch this alongside the binary and refuse to
+      # install when the hash doesn't match — the first line of defence
+      # against a corrupted or swapped release asset.
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          sha256sum silt-${{ github.ref_name }}-*.tar.gz silt-${{ github.ref_name }}-*.zip \
+            > silt-${{ github.ref_name }}-SHA256SUMS
+          cat silt-${{ github.ref_name }}-SHA256SUMS
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
