@@ -100,6 +100,13 @@ pub struct Channel {
     /// Number of receivers currently waiting (waker-based + condvar-based).
     /// Used by rendezvous try_send to detect if a direct handoff is possible.
     waiting_receivers: AtomicUsize,
+    /// Set when `TimerManager::schedule` has registered this channel for
+    /// a pending close. Cleared when `close()` runs. The main-thread
+    /// wait loop consults this flag to avoid declaring deadlock while a
+    /// timer is legitimately pending: `channel.timeout(50)` with no
+    /// other scheduled tasks is not a deadlock — the timer thread will
+    /// close the channel on schedule.
+    pending_timer_close: AtomicBool,
 }
 
 /// Result of attempting to send on a channel.
@@ -129,7 +136,23 @@ impl Channel {
             next_waker_id: AtomicU64::new(0),
             handoff: Mutex::new(None),
             waiting_receivers: AtomicUsize::new(0),
+            pending_timer_close: AtomicBool::new(false),
         }
+    }
+
+    /// Mark this channel as having a pending timer-driven close. The
+    /// main-thread wait loop uses this to distinguish a timer-parked
+    /// wait from a real deadlock.
+    pub fn mark_pending_timer_close(&self) {
+        self.pending_timer_close
+            .store(true, AtomicOrdering::Release);
+    }
+
+    /// True while a timer is scheduled to close this channel and has
+    /// not yet fired. Read by `main_thread_wait_for_receive` before
+    /// declaring deadlock.
+    pub fn has_pending_timer_close(&self) -> bool {
+        self.pending_timer_close.load(AtomicOrdering::Acquire)
     }
 
     /// Mint a fresh `WakerId` for a new registration.
@@ -284,6 +307,10 @@ impl Channel {
         // `condvar.wait` just after we set `closed = true` and fired
         // `notify_all`, and then miss the wakeup.
         self.closed.store(true, AtomicOrdering::Release);
+        // Timer-driven close has landed; clear the pending flag so the
+        // main-thread wait loop falls through to its normal path.
+        self.pending_timer_close
+            .store(false, AtomicOrdering::Release);
         drop(self.handoff.lock());
         // Acquire + release the buffer lock so that any thread in the
         // buffered receive_blocking path that already checked `closed`

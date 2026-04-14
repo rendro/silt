@@ -175,6 +175,9 @@ impl TimerManager {
     /// Schedule a channel to be closed after `delay`.
     pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
         let deadline = Instant::now() + delay;
+        // Tell the channel it has an incoming close so the main-thread
+        // deadlock check doesn't fire while the timer is pending.
+        ch.mark_pending_timer_close();
         if let Err(e) = self
             .sender
             .lock()

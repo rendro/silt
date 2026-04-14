@@ -770,6 +770,11 @@ fn main_thread_wait_for_send(
                 }
                 TrySendResult::Full => {}
             }
+            // Same timer-pending carve-out as the recv path: a scheduled
+            // close is not a deadlock.
+            if ch.has_pending_timer_close() {
+                continue;
+            }
             return Err(VmError::new(
                 "deadlock on main thread: channel send with no counterparty".into(),
             ));
@@ -827,6 +832,14 @@ fn main_thread_wait_for_receive(
                     return Ok(Value::Variant("Closed".into(), vec![]));
                 }
                 TryReceiveResult::Empty => {}
+            }
+            // A pending timer-driven close is a legitimate reason to
+            // keep waiting on an otherwise idle scheduler — e.g. a main
+            // thread that does nothing but `channel.receive(timeout(N))`.
+            // Without this, a spurious wakeup or CI jitter can trip the
+            // deadlock check before the 50ms timer fires.
+            if ch.has_pending_timer_close() {
+                continue;
             }
             return Err(VmError::new(
                 "deadlock on main thread: channel receive with no counterparty".into(),
