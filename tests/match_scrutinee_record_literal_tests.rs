@@ -21,7 +21,7 @@
 use silt::typechecker;
 use silt::types::Severity;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 fn parse_ok(input: &str) -> Result<(), String> {
     let tokens = silt::lexer::Lexer::new(input)
@@ -49,20 +49,27 @@ fn type_errors(input: &str) -> Vec<String> {
 }
 
 fn run_silt(src: &str) -> (String, String, i32) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
-        .args(["run", "/dev/stdin"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn silt");
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
+    // Write to a temp file rather than piping to `/dev/stdin` — the
+    // latter doesn't exist on Windows. Unique-per-test-process filename
+    // so parallel test runs don't collide.
+    let path = std::env::temp_dir().join(format!(
+        "silt_match_scrutinee_test_{}_{}.silt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    ));
+    std::fs::File::create(&path)
+        .expect("create temp file")
         .write_all(src.as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().expect("wait");
+        .expect("write temp file");
+    let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("spawn silt");
+    let _ = std::fs::remove_file(&path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
