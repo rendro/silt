@@ -1,7 +1,7 @@
 use notify::{RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Returns true if any of the given paths has a `.silt` extension.
 /// Extracted so the filtering logic can be unit-tested in isolation
@@ -10,6 +10,26 @@ fn any_silt_path_changed(paths: &[PathBuf]) -> bool {
     paths
         .iter()
         .any(|p| p.extension().is_some_and(|ext| ext == "silt"))
+}
+
+/// Confirm at least one `.silt` path in the event actually has a
+/// modification time newer than `since`. macOS FSEvents can emit
+/// coalesced directory-level events that list sibling `.silt` files
+/// even when only a non-`.silt` file was modified, so an
+/// extension-only filter admits false positives. Checking mtime is a
+/// filesystem-level truth check that rejects those.
+///
+/// Paths that can't be `stat`'d (deleted, permission denied) are
+/// skipped rather than treated as modified, because a rerun can't
+/// observe a file that's gone anyway.
+fn any_silt_path_mtime_newer(paths: &[PathBuf], since: SystemTime) -> bool {
+    paths.iter().any(|p| {
+        p.extension().is_some_and(|ext| ext == "silt")
+            && p.metadata()
+                .and_then(|m| m.modified())
+                .map(|m| m > since)
+                .unwrap_or(false)
+    })
 }
 
 /// Returns true if enough time has elapsed since `last_run` to rerun
@@ -62,6 +82,10 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
 
     let debounce = Duration::from_millis(500);
     let mut last_run = Instant::now();
+    // Wall-clock timestamp of the most recent rerun (or startup). Used
+    // to reject false-positive watcher events whose paths don't
+    // actually have a newer mtime — see `any_silt_path_mtime_newer`.
+    let mut last_run_system = SystemTime::now();
     let mut pending_rerun = false;
 
     loop {
@@ -97,12 +121,21 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
                 while rx.try_recv().is_ok() {}
 
                 last_run = Instant::now();
+                last_run_system = SystemTime::now();
                 eprint!("\x1B[2J\x1B[H");
                 let _ = std::process::Command::new(&exe).args(args).status();
                 eprintln!("\n[watch] Watching for changes...");
             }
             Ok(Some(Ok(event))) => {
                 if !any_silt_path_changed(&event.paths) {
+                    continue;
+                }
+                // Defensive mtime check: on macOS, FSEvents can report
+                // coalesced directory-level events that include sibling
+                // `.silt` files when only a non-`.silt` file was
+                // modified. The extension filter above admits those as
+                // silt-events; the mtime check rejects them.
+                if !any_silt_path_mtime_newer(&event.paths, last_run_system) {
                     continue;
                 }
 
@@ -114,6 +147,7 @@ pub fn watch_and_rerun(watch_dir: &Path, args: &[String]) {
                     while rx.try_recv().is_ok() {}
 
                     last_run = Instant::now();
+                    last_run_system = SystemTime::now();
                     eprint!("\x1B[2J\x1B[H");
                     let _ = std::process::Command::new(&exe).args(args).status();
                     eprintln!("\n[watch] Watching for changes...");
@@ -177,6 +211,70 @@ mod tests {
         // A file named `silt.txt` is NOT a .silt file.
         let paths = vec![PathBuf::from("/tmp/silt.txt")];
         assert!(!any_silt_path_changed(&paths));
+    }
+
+    // ── any_silt_path_mtime_newer ─────────────────────────────────
+    //
+    // Regression lock for the macOS FSEvents coalescing issue: the
+    // watcher can report a `.silt` path in an event whose root cause
+    // was a modification to a sibling non-`.silt` file. The extension
+    // filter admits those false positives; the mtime check rejects
+    // them by consulting the filesystem directly.
+    #[test]
+    fn mtime_check_rejects_stale_silt_path() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!(
+            "silt_watch_mtime_test_{}.silt",
+            std::process::id()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"fn main() {}").unwrap();
+        drop(f);
+
+        // Sleep briefly, then capture "now" — the file's mtime is
+        // strictly earlier than this.
+        std::thread::sleep(Duration::from_millis(20));
+        let since = SystemTime::now();
+
+        assert!(
+            !any_silt_path_mtime_newer(&[path.clone()], since),
+            "unmodified .silt file should not count as newer"
+        );
+
+        // Touch the file and verify the check flips.
+        std::thread::sleep(Duration::from_millis(20));
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"fn main() { 1 }").unwrap();
+        drop(f);
+
+        assert!(
+            any_silt_path_mtime_newer(&[path.clone()], since),
+            ".silt file with mtime > since should count as newer"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn mtime_check_ignores_non_silt_paths() {
+        use std::io::Write;
+        // Even a freshly-modified .txt path must not satisfy the
+        // silt-specific mtime check.
+        let path = std::env::temp_dir().join(format!(
+            "silt_watch_mtime_test_{}.txt",
+            std::process::id()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"notes").unwrap();
+        drop(f);
+
+        let since = SystemTime::UNIX_EPOCH;
+        assert!(
+            !any_silt_path_mtime_newer(&[path.clone()], since),
+            "non-silt path must never satisfy the silt mtime check"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     // ── should_rerun_now / debounce ───────────────────────────────
