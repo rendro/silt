@@ -2194,8 +2194,32 @@ impl Parser {
                 Ok(mk(PatternKind::Wildcard))
             }
             Token::Ident(ref name) if is_constructor(*name) => {
-                let name = *name;
+                let mut name = *name;
                 self.advance();
+                // Qualified variant pattern: `EnumName.Variant(args)` or
+                // `EnumName.Variant { fields }` or bare `EnumName.Variant`.
+                // Silt's variants resolve by bare name globally (see
+                // `variant_to_enum`), so the qualifier is disambiguation
+                // only. We consume it and parse the variant as the
+                // effective constructor name. Same-name variant
+                // collisions across enums are already reported; if the
+                // user names the wrong enum here we surface a targeted
+                // error in the typechecker's pattern resolution path.
+                if self.at(&Token::Dot) {
+                    self.advance();
+                    let (variant, _) = self.expect_ident()?;
+                    if !is_constructor(variant) {
+                        return Err(ParseError {
+                            message: format!(
+                                "expected a variant name after '{}.', found '{}'",
+                                intern::resolve(name),
+                                intern::resolve(variant)
+                            ),
+                            span: self.span(),
+                        });
+                    }
+                    name = variant;
+                }
                 // Constructor pattern: Some(x), Ok(value), Rect(w, h)
                 if self.at(&Token::LParen) {
                     self.advance();

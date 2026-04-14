@@ -1301,6 +1301,52 @@ impl TypeChecker {
                         expr.ty = Some(resolved.clone());
                         return resolved;
                     }
+                    // Qualified variant access: `EnumName.Variant`. Variants
+                    // are registered globally by bare name, so when the LHS
+                    // is an enum type and the RHS is one of its variants,
+                    // resolve to the variant's scheme. Handles both unit
+                    // variants used as values and variants about to be
+                    // called with args (the outer `Call` path reuses the
+                    // resolved scheme).
+                    if self.enums.contains_key(&module_name) {
+                        match self.variant_to_enum.get(&field).copied() {
+                            Some(owner) if owner == module_name => {
+                                if let Some(scheme) = env.lookup(field).cloned() {
+                                    let result = self.instantiate(&scheme);
+                                    let resolved = self.apply(&result);
+                                    expr.ty = Some(resolved.clone());
+                                    return resolved;
+                                }
+                            }
+                            Some(owner) => {
+                                self.error(
+                                    format!(
+                                        "'{}' is not a variant of enum '{}' (it belongs to '{}')",
+                                        resolve(field),
+                                        resolve(module_name),
+                                        resolve(owner),
+                                    ),
+                                    span,
+                                );
+                                let fresh = self.fresh_var();
+                                expr.ty = Some(fresh.clone());
+                                return fresh;
+                            }
+                            None => {
+                                self.error(
+                                    format!(
+                                        "enum '{}' has no variant '{}'",
+                                        resolve(module_name),
+                                        resolve(field),
+                                    ),
+                                    span,
+                                );
+                                let fresh = self.fresh_var();
+                                expr.ty = Some(fresh.clone());
+                                return fresh;
+                            }
+                        }
+                    }
                     // G5: when `<module>` is a known builtin module (list,
                     // string, map, ...) and `<member>` is not registered,
                     // emit a specific "unknown function on module" error

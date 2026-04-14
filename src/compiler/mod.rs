@@ -311,6 +311,11 @@ pub struct Compiler {
     /// (e.g. `mylib.double` registered via `register_fn1`) and file-module
     /// aliases (`import string as s` → `s.split`) continue to work.
     repl_mode: bool,
+    /// Maps enum type name → set of variant names. Populated as `type`
+    /// declarations are compiled. Used by `FieldAccess` codegen to
+    /// rewrite `EnumName.Variant` into a bare `GetGlobal("Variant")`
+    /// since variants are registered globally by bare name.
+    known_enum_variants: HashMap<String, HashSet<String>>,
 }
 
 impl Default for Compiler {
@@ -335,6 +340,7 @@ impl Compiler {
             module_public_fns: HashMap::new(),
             module_private_fns: HashMap::new(),
             repl_mode: false,
+            known_enum_variants: HashMap::new(),
         }
     }
 
@@ -354,6 +360,7 @@ impl Compiler {
             module_public_fns: HashMap::new(),
             module_private_fns: HashMap::new(),
             repl_mode: false,
+            known_enum_variants: HashMap::new(),
         }
     }
 
@@ -574,6 +581,17 @@ impl Compiler {
                 let span = type_decl.span;
                 match &type_decl.body {
                     crate::ast::TypeBody::Enum(variants) => {
+                        // Track enum-variant mapping so `EnumName.Variant`
+                        // field access can be rewritten to a bare global
+                        // lookup at codegen time.
+                        let enum_name = resolve(type_decl.name);
+                        let variant_set = self
+                            .known_enum_variants
+                            .entry(enum_name)
+                            .or_default();
+                        for variant in variants {
+                            variant_set.insert(resolve(variant.name));
+                        }
                         for variant in variants {
                             let vname = resolve(variant.name);
                             let arity = variant.fields.len();
@@ -1493,7 +1511,39 @@ impl Compiler {
                     } else {
                         false
                     };
-                    if is_module_call {
+                    // Qualified variant call: `EnumName.Variant(args)`
+                    // resolves to the variant's bare global constructor.
+                    // Checked before the module-call path so enum names
+                    // aren't confused with missing module imports.
+                    let qualified_variant_global = if let ExprKind::Ident(name) = &receiver.kind
+                        && is_module_call
+                    {
+                        let name_str = resolve(*name);
+                        let method_str = resolve(*method);
+                        self.known_enum_variants
+                            .get(&name_str)
+                            .filter(|vs| vs.contains(&method_str))
+                            .map(|_| method_str)
+                    } else {
+                        None
+                    };
+                    if let Some(variant_name) = qualified_variant_global {
+                        let name_idx = self.add_constant(Value::String(variant_name), span)?;
+                        self.current_chunk().emit_op(Op::GetGlobal, span);
+                        self.current_chunk().emit_u16(name_idx, span);
+                        for arg in args {
+                            self.compile_expr(arg)?;
+                        }
+                        let argc = args.len() as u8;
+                        if tail {
+                            self.current_chunk().emit_op(Op::TailCall, span);
+                            self.current_chunk().emit_u8(argc, span);
+                            self.current_chunk().emit_op(Op::Return, span);
+                        } else {
+                            self.current_chunk().emit_op(Op::Call, span);
+                            self.current_chunk().emit_u8(argc, span);
+                        }
+                    } else if is_module_call {
                         if let ExprKind::Ident(module) = &receiver.kind {
                             // Gate: require import for builtin modules
                             let mod_str = resolve(*module);
@@ -1587,6 +1637,21 @@ impl Compiler {
                         || self.resolve_upvalue(*name, span)?.is_some();
                     if !is_local {
                         let name_str = resolve(*name);
+                        // Qualified variant access: `EnumName.Variant`
+                        // resolves to the variant's bare global
+                        // registration. Checked ahead of the builtin-
+                        // module gate so enum names aren't mistaken for
+                        // missing module imports.
+                        let field_str_early = resolve(*field);
+                        if let Some(variants) = self.known_enum_variants.get(&name_str)
+                            && variants.contains(&field_str_early)
+                        {
+                            let name_idx =
+                                self.add_constant(Value::String(field_str_early), span)?;
+                            self.current_chunk().emit_op(Op::GetGlobal, span);
+                            self.current_chunk().emit_u16(name_idx, span);
+                            return Ok(());
+                        }
                         // Gate: require import for builtin modules.
                         if module::is_builtin_module(&name_str)
                             && !self.imported_builtin_modules.contains(&name_str)
