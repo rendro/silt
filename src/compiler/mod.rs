@@ -585,10 +585,7 @@ impl Compiler {
                         // field access can be rewritten to a bare global
                         // lookup at codegen time.
                         let enum_name = resolve(type_decl.name);
-                        let variant_set = self
-                            .known_enum_variants
-                            .entry(enum_name)
-                            .or_default();
+                        let variant_set = self.known_enum_variants.entry(enum_name).or_default();
                         for variant in variants {
                             variant_set.insert(resolve(variant.name));
                         }

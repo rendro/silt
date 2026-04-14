@@ -223,10 +223,8 @@ mod tests {
     #[test]
     fn mtime_check_rejects_stale_silt_path() {
         use std::io::Write;
-        let path = std::env::temp_dir().join(format!(
-            "silt_watch_mtime_test_{}.silt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("silt_watch_mtime_test_{}.silt", std::process::id()));
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(b"fn main() {}").unwrap();
         drop(f);
@@ -260,10 +258,8 @@ mod tests {
         use std::io::Write;
         // Even a freshly-modified .txt path must not satisfy the
         // silt-specific mtime check.
-        let path = std::env::temp_dir().join(format!(
-            "silt_watch_mtime_test_{}.txt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("silt_watch_mtime_test_{}.txt", std::process::id()));
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(b"notes").unwrap();
         drop(f);
