@@ -336,20 +336,30 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
                         if let Some(d) = interp_depths.last_mut() {
                             *d += 1;
                         }
-                        continue;
-                    }
-                    if ch == '}' {
+                        // Fall through so a `{`-scan still counts the
+                        // nesting — `open == '{'` callers track this
+                        // same char; non-`{}` callers (e.g. `(`/`)`)
+                        // don't care about it.
+                    } else if ch == '}' {
                         if let Some(d) = interp_depths.last_mut() {
                             if *d == 0 {
                                 interp_depths.pop();
                                 in_string = true;
+                                continue;
                             } else {
                                 *d -= 1;
                             }
                         }
-                        continue;
                     }
-                    continue;
+                    // For brackets other than `{`/`}`, the expression
+                    // inside an interpolation is real code: `fmt(x)`
+                    // inside `"{fmt(x)}"` has real parens that callers
+                    // scanning for `(`/`)` must see. Previously we
+                    // `continue`d unconditionally here, skipping those
+                    // parens and causing `compute_bracket_end_line` to
+                    // latch onto the next `(` in the file — dragging
+                    // trailing comments from following statements into
+                    // the interpolated call on multi-line re-layout.
                 }
                 if ch == open {
                     depth += 1;
@@ -3902,6 +3912,35 @@ fn main() {
         let first = format(source).unwrap();
         let second = format(&first).unwrap();
         assert_eq!(first, second, "string interpolation should be idempotent");
+    }
+
+    #[test]
+    fn test_idempotent_call_in_interpolation_followed_by_comment_and_call() {
+        // Regression lock: a call inside a string interpolation, followed
+        // by a standalone line comment and then another call statement,
+        // used to have the comment dragged INTO the interpolated call on
+        // re-format. `compute_bracket_end_line` scanning for `(`/`)`
+        // skipped brackets inside interpolations, latched onto the next
+        // `(` in the file (the following `foo(...)`), and
+        // `should_layout_multiline` then pulled the comment between the
+        // two statements into the multi-line Call layout for `fmt(...)`.
+        let source = r#"fn main() {
+  let total_area = 3.14
+  printl % "Total area: {fmt(total_area)}"
+  -- a trailing comment
+  println("")
+}
+"#;
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(
+            first, second,
+            "interpolated call followed by comment+call must be idempotent"
+        );
+        assert!(
+            !first.contains("fmt(\n"),
+            "fmt() must stay inline; the trailing comment belongs at statement level, not inside the call"
+        );
     }
 
     // ── Idempotency: map literals ───────────────────────────────────
