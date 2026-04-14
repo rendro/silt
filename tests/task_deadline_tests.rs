@@ -9,6 +9,14 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// Render a path for embedding inside silt source. `path.display()`
+/// uses native separators, so on Windows `\U` et al. become unknown
+/// lexer escape sequences. Forward slashes are accepted by the
+/// Windows filesystem APIs so the runtime still resolves the file.
+fn path_for_silt(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "/")
+}
+
 fn silt_bin() -> PathBuf {
     let target = std::env::var("CARGO_BIN_EXE_silt").ok();
     if let Some(p) = target {
@@ -93,7 +101,7 @@ fn main() {{
   }}
 }}
 "#,
-        path.display()
+        path_for_silt(&path)
     );
     let (stdout, _stderr, code) = run_silt(&src);
     let _ = std::fs::remove_file(&path);
@@ -123,7 +131,7 @@ fn main() {{
   }}
 }}
 "#,
-        path.display()
+        path_for_silt(&path)
     );
     let (stdout, _stderr, code) = run_silt(&src);
     let _ = std::fs::remove_file(&path);
@@ -175,8 +183,8 @@ fn main() {{
   }}
 }}
 "#,
-        fixture.display(),
-        fixture.display()
+        path_for_silt(&fixture),
+        path_for_silt(&fixture)
     );
     let (stdout, _stderr, code) = run_silt(&src);
     let _ = std::fs::remove_file(&fixture);
@@ -238,7 +246,7 @@ fn main() {{
   println(task.join(handle))
 }}
 "#,
-        path.display()
+        path_for_silt(&path)
     );
     let (stdout, _stderr, code) = run_silt(&src);
     let _ = std::fs::remove_file(&path);
