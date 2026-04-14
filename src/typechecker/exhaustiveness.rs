@@ -133,6 +133,17 @@ impl TypeChecker {
         let matrix = &expanded[..];
 
         if matches!(query.kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
+            // Maranget shortcut: a bare wildcard/ident row in the matrix
+            // already covers every value at this column, so no wildcard
+            // query can be useful. Without this, recursive variant types
+            // re-enumerate constructors at every level and blow up
+            // exponentially (e.g. `Add(Expr, Expr)` hits 5^d expansions).
+            if matrix
+                .iter()
+                .any(|p| matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_)))
+            {
+                return false;
+            }
             return self.is_wildcard_useful(matrix, ty, depth);
         }
 
@@ -1248,19 +1259,26 @@ fn main() { area(Circle(1.0)) }
         );
     }
 
-    // ── Depth-limit fallback ────────────────────────────────────────
+    // ── Recursive variant match certifies in polynomial time ────────
     //
-    // Regression for a silent-wrong-behavior bug: when the usefulness
-    // algorithm hit its recursion depth bound on a recursive-variant
-    // match, it used to return `false` ("not useful" ⇒ "exhaustive") and
-    // the match was accepted silently — potentially papering over real
-    // coverage gaps. The checker now sets an interior flag on bailout so
-    // `check_exhaustiveness` can emit a "could not verify" warning
-    // instead, and this test drives the flag directly through the
-    // internal API using a hand-constructed recursive enum and pattern
-    // tree deeper than `MAX_EXHAUSTIVENESS_DEPTH`.
+    // Regression for a doubly-exponential blowup bug. On a recursive
+    // enum like `Expr { Leaf(Int), Pair(Expr, Expr) }`, the usefulness
+    // algorithm used to re-enumerate every variant at every level of
+    // the recursion — `Pair`'s two `Expr` sub-columns each triggered a
+    // fresh round of constructor enumeration, and the work grew as
+    // `k^d` until `MAX_EXHAUSTIVENESS_DEPTH` tripped. The match was
+    // then reported as "could not verify exhaustiveness" (and before
+    // that, silently accepted).
+    //
+    // The fix is a standard Maranget shortcut: if any row in the matrix
+    // at the current column is a bare wildcard/ident, it already covers
+    // every value at that column, so no wildcard query can be useful.
+    // This collapses `Pair(_, _)`-style arms to O(1) work per column
+    // instead of `k^d`. This test locks in that the shortcut fires:
+    // the match is certified exhaustive with no depth-limit warning and
+    // no spurious diagnostics.
     #[test]
-    fn test_depth_limit_reports_could_not_verify() {
+    fn test_recursive_variant_match_certifies_without_depth_bailout() {
         use super::MAX_EXHAUSTIVENESS_DEPTH;
         use crate::intern::intern;
         use crate::lexer::Span;
@@ -1297,14 +1315,11 @@ fn main() { area(Circle(1.0)) }
         tc.variant_to_enum.insert(pair_name, expr_name);
 
         // Build a two-arm match that IS logically exhaustive — every
-        // `Expr` is either a `Leaf` or a `Pair` — but the Maranget
-        // algorithm can only certify that by recursing into the `Pair`
-        // sub-patterns, where each Expr sub-column forces another round
-        // of constructor enumeration. Because the enum is recursive the
-        // recursion keeps growing and eventually trips the
-        // `MAX_EXHAUSTIVENESS_DEPTH` bound. The old code then silently
-        // returned `false` ("not useful" ⇒ "exhaustive"); the new code
-        // surfaces a "could not verify" warning via the interior flag.
+        // `Expr` is either a `Leaf` or a `Pair`. Pre-fix, the Maranget
+        // algorithm re-enumerated all variants at every level as it
+        // recursed into `Pair`'s two `Expr` columns, hit the depth
+        // bound, and raised "could not verify". With the wildcard-row
+        // shortcut the algorithm certifies this cleanly and fast.
         let span = Span::new(1, 1);
         let body = Expr::new(crate::ast::ExprKind::Int(0), span);
         let wild = || Pattern::new(PatternKind::Wildcard, span);
@@ -1329,29 +1344,17 @@ fn main() { area(Circle(1.0)) }
 
         tc.check_exhaustiveness(&arms, &expr_ty, span);
 
-        // We should see exactly the "could not verify" warning — not a
-        // silent success and not a plain "non-exhaustive match" error.
-        let could_not_verify: Vec<_> = tc
-            .errors
-            .iter()
-            .filter(|e| e.message.contains("could not verify exhaustiveness"))
-            .collect();
+        // Post-fix expectation: the match is certified exhaustive with
+        // no "could not verify" warning, no "non-exhaustive" error, and
+        // no depth-bailout flag set.
         assert!(
-            !could_not_verify.is_empty(),
-            "expected a 'could not verify exhaustiveness' diagnostic, got: {:?}",
+            tc.errors.is_empty(),
+            "expected no diagnostics, got: {:?}",
             tc.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
-        for d in &could_not_verify {
-            assert_eq!(
-                d.severity,
-                Severity::Warning,
-                "depth-limit fallback should be a warning, not an error"
-            );
-            assert!(
-                d.message.contains("wildcard"),
-                "warning should suggest a wildcard arm, got: {}",
-                d.message
-            );
-        }
+        assert!(
+            !tc.exhaustiveness_depth_exceeded.get(),
+            "depth bound should not be hit on a simple recursive variant match",
+        );
     }
 }
