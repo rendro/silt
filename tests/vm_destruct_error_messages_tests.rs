@@ -34,9 +34,7 @@ fn run_err(input: &str) -> String {
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile error");
+    let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     let err = vm.run(script).expect_err("expected runtime error");
@@ -145,10 +143,8 @@ fn main() {
 /// the opcode name, this test fails.
 #[test]
 fn test_destruct_error_strings_do_not_mention_opcode_names_in_source() {
-    let source = std::fs::read_to_string(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm/execute.rs"),
-    )
-    .expect("read execute.rs");
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm/execute.rs"))
+        .expect("read execute.rs");
 
     // Limit scope to the destruct ops' bodies. We can't easily slice by
     // line, but we can require that every line that mentions a
@@ -201,10 +197,8 @@ fn test_destruct_error_strings_do_not_mention_opcode_names_in_source() {
 /// lost their local `const MAX_FRAMES` declarations.
 #[test]
 fn test_max_frames_is_single_module_level_constant() {
-    let source = std::fs::read_to_string(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm/execute.rs"),
-    )
-    .expect("read execute.rs");
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm/execute.rs"))
+        .expect("read execute.rs");
     let decls: Vec<&str> = source
         .lines()
         .filter(|l| l.contains("const MAX_FRAMES"))

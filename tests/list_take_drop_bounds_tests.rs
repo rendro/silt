@@ -18,9 +18,7 @@ fn run(input: &str) -> Value {
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile error");
+    let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")
@@ -49,8 +47,7 @@ fn run_err(input: &str) -> String {
 // empty result.
 #[test]
 fn test_list_take_range_at_i64_min_zero_count_returns_empty() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() -> Int {
   let lo = -9223372036854775807 - 1
@@ -58,8 +55,7 @@ fn main() -> Int {
   let t = list.take(r, 0)
   list.length(t)
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(0));
 }
 
@@ -67,8 +63,7 @@ fn main() -> Int {
 // `list.take(lo..(lo+8), 3)` → `Range(lo, lo+2)` with 3 elements.
 #[test]
 fn test_list_take_range_at_i64_min_nonzero_count_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() -> Int {
   let lo = -9223372036854775807 - 1
@@ -76,8 +71,7 @@ fn main() -> Int {
   let t = list.take(r, 3)
   list.length(t)
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(3));
 }
 
@@ -85,12 +79,10 @@ fn main() -> Int {
 // still returns empty on zero count.
 #[test]
 fn test_list_take_list_zero_count_returns_empty() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() { list.take([1, 2, 3], 0) }
-"#,
-    );
+"#);
     assert_eq!(result, Value::List(Arc::new(vec![])));
 }
 
@@ -100,15 +92,13 @@ fn main() { list.take([1, 2, 3], 0) }
 // caps at the 4 elements in the range.
 #[test]
 fn test_list_take_range_oversized_count_returns_full() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() -> Int {
   let r = 5..8
   list.length(list.take(r, 100))
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(4));
 }
 
@@ -117,8 +107,7 @@ fn main() -> Int {
 // the BROKEN take bug and is currently correct — lock it with a test.
 #[test]
 fn test_list_drop_range_at_i64_min_zero_count_returns_full() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() -> Int {
   let lo = -9223372036854775807 - 1
@@ -126,8 +115,7 @@ fn main() -> Int {
   let d = list.drop(r, 0)
   list.length(d)
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(9));
 }
 
@@ -135,8 +123,7 @@ fn main() -> Int {
 // `lo == i64::MIN` (where `lo + n` could overflow).
 #[test]
 fn test_list_drop_range_at_i64_min_count_larger_than_range_returns_empty() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() -> Int {
   let lo = -9223372036854775807 - 1
@@ -144,8 +131,7 @@ fn main() -> Int {
   let d = list.drop(r, 100)
   list.length(d)
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(0));
 }
 

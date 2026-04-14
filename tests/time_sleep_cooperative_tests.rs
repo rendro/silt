@@ -26,13 +26,14 @@ fn run_silt(src: &str) -> (String, String, i32, Duration) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_sleep_{}_{n}.silt",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("silt_sleep_{}_{n}.silt", std::process::id()));
     std::fs::write(&tmp, src).unwrap();
     let start = Instant::now();
-    let output = Command::new(silt_bin()).arg("run").arg(&tmp).output().unwrap();
+    let output = Command::new(silt_bin())
+        .arg("run")
+        .arg(&tmp)
+        .output()
+        .unwrap();
     let wall = start.elapsed();
     let _ = std::fs::remove_file(&tmp);
     (
@@ -65,7 +66,10 @@ fn main() {
 "#;
     let (stdout, stderr, code, wall) = run_silt(src);
     assert_eq!(code, 0, "silt exit nonzero; stderr={stderr}");
-    assert!(stdout.contains("done"), "expected 'done' in stdout; got {stdout:?}");
+    assert!(
+        stdout.contains("done"),
+        "expected 'done' in stdout; got {stdout:?}"
+    );
     eprintln!(
         "test_time_sleep_parks_cooperatively_n_tasks_run_in_parallel: wall={:?}",
         wall
@@ -99,7 +103,10 @@ fn main() {
 "#;
     let (stdout, stderr, code, _wall) = run_silt(src);
     assert_eq!(code, 0, "silt exit nonzero; stderr={stderr}");
-    assert!(stdout.contains("ok"), "expected 'ok' in stdout; got {stdout:?}");
+    assert!(
+        stdout.contains("ok"),
+        "expected 'ok' in stdout; got {stdout:?}"
+    );
 }
 
 #[test]

@@ -120,7 +120,10 @@ mod tests {
         let cands = ["println", "print", "panic"];
         // `xyzzy_completely_unrelated` is too far from anything in the
         // candidate set — don't offer a misleading hint.
-        assert_eq!(suggest_similar("xyzzy_completely_unrelated", cands.iter()), None);
+        assert_eq!(
+            suggest_similar("xyzzy_completely_unrelated", cands.iter()),
+            None
+        );
         // `xyz` → `abc` is distance 3, max 3 — over the absolute-1 cap.
         assert_eq!(suggest_similar("xyz", ["abc"].iter()), None);
         // `foo` → `Bool` is distance 2, max 4. Under the tightened

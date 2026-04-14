@@ -107,8 +107,7 @@ fn main() {{
 /// after the yield-handling changes.
 #[test]
 fn test_call_method_non_yielding_trait_method() {
-    let result = run(
-        r#"
+    let result = run(r#"
 type Counter { n: Int }
 
 trait Describe { fn describe(self) -> String }
@@ -123,8 +122,7 @@ fn main() {
   let c = Counter { n: 42 }
   c.describe()
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::String("count=42".into()));
 }
 

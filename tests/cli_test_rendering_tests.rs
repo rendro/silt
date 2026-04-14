@@ -156,7 +156,9 @@ fn test_never_runs() {
     // "VM error:" prefix — that would indicate we fell back to the old
     // path that drops source info.
     assert!(
-        !stderr.lines().any(|l| l.trim_start().starts_with("VM error:")),
+        !stderr
+            .lines()
+            .any(|l| l.trim_start().starts_with("VM error:")),
         "expected structured rendering, not raw VmError::Display. stderr: {stderr}"
     );
 }
@@ -273,7 +275,10 @@ fn test_silt_help_fmt_row_alignment() {
         .lines()
         .filter(|l| l.trim_start().starts_with("silt "))
         .collect();
-    assert!(rows.len() >= 5, "expected several usage rows, got: {stdout}");
+    assert!(
+        rows.len() >= 5,
+        "expected several usage rows, got: {stdout}"
+    );
 
     // Compute the column of the description word for each row. The
     // description is whatever follows the run of ≥2 spaces after the
@@ -442,9 +447,7 @@ fn main() {
 
     // Ordering: the header must come first, then `-->`, then the caret
     // line, then the `= note:` body. Any other order is the F12 bug.
-    let header_idx = stderr
-        .find("error[runtime]")
-        .expect("header not found");
+    let header_idx = stderr.find("error[runtime]").expect("header not found");
     let loc_idx = stderr.find("-->").expect("--> not found");
     // Find the caret-bearing line (the one with `^` pointing at the
     // offending source span). This must come after `-->` and before
@@ -813,10 +816,7 @@ fn test_disasm_unknown_flag() {
         .output()
         .expect("failed to run silt");
 
-    assert!(
-        !output.status.success(),
-        "expected non-zero exit code"
-    );
+    assert!(!output.status.success(), "expected non-zero exit code");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -856,11 +856,7 @@ fn test_run_module_error_paths_consistently_normalized() {
     fs::write(&helper, "pub fn kaboom() = 1 / 0\n").unwrap();
 
     let main = dir.join("main.silt");
-    fs::write(
-        &main,
-        "import helper\nfn main() = helper.kaboom()\n",
-    )
-    .unwrap();
+    fs::write(&main, "import helper\nfn main() = helper.kaboom()\n").unwrap();
 
     // Run with a relative path so paths should stay relative.
     let output = silt_cmd()
@@ -883,10 +879,7 @@ fn test_run_module_error_paths_consistently_normalized() {
 
     // The `-->` locator must reference helper.silt but NOT with an
     // absolute path. Extract lines containing `-->`.
-    let locator_lines: Vec<&str> = stderr
-        .lines()
-        .filter(|l| l.contains("-->"))
-        .collect();
+    let locator_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("-->")).collect();
     assert!(
         !locator_lines.is_empty(),
         "expected '-->' locator in stderr, got: {stderr}"
@@ -1306,4 +1299,3 @@ fn test_silt_run_setup_error_renders_module_source() {
         "expected '1 / 0' from module source in error, got: {stderr}"
     );
 }
-

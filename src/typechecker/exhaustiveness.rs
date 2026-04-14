@@ -175,28 +175,26 @@ impl TypeChecker {
                     // reached here we must instantiate the record's field
                     // templates (substituting the type args) and delegate to
                     // `is_record_useful`, matching the `Type::Record` arm below.
-                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.record_param_var_ids.get(name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> = if type_args.len()
-                            == param_var_ids.len()
-                        {
-                            param_var_ids
+                    let fields: Vec<(Symbol, Type)> =
+                        if let Some(param_var_ids) = self.record_param_var_ids.get(name).cloned() {
+                            let mapping: HashMap<TyVar, Type> =
+                                if type_args.len() == param_var_ids.len() {
+                                    param_var_ids
+                                        .iter()
+                                        .zip(type_args.iter())
+                                        .map(|(&v, t)| (v, t.clone()))
+                                        .collect()
+                                } else {
+                                    HashMap::new()
+                                };
+                            rec_info
+                                .fields
                                 .iter()
-                                .zip(type_args.iter())
-                                .map(|(&v, t)| (v, t.clone()))
+                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
                                 .collect()
                         } else {
-                            HashMap::new()
+                            rec_info.fields.clone()
                         };
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
                     self.is_record_useful(matrix, *name, &fields, depth)
                 } else {
                     false
@@ -621,8 +619,10 @@ impl TypeChecker {
             &first_ty,
             Type::Int | Type::Float | Type::ExtFloat | Type::String
         );
-        let query_first_is_wild =
-            matches!(query_first.kind, PatternKind::Wildcard | PatternKind::Ident(_));
+        let query_first_is_wild = matches!(
+            query_first.kind,
+            PatternKind::Wildcard | PatternKind::Ident(_)
+        );
 
         if is_infinite_scalar && query_first_is_wild {
             // Collect distinct literal constructors seen in the first
@@ -657,8 +657,7 @@ impl TypeChecker {
                     match &pat.kind {
                         PatternKind::Tuple(ps) if ps.len() == arity => {
                             if Self::first_col_matches(&ps[0], ctor) {
-                                specialized_rest
-                                    .push(synth(PatternKind::Tuple(ps[1..].to_vec())));
+                                specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                             }
                         }
                         PatternKind::Wildcard | PatternKind::Ident(_) => {
@@ -916,34 +915,36 @@ impl TypeChecker {
                     if missing.is_empty() {
                         "not all patterns are covered".into()
                     } else {
-                        let word = if missing.len() == 1 { "variant" } else { "variants" };
+                        let word = if missing.len() == 1 {
+                            "variant"
+                        } else {
+                            "variants"
+                        };
                         format!("missing {} {}", word, missing.join(", "))
                     }
                 } else if let Some(rec_info) = self.records.get(name).cloned() {
                     // B1 (round 15): mirror the enum branch for records
                     // reached via `Type::Generic` at fn boundaries.
-                    let fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.record_param_var_ids.get(name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> = if type_args.len()
-                            == param_var_ids.len()
-                        {
-                            param_var_ids
+                    let fields: Vec<(Symbol, Type)> =
+                        if let Some(param_var_ids) = self.record_param_var_ids.get(name).cloned() {
+                            let mapping: HashMap<TyVar, Type> =
+                                if type_args.len() == param_var_ids.len() {
+                                    param_var_ids
+                                        .iter()
+                                        .zip(type_args.iter())
+                                        .map(|(&v, t)| (v, t.clone()))
+                                        .collect()
+                                } else {
+                                    HashMap::new()
+                                };
+                            rec_info
+                                .fields
                                 .iter()
-                                .zip(type_args.iter())
-                                .map(|(&v, t)| (v, t.clone()))
+                                .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
                                 .collect()
                         } else {
-                            HashMap::new()
+                            rec_info.fields.clone()
                         };
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
                     let record_ty = Type::Record(*name, fields);
                     self.missing_description(patterns, &record_ty)
                 } else {
@@ -1309,10 +1310,7 @@ fn main() { area(Circle(1.0)) }
         let wild = || Pattern::new(PatternKind::Wildcard, span);
         let arms = vec![
             MatchArm {
-                pattern: Pattern::new(
-                    PatternKind::Constructor(leaf_name, vec![wild()]),
-                    span,
-                ),
+                pattern: Pattern::new(PatternKind::Constructor(leaf_name, vec![wild()]), span),
                 guard: None,
                 body: body.clone(),
             },

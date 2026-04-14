@@ -1164,15 +1164,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             // Reject silently-truncated `as i32`/`as u32` values: a
             // year of `u32::MAX + 1999` used to silently wrap to 1999.
-            let y32 = i32::try_from(*y).map_err(|_| {
-                VmError::new(format!("time.date: year {y} out of range for i32"))
-            })?;
-            let m32 = u32::try_from(*m).map_err(|_| {
-                VmError::new(format!("time.date: month {m} out of range for u32"))
-            })?;
-            let d32 = u32::try_from(*d).map_err(|_| {
-                VmError::new(format!("time.date: day {d} out of range for u32"))
-            })?;
+            let y32 = i32::try_from(*y)
+                .map_err(|_| VmError::new(format!("time.date: year {y} out of range for i32")))?;
+            let m32 = u32::try_from(*m)
+                .map_err(|_| VmError::new(format!("time.date: month {m} out of range for u32")))?;
+            let d32 = u32::try_from(*d)
+                .map_err(|_| VmError::new(format!("time.date: day {d} out of range for u32")))?;
             match NaiveDate::from_ymd_opt(y32, m32, d32) {
                 Some(date) => Ok(Value::Variant("Ok".into(), vec![make_date(date)])),
                 None => Ok(Value::Variant(
@@ -1192,15 +1189,12 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             else {
                 return Err(VmError::new("time.time requires Int arguments".into()));
             };
-            let h32 = u32::try_from(*h).map_err(|_| {
-                VmError::new(format!("time.time: hour {h} out of range for u32"))
-            })?;
-            let m32 = u32::try_from(*m).map_err(|_| {
-                VmError::new(format!("time.time: minute {m} out of range for u32"))
-            })?;
-            let s32 = u32::try_from(*s).map_err(|_| {
-                VmError::new(format!("time.time: second {s} out of range for u32"))
-            })?;
+            let h32 = u32::try_from(*h)
+                .map_err(|_| VmError::new(format!("time.time: hour {h} out of range for u32")))?;
+            let m32 = u32::try_from(*m)
+                .map_err(|_| VmError::new(format!("time.time: minute {m} out of range for u32")))?;
+            let s32 = u32::try_from(*s)
+                .map_err(|_| VmError::new(format!("time.time: second {s} out of range for u32")))?;
             match NaiveTime::from_hms_opt(h32, m32, s32) {
                 Some(t) => Ok(Value::Variant("Ok".into(), vec![make_time(t)])),
                 None => Ok(Value::Variant(
@@ -1261,9 +1255,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // check as defence in depth against future Instant
             // widenings or chrono internal assumption changes.)
             let local_dt = utc_dt.checked_add_signed(offset).ok_or_else(|| {
-                VmError::new(
-                    "time.to_datetime: datetime + offset out of range".into(),
-                )
+                VmError::new("time.to_datetime: datetime + offset out of range".into())
             })?;
             Ok(make_datetime(local_dt))
         }
@@ -1288,9 +1280,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // pathological offset/datetime combination surfaces as a
             // clean VmError.
             let utc_dt = dt.checked_sub_signed(offset).ok_or_else(|| {
-                VmError::new(
-                    "time.to_instant: datetime - offset out of range".into(),
-                )
+                VmError::new("time.to_instant: datetime - offset out of range".into())
             })?;
             let epoch_ns = utc_dt
                 .and_utc()
@@ -1617,9 +1607,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // silently wrapped: `days_in_month(2024, u32::MAX + 2)`
             // returned 29. Require the arguments to fit.
             let y32 = i32::try_from(*y).map_err(|_| {
-                VmError::new(format!(
-                    "time.days_in_month: year {y} out of range for i32"
-                ))
+                VmError::new(format!("time.days_in_month: year {y} out of range for i32"))
             })?;
             let m32 = u32::try_from(*m).map_err(|_| {
                 VmError::new(format!(
@@ -1637,9 +1625,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::new("time.is_leap_year requires an Int".into()));
             };
             let y32 = i32::try_from(*y).map_err(|_| {
-                VmError::new(format!(
-                    "time.is_leap_year: year {y} out of range for i32"
-                ))
+                VmError::new(format!("time.is_leap_year: year {y} out of range for i32"))
             })?;
             let leap = (y32 % 4 == 0 && y32 % 100 != 0) || (y32 % 400 == 0);
             Ok(Value::Bool(leap))
@@ -1672,9 +1658,10 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             // (NOT the I/O pool — we don't want to burn a worker thread
             // per sleeper) and park cooperatively.
             let completion = IoCompletion::new();
-            vm.runtime
-                .timer
-                .schedule_completion(std::time::Duration::from_nanos(dur_ns as u64), completion.clone());
+            vm.runtime.timer.schedule_completion(
+                std::time::Duration::from_nanos(dur_ns as u64),
+                completion.clone(),
+            );
             vm.pending_io = Some(completion.clone());
             vm.block_reason = Some(BlockReason::Io(completion));
             for arg in args {
@@ -2183,10 +2170,7 @@ mod http_response_tests {
         let mut fields: BTreeMap<String, Value> = BTreeMap::new();
         fields.insert("status".to_string(), Value::Int(status));
         fields.insert("body".to_string(), Value::String(String::new()));
-        fields.insert(
-            "headers".to_string(),
-            Value::Map(Arc::new(BTreeMap::new())),
-        );
+        fields.insert("headers".to_string(), Value::Map(Arc::new(BTreeMap::new())));
         Value::Record("Response".to_string(), Arc::new(fields))
     }
 

@@ -399,8 +399,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         let span = (*hi as i128) - (*lo as i128) + 1;
                         i64::try_from(span).map(Value::Int).map_err(|_| {
                             VmError::new(
-                                "list.length overflow: range too large to represent as Int"
-                                    .into(),
+                                "list.length overflow: range too large to represent as Int".into(),
                             )
                         })
                     }

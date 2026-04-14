@@ -66,8 +66,7 @@ fn run_err(input: &str) -> String {
 fn test_time_to_datetime_negative_epoch_ns_subsecond_resolves_correctly() {
     // epoch_ns = -500_000_000 is 500ms before 1970-01-01T00:00:00 UTC,
     // which is 1969-12-31T23:59:59.500 UTC.
-    let result = run(
-        r#"
+    let result = run(r#"
 import time
 fn main() -> Bool {
   let inst = Instant { epoch_ns: -500000000 }
@@ -80,16 +79,14 @@ fn main() -> Bool {
     && dt.time.second == 59
     && dt.time.ns == 500000000
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Bool(true));
 }
 
 /// Baseline: epoch_ns == 0 still round-trips through to_datetime.
 #[test]
 fn test_time_to_datetime_exact_epoch_zero_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import time
 fn main() -> Bool {
   let inst = Instant { epoch_ns: 0 }
@@ -102,8 +99,7 @@ fn main() -> Bool {
     && dt.time.second == 0
     && dt.time.ns == 0
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Bool(true));
 }
 
@@ -111,8 +107,7 @@ fn main() -> Bool {
 /// `-1_500_000_000 ns` == 1.5s before epoch == 1969-12-31 23:59:58.500.
 #[test]
 fn test_time_to_datetime_negative_integer_seconds_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import time
 fn main() -> Bool {
   let inst = Instant { epoch_ns: -1500000000 }
@@ -125,8 +120,7 @@ fn main() -> Bool {
     && dt.time.second == 58
     && dt.time.ns == 500000000
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Bool(true));
 }
 
@@ -135,8 +129,7 @@ fn main() -> Bool {
 /// 1969-12-31 23:59:59.500.
 #[test]
 fn test_time_to_utc_negative_epoch_ns_subsecond() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import time
 fn main() -> Bool {
   let inst = Instant { epoch_ns: -500000000 }
@@ -149,8 +142,7 @@ fn main() -> Bool {
     && dt.time.second == 59
     && dt.time.ns == 500000000
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Bool(true));
 }
 
@@ -477,8 +469,7 @@ fn main() -> String {
         "error should be tagged time.format_date, got: {err}"
     );
     assert!(
-        err.to_lowercase().contains("timezone")
-            || err.to_lowercase().contains("time specifier"),
+        err.to_lowercase().contains("timezone") || err.to_lowercase().contains("time specifier"),
         "error should mention 'timezone' or 'time specifier', got: {err}"
     );
     assert!(
@@ -528,8 +519,7 @@ fn main() -> String {
 /// pure-date specifier on a Date receiver. Must still work.
 #[test]
 fn test_time_format_date_happy_path_still_works() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import time
 fn main() -> String {
   match time.date(2024, 6, 15) {
@@ -537,8 +527,7 @@ fn main() -> String {
     Err(_) -> "err"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::String("2024-06-15".into()));
 }
 
@@ -547,8 +536,7 @@ fn main() -> String {
 /// specifiers on DateTime, not time specifiers).
 #[test]
 fn test_time_format_datetime_with_time_specifiers_still_works() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import time
 fn main() -> String {
   match time.date(2024, 6, 15) {
@@ -559,8 +547,7 @@ fn main() -> String {
     Err(_) -> "date err"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::String("10:30:45".into()));
 }
 

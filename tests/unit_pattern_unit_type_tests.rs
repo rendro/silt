@@ -95,7 +95,9 @@ fn main() {
         !errs.is_empty(),
         "expected a type error for `let (a, b) = ()`, got none"
     );
-    let hit_mismatch = errs.iter().any(|m| m.contains("type mismatch") || m.contains("tuple length mismatch"));
+    let hit_mismatch = errs
+        .iter()
+        .any(|m| m.contains("type mismatch") || m.contains("tuple length mismatch"));
     assert!(
         hit_mismatch,
         "expected a tuple mismatch diagnostic, got: {errs:?}"

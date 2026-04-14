@@ -3,8 +3,8 @@
 //! This module contains the core inference logic: infer_expr, infer_stmt,
 //! bind_pattern, check_pattern, and check_fn_body.
 
-use super::*;
 use super::suggest::suggest_similar;
+use super::*;
 
 /// GAP (round 17 F5): pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
@@ -56,10 +56,7 @@ pub(super) fn format_undefined_variable_message(
 /// with a "did you mean `<cand>`?" hint when one of the module's builtin
 /// functions is a close edit-distance match. See
 /// `src/module.rs::builtin_module_functions` for the candidate source.
-pub(super) fn format_unknown_module_function_message(
-    field: Symbol,
-    module_str: &str,
-) -> String {
+pub(super) fn format_unknown_module_function_message(field: Symbol, module_str: &str) -> String {
     let field_str = resolve(field);
     let base = format!("unknown function '{field_str}' on module '{module_str}'");
     let fns = crate::module::builtin_module_functions(module_str);
@@ -197,15 +194,14 @@ impl TypeChecker {
                     // or the enclosing fn already declared the same
                     // constraint via its own where clause (handled now).
                     if !self.covered_by_active_constraint(&resolved, trait_name) {
-                        self.pending_where_constraints
-                            .push(PendingWhereConstraint {
-                                tyvar: *v,
-                                trait_name,
-                                callee_fn_name: Some(method_name),
-                                span,
-                                active_snapshot: self.active_constraints.clone(),
-                                param_tyvars: self.current_fn_param_tyvars.clone(),
-                            });
+                        self.pending_where_constraints.push(PendingWhereConstraint {
+                            tyvar: *v,
+                            trait_name,
+                            callee_fn_name: Some(method_name),
+                            span,
+                            active_snapshot: self.active_constraints.clone(),
+                            param_tyvars: self.current_fn_param_tyvars.clone(),
+                        });
                     }
                 }
                 _ => {
@@ -315,7 +311,8 @@ impl TypeChecker {
         let constrained_params: Vec<Type> = param_types.iter().map(|t| self.apply(t)).collect();
         let constrained_ret = self.apply(&ret_type);
         let constrained_fn = Type::Fun(constrained_params, Box::new(constrained_ret));
-        self.fn_body_types.insert(lookup_name, constrained_fn.clone());
+        self.fn_body_types
+            .insert(lookup_name, constrained_fn.clone());
 
         // Restore previous constraints and return type
         self.current_return_type = prev_return_type;
@@ -378,20 +375,19 @@ impl TypeChecker {
                         let field_ty = if let Some(param_var_ids) =
                             self.record_param_var_ids.get(&type_name).cloned()
                         {
-                            let mapping: HashMap<TyVar, Type> = if type_args.len()
-                                == param_var_ids.len()
-                            {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
+                            let mapping: HashMap<TyVar, Type> =
+                                if type_args.len() == param_var_ids.len() {
+                                    param_var_ids
+                                        .iter()
+                                        .zip(type_args.iter())
+                                        .map(|(&v, t)| (v, t.clone()))
+                                        .collect()
+                                } else {
+                                    param_var_ids
+                                        .iter()
+                                        .map(|&v| (v, self.fresh_var()))
+                                        .collect()
+                                };
                             let substituted = substitute_vars(ft, &mapping);
                             self.apply(&substituted)
                         } else {
@@ -602,11 +598,7 @@ impl TypeChecker {
     // first use of `n`. Walk the pattern and reject any Constructor
     // pattern whose parent enum has more than one variant. Match arms
     // do NOT call this check — refutable patterns are legal there.
-    pub(super) fn reject_refutable_constructor_in_let(
-        &mut self,
-        pattern: &Pattern,
-        span: Span,
-    ) {
+    pub(super) fn reject_refutable_constructor_in_let(&mut self, pattern: &Pattern, span: Span) {
         match &pattern.kind {
             PatternKind::Constructor(name, sub_pats) => {
                 if let Some(enum_name) = self.variant_to_enum.get(name).cloned()
@@ -736,8 +728,7 @@ impl TypeChecker {
                     // against a fresh tuple shape so a) Var scrutinees get
                     // the correct tuple type, and b) concrete non-tuple
                     // scrutinees produce "expected (..), got <type>".
-                    let shape_elems: Vec<Type> =
-                        pats.iter().map(|_| self.fresh_var()).collect();
+                    let shape_elems: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
                     let shape = Type::Tuple(shape_elems.clone());
                     self.unify(ty, &shape, span);
                     // After unify, if the scrutinee unified into a tuple
@@ -834,8 +825,8 @@ impl TypeChecker {
                 // the field didn't exist. Both were deferred to VM runtime
                 // errors. Reject them at the type-check stage.
                 let resolved = self.apply(ty);
-                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> = if let Some(rec_name)
-                    = name
+                let pattern_record: Option<(Symbol, Vec<(Symbol, Type)>)> = if let Some(rec_name) =
+                    name
                     && let Some(rec_info) = self.records.get(rec_name).cloned()
                 {
                     let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
@@ -889,20 +880,19 @@ impl TypeChecker {
                         } else if let Some(param_var_ids) =
                             self.record_param_var_ids.get(type_name).cloned()
                         {
-                            let mapping: HashMap<TyVar, Type> = if type_args.len()
-                                == param_var_ids.len()
-                            {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
+                            let mapping: HashMap<TyVar, Type> =
+                                if type_args.len() == param_var_ids.len() {
+                                    param_var_ids
+                                        .iter()
+                                        .zip(type_args.iter())
+                                        .map(|(&v, t)| (v, t.clone()))
+                                        .collect()
+                                } else {
+                                    param_var_ids
+                                        .iter()
+                                        .map(|&v| (v, self.fresh_var()))
+                                        .collect()
+                                };
                             rec_info
                                 .fields
                                 .iter()
@@ -1109,8 +1099,7 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(ty, &pinned_ty, span);
                 } else {
-                    let msg =
-                        format_undefined_variable_message(*name, env, "in pin pattern");
+                    let msg = format_undefined_variable_message(*name, env, "in pin pattern");
                     self.error(msg, span);
                 }
             }
@@ -1322,10 +1311,7 @@ impl TypeChecker {
                     // so downstream inference continues.
                     let module_str = resolve(module_name);
                     if crate::module::is_builtin_module(&module_str) {
-                        let msg = format_unknown_module_function_message(
-                            field,
-                            &module_str,
-                        );
+                        let msg = format_unknown_module_function_message(field, &module_str);
                         self.error(msg, span);
                         let fresh = self.fresh_var();
                         expr.ty = Some(fresh.clone());
@@ -1346,7 +1332,8 @@ impl TypeChecker {
                         } else if let Some(entry) =
                             self.method_table.get(&(*rec_name, field)).cloned()
                         {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1373,23 +1360,22 @@ impl TypeChecker {
                             let resolved = if let Some(param_var_ids) =
                                 self.record_param_var_ids.get(type_name).cloned()
                             {
-                                let mapping: HashMap<TyVar, Type> = if type_args.len()
-                                    == param_var_ids.len()
-                                {
-                                    param_var_ids
-                                        .iter()
-                                        .zip(type_args.iter())
-                                        .map(|(&v, t)| (v, t.clone()))
-                                        .collect()
-                                } else {
-                                    // Arity mismatch (already reported elsewhere).
-                                    // Fall back to fresh vars to avoid leaking
-                                    // the shared template TyVars.
-                                    param_var_ids
-                                        .iter()
-                                        .map(|&v| (v, self.fresh_var()))
-                                        .collect()
-                                };
+                                let mapping: HashMap<TyVar, Type> =
+                                    if type_args.len() == param_var_ids.len() {
+                                        param_var_ids
+                                            .iter()
+                                            .zip(type_args.iter())
+                                            .map(|(&v, t)| (v, t.clone()))
+                                            .collect()
+                                    } else {
+                                        // Arity mismatch (already reported elsewhere).
+                                        // Fall back to fresh vars to avoid leaking
+                                        // the shared template TyVars.
+                                        param_var_ids
+                                            .iter()
+                                            .map(|&v| (v, self.fresh_var()))
+                                            .collect()
+                                    };
                                 let substituted = substitute_vars(ft, &mapping);
                                 self.apply(&substituted)
                             } else {
@@ -1400,7 +1386,8 @@ impl TypeChecker {
                         }
                         // Check method table (trait methods)
                         if let Some(entry) = self.method_table.get(&(*type_name, field)).cloned() {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1431,7 +1418,8 @@ impl TypeChecker {
                             _ => unreachable!(),
                         };
                         if let Some(entry) = self.method_table.get(&(type_name, field)).cloned() {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1459,7 +1447,8 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("List"), field)).cloned()
                         {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1479,7 +1468,8 @@ impl TypeChecker {
                         if let Some(entry) =
                             self.method_table.get(&(intern("Tuple"), field)).cloned()
                         {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1498,7 +1488,8 @@ impl TypeChecker {
                     Type::Map(_, _) => {
                         if let Some(entry) = self.method_table.get(&(intern("Map"), field)).cloned()
                         {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1517,7 +1508,8 @@ impl TypeChecker {
                     Type::Set(_) => {
                         if let Some(entry) = self.method_table.get(&(intern("Set"), field)).cloned()
                         {
-                            let instantiated = self.dispatch_method_entry(&entry, field, &obj_ty, span);
+                            let instantiated =
+                                self.dispatch_method_entry(&entry, field, &obj_ty, span);
                             let resolved = self.apply(&instantiated);
                             expr.ty = Some(resolved.clone());
                             return resolved;
@@ -1971,16 +1963,14 @@ impl TypeChecker {
                                 // it at the top-level call site). We
                                 // re-check in `finalize_deferred_checks`.
                                 if let Type::Var(v) = resolved {
-                                    self.pending_where_constraints.push(
-                                        PendingWhereConstraint {
-                                            tyvar: v,
-                                            trait_name: *trait_name,
-                                            callee_fn_name,
-                                            span,
-                                            active_snapshot: self.active_constraints.clone(),
-                                            param_tyvars: self.current_fn_param_tyvars.clone(),
-                                        },
-                                    );
+                                    self.pending_where_constraints.push(PendingWhereConstraint {
+                                        tyvar: v,
+                                        trait_name: *trait_name,
+                                        callee_fn_name,
+                                        span,
+                                        active_snapshot: self.active_constraints.clone(),
+                                        param_tyvars: self.current_fn_param_tyvars.clone(),
+                                    });
                                 }
                             }
                         }
@@ -2190,8 +2180,7 @@ impl TypeChecker {
                         let arity_ok = if is_method_call {
                             arg_types.len() + 1 == params.len()
                         } else if is_module_call {
-                            arg_types.len() == params.len()
-                                || arg_types.len() + 1 == params.len()
+                            arg_types.len() == params.len() || arg_types.len() + 1 == params.len()
                         } else {
                             arg_types.len() == params.len()
                         };
@@ -2245,15 +2234,14 @@ impl TypeChecker {
                         // arm for details; both sites push to the same
                         // pending list re-examined by finalize.
                         if let Type::Var(v) = resolved {
-                            self.pending_where_constraints
-                                .push(PendingWhereConstraint {
-                                    tyvar: v,
-                                    trait_name: *trait_name,
-                                    callee_fn_name,
-                                    span,
-                                    active_snapshot: self.active_constraints.clone(),
-                                    param_tyvars: self.current_fn_param_tyvars.clone(),
-                                });
+                            self.pending_where_constraints.push(PendingWhereConstraint {
+                                tyvar: v,
+                                trait_name: *trait_name,
+                                callee_fn_name,
+                                span,
+                                active_snapshot: self.active_constraints.clone(),
+                                param_tyvars: self.current_fn_param_tyvars.clone(),
+                            });
                         }
                     }
                 }
@@ -2386,10 +2374,7 @@ impl TypeChecker {
                         if let Some(declared_ty) = declared.get(field_name) {
                             self.unify(&ft, declared_ty, span);
                         } else {
-                            self.error(
-                                format!("unknown field '{field_name}' in {rec_name}"),
-                                span,
-                            );
+                            self.error(format!("unknown field '{field_name}' in {rec_name}"), span);
                         }
                     }
                     handled = true;
@@ -2399,20 +2384,19 @@ impl TypeChecker {
                     let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
                         self.record_param_var_ids.get(type_name).cloned()
                     {
-                        let mapping: HashMap<TyVar, Type> = if type_args.len()
-                            == param_var_ids.len()
-                        {
-                            param_var_ids
-                                .iter()
-                                .zip(type_args.iter())
-                                .map(|(&v, t)| (v, t.clone()))
-                                .collect()
-                        } else {
-                            param_var_ids
-                                .iter()
-                                .map(|&v| (v, self.fresh_var()))
-                                .collect()
-                        };
+                        let mapping: HashMap<TyVar, Type> =
+                            if type_args.len() == param_var_ids.len() {
+                                param_var_ids
+                                    .iter()
+                                    .zip(type_args.iter())
+                                    .map(|(&v, t)| (v, t.clone()))
+                                    .collect()
+                            } else {
+                                param_var_ids
+                                    .iter()
+                                    .map(|&v| (v, self.fresh_var()))
+                                    .collect()
+                            };
                         rec_info
                             .fields
                             .iter()
@@ -2840,7 +2824,11 @@ impl TypeChecker {
                                 }
                             } else {
                                 self.error(
-                                    format!("constructor '{}' expects 0 fields, but pattern has {}", name, sub_pats.len()),
+                                    format!(
+                                        "constructor '{}' expects 0 fields, but pattern has {}",
+                                        name,
+                                        sub_pats.len()
+                                    ),
                                     pattern.span,
                                 );
                             }
@@ -2903,9 +2891,7 @@ impl TypeChecker {
                                 // BROKEN-3: Reject unknown field names in
                                 // match record patterns at compile time.
                                 self.error(
-                                    format!(
-                                        "record '{rec_name}' has no field '{field_name}'"
-                                    ),
+                                    format!("record '{rec_name}' has no field '{field_name}'"),
                                     span,
                                 );
                                 if let Some(sp) = sub_pat {
@@ -3046,8 +3032,7 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
                 } else {
-                    let msg =
-                        format_undefined_variable_message(*name, env, "in pin pattern");
+                    let msg = format_undefined_variable_message(*name, env, "in pin pattern");
                     self.error(msg, span);
                 }
             }

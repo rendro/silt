@@ -174,8 +174,7 @@ fn parse_location_version(headers: &str) -> Option<String> {
 /// Fails closed: any problem (missing entry, unreadable file, hash mismatch)
 /// returns Err. The caller is expected to abort installation on error.
 fn verify_archive(archive: &Path, sums_file: &Path, asset_name: &str) -> Result<(), String> {
-    let sums =
-        fs::read_to_string(sums_file).map_err(|e| format!("read SHA256SUMS: {e}"))?;
+    let sums = fs::read_to_string(sums_file).map_err(|e| format!("read SHA256SUMS: {e}"))?;
     let expected = find_expected_hash(&sums, asset_name).ok_or_else(|| {
         format!("no SHA256SUMS entry for {asset_name} — release is missing this asset or sums file is malformed")
     })?;
@@ -214,8 +213,7 @@ fn find_expected_hash<'a>(sums: &'a str, asset_name: &str) -> Option<&'a str> {
 
 /// Compute the SHA-256 of `path` as a lowercase hex string.
 fn sha256_hex(path: &Path) -> Result<String, String> {
-    let mut file =
-        fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut file = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {

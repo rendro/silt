@@ -389,10 +389,7 @@ fn compute_param_lines(
             return vec![None; n_params];
         };
         let source_lines = &state.source_lines;
-        if start_line == 0
-            || start_line > source_lines.len()
-            || close_line > source_lines.len()
-        {
+        if start_line == 0 || start_line > source_lines.len() || close_line > source_lines.len() {
             return vec![None; n_params];
         }
         let mut depth: i32 = 0;
@@ -444,18 +441,12 @@ fn compute_param_lines(
                     let mut bdepth: i32 = 1;
                     let mut j = i + 2;
                     while j < chars.len() {
-                        if j + 1 < chars.len()
-                            && chars[j] == '{'
-                            && chars[j + 1] == '-'
-                        {
+                        if j + 1 < chars.len() && chars[j] == '{' && chars[j + 1] == '-' {
                             bdepth += 1;
                             j += 2;
                             continue;
                         }
-                        if j + 1 < chars.len()
-                            && chars[j] == '-'
-                            && chars[j + 1] == '}'
-                        {
+                        if j + 1 < chars.len() && chars[j] == '-' && chars[j + 1] == '}' {
                             bdepth -= 1;
                             j += 2;
                             if bdepth == 0 {
@@ -747,9 +738,7 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
 /// it is NOT a standalone comment; it is attached to the statement at that
 /// line. Multiple leading `{- ... -}` block comments on the same line are
 /// concatenated, preserving the source spacing between them.
-fn extract_comments(
-    source: &str,
-) -> (Vec<Comment>, Vec<TrailingComment>, HashMap<usize, String>) {
+fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMap<usize, String>) {
     let mut comments = Vec::new();
     let mut trailing = Vec::new();
     let mut leading_inline: HashMap<usize, String> = HashMap::new();
@@ -828,10 +817,7 @@ fn extract_comments(
             let mut pos = leading_ws;
             let mut last_close_end: Option<usize> = None;
             loop {
-                if pos + 1 >= chars.len()
-                    || chars[pos] != '{'
-                    || chars[pos + 1] != '-'
-                {
+                if pos + 1 >= chars.len() || chars[pos] != '{' || chars[pos + 1] != '-' {
                     break;
                 }
                 // Walk to matching `-}` on the same line, tracking nesting.
@@ -875,9 +861,8 @@ fn extract_comments(
                 while k < chars.len() && chars[k].is_whitespace() {
                     k += 1;
                 }
-                let has_line_comment = k + 1 < chars.len()
-                    && chars[k] == '-'
-                    && chars[k + 1] == '-';
+                let has_line_comment =
+                    k + 1 < chars.len() && chars[k] == '-' && chars[k + 1] == '-';
                 if k >= chars.len() || has_line_comment {
                     // Standalone single-line block comment sequence
                     // (possibly followed by a `-- ...` line comment).
@@ -1275,9 +1260,7 @@ pub fn format(source: &str) -> Result<String, FmtError> {
     let program = Parser::new(tokens.clone())
         .parse_program()
         .map_err(FmtError::Parse)?;
-    let formatted = with_current_source(source, || {
-        format_program_with_comments(&program, source)
-    });
+    let formatted = with_current_source(source, || format_program_with_comments(&program, source));
     Ok(splice_inline_block_comments(source, &tokens, formatted))
 }
 
@@ -1449,10 +1432,7 @@ fn splice_inline_block_comments(
         // otherwise glue against the `-}`. Closing punctuation (`,`, `)`,
         // `]`, `}`) must stay tight so we don't produce `a {- c -} ,`.
         let needs_trail_space = match after_ch {
-            Some(c) => {
-                !c.is_whitespace()
-                    && !matches!(c, ',' | ')' | ']' | '}' | ';' | '.')
-            }
+            Some(c) => !c.is_whitespace() && !matches!(c, ',' | ')' | ']' | '}' | ';' | '.'),
             None => false,
         };
         let mut payload = String::new();
@@ -1530,9 +1510,12 @@ fn collect_source_block_comments(source: &str) -> Vec<(usize, String)> {
     let mut in_triple = false;
     while i < bytes.len() {
         // Triple-quoted string: skip content until closing `"""`.
-        if !in_string && !in_triple
+        if !in_string
+            && !in_triple
             && i + 2 < bytes.len()
-            && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"'
+            && bytes[i] == b'"'
+            && bytes[i + 1] == b'"'
+            && bytes[i + 2] == b'"'
         {
             in_triple = true;
             i += 3;
@@ -1540,7 +1523,9 @@ fn collect_source_block_comments(source: &str) -> Vec<(usize, String)> {
         }
         if in_triple {
             if i + 2 < bytes.len()
-                && bytes[i] == b'"' && bytes[i + 1] == b'"' && bytes[i + 2] == b'"'
+                && bytes[i] == b'"'
+                && bytes[i + 1] == b'"'
+                && bytes[i + 2] == b'"'
             {
                 in_triple = false;
                 i += 3;
@@ -1844,14 +1829,9 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     let params_close_line = compute_bracket_end_line(fn_start_line, '(', ')');
     let param_lines: Vec<Option<usize>> =
         compute_param_lines(fn_start_line, params_close_line, f.params.len());
-    let concrete_param_lines: Vec<usize> =
-        param_lines.iter().filter_map(|l| *l).collect();
+    let concrete_param_lines: Vec<usize> = param_lines.iter().filter_map(|l| *l).collect();
     let multiline_params = !f.params.is_empty()
-        && should_layout_multiline(
-            fn_start_line,
-            params_close_line,
-            &concrete_param_lines,
-        );
+        && should_layout_multiline(fn_start_line, params_close_line, &concrete_param_lines);
     let params = if multiline_params {
         let mut lines: Vec<String> = Vec::new();
         let mut prev_line = fn_start_line;
@@ -1991,11 +1971,7 @@ fn format_body(expr: &Expr, depth: usize) -> String {
 /// of the `}` closing the enclosing block, used to drain any comments
 /// that sit between the last statement and the close brace so they are
 /// emitted inside the block rather than hoisted to the enclosing scope.
-fn format_stmts_with_comments(
-    stmts: &[Stmt],
-    depth: usize,
-    block_close_line: usize,
-) -> String {
+fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, block_close_line: usize) -> String {
     let mut result = Vec::new();
 
     let mut last_stmt_line = 0usize;
@@ -2056,7 +2032,12 @@ fn find_ident_line(ident: &str, search_from: usize, search_until: usize) -> Opti
         let lines = &state.source_lines;
         let start = search_from.saturating_sub(1);
         let end = search_until.saturating_sub(1).min(lines.len());
-        for (idx, raw) in lines.iter().enumerate().skip(start).take(end.saturating_sub(start)) {
+        for (idx, raw) in lines
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(end.saturating_sub(start))
+        {
             if line_contains_word(raw, ident) {
                 return Some(idx + 1);
             }
@@ -2101,8 +2082,8 @@ fn line_contains_word(line: &str, ident: &str) -> bool {
         // Check whole-word match.
         if &bytes[i..i + needle.len()] == needle {
             let before_ok = i == 0 || !is_ident_char(bytes[i - 1] as char);
-            let after_ok = i + needle.len() == bytes.len()
-                || !is_ident_char(bytes[i + needle.len()] as char);
+            let after_ok =
+                i + needle.len() == bytes.len() || !is_ident_char(bytes[i + needle.len()] as char);
             if before_ok && after_ok {
                 return true;
             }
@@ -2442,11 +2423,7 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     for c in &tail {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
-    Some(format!(
-        "[\n{}\n{}]",
-        lines.join("\n"),
-        indent(depth)
-    ))
+    Some(format!("[\n{}\n{}]", lines.join("\n"), indent(depth)))
 }
 
 /// Tuple multi-line emitter. Mirrors `format_list_expr_if_multiline`.
@@ -2482,11 +2459,7 @@ fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     for c in &tail {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
-    Some(format!(
-        "(\n{}\n{})",
-        lines.join("\n"),
-        indent(depth)
-    ))
+    Some(format!("(\n{}\n{})", lines.join("\n"), indent(depth)))
 }
 
 /// Call-expression multi-line emitter. Walks the argument list and emits
@@ -2568,10 +2541,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         let trailing = take_trailing_for_line(fline)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        lines.push(format!(
-            "{}{fname}: {val},{trailing}",
-            indent(depth + 1)
-        ));
+        lines.push(format!("{}{fname}: {val},{trailing}", indent(depth + 1)));
         prev_line = fline;
     }
     let tail = take_comments_between(prev_line, close_line);
@@ -2595,11 +2565,7 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
 /// stealing a trailing comment that belongs to the *statement* rather
 /// than the innermost collection element when the whole expression was
 /// written on one source line, e.g. `println(1) {- trailing -}`.
-fn should_layout_multiline(
-    open_line: usize,
-    close_line: usize,
-    elem_lines: &[usize],
-) -> bool {
+fn should_layout_multiline(open_line: usize, close_line: usize, elem_lines: &[usize]) -> bool {
     if close_line <= open_line {
         return false;
     }
@@ -2653,7 +2619,11 @@ fn collect_pipe_stages_expr<'a>(expr: &'a Expr, stages: &mut Vec<&'a Expr>) {
 /// separator lines before the relevant arm; trailing comments sharing
 /// an arm's source line are inlined after the arm.
 fn format_match_expr(expr: &Expr, depth: usize) -> String {
-    let ExprKind::Match { expr: scrutinee, arms } = &expr.kind else {
+    let ExprKind::Match {
+        expr: scrutinee,
+        arms,
+    } = &expr.kind
+    else {
         unreachable!()
     };
     let close_line = compute_block_end_line(expr.span);
@@ -2686,11 +2656,7 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
 
-    format!(
-        "{header}{{\n{}\n{}}}",
-        lines.join("\n"),
-        indent(depth)
-    )
+    format!("{header}{{\n{}\n{}}}", lines.join("\n"), indent(depth))
 }
 
 fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
@@ -2965,11 +2931,7 @@ fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
             // body block are emitted at the correct nested position.
             let close_line = compute_block_end_line(body.span);
             let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
-            return format!(
-                "{{ {params_str} ->\n{}\n{}}}",
-                inner,
-                indent(depth)
-            );
+            return format!("{{ {params_str} ->\n{}\n{}}}", inner, indent(depth));
         }
         format!("{{ {params_str} -> {} }}", format_expr(body, depth))
     } else {
@@ -3317,8 +3279,7 @@ fn c() = 3
 
     #[test]
     fn test_extract_comments_basic() {
-        let (comments, _trailing, _leading) =
-            extract_comments("-- hello\nfn foo() = 1\n-- bye");
+        let (comments, _trailing, _leading) = extract_comments("-- hello\nfn foo() = 1\n-- bye");
         assert_eq!(comments.len(), 2);
         assert_eq!(comments[0].line, 1);
         assert_eq!(comments[0].text, "-- hello");
@@ -4541,25 +4502,31 @@ import a
             .expect("second record field trailing comment should be preserved");
         let x_pos = result.find("x: Int").expect("x field should survive");
         let y_pos = result.find("y: Int").expect("y field should survive");
-        assert!(x_pos < horiz_pos, "`-- horizontal` must follow `x: Int`, got: {result}");
-        assert!(horiz_pos < y_pos, "`-- horizontal` must precede `y: Int`, got: {result}");
-        assert!(y_pos < vert_pos, "`-- vertical` must follow `y: Int`, got: {result}");
+        assert!(
+            x_pos < horiz_pos,
+            "`-- horizontal` must follow `x: Int`, got: {result}"
+        );
+        assert!(
+            horiz_pos < y_pos,
+            "`-- horizontal` must precede `y: Int`, got: {result}"
+        );
+        assert!(
+            y_pos < vert_pos,
+            "`-- vertical` must follow `y: Int`, got: {result}"
+        );
     }
 
     #[test]
     fn test_trailing_comment_on_match_arm() {
         // F2 repro 3: trailing comment on a match arm.
-        let source = "fn main() {\n  match 1 {\n    1 -> 1 -- trailing in arm\n    _ -> 0\n  }\n}\n";
+        let source =
+            "fn main() {\n  match 1 {\n    1 -> 1 -- trailing in arm\n    _ -> 0\n  }\n}\n";
         let result = format(source).unwrap();
         let comment_pos = result
             .find("-- trailing in arm")
             .expect("match arm trailing comment should be preserved");
-        let arm_1_pos = result
-            .find("1 -> 1")
-            .expect("first arm should survive");
-        let arm_wildcard_pos = result
-            .find("_ -> 0")
-            .expect("second arm should survive");
+        let arm_1_pos = result.find("1 -> 1").expect("first arm should survive");
+        let arm_wildcard_pos = result.find("_ -> 0").expect("second arm should survive");
         assert!(
             arm_1_pos < comment_pos,
             "trailing comment must follow `1 -> 1`, got: {result}"
@@ -4605,11 +4572,15 @@ import a
         let render_pos = result
             .find("-- render this value")
             .expect("leading comment on abstract method should be preserved");
-        let show_pos = result.find("fn show").expect("show signature should survive");
+        let show_pos = result
+            .find("fn show")
+            .expect("show signature should survive");
         let low_level_pos = result
             .find("-- low-level")
             .expect("trailing comment on abstract method should be preserved");
-        let debug_pos = result.find("fn debug").expect("debug signature should survive");
+        let debug_pos = result
+            .find("fn debug")
+            .expect("debug signature should survive");
         assert!(
             render_pos < show_pos,
             "`-- render this value` must precede `fn show`, got: {result}"
@@ -4678,7 +4649,9 @@ import a
         // and emit it outside the fn body.
         let source = "fn main() {\n  let s = \"text with } closing brace\"\n  -- body comment after string\n  println(s)\n}\n";
         let result = format(source).unwrap();
-        let s_pos = result.find("let s =").expect("let statement should survive");
+        let s_pos = result
+            .find("let s =")
+            .expect("let statement should survive");
         let comment_pos = result
             .find("-- body comment after string")
             .expect("body comment should survive formatting");
@@ -4734,7 +4707,10 @@ import a
             after_pos < y_pos,
             "after-comment must precede `let y = 2`, got: {result}"
         );
-        assert!(y_pos < sum_pos, "`let y = 2` must precede `x + y`, got: {result}");
+        assert!(
+            y_pos < sum_pos,
+            "`let y = 2` must precede `x + y`, got: {result}"
+        );
         let final_brace = result.rfind('}').unwrap();
         assert!(
             after_pos < final_brace,
@@ -4807,8 +4783,7 @@ import a
         // in parens when the outer is a unary op.
         let source = "fn main() {\n  let d = -(1 + 2)\n  println(d)\n}\n";
         let result = format(source).unwrap();
-        let expected =
-            "fn main() {\n  let d = -(1 + 2)\n  println(d)\n}\n";
+        let expected = "fn main() {\n  let d = -(1 + 2)\n  println(d)\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -4817,8 +4792,7 @@ import a
         // `!(true && false)` must NOT become `!true && false`.
         let source = "fn main() {\n  let b = !(true && false)\n  println(b)\n}\n";
         let result = format(source).unwrap();
-        let expected =
-            "fn main() {\n  let b = !(true && false)\n  println(b)\n}\n";
+        let expected = "fn main() {\n  let b = !(true && false)\n  println(b)\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -4848,9 +4822,11 @@ import a
     fn test_format_preserves_trailing_block_comment_on_statement() {
         // `let x = 1 {- trailing block -}` must keep the trailing block
         // comment after the statement. Same for `println(1) {- trailing -}`.
-        let source = "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
+        let source =
+            "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
         let result = format(source).unwrap();
-        let expected = "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
+        let expected =
+            "fn main() {\n  let x = 1 {- trailing block -}\n  println(1) {- trailing -}\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -4887,8 +4863,7 @@ import a
     fn test_format_preserves_leading_block_comment_two_adjacent_stmts() {
         let source = "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
         let result = format(source).unwrap();
-        let expected =
-            "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
+        let expected = "fn main() {\n  {- lead -} let a = 1\n  {- lead2 -} let b = 2\n}\n";
         assert_eq!(result, expected);
         assert_eq!(
             result.matches("let a = 1").count(),
@@ -4935,9 +4910,11 @@ import a
 
     #[test]
     fn test_format_preserves_trailing_comments_on_multiline_list_elements() {
-        let source = "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
+        let source =
+            "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
         let result = format(source).unwrap();
-        let expected = "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
+        let expected =
+            "fn main() {\n  let xs = [\n    1, -- one\n    2, -- two\n  ]\n  println(xs)\n}\n";
         assert_eq!(result, expected);
     }
 
@@ -4967,7 +4944,8 @@ import a
 
     #[test]
     fn test_format_preserves_trailing_comments_on_multiline_record_literal_fields() {
-        let source = "type Point { x: Int, y: Int }\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        let source =
+            "type Point { x: Int, y: Int }\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
         let result = format(source).unwrap();
         let expected = "type Point {\n  x: Int,\n  y: Int,\n}\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
         assert_eq!(result, expected);

@@ -81,14 +81,12 @@ fn main() {
 
 #[test]
 fn test_string_replace_empty_from_small_to_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.replace("abc", "", "X")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("XaXbXcX".to_string()));
 }
 
@@ -98,14 +96,12 @@ fn main() {
 
 #[test]
 fn test_string_replace_normal_case_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.replace("hello world", "world", "silt")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("hello silt".to_string()));
 }
 
@@ -125,15 +121,13 @@ fn main() {
 
 #[test]
 fn test_string_replace_at_cap_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   let s = string.repeat("ab", 5000000)
   string.length(string.replace(s, "ab", "xy"))
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::Int(10_000_000));
     // Suppress unused-import warning without needing a real list.
     let _ = Arc::new(vec![Value::Int(0)]);

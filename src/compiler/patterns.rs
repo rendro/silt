@@ -254,11 +254,7 @@ impl Compiler {
                         //   depth-2 trampoline: Pop     ; falls through
                         //   depth-1 trampoline: Pop     ; falls through
                         //   depth-0 target:     <next alt code>
-                        let max_depth = sub_fails
-                            .iter()
-                            .map(|&(_, d)| d)
-                            .max()
-                            .unwrap_or(0);
+                        let max_depth = sub_fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
 
                         // Build trampolines from highest depth down to 1.
                         // trampoline_starts[d] = code offset where the
@@ -279,10 +275,7 @@ impl Compiler {
                             if depth == 0 {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError {
-                                        message: msg,
-                                        span,
-                                    })?;
+                                    .map_err(|msg| CompileError { message: msg, span })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -291,47 +284,33 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError {
-                                        message: msg,
-                                        span,
-                                    })?;
+                                    .map_err(|msg| CompileError { message: msg, span })?;
                             }
                         }
                     } else {
                         // Last alt: its failures are the overall failures.
                         // Need the same cleanup treatment so the caller's
                         // patch targets see a clean stack.
-                        let max_depth = sub_fails
-                            .iter()
-                            .map(|&(_, d)| d)
-                            .max()
-                            .unwrap_or(0);
+                        let max_depth = sub_fails.iter().map(|&(_, d)| d).max().unwrap_or(0);
 
                         if max_depth == 0 {
                             // No compound cleanup needed.
-                            fail_jumps = sub_fails
-                                .into_iter()
-                                .map(|(j, _)| j)
-                                .collect();
+                            fail_jumps = sub_fails.into_iter().map(|(j, _)| j).collect();
                         } else {
                             // Emit a jump to skip over the trampolines on
                             // the success path.  Without this, success
                             // falls through the trampoline Pops and
                             // corrupts the stack.
-                            let success_skip =
-                                self.current_chunk().emit_jump(Op::Jump, span);
+                            let success_skip = self.current_chunk().emit_jump(Op::Jump, span);
 
                             // Emit cleanup trampolines, then a single
                             // Jump that becomes the returned fail_jump.
-                            let mut trampoline_starts: Vec<(usize, usize)> =
-                                Vec::new();
+                            let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
                             for d in (1..=max_depth).rev() {
-                                let start =
-                                    self.current_chunk().emit_op(Op::Pop, span);
+                                let start = self.current_chunk().emit_op(Op::Pop, span);
                                 trampoline_starts.push((d, start));
                             }
-                            let exit_jump =
-                                self.current_chunk().emit_jump(Op::Jump, span);
+                            let exit_jump = self.current_chunk().emit_jump(Op::Jump, span);
 
                             // Patch success_skip to land here (after the
                             // trampolines), so the success path resumes
@@ -350,10 +329,7 @@ impl Compiler {
                                         .1;
                                     self.current_chunk()
                                         .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError {
-                                            message: msg,
-                                            span,
-                                        })?;
+                                        .map_err(|msg| CompileError { message: msg, span })?;
                                 }
                             }
 
@@ -467,8 +443,7 @@ impl Compiler {
 
             PatternKind::Bool(b) => {
                 self.current_chunk().emit_op(Op::TestBool, span);
-                self.current_chunk()
-                    .emit_u8(if *b { 1 } else { 0 }, span);
+                self.current_chunk().emit_u8(if *b { 1 } else { 0 }, span);
                 let jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                 Ok(vec![(jump, base_depth)])
             }
@@ -510,8 +485,7 @@ impl Compiler {
                     self.current_chunk().emit_op(Op::GetUpvalue, span);
                     self.current_chunk().emit_u8(idx, span);
                 } else {
-                    let name_idx =
-                        self.add_constant(Value::String(resolve(*name)), span)?;
+                    let name_idx = self.add_constant(Value::String(resolve(*name)), span)?;
                     self.current_chunk().emit_op(Op::GetGlobal, span);
                     self.current_chunk().emit_u16(name_idx, span);
                 }
@@ -522,7 +496,6 @@ impl Compiler {
 
             // ── Compound patterns ──────────────────────────────
             // These push intermediate Destruct values on the stack.
-
             PatternKind::Constructor(name, fields) => {
                 let name_str = resolve(*name);
                 if let Some(required) = module::gated_constructor_module(&name_str)
@@ -543,11 +516,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(field_pat) {
                         self.current_chunk().emit_op(Op::DestructVariant, span);
                         self.current_chunk().emit_u8(i as u8, span);
-                        let sub_fails = self.compile_pattern_test_tracked(
-                            field_pat,
-                            span,
-                            base_depth + 1,
-                        )?;
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(field_pat, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
                     }
@@ -559,8 +529,7 @@ impl Compiler {
             PatternKind::Tuple(pats) => {
                 if pats.len() > u8::MAX as usize {
                     return Err(CompileError {
-                        message: "tuple pattern cannot have more than 255 elements"
-                            .into(),
+                        message: "tuple pattern cannot have more than 255 elements".into(),
                         span,
                     });
                 }
@@ -573,11 +542,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(pat) {
                         self.current_chunk().emit_op(Op::DestructTuple, span);
                         self.current_chunk().emit_u8(i as u8, span);
-                        let sub_fails = self.compile_pattern_test_tracked(
-                            pat,
-                            span,
-                            base_depth + 1,
-                        )?;
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
                     }
@@ -602,11 +568,8 @@ impl Compiler {
                     if !self.pattern_is_irrefutable(pat) {
                         self.current_chunk().emit_op(Op::DestructList, span);
                         self.current_chunk().emit_u8(i as u8, span);
-                        let sub_fails = self.compile_pattern_test_tracked(
-                            pat,
-                            span,
-                            base_depth + 1,
-                        )?;
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(pat, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
                     }
@@ -617,11 +580,8 @@ impl Compiler {
                 {
                     self.current_chunk().emit_op(Op::DestructListRest, span);
                     self.current_chunk().emit_u8(elem_count, span);
-                    let sub_fails = self.compile_pattern_test_tracked(
-                        rest_pat,
-                        span,
-                        base_depth + 1,
-                    )?;
+                    let sub_fails =
+                        self.compile_pattern_test_tracked(rest_pat, span, base_depth + 1)?;
                     self.current_chunk().emit_op(Op::Pop, span);
                     all_jumps.extend(sub_fails);
                 }
@@ -633,12 +593,10 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 if let Some(type_name) = name {
-                    let idx =
-                        self.add_constant(Value::String(resolve(*type_name)), span)?;
+                    let idx = self.add_constant(Value::String(resolve(*type_name)), span)?;
                     self.current_chunk().emit_op(Op::TestRecordTag, span);
                     self.current_chunk().emit_u16(idx, span);
-                    let tag_jump =
-                        self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    let tag_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push((tag_jump, base_depth));
                 }
 
@@ -648,18 +606,12 @@ impl Compiler {
                         None => continue,
                     };
                     if !self.pattern_is_irrefutable(sub_pattern) {
-                        let field_idx = self.add_constant(
-                            Value::String(resolve(*field_name)),
-                            span,
-                        )?;
-                        self.current_chunk()
-                            .emit_op(Op::DestructRecordField, span);
+                        let field_idx =
+                            self.add_constant(Value::String(resolve(*field_name)), span)?;
+                        self.current_chunk().emit_op(Op::DestructRecordField, span);
                         self.current_chunk().emit_u16(field_idx, span);
-                        let sub_fails = self.compile_pattern_test_tracked(
-                            sub_pattern,
-                            span,
-                            base_depth + 1,
-                        )?;
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
                     }
@@ -672,24 +624,18 @@ impl Compiler {
                 let mut all_jumps = Vec::new();
 
                 for (key, sub_pat) in entries {
-                    let key_idx =
-                        self.add_constant(Value::String(key.clone()), span)?;
+                    let key_idx = self.add_constant(Value::String(key.clone()), span)?;
                     self.current_chunk().emit_op(Op::TestMapHasKey, span);
                     self.current_chunk().emit_u16(key_idx, span);
-                    let key_jump =
-                        self.current_chunk().emit_jump(Op::JumpIfFalse, span);
+                    let key_jump = self.current_chunk().emit_jump(Op::JumpIfFalse, span);
                     all_jumps.push((key_jump, base_depth));
 
                     if !self.pattern_is_irrefutable(sub_pat) {
-                        let key_idx2 =
-                            self.add_constant(Value::String(key.clone()), span)?;
+                        let key_idx2 = self.add_constant(Value::String(key.clone()), span)?;
                         self.current_chunk().emit_op(Op::DestructMapValue, span);
                         self.current_chunk().emit_u16(key_idx2, span);
-                        let sub_fails = self.compile_pattern_test_tracked(
-                            sub_pat,
-                            span,
-                            base_depth + 1,
-                        )?;
+                        let sub_fails =
+                            self.compile_pattern_test_tracked(sub_pat, span, base_depth + 1)?;
                         self.current_chunk().emit_op(Op::Pop, span);
                         all_jumps.extend(sub_fails);
                     }
@@ -704,12 +650,10 @@ impl Compiler {
                 let mut success_jumps = Vec::new();
 
                 for (i, alt) in alternatives.iter().enumerate() {
-                    let sub_fails =
-                        self.compile_pattern_test_tracked(alt, span, base_depth)?;
+                    let sub_fails = self.compile_pattern_test_tracked(alt, span, base_depth)?;
 
                     if i < alternatives.len() - 1 {
-                        let success =
-                            self.current_chunk().emit_jump(Op::Jump, span);
+                        let success = self.current_chunk().emit_jump(Op::Jump, span);
                         success_jumps.push(success);
 
                         let max_depth = sub_fails
@@ -718,11 +662,9 @@ impl Compiler {
                             .max()
                             .unwrap_or(base_depth);
 
-                        let mut trampoline_starts: Vec<(usize, usize)> =
-                            Vec::new();
+                        let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
                         for d in (base_depth + 1..=max_depth).rev() {
-                            let start =
-                                self.current_chunk().emit_op(Op::Pop, span);
+                            let start = self.current_chunk().emit_op(Op::Pop, span);
                             trampoline_starts.push((d, start));
                         }
                         let next_alt_offset = self.current_chunk().len();
@@ -731,10 +673,7 @@ impl Compiler {
                             if depth <= base_depth {
                                 self.current_chunk()
                                     .patch_jump_to(fj, next_alt_offset)
-                                    .map_err(|msg| CompileError {
-                                        message: msg,
-                                        span,
-                                    })?;
+                                    .map_err(|msg| CompileError { message: msg, span })?;
                             } else {
                                 let target = trampoline_starts
                                     .iter()
@@ -743,10 +682,7 @@ impl Compiler {
                                     .1;
                                 self.current_chunk()
                                     .patch_jump_to(fj, target)
-                                    .map_err(|msg| CompileError {
-                                        message: msg,
-                                        span,
-                                    })?;
+                                    .map_err(|msg| CompileError { message: msg, span })?;
                             }
                         }
                     } else {
@@ -761,18 +697,14 @@ impl Compiler {
                             fail_jumps = sub_fails;
                         } else {
                             // Skip over trampolines on success path.
-                            let success_skip =
-                                self.current_chunk().emit_jump(Op::Jump, span);
+                            let success_skip = self.current_chunk().emit_jump(Op::Jump, span);
 
-                            let mut trampoline_starts: Vec<(usize, usize)> =
-                                Vec::new();
+                            let mut trampoline_starts: Vec<(usize, usize)> = Vec::new();
                             for d in (base_depth + 1..=max_depth).rev() {
-                                let start =
-                                    self.current_chunk().emit_op(Op::Pop, span);
+                                let start = self.current_chunk().emit_op(Op::Pop, span);
                                 trampoline_starts.push((d, start));
                             }
-                            let exit_jump =
-                                self.current_chunk().emit_jump(Op::Jump, span);
+                            let exit_jump = self.current_chunk().emit_jump(Op::Jump, span);
 
                             // Patch success_skip to land after trampolines.
                             self.patch_jump(success_skip, span)?;
@@ -789,10 +721,7 @@ impl Compiler {
                                         .1;
                                     self.current_chunk()
                                         .patch_jump_to(fj, target)
-                                        .map_err(|msg| CompileError {
-                                            message: msg,
-                                            span,
-                                        })?;
+                                        .map_err(|msg| CompileError { message: msg, span })?;
                                 }
                             }
 
@@ -1098,9 +1027,7 @@ impl Compiler {
                 }
             }),
             PatternKind::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
-            PatternKind::Map(entries) => {
-                entries.iter().any(|(_, p)| self.pattern_has_bindings(p))
-            }
+            PatternKind::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
         }
     }
 

@@ -725,8 +725,7 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter()
-            .any(|e| e.contains("Fn(Int, String) -> Bool")),
+        errs.iter().any(|e| e.contains("Fn(Int, String) -> Bool")),
         "expected 'Fn(Int, String) -> Bool' in error message, got: {errs:?}"
     );
 }

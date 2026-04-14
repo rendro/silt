@@ -214,10 +214,7 @@ fn test_silt_check_with_main_function_is_clean() {
 fn test_silt_run_with_main_function_does_not_show_missing_main_error() {
     // Regression guard on the `run` path: a valid program must not
     // spuriously report a missing-main error.
-    let path = temp_silt_file(
-        "run_has_main",
-        "fn main() { println(\"ok\") }\n",
-    );
+    let path = temp_silt_file("run_has_main", "fn main() { println(\"ok\") }\n");
 
     let output = silt_cmd()
         .arg("run")

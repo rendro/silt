@@ -133,8 +133,7 @@ fn test_run_parse_error() {
     // A bare `contains("error")` would also match type / runtime /
     // CLI errors, masking drift to the wrong error kind.
     assert!(
-        stderr.contains("error[parse]")
-            && stderr.contains("expected identifier, found {"),
+        stderr.contains("error[parse]") && stderr.contains("expected identifier, found {"),
         "expected parse-phase identifier error in stderr, got: {stderr}"
     );
 }
@@ -794,11 +793,7 @@ fn test_runtime_error_from_module_shows_module_source() {
 
     // main.silt: imports foo and calls foo.bad from main.
     let main = dir.join("main.silt");
-    fs::write(
-        &main,
-        "import foo\n\nfn main() {\n  foo.bad()\n}\n",
-    )
-    .unwrap();
+    fs::write(&main, "import foo\n\nfn main() {\n  foo.bad()\n}\n").unwrap();
 
     let output = silt_cmd()
         .arg("run")
@@ -1538,7 +1533,10 @@ fn test_silt_check_no_args_banner_matches_help() {
 
 #[test]
 fn test_silt_lowercase_v_prints_version() {
-    let output = silt_cmd().arg("-v").output().expect("failed to run silt -v");
+    let output = silt_cmd()
+        .arg("-v")
+        .output()
+        .expect("failed to run silt -v");
     assert!(
         output.status.success(),
         "expected exit 0 for `silt -v`, stderr: {}",
@@ -1611,13 +1609,16 @@ fn test_json_error_message_field_has_no_embedded_newlines() {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("stdout should be valid JSON");
     let arr = parsed.as_array().expect("expected JSON array");
-    assert!(!arr.is_empty(), "expected at least one error in JSON output");
+    assert!(
+        !arr.is_empty(),
+        "expected at least one error in JSON output"
+    );
 
     // Find an error whose message mentions the module parse failure.
     let module_err = arr.iter().find(|e| {
-        e["message"]
-            .as_str()
-            .map_or(false, |m| m.contains("module") || m.contains("expected parameter name"))
+        e["message"].as_str().map_or(false, |m| {
+            m.contains("module") || m.contains("expected parameter name")
+        })
     });
     assert!(
         module_err.is_some(),
@@ -1698,10 +1699,7 @@ fn test_lsp_unknown_flag() {
 #[test]
 fn test_fmt_check_error_no_redundant_path_prefix() {
     // Create a file with a parse error so fmt --check hits the error path.
-    let path = temp_silt_file(
-        "fmt_redundant_prefix",
-        "fn broken( {\n}\n",
-    );
+    let path = temp_silt_file("fmt_redundant_prefix", "fn broken( {\n}\n");
 
     let output = silt_cmd()
         .arg("fmt")

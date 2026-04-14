@@ -21,9 +21,7 @@ use silt::vm::Vm;
 /// Typecheck-only: collect error messages.
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -35,9 +33,7 @@ fn type_errors(input: &str) -> Vec<String> {
 /// Panics on any error. Returns the top-level `main` return value.
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let errs = typechecker::check(&mut program);
     let fatal: Vec<_> = errs
         .iter()
@@ -45,9 +41,7 @@ fn run(input: &str) -> Value {
         .collect();
     assert!(fatal.is_empty(), "type errors: {fatal:?}");
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile error");
+    let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")

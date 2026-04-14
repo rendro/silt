@@ -145,10 +145,7 @@ impl Vm {
     ///
     /// The `args` slice is pushed back onto the stack on re-park so the
     /// CallBuiltin opcode can re-read them when the task resumes.
-    pub(crate) fn io_entry_guard(
-        &mut self,
-        args: &[Value],
-    ) -> Result<Option<Value>, VmError> {
+    pub(crate) fn io_entry_guard(&mut self, args: &[Value]) -> Result<Option<Value>, VmError> {
         use crate::vm::runtime::BlockReason;
         if self.is_scheduled_task
             && let Some(completion) = self.pending_io.take()

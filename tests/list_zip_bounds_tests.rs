@@ -78,14 +78,12 @@ fn main() {
 
 #[test]
 fn test_list_zip_range_range_at_cap_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   list.length(list.zip(0..9999999, 0..9999999))
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::Int(10_000_000));
 }
 
@@ -151,14 +149,12 @@ fn main() {
 
 #[test]
 fn test_list_zip_small_ranges_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   list.zip(0..4, 10..14)
 }
-        "#,
-    );
+        "#);
     let expected = Value::List(Arc::new(vec![
         Value::Tuple(vec![Value::Int(0), Value::Int(10)]),
         Value::Tuple(vec![Value::Int(1), Value::Int(11)]),

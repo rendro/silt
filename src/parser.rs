@@ -1544,8 +1544,7 @@ impl Parser {
                     ))
                 } else if !self.has_newline_before()
                     && self.at(&Token::LBrace)
-                    && (!self.in_match_scrutinee
-                        || self.scrutinee_lbrace_is_record_literal())
+                    && (!self.in_match_scrutinee || self.scrutinee_lbrace_is_record_literal())
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
@@ -3146,7 +3145,9 @@ fn main() {
             if let ExprKind::Match { arms, .. } = &match_expr.kind {
                 if let PatternKind::List(ref pats, ref rest) = arms[0].pattern.kind {
                     assert_eq!(pats.len(), 1);
-                    assert!(matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h")));
+                    assert!(
+                        matches!(&pats[0].kind, PatternKind::Ident(n) if *n == intern::intern("h"))
+                    );
                     assert!(rest.is_some());
                     assert!(
                         matches!(&rest.as_deref().unwrap().kind, PatternKind::Ident(n) if *n == intern::intern("t"))
@@ -3155,7 +3156,9 @@ fn main() {
                     panic!("expected list pattern");
                 }
                 // Second arm: empty list
-                assert!(matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty()));
+                assert!(
+                    matches!(&arms[1].pattern.kind, PatternKind::List(pats, None) if pats.is_empty())
+                );
             } else {
                 panic!("expected match");
             }

@@ -27,12 +27,13 @@ fn run_silt(src: &str) -> (String, String, i32) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_td_{}_{n}.silt",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("silt_td_{}_{n}.silt", std::process::id()));
     std::fs::write(&tmp, src).unwrap();
-    let output = Command::new(silt_bin()).arg("run").arg(&tmp).output().unwrap();
+    let output = Command::new(silt_bin())
+        .arg("run")
+        .arg(&tmp)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&tmp);
     (
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -183,8 +184,7 @@ fn main() {{
     // The second I/O must succeed (or get a clean fs error) — it must
     // NOT return the stale watchdog-fired Err.
     assert!(
-        stdout.contains("second=")
-            && !stdout.contains("second=err:leak"),
+        stdout.contains("second=") && !stdout.contains("second=err:leak"),
         "second I/O must not reuse stale pending_io; got: {stdout}"
     );
 }
@@ -292,10 +292,7 @@ fn run_silt_with_io_timeout_stdin_piped(
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_td_wd_{}_{n}.silt",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("silt_td_wd_{}_{n}.silt", std::process::id()));
     std::fs::write(&tmp, src).unwrap();
 
     let mut child = Command::new(silt_bin())

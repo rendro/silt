@@ -130,10 +130,7 @@ fn every_example_type_checks_and_has_no_warnings() {
         if WARN_ALLOWLIST.contains(&name) {
             continue;
         }
-        let warn_lines: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("warning["))
-            .collect();
+        let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("warning[")).collect();
         if !warn_lines.is_empty() {
             warn_failures.push(format!(
                 "{}: emitted {} warning line(s):\n{}",
@@ -422,8 +419,7 @@ fn all_doc_fn_main_blocks_type_check() {
         "expected at least one markdown target (README.md or docs/**/*.md)"
     );
 
-    let tmp_dir =
-        std::env::temp_dir().join(format!("silt_all_doc_check_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("silt_all_doc_check_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
     let mut failures: Vec<String> = Vec::new();
@@ -703,8 +699,7 @@ fn bindings_and_functions_globals_list_matches_reality() {
     //     `src/typechecker/builtins.rs` (the prelude + `Int`/`Float`/
     //     `String`/`Bool` primitive type descriptors).
     let required = [
-        "print", "println", "panic", "Ok", "Err", "Some", "None", "Int", "Float", "String",
-        "Bool",
+        "print", "println", "panic", "Ok", "Err", "Some", "None", "Int", "Float", "String", "Bool",
     ];
     let missing: Vec<&str> = required
         .iter()
@@ -783,12 +778,10 @@ fn disasm_wording_consistent_across_main_readme_getting_started() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let main_rs = std::fs::read_to_string(manifest_dir.join("src").join("main.rs"))
         .expect("read src/main.rs");
-    let readme =
-        std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");
-    let getting_started = std::fs::read_to_string(
-        manifest_dir.join("docs").join("getting-started.md"),
-    )
-    .expect("read docs/getting-started.md");
+    let readme = std::fs::read_to_string(manifest_dir.join("README.md")).expect("read README.md");
+    let getting_started =
+        std::fs::read_to_string(manifest_dir.join("docs").join("getting-started.md"))
+            .expect("read docs/getting-started.md");
 
     // Authoritative wording comes from src/main.rs --help text.
     assert!(
@@ -872,7 +865,9 @@ fn all_doc_fn_test_blocks_compile() {
                 Some(r) => r,
                 None => continue,
             };
-            let rest = rest.strip_prefix("skip_test_").or_else(|| rest.strip_prefix("test_"));
+            let rest = rest
+                .strip_prefix("skip_test_")
+                .or_else(|| rest.strip_prefix("test_"));
             if let Some(after) = rest {
                 // The char right after must look like an identifier continuation
                 // so we don't match `fn test` as a bare-word false positive.
@@ -886,8 +881,8 @@ fn all_doc_fn_test_blocks_compile() {
         false
     }
 
-    let tmp_dir = std::env::temp_dir()
-        .join(format!("silt_all_doc_test_blocks_{}", std::process::id()));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("silt_all_doc_test_blocks_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
     let mut failures: Vec<String> = Vec::new();
@@ -1010,8 +1005,14 @@ fn int_float_doc_does_not_claim_float_to_int_accepts_extfloat() {
 #[test]
 fn test_float_to_string_doc_documents_both_overloads() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let int_float = manifest_dir.join("docs").join("stdlib").join("int-float.md");
-    let modules = manifest_dir.join("docs").join("language").join("modules.md");
+    let int_float = manifest_dir
+        .join("docs")
+        .join("stdlib")
+        .join("int-float.md");
+    let modules = manifest_dir
+        .join("docs")
+        .join("language")
+        .join("modules.md");
 
     let int_float_body = std::fs::read_to_string(&int_float)
         .unwrap_or_else(|e| panic!("failed to read {}: {}", int_float.display(), e));
@@ -1099,8 +1100,8 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
         "expected at least one markdown target (README.md or docs/**/*.md)"
     );
 
-    let tmp_dir = std::env::temp_dir()
-        .join(format!("silt_doc_warnings_walker_{}", std::process::id()));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("silt_doc_warnings_walker_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
     let mut failures: Vec<String> = Vec::new();
@@ -1132,10 +1133,7 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Look for any `warning[` line — the compiler emits
             // `warning[compile]: ...` / `warning[type]: ...` etc.
-            let warn_lines: Vec<&str> = stderr
-                .lines()
-                .filter(|l| l.contains("warning["))
-                .collect();
+            let warn_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("warning[")).collect();
             if !warn_lines.is_empty() {
                 failures.push(format!(
                     "{}:{} (```silt fence): emitted compile warning(s):\n{}",
@@ -1448,8 +1446,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         "expected at least one markdown target (README.md or docs/**/*.md)"
     );
 
-    let tmp_dir =
-        std::env::temp_dir().join(format!("silt_doc_run_walker_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("silt_doc_run_walker_{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
     let mut ran = 0usize;
@@ -1507,10 +1504,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
 
             // An `error[` line on stderr is a runtime or late
             // compile error that the compile-only walker missed.
-            let error_lines: Vec<&str> = stderr
-                .lines()
-                .filter(|l| l.contains("error["))
-                .collect();
+            let error_lines: Vec<&str> = stderr.lines().filter(|l| l.contains("error[")).collect();
             if !error_lines.is_empty() {
                 failures.push(format!(
                     "{}:{} (```silt fence): runtime error(s):\n{}\n\
@@ -1629,9 +1623,13 @@ fn docs_mention_silt_io_timeout_env_var() {
 #[test]
 fn docs_mention_watchdog_zombie_limitation() {
     let doc = std::fs::read_to_string("docs/concurrency.md").unwrap();
-    assert!(doc.contains("SILT_IO_TIMEOUT") &&
-            (doc.contains("zombie") || doc.contains("not cancelled") || doc.contains("continues to completion")),
-            "docs/concurrency.md must document watchdog-zombie limitation near SILT_IO_TIMEOUT");
+    assert!(
+        doc.contains("SILT_IO_TIMEOUT")
+            && (doc.contains("zombie")
+                || doc.contains("not cancelled")
+                || doc.contains("continues to completion")),
+        "docs/concurrency.md must document watchdog-zombie limitation near SILT_IO_TIMEOUT"
+    );
 }
 
 #[test]
@@ -1641,8 +1639,7 @@ fn docs_mention_silt_run_disassemble_flag() {
     // discoverable.
     let getting_started = std::fs::read_to_string("docs/getting-started.md")
         .expect("docs/getting-started.md must be readable");
-    let readme = std::fs::read_to_string("README.md")
-        .expect("README.md must be readable");
+    let readme = std::fs::read_to_string("README.md").expect("README.md must be readable");
     assert!(
         getting_started.contains("--disassemble") || readme.contains("--disassemble"),
         "either docs/getting-started.md or README.md must mention the `silt run --disassemble` flag"

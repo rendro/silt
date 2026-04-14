@@ -486,8 +486,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     "task.spawn_until requires a function argument".into(),
                 ));
             };
-            let deadline =
-                Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
+            let deadline = Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
             spawn_with_deadline(vm, closure, deadline)
         }
         "deadline" => {
@@ -525,8 +524,7 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                         "task.deadline: duration must be non-negative".into(),
                     ));
                 }
-                let new_deadline = Instant::now()
-                    .checked_add(Duration::from_nanos(dur_ns as u64));
+                let new_deadline = Instant::now().checked_add(Duration::from_nanos(dur_ns as u64));
                 let prev = vm.current_deadline;
                 vm.deadline_stack.push(prev);
                 // Tighten: earliest of current and new wins.

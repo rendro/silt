@@ -149,7 +149,8 @@ fn main() { println(measure_it(42)) }
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("does not implement trait 'Measurable'")),
+        errs.iter()
+            .any(|e| e.contains("does not implement trait 'Measurable'")),
         "expected 'does not implement trait Measurable' error, got: {errs:?}"
     );
 }

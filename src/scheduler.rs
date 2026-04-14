@@ -7,8 +7,8 @@
 use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Weak;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -142,8 +142,7 @@ impl WatchdogRegistry {
         let mut fired = 0;
         for (weak_completion, msg) in to_fire {
             if let Some(completion) = weak_completion.upgrade() {
-                let err_value =
-                    Value::Variant("Err".into(), vec![Value::String(msg.to_string())]);
+                let err_value = Value::Variant("Err".into(), vec![Value::String(msg.to_string())]);
                 if completion.complete(err_value) {
                     fired += 1;
                 }
@@ -601,9 +600,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             select_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                             select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                             let mut handles = select_inner.blocked_handles.lock();
-                            if let Some(pos) =
-                                handles.iter().position(|h| h.id == select_task_id)
-                            {
+                            if let Some(pos) = handles.iter().position(|h| h.id == select_task_id) {
                                 handles.swap_remove(pos);
                             }
                             drop(handles);
@@ -682,7 +679,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             .map(|d| (d, DeadlineSource::Task));
                         let effective = match (global_deadline, task_deadline) {
                             (Some((a, sa)), Some((b, sb))) => {
-                                if a <= b { Some((a, sa)) } else { Some((b, sb)) }
+                                if a <= b {
+                                    Some((a, sa))
+                                } else {
+                                    Some((b, sb))
+                                }
                             }
                             (Some(x), None) | (None, Some(x)) => Some(x),
                             (None, None) => None,

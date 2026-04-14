@@ -95,14 +95,12 @@ fn main() {
 #[test]
 fn test_string_pad_left_at_cap_ok_or_rejected() {
     // At cap: allowed, returns a string whose char count equals the cap.
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.length(string.pad_left("hi", 10000000, " "))
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::Int(10_000_000));
 
     // One past cap: clean VmError, not an abort.
@@ -124,55 +122,47 @@ fn main() {
 
 #[test]
 fn test_string_pad_left_normal_width_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.pad_left("hi", 5, " ")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("   hi".into()));
 }
 
 #[test]
 fn test_string_pad_right_normal_width_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.pad_right("hi", 5, " ")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("hi   ".into()));
 }
 
 #[test]
 fn test_string_pad_left_width_zero_ok() {
     // Width less than the input's char count: original string preserved.
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.pad_left("hello", 2, " ")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("hello".into()));
 }
 
 #[test]
 fn test_string_pad_left_multibyte_pad_char() {
     // Non-ASCII pad char (U+00E9 'é' is 2 bytes UTF-8).
-    let result = run(
-        r#"
+    let result = run(r#"
 import string
 fn main() {
   string.pad_left("hi", 5, "é")
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::String("éééhi".into()));
 }
 

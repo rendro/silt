@@ -16,8 +16,8 @@ use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::typechecker;
 use silt::types::Severity;
-use silt::vm::Vm;
 use silt::value::Value;
+use silt::vm::Vm;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -35,9 +35,7 @@ fn parse_error(input: &str) -> Option<String> {
 /// other typechecker-level rejections that the parser accepts.
 fn type_errors(input: &str) -> Vec<String> {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     typechecker::check(&mut program)
         .into_iter()
         .filter(|e| e.severity == Severity::Error)
@@ -50,9 +48,7 @@ fn type_errors(input: &str) -> Vec<String> {
 /// return value.
 fn run(input: &str) -> Value {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
-    let mut program = Parser::new(tokens)
-        .parse_program()
-        .expect("parse error");
+    let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let errs = typechecker::check(&mut program);
     let fatal: Vec<_> = errs
         .iter()
@@ -60,9 +56,7 @@ fn run(input: &str) -> Value {
         .collect();
     assert!(fatal.is_empty(), "type errors: {fatal:?}");
     let mut compiler = Compiler::new();
-    let functions = compiler
-        .compile_program(&program)
-        .expect("compile error");
+    let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
     vm.run(script).expect("runtime error")
@@ -85,8 +79,7 @@ trait X for Box(Int) {
     )
     .expect("expected parse error on concrete-typed impl target");
     assert!(
-        err.contains("must be a lowercase type variable")
-            && err.contains("Int"),
+        err.contains("must be a lowercase type variable") && err.contains("Int"),
         "got: {err}"
     );
 }
@@ -104,8 +97,7 @@ trait X for Pair(a, a) {
     )
     .expect("expected parse error on duplicate impl binder");
     assert!(
-        err.contains("duplicate type variable")
-            && err.contains("'a'"),
+        err.contains("duplicate type variable") && err.contains("'a'"),
         "got: {err}"
     );
 }
@@ -124,10 +116,7 @@ trait X for (Int, Int) {
 "#,
     )
     .expect("expected parse error on tuple impl target");
-    assert!(
-        err.contains("must be a named type"),
-        "got: {err}"
-    );
+    assert!(err.contains("must be a named type"), "got: {err}");
 }
 
 // ── Typecheck rejection ─────────────────────────────────────────────
@@ -146,9 +135,10 @@ trait X for Box(a, b) {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("type argument count mismatch")
-            && e.contains("'Box'")
-            && e.contains("expected 1, got 2")),
+        errs.iter()
+            .any(|e| e.contains("type argument count mismatch")
+                && e.contains("'Box'")
+                && e.contains("expected 1, got 2")),
         "got: {errs:?}"
     );
 }
@@ -161,8 +151,7 @@ fn test_trait_impl_parameterized_enum_pattern_matches_self() {
     // errored with "type argument count mismatch for Box: expected 0,
     // got 1" because type_from_name built Generic("Box", []) and the
     // match pattern expected Generic("Box", [elem]).
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Wrap { fn unwrap(self) -> Int }
 trait Wrap for Box(a) {
@@ -174,8 +163,7 @@ fn main() -> Int {
   let b = Box(99)
   b.unwrap()
 }
-"#,
-    );
+"#);
     match v {
         Value::Int(42) => {}
         other => panic!("expected Int(42), got {other:?}"),
@@ -187,8 +175,7 @@ fn test_trait_impl_parameterized_enum_works_for_distinct_element_types() {
     // A single `trait X for Box(a)` impl must monomorph at each call
     // site: `Box(Int)` and `Box(String)` both dispatch to the same
     // method with no cross-pollution between their tyvars.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Unwrap { fn get(self) -> Int }
 trait Unwrap for Box(a) {
@@ -199,8 +186,7 @@ fn main() -> Int {
   let c = Box("hello")
   b.get() + c.get()
 }
-"#,
-    );
+"#);
     match v {
         Value::Int(2) => {}
         other => panic!("expected Int(2), got {other:?}"),
@@ -212,8 +198,7 @@ fn test_trait_impl_parameterized_record_field_access_on_type_var() {
     // Pre-feature: `self.value` on a `trait X for Cell(a)` body failed
     // because self_type was Generic("Cell", []) and field lookup on a
     // zero-arity Generic of a 1-param record didn't unify.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Cell(T) { value: T }
 trait Peek { fn peek(self) -> Int }
 trait Peek for Int { fn peek(self) -> Int { self } }
@@ -224,8 +209,7 @@ fn main() -> Int {
   let c = Cell { value: 42 }
   c.peek()
 }
-"#,
-    );
+"#);
     match v {
         Value::Int(42) => {}
         other => panic!("expected Int(42), got {other:?}"),
@@ -239,8 +223,7 @@ fn test_trait_impl_parameterized_method_level_where_on_impl_binder() {
     // method-level `where a: Greet` makes the constraint check succeed
     // because `a` is visible in the method signature via the impl-level
     // param_map clone.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int-greet" } }
@@ -253,8 +236,7 @@ fn main() -> String {
   let b = Box(5)
   b.greet()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "int-greet"),
         other => panic!("expected String, got {other:?}"),
@@ -267,13 +249,11 @@ fn main() -> String {
 fn test_trait_impl_bare_target_still_typechecks_and_runs() {
     // Existing `trait X for Int { ... }` form must be unchanged —
     // no parser errors, no typecheck errors, runtime value correct.
-    let v = run(
-        r#"
+    let v = run(r#"
 trait Double { fn double(self) -> Int }
 trait Double for Int { fn double(self) -> Int { self * 2 } }
 fn main() -> Int { (5).double() }
-"#,
-    );
+"#);
     match v {
         Value::Int(10) => {}
         other => panic!("expected Int(10), got {other:?}"),
@@ -286,8 +266,7 @@ fn test_trait_impl_bare_target_on_parameterized_record_still_works() {
     // must be preserved — a bare `trait X for Box` on a parameterized
     // record (Generic("Box", [fresh_var]) via round-16 arity fix) still
     // compiles and runs when the method body never exposes the inner.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { value: T }
 trait Tag { fn tag(self) -> String }
 trait Tag for Box { fn tag(self) -> String { "box" } }
@@ -295,8 +274,7 @@ fn main() -> String {
   let b = Box { value: 42 }
   b.tag()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "box"),
         other => panic!("expected String, got {other:?}"),
@@ -370,8 +348,7 @@ fn test_trait_impl_level_where_clause_propagates_to_method_body() {
     // inside every method body in the impl, so `inner.greet()` on
     // `inner: a` dispatches via active_constraints without requiring
     // a method-level duplicate of the where clause.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int-greet" } }
@@ -383,8 +360,7 @@ trait Greet for Box(a) where a: Greet {
 fn main() -> String {
   Box(5).greet()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "int-greet"),
         other => panic!("expected String, got {other:?}"),
@@ -417,7 +393,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
+        errs.iter()
+            .any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
         "expected rejection, got: {errs:?}"
     );
 }
@@ -429,8 +406,7 @@ fn test_trait_impl_level_where_accepts_conforming_call_site() {
     // false positives from the call-site rejection path: a bug that
     // rejects all receiver-method calls instead of just the violating
     // ones would fail this test.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "int" } }
@@ -442,8 +418,7 @@ trait Greet for Box(a) where a: Greet {
 fn main() -> String {
   Box(5).greet()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "int"),
         other => panic!("expected String, got {other:?}"),
@@ -458,8 +433,7 @@ fn test_trait_impl_level_where_with_multi_constraint_plus_syntax() {
     // entries sharing a type var, both propagating to method bodies
     // via active_constraints. Body uses BOTH `.greet()` and `.loud()`
     // on the inner value.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Loud { fn loud(self) -> String }
@@ -475,8 +449,7 @@ trait Greet for Box(a) where a: Greet + Loud {
 fn main() -> String {
   Box(42).greet()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "int-INT"),
         other => panic!("expected String, got {other:?}"),
@@ -507,7 +480,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("does not implement trait 'Loud'")),
+        errs.iter()
+            .any(|e| e.contains("does not implement trait 'Loud'")),
         "expected Loud rejection, got: {errs:?}"
     );
 }
@@ -517,8 +491,7 @@ fn test_trait_impl_level_where_with_comma_separated_clauses() {
     // Comma-separated form: `where a: Greet, a: Loud` must be
     // equivalent to `where a: Greet + Loud`. Both syntactic forms
     // flatten to the same (tv, trait) pairs in the parser.
-    let v = run(
-        r#"
+    let v = run(r#"
 type Box(T) { Box(T) }
 trait Greet { fn greet(self) -> String }
 trait Loud { fn loud(self) -> String }
@@ -534,8 +507,7 @@ trait Greet for Box(a) where a: Greet, a: Loud {
 fn main() -> String {
   Box(7).greet()
 }
-"#,
-    );
+"#);
     match v {
         Value::String(s) => assert_eq!(s.as_str(), "int/INT"),
         other => panic!("expected String, got {other:?}"),
@@ -562,8 +534,7 @@ trait Show for Box(a) where b: Show {
     );
     assert!(
         errs.iter().any(|e| {
-            e.contains("'b'")
-                && e.contains("not declared in the target type arguments")
+            e.contains("'b'") && e.contains("not declared in the target type arguments")
         }),
         "expected undeclared-binder error, got: {errs:?}"
     );
@@ -583,7 +554,8 @@ trait Show for Box(a) where a: NotARealTrait {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("unknown trait 'NotARealTrait'")),
+        errs.iter()
+            .any(|e| e.contains("unknown trait 'NotARealTrait'")),
         "expected unknown-trait error, got: {errs:?}"
     );
 }
@@ -621,7 +593,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
+        errs.iter()
+            .any(|e| e.contains("type 'String' does not implement trait 'Greet'")),
         "expected method-level where violation, got: {errs:?}"
     );
 }

@@ -42,11 +42,9 @@ fn main() {
     // The new message names the type and points at record-pattern
     // syntax. We don't pin the exact wording, but assert both pieces
     // of information are present so the user can act on it.
-    let hit = errs.iter().any(|m| {
-        m.contains("record")
-            && m.contains("Circle")
-            && !m.contains("expects 0 fields")
-    });
+    let hit = errs
+        .iter()
+        .any(|m| m.contains("record") && m.contains("Circle") && !m.contains("expects 0 fields"));
     assert!(
         hit,
         "expected a record-pattern hint (and NOT the legacy 'expects 0 fields' text), got: {errs:?}"

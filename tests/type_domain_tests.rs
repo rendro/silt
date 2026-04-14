@@ -47,8 +47,9 @@ fn main() { let _ = add(true, false) }
     // matched most type errors, so a bug that rejected Bool + Bool for
     // the WRONG reason would silently still pass.
     assert!(
-        errs.iter().any(|e| e
-            .contains("operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'")),
+        errs.iter().any(
+            |e| e.contains("operator '+' requires Int, Float, ExtFloat, or String, got 'Bool'")
+        ),
         "expected operator '+' Bool-domain rejection, got: {errs:?}"
     );
 }

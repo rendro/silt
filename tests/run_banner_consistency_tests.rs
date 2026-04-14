@@ -81,8 +81,7 @@ fn usage_line(text: &str) -> Option<String> {
 /// error paths), so this helper checks both.
 fn silt_usage_line(args: &[&str]) -> (String, String, String) {
     let wait = Duration::from_secs(3);
-    let (_code, stdout, stderr) =
-        run_silt_with_timeout(args, wait).expect("silt invocation hung");
+    let (_code, stdout, stderr) = run_silt_with_timeout(args, wait).expect("silt invocation hung");
     let line = usage_line(&stdout)
         .or_else(|| usage_line(&stderr))
         .unwrap_or_else(|| {

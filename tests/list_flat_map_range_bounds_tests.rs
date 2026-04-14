@@ -96,14 +96,12 @@ fn main() {
 
 #[test]
 fn test_list_flat_map_callback_range_small_ok_mutation_verify() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   [10, 20] |> list.flat_map { _ -> 1..4 }
 }
-        "#,
-    );
+        "#);
     // Silt ranges inclusive on both ends: 1..4 is [1, 2, 3, 4].
     // Two input items -> 2 * 4 = 8 integers, each row [1, 2, 3, 4].
     let expected = Value::List(Arc::new(vec![
@@ -121,7 +119,12 @@ fn main() {
         assert_eq!(xs.len(), 8, "expected exactly 8 elements, got {}", xs.len());
         assert_eq!(xs[0], Value::Int(1), "first element wrong: {:?}", xs[0]);
         assert_eq!(xs[3], Value::Int(4), "end of first row wrong: {:?}", xs[3]);
-        assert_eq!(xs[4], Value::Int(1), "start of second row wrong: {:?}", xs[4]);
+        assert_eq!(
+            xs[4],
+            Value::Int(1),
+            "start of second row wrong: {:?}",
+            xs[4]
+        );
         assert_eq!(xs[7], Value::Int(4), "final element wrong: {:?}", xs[7]);
     } else {
         panic!("expected a list, got {:?}", result);
@@ -136,14 +139,12 @@ fn main() {
 
 #[test]
 fn test_list_flat_map_callback_range_small_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   [1, 2] |> list.flat_map { _ -> 0..3 }
 }
-        "#,
-    );
+        "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -168,16 +169,14 @@ fn main() {
 
 #[test]
 fn test_list_flat_map_callback_empty_range_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   let lo = 5
   let hi = 4
   [1] |> list.flat_map { _ -> lo..hi }
 }
-        "#,
-    );
+        "#);
     assert_eq!(result, Value::List(Arc::new(vec![])));
 }
 
@@ -189,14 +188,12 @@ fn main() {
 
 #[test]
 fn test_list_flat_map_callback_nonrange_unchanged() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   [1, 2] |> list.flat_map { x -> [x, x] }
 }
-        "#,
-    );
+        "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![

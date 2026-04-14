@@ -47,8 +47,7 @@ fn main() {
 }
 "#,
     );
-    let msg = first_containing(&errs, "unknown method")
-        .expect("expected an unknown-method error");
+    let msg = first_containing(&errs, "unknown method").expect("expected an unknown-method error");
     assert!(
         msg.contains("did you mean"),
         "expected 'did you mean' hint on List.dispaly, got: {msg:?}"
@@ -78,8 +77,7 @@ fn main() {
 }
 "#,
     );
-    let msg = first_containing(&errs, "unknown method")
-        .expect("expected an unknown-method error");
+    let msg = first_containing(&errs, "unknown method").expect("expected an unknown-method error");
     assert!(
         !msg.contains("did you mean"),
         "did not expect a suggestion for wholly-unrelated name, got: {msg:?}"

@@ -185,9 +185,7 @@ pub fn run_repl() {
                         }
                         "" => continue,
                         other if other.starts_with(':') && !other.starts_with("::") => {
-                            eprintln!(
-                                "unknown REPL command '{other}'; type :help for the list"
-                            );
+                            eprintln!("unknown REPL command '{other}'; type :help for the list");
                             continue;
                         }
                         _ => {}
@@ -477,9 +475,8 @@ fn eval_declaration(
             // Print the call stack for the non-synthetic frames. Frame line
             // numbers come from the original REPL input buffer, so we label
             // them `<declaration>` rather than print misleading positions.
-            for line in render_call_stack(&e.call_stack, |_name, _span| {
-                "<declaration>".to_string()
-            }) {
+            for line in render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
+            {
                 eprintln!("{line}");
             }
         } else {
@@ -706,8 +703,7 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                 // matching the treatment the call-stack frames below
                 // already apply to prior-entry frames.
                 if span_fits_input(adjusted, input) {
-                    let source_err =
-                        SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
+                    let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
                     eprintln!("{source_err}");
                 } else {
                     eprintln!("error[runtime]: {}", e.message);
@@ -718,9 +714,9 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                 // for anything but the error site itself, so we print
                 // function names with a `<declaration>` label rather than
                 // misleading file positions.
-                for line in render_call_stack(&e.call_stack, |_name, _span| {
-                    "<declaration>".to_string()
-                }) {
+                for line in
+                    render_call_stack(&e.call_stack, |_name, _span| "<declaration>".to_string())
+                {
                     eprintln!("{line}");
                 }
             } else {

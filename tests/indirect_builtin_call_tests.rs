@@ -100,8 +100,7 @@ fn main() {{
 /// correctly (the fix must not break the non-yield path).
 #[test]
 fn test_indirect_non_yielding_builtin_in_spawned_task() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 import task
 
@@ -110,8 +109,7 @@ fn main() {
   let h = task.spawn(fn() { len([10, 20, 30]) })
   task.join(h)
 }
-"#,
-    );
+"#);
     assert_eq!(result, Value::Int(3));
 }
 

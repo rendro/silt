@@ -66,14 +66,12 @@ fn main() {
 /// Flatten a small list of sub-lists -- must still work correctly.
 #[test]
 fn test_list_flatten_small_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   list.flatten([[1, 2], [3, 4], [5]])
 }
-        "#,
-    );
+        "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![
@@ -114,8 +112,7 @@ fn main() {
 /// Unfold that generates a small list -- must still work correctly.
 #[test]
 fn test_list_unfold_small_ok() {
-    let result = run(
-        r#"
+    let result = run(r#"
 import list
 fn main() {
   list.unfold(1) { n ->
@@ -125,8 +122,7 @@ fn main() {
     }
   }
 }
-        "#,
-    );
+        "#);
     assert_eq!(
         result,
         Value::List(Arc::new(vec![

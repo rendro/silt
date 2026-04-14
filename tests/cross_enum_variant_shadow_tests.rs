@@ -105,7 +105,9 @@ fn main() { }
 "#,
     );
     assert!(
-        warnings.iter().any(|w| w.contains("variant 'Ok'") && w.contains("shadows")),
+        warnings
+            .iter()
+            .any(|w| w.contains("variant 'Ok'") && w.contains("shadows")),
         "expected shadow warning for user Result.Ok vs builtin Result.Ok, got: {warnings:?}"
     );
 }

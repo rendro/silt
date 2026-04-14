@@ -208,11 +208,7 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "float.to_string: decimals {decimals} exceeds maximum precision of 65535"
                 ))
             })?;
-            Ok(Value::String(format!(
-                "{:.prec$}",
-                f,
-                prec = prec as usize
-            )))
+            Ok(Value::String(format!("{:.prec$}", f, prec = prec as usize)))
         }
         "to_int" => {
             if args.len() != 1 {

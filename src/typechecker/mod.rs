@@ -1178,8 +1178,7 @@ impl TypeChecker {
                     // tighten the scheme (never introduce new vars), so any
                     // original constraint whose old var is still free in the
                     // new scheme maps to a concrete new var.
-                    let remap =
-                        align_tyvars(&original_scheme.ty, &new_scheme.ty);
+                    let remap = align_tyvars(&original_scheme.ty, &new_scheme.ty);
                     for (old_tv, trait_name) in &original_scheme.constraints {
                         if let Some(&new_tv) = remap.get(old_tv)
                             && new_scheme.vars.contains(&new_tv)
@@ -1392,10 +1391,7 @@ impl TypeChecker {
                 for variant in variants {
                     if !seen_variants.insert(variant.name) {
                         self.error(
-                            format!(
-                                "duplicate variant '{}' in enum '{}'",
-                                variant.name, td.name
-                            ),
+                            format!("duplicate variant '{}' in enum '{}'", variant.name, td.name),
                             td.span,
                         );
                     }
@@ -1524,10 +1520,7 @@ impl TypeChecker {
                 for f in fields {
                     if !seen_fields.insert(f.name) {
                         self.error(
-                            format!(
-                                "duplicate field '{}' in record type '{}'",
-                                f.name, td.name
-                            ),
+                            format!("duplicate field '{}' in record type '{}'", f.name, td.name),
                             td.span,
                         );
                     }
@@ -1595,8 +1588,7 @@ impl TypeChecker {
                             _ => unreachable!(),
                         })
                         .collect();
-                    let args: Vec<Type> =
-                        td.params.iter().map(|p| param_vars[p].clone()).collect();
+                    let args: Vec<Type> = td.params.iter().map(|p| param_vars[p].clone()).collect();
                     let generic_record = Type::Generic(td.name, args);
                     Scheme {
                         vars: var_ids,
@@ -2064,9 +2056,7 @@ impl TypeChecker {
                 && !is_user_enum
             {
                 self.error(
-                    format!(
-                        "trait impl target '{name_str}' is not a declared type"
-                    ),
+                    format!("trait impl target '{name_str}' is not a declared type"),
                     ti.span,
                 );
             }
@@ -2200,7 +2190,9 @@ impl TypeChecker {
             for (i, param) in method.params.iter().enumerate() {
                 let ty = if let Some(te) = &param.ty {
                     self.resolve_type_expr(te, &mut param_map)
-                } else if i == 0 && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym) {
+                } else if i == 0
+                    && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym)
+                {
                     // Bare `self` parameter in a trait impl: type it as the
                     // target type so field/method accesses on `self` are
                     // properly checked against the impl's target.
@@ -2225,8 +2217,7 @@ impl TypeChecker {
             // overwrite the earlier one and route every `.method()`
             // call to the last-registered trait. Reject with an
             // ambiguity error that names both traits.
-            if let Some(existing) =
-                self.method_table.get(&(ti.target_type, method.name))
+            if let Some(existing) = self.method_table.get(&(ti.target_type, method.name))
                 && !existing.is_auto_derived
                 && let Some(existing_trait) = existing.trait_name
                 && existing_trait != ti.trait_name
@@ -2234,10 +2225,7 @@ impl TypeChecker {
                 self.error(
                     format!(
                         "ambiguous method '{}' on type '{}': provided by traits {}, {}",
-                        method.name,
-                        ti.target_type,
-                        existing_trait,
-                        ti.trait_name
+                        method.name, ti.target_type, existing_trait, ti.trait_name
                     ),
                     ti.span,
                 );

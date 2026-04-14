@@ -20,7 +20,10 @@ fn fmt(src: &str) -> String {
 fn assert_idempotent(src: &str) {
     let once = fmt(src);
     let twice = fmt(&once);
-    assert_eq!(once, twice, "format is not idempotent:\nfirst:\n{once}\nsecond:\n{twice}");
+    assert_eq!(
+        once, twice,
+        "format is not idempotent:\nfirst:\n{once}\nsecond:\n{twice}"
+    );
 }
 
 #[test]

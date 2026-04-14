@@ -109,14 +109,12 @@ fn test_float_to_string_decimals_negative_rejected_or_handled() {
 /// so `1.5` rounds to `2` (verified against rustc before locking).
 #[test]
 fn test_float_to_string_decimals_zero_ok() {
-    let v = run(
-        r#"
+    let v = run(r#"
         import float
         fn main() -> string {
           return float.to_string(1.5, 0)
         }
-        "#,
-    );
+        "#);
     assert_eq!(v, Value::String("2".into()));
 }
 
@@ -126,14 +124,12 @@ fn test_float_to_string_decimals_zero_ok() {
 /// fix, which only rejects values that would have panicked anyway.
 #[test]
 fn test_float_to_string_decimals_at_u16_max_ok() {
-    let v = run(
-        r#"
+    let v = run(r#"
         import float
         fn main() -> string {
           return float.to_string(1.5, 65535)
         }
-        "#,
-    );
+        "#);
     match v {
         Value::String(s) => {
             // "1." plus 65535 fractional digits = 65537 chars total.
@@ -143,7 +139,11 @@ fn test_float_to_string_decimals_at_u16_max_ok() {
                 "expected 1 + 1 + 65535 = 65537 chars, got {}",
                 s.len()
             );
-            assert!(s.starts_with("1.5"), "expected leading '1.5', got: {}", &s[..8]);
+            assert!(
+                s.starts_with("1.5"),
+                "expected leading '1.5', got: {}",
+                &s[..8]
+            );
         }
         other => panic!("expected String, got {other:?}"),
     }
@@ -153,13 +153,11 @@ fn test_float_to_string_decimals_at_u16_max_ok() {
 /// Guards against any regression in the happy path from the fix.
 #[test]
 fn test_float_to_string_normal_ok() {
-    let v = run(
-        r#"
+    let v = run(r#"
         import float
         fn main() -> string {
           return float.to_string(3.14159, 2)
         }
-        "#,
-    );
+        "#);
     assert_eq!(v, Value::String("3.14".into()));
 }

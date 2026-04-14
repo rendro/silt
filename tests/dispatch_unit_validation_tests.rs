@@ -49,8 +49,7 @@ fn inference_source() -> String {
     path.push("src");
     path.push("typechecker");
     path.push("inference.rs");
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e))
 }
 
 /// Pin the exact membership of the `dispatch_method_entry` skip arm.
@@ -100,14 +99,12 @@ fn dispatch_method_entry_function_still_contains_the_skip_arm() {
     let src = inference_source();
 
     // Locate the function header.
-    let fn_header_idx = src
-        .find("pub(super) fn dispatch_method_entry(")
-        .expect(
-            "dispatch_method_entry function not found in \
+    let fn_header_idx = src.find("pub(super) fn dispatch_method_entry(").expect(
+        "dispatch_method_entry function not found in \
              src/typechecker/inference.rs — if it was renamed or \
              moved, update this regression test and confirm the \
              Round-24 fix is still applied at the new location.",
-        );
+    );
 
     // Slice from the header to end-of-file; the skip arm must appear
     // inside this slice. We don't try to find the function's exact

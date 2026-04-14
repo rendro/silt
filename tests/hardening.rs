@@ -1551,13 +1551,11 @@ fn test_json_parse_rejects_out_of_range_int() {
     // range" / "overflow". We match on the variant so the test fails
     // loudly if the saturation bug returns (the pre-fix version would
     // produce `Ok(Payload { n: 9223372036854775807 })`).
-    let result = run(
-        r#"
+    let result = run(r#"
 import json
 type Payload { n: Int }
 fn main() = json.parse(Payload, """{"n": 1e100}""")
-"#,
-    );
+"#);
     match result {
         Value::Variant(ref tag, ref payload) if tag == "Err" => {
             assert_eq!(payload.len(), 1);
@@ -1567,8 +1565,7 @@ fn main() = json.parse(Payload, """{"n": 1e100}""")
             };
             // Production message from src/builtins/json.rs number-parse path.
             assert!(
-                msg.contains("json.parse(Payload): field 'n'")
-                    && msg.contains("out of Int range"),
+                msg.contains("json.parse(Payload): field 'n'") && msg.contains("out of Int range"),
                 "expected clean out-of-range error, got: {msg}"
             );
         }
@@ -1611,8 +1608,7 @@ fn test_question_mark_inside_spawned_task_does_not_corrupt_stack() {
     // .base_slot` for the `finished_base - 1` truncation target in
     // both `execute` and `execute_slice`: the test then fails with
     // `SetLocal slot out of range` inside `worker`.
-    let result = run(
-        r#"
+    let result = run(r#"
 import task
 import option
 
@@ -1635,8 +1631,7 @@ fn main() -> Int {
   let h = task.spawn(worker)
   task.join(h)
 }
-"#,
-    );
+"#);
     assert_eq!(
         result,
         Value::Int(666),
@@ -1677,14 +1672,12 @@ fn main() -> Int {
     );
 
     // Positive control: a small range still works and returns the right count.
-    let ok = run(
-        r#"
+    let ok = run(r#"
 import list
 fn main() -> Int {
   list.length(1..10)
 }
-"#,
-    );
+"#);
     assert_eq!(ok, Value::Int(10));
 }
 
@@ -1778,8 +1771,7 @@ fn main() -> Int {
     // the error to e.g. "time: month out of range" — which would
     // still match the old 2-word AND chain — fails this lock.
     assert!(
-        err.contains("time.days_in_month: month")
-            && err.contains("out of range for u32"),
+        err.contains("time.days_in_month: month") && err.contains("out of range for u32"),
         "expected exact 'time.days_in_month: month ... out of range for u32' \
          prefix, got: {err}"
     );
@@ -1805,8 +1797,7 @@ fn main() -> Bool {
     // routes is_leap_year through extract_date would pass the old
     // check silently.
     assert!(
-        err.contains("time.is_leap_year: year")
-            && err.contains("out of range for i32"),
+        err.contains("time.is_leap_year: year") && err.contains("out of range for i32"),
         "expected exact 'time.is_leap_year: year ... out of range for i32' \
          prefix, got: {err}"
     );
@@ -1907,8 +1898,7 @@ fn main() -> String {
 "#,
     );
     assert!(
-        err.contains("time.format_date")
-            && err.to_lowercase().contains("invalid format specifier"),
+        err.contains("time.format_date") && err.to_lowercase().contains("invalid format specifier"),
         "expected clean invalid-specifier error, got: {err}"
     );
     assert!(

@@ -255,10 +255,7 @@ fn test_rendered_undefined_variable_emits_help_continuation_line() {
         .iter()
         .find(|e| e.message.contains("undefined variable 'pintln'"))
         .expect("typecheck should flag pintln");
-    let rendered = format!(
-        "{}",
-        SourceError::from_type_error(err, source, "t.silt")
-    );
+    let rendered = format!("{}", SourceError::from_type_error(err, source, "t.silt"));
     assert!(
         rendered.contains("= help:"),
         "expected rendered '= help:' continuation, got:\n{rendered}"

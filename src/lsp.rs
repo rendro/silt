@@ -782,8 +782,7 @@ impl Server {
         // at nesting depth 0, and count commas at depth 1 from there.
         // Skips string literals and silt comments so that commas/parens
         // inside them are not miscounted.
-        let (active_param, paren_pos) =
-            scan_call_site_forward(before.as_bytes())?;
+        let (active_param, paren_pos) = scan_call_site_forward(before.as_bytes())?;
         let before_paren = before[..paren_pos].trim_end();
         let fn_name: String = before_paren
             .chars()
@@ -3798,7 +3797,11 @@ mod tests {
         // receiver), which used to cause `find('.')` to locate the FIRST
         // dot instead of the correct one for "value".
         let source = "d.inner.value";
-        let span = Span { line: 1, col: 1, offset: 0 };
+        let span = Span {
+            line: 1,
+            col: 1,
+            offset: 0,
+        };
 
         let inner_sym = crate::intern::intern("inner");
         let value_sym = crate::intern::intern("value");
@@ -3809,10 +3812,10 @@ mod tests {
             span,
             ty: Some(Type::Record(
                 crate::intern::intern("Outer"),
-                vec![(inner_sym, Type::Record(
-                    crate::intern::intern("Inner"),
-                    vec![(value_sym, Type::Int)],
-                ))],
+                vec![(
+                    inner_sym,
+                    Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
+                )],
             )),
         };
 
@@ -3838,7 +3841,13 @@ mod tests {
         let cursor_on_value = 8;
         let mut result = None;
         let program = Program { decls: vec![] };
-        find_field_in_expr(&outer_access, source, cursor_on_value, &program, &mut result);
+        find_field_in_expr(
+            &outer_access,
+            source,
+            cursor_on_value,
+            &program,
+            &mut result,
+        );
 
         assert!(
             result.is_some(),
@@ -3853,7 +3862,11 @@ mod tests {
     fn test_find_field_chained_access_middle() {
         // Same chain `d.inner.value`, but cursor on 'i' of "inner" (offset 2).
         let source = "d.inner.value";
-        let span = Span { line: 1, col: 1, offset: 0 };
+        let span = Span {
+            line: 1,
+            col: 1,
+            offset: 0,
+        };
 
         let inner_sym = crate::intern::intern("inner");
         let value_sym = crate::intern::intern("value");
@@ -3863,10 +3876,10 @@ mod tests {
             span,
             ty: Some(Type::Record(
                 crate::intern::intern("Outer"),
-                vec![(inner_sym, Type::Record(
-                    crate::intern::intern("Inner"),
-                    vec![(value_sym, Type::Int)],
-                ))],
+                vec![(
+                    inner_sym,
+                    Type::Record(crate::intern::intern("Inner"), vec![(value_sym, Type::Int)]),
+                )],
             )),
         };
 
@@ -3889,7 +3902,13 @@ mod tests {
         let cursor_on_inner = 2;
         let mut result = None;
         let program = Program { decls: vec![] };
-        find_field_in_expr(&outer_access, source, cursor_on_inner, &program, &mut result);
+        find_field_in_expr(
+            &outer_access,
+            source,
+            cursor_on_inner,
+            &program,
+            &mut result,
+        );
 
         assert!(
             result.is_some(),

@@ -175,7 +175,11 @@ impl TimerManager {
     /// Schedule a channel to be closed after `delay`.
     pub(crate) fn schedule(&self, delay: Duration, ch: Arc<Channel>) {
         let deadline = Instant::now() + delay;
-        if let Err(e) = self.sender.lock().send((deadline, TimerTarget::Channel(ch))) {
+        if let Err(e) = self
+            .sender
+            .lock()
+            .send((deadline, TimerTarget::Channel(ch)))
+        {
             debug_assert!(false, "TimerManager worker thread is gone: {e}");
             eprintln!(
                 "silt: TimerManager worker thread unreachable ({e}); channel.timeout will not fire"

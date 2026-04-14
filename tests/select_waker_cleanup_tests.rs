@@ -70,7 +70,10 @@ fn test_select_sibling_waker_removed_clears_counter_and_queue() {
     // select resolved via A. Without this step, B's counter stays at
     // 1 and B's queue still holds the stale waker.
     let removed = b.remove_recv_waker(b_id);
-    assert!(removed, "remove_recv_waker should find the registered waker");
+    assert!(
+        removed,
+        "remove_recv_waker should find the registered waker"
+    );
 
     assert_eq!(
         b.waiting_receivers_count(),

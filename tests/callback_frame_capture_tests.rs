@@ -480,7 +480,9 @@ fn main() {
         "expected span locator at line 7 (callback body), got:\n{stderr}"
     );
     assert!(
-        !stderr.lines().any(|l| l.contains("-->") && l.contains(":5:")),
+        !stderr
+            .lines()
+            .any(|l| l.contains("-->") && l.contains(":5:")),
         "expected locator NOT to point at line 5 (channel.each call site), got:\n{stderr}"
     );
     // The caret line should sit above `1 / 0`, not above

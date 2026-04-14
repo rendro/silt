@@ -212,8 +212,9 @@ fn test_parse_missing_closing_paren() {
     // ("expected ')' to close parenthesized expression starting at line N, found }").
     let errs = parse_errors("fn main() { (1 + 2 }");
     assert!(
-        errs.iter().any(|e| e
-            .contains("expected ')' to close parenthesized expression starting at line 1, found }")),
+        errs.iter().any(|e| e.contains(
+            "expected ')' to close parenthesized expression starting at line 1, found }"
+        )),
         "got: {errs:?}"
     );
 }
@@ -234,7 +235,8 @@ fn test_parse_missing_closing_bracket() {
 fn test_parse_missing_closing_brace() {
     let errs = parse_errors("fn main() { let x = 1");
     assert!(
-        errs.iter().any(|e| e.contains("expected '}' to close block")),
+        errs.iter()
+            .any(|e| e.contains("expected '}' to close block")),
         "got: {errs:?}"
     );
 }
@@ -257,7 +259,8 @@ fn test_parse_fn_missing_body() {
     // Test something that actually fails: a function with no name.
     let errs = parse_errors("fn () { }");
     assert!(
-        errs.iter().any(|e| e.contains("expected identifier, found (")),
+        errs.iter()
+            .any(|e| e.contains("expected identifier, found (")),
         "got: {errs:?}"
     );
 }
@@ -277,7 +280,8 @@ fn main() {
     "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("expected ->, found \"hello\"")),
+        errs.iter()
+            .any(|e| e.contains("expected ->, found \"hello\"")),
         "got: {errs:?}"
     );
 }
@@ -295,7 +299,8 @@ fn test_parse_type_missing_body() {
 fn test_parse_import_missing_module_name() {
     let errs = parse_errors("import");
     assert!(
-        errs.iter().any(|e| e.contains("expected identifier, found EOF")),
+        errs.iter()
+            .any(|e| e.contains("expected identifier, found EOF")),
         "got: {errs:?}"
     );
 }
@@ -304,7 +309,8 @@ fn test_parse_import_missing_module_name() {
 fn test_parse_double_comma_in_args() {
     let errs = parse_errors("fn main() { foo(1,, 2) }");
     assert!(
-        errs.iter().any(|e| e.contains("expected expression, found ,")),
+        errs.iter()
+            .any(|e| e.contains("expected expression, found ,")),
         "got: {errs:?}"
     );
 }
@@ -313,7 +319,8 @@ fn test_parse_double_comma_in_args() {
 fn test_parse_trailing_operator() {
     let errs = parse_errors("fn main() { 1 + }");
     assert!(
-        errs.iter().any(|e| e.contains("expected expression, found }")),
+        errs.iter()
+            .any(|e| e.contains("expected expression, found }")),
         "got: {errs:?}"
     );
 }
@@ -1497,7 +1504,8 @@ fn test_parse_excessive_nesting() {
     // Asserts exact parser message from src/parser.rs
     // ("expression nesting exceeds maximum depth").
     assert!(
-        err.message.contains("expression nesting exceeds maximum depth"),
+        err.message
+            .contains("expression nesting exceeds maximum depth"),
         "got: {}",
         err.message
     );
@@ -1688,7 +1696,8 @@ fn main() { 42 }
     "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("type mismatch: expected Int, got String")),
+        errs.iter()
+            .any(|e| e.contains("type mismatch: expected Int, got String")),
         "expected type mismatch error, got: {errs:?}"
     );
 }
@@ -2508,9 +2517,7 @@ fn main() { list.range(1, 5) }
         "expected module-member error for list.range, got: {errs:?}"
     );
     assert!(
-        !errs
-            .iter()
-            .any(|e| e.contains("undefined variable 'list'")),
+        !errs.iter().any(|e| e.contains("undefined variable 'list'")),
         "must no longer report 'undefined variable list' for a valid builtin module: {errs:?}"
     );
 }

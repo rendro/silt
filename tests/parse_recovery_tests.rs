@@ -247,10 +247,7 @@ fn main() -> Int {
     }
     // And as always, no cascade.
     for msg in &type_msgs {
-        assert!(
-            !msg.contains("undefined variable 'f'"),
-            "cascade: {msg}"
-        );
+        assert!(!msg.contains("undefined variable 'f'"), "cascade: {msg}");
     }
 }
 

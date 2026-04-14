@@ -194,8 +194,7 @@ fn apply_callback_result(
                     Value::List(inner) => {
                         // Guard against accumulated overflow even for list
                         // results: the cap applies to the final list size.
-                        let projected =
-                            (v.len() as u128).saturating_add(inner.len() as u128);
+                        let projected = (v.len() as u128).saturating_add(inner.len() as u128);
                         if projected > MAX_RANGE_MATERIALIZE as u128 {
                             return Err(VmError::new(format!(
                                 "list.flat_map: accumulated result exceeds maximum list length of {} elements",
@@ -210,11 +209,9 @@ fn apply_callback_result(
                         // adding it to the existing accumulator won't
                         // exceed the cap either. Without this, a callback
                         // returning `0..i64::MAX` would OOM the process.
-                        let range_len = checked_range_len(lo, hi).map_err(|m| {
-                            VmError::new(format!("list.flat_map: {m}"))
-                        })?;
-                        let projected =
-                            (v.len() as u128).saturating_add(range_len as u128);
+                        let range_len = checked_range_len(lo, hi)
+                            .map_err(|m| VmError::new(format!("list.flat_map: {m}")))?;
+                        let projected = (v.len() as u128).saturating_add(range_len as u128);
                         if projected > MAX_RANGE_MATERIALIZE as u128 {
                             return Err(VmError::new(format!(
                                 "list.flat_map: accumulated result exceeds maximum list length of {} elements",
@@ -1303,8 +1300,7 @@ impl Vm {
                         .filter(|(d, _, _)| *d == depth)
                         .count();
                     if count_at_depth >= crate::vm::runtime::TCO_ELIDED_CAP
-                        && let Some(pos) =
-                            self.tco_elided.iter().position(|(d, _, _)| *d == depth)
+                        && let Some(pos) = self.tco_elided.iter().position(|(d, _, _)| *d == depth)
                     {
                         self.tco_elided.remove(pos);
                     }

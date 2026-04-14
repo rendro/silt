@@ -977,8 +977,7 @@ impl Compiler {
         // Wrap module top-level code in a synthetic `<module:name>` function
         // so runtime errors carry a frame that identifies the source file.
         let init_name = format!("<module:{module_name}>");
-        self.contexts
-            .push(CompileContext::new(init_name, 0));
+        self.contexts.push(CompileContext::new(init_name, 0));
 
         // Compile each declaration. Functions get registered as
         // "module_name.fn_name" for public ones, or just compiled (for
@@ -1991,7 +1990,11 @@ impl Compiler {
                 let loop_start = loop_info.loop_start;
                 let expected = loop_info.binding_count as usize;
                 if args.len() != expected {
-                    let arg_word = if expected == 1 { "argument" } else { "arguments" };
+                    let arg_word = if expected == 1 {
+                        "argument"
+                    } else {
+                        "arguments"
+                    };
                     return Err(CompileError {
                         message: format!(
                             "loop() expects {expected} {arg_word}, got {}",
@@ -3766,10 +3769,7 @@ fn f(expected, actual) {
             let returned = compiler
                 .add_upvalue(inner_idx, desc, Span::new(0, 0))
                 .unwrap_or_else(|e| {
-                    panic!(
-                        "upvalue {i} (of 255) must be accepted; got {}",
-                        e.message
-                    )
+                    panic!("upvalue {i} (of 255) must be accepted; got {}", e.message)
                 });
             assert_eq!(
                 returned, i,

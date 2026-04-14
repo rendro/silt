@@ -1000,8 +1000,7 @@ fn test_signature_help_returns_arity() {
     //   line 5: }
     //
     // Cursor will sit just after the `(` of the `add(` call on line 4.
-    let source =
-        "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn main() {\n  add(\n}\n";
+    let source = "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn main() {\n  add(\n}\n";
     let _ = client.did_open_and_wait(&uri, source);
 
     // "  add(" is 6 columns, cursor goes right after the `(`.

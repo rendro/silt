@@ -51,12 +51,10 @@ fn run_err(input: &str) -> String {
 fn test_option_map_some_applies_callback() {
     // Locks src/builtins/core.rs:150-154 — Some branch applies the
     // closure and rewraps the result as Some(new_val).
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 fn main() { option.map(Some(5), { n -> n * 2 }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(10)]));
 }
 
@@ -64,12 +62,10 @@ fn main() { option.map(Some(5), { n -> n * 2 }) }
 fn test_option_map_none_propagates() {
     // Locks src/builtins/core.rs:155 — None propagates without
     // invoking the callback.
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 fn main() { option.map(None, { n -> n * 2 }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("None".into(), Vec::new()));
 }
 
@@ -81,12 +77,10 @@ fn main() { option.map(None, { n -> n * 2 }) }
 fn test_option_to_result_some_becomes_ok() {
     // Locks src/builtins/core.rs:136-138 — Some(v) becomes Ok(v),
     // discarding the provided err value.
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 fn main() { option.to_result(Some(42), "missing") }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(42)]));
 }
 
@@ -94,12 +88,10 @@ fn main() { option.to_result(Some(42), "missing") }
 fn test_option_to_result_none_becomes_err_with_value() {
     // Locks src/builtins/core.rs:139-141 — None becomes
     // Err(err_value), propagating the user-supplied error payload.
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 fn main() { option.to_result(None, "missing") }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::Variant("Err".into(), vec![Value::String("missing".into())])
@@ -116,12 +108,10 @@ fn test_option_flat_map_some_applies_callback() {
     // callback with v and returns its Option result directly (no
     // extra wrapping). The None branch is already covered by
     // test_option_flat_map_none in tests/integration.rs.
-    let result = run(
-        r#"
+    let result = run(r#"
 import option
 fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Some".into(), vec![Value::Int(13)]));
 }
 
@@ -133,12 +123,10 @@ fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }
 fn test_result_unwrap_or_ok_returns_value() {
     // Locks src/builtins/core.rs:14-16 — Ok(v) branch returns the
     // inner value and ignores the default.
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.unwrap_or(Ok(7), 99) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(7));
 }
 
@@ -146,12 +134,10 @@ fn main() { result.unwrap_or(Ok(7), 99) }
 fn test_result_unwrap_or_err_returns_default() {
     // Locks src/builtins/core.rs:17 — Err branch returns the
     // user-supplied default, dropping the error payload.
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.unwrap_or(Err("boom"), 99) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Int(99));
 }
 
@@ -163,12 +149,10 @@ fn main() { result.unwrap_or(Err("boom"), 99) }
 fn test_result_flat_map_ok_applies_callback() {
     // Locks src/builtins/core.rs:89-91 — Ok(v) invokes callback with
     // v; callback's Result is returned directly (no extra wrapping).
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.flat_map(Ok(4), { n -> Ok(n * n) }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(16)]));
 }
 
@@ -176,12 +160,10 @@ fn main() { result.flat_map(Ok(4), { n -> Ok(n * n) }) }
 fn test_result_flat_map_err_propagates() {
     // Locks src/builtins/core.rs:92 — Err is passed through unchanged
     // and the callback is never invoked.
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
-    "#,
-    );
+    "#);
     assert_eq!(
         result,
         Value::Variant("Err".into(), vec![Value::String("fail".into())])
@@ -197,12 +179,10 @@ fn test_result_map_err_on_err_applies_callback() {
     // Locks src/builtins/core.rs:57-61 — Err(e) invokes callback
     // with e and rewraps as Err(new_e). The Ok passthrough is
     // already covered by test_result_map_err_on_ok in integration.rs.
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.map_err(Err(3), { e -> e + 100 }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Err".into(), vec![Value::Int(103)]));
 }
 
@@ -215,12 +195,10 @@ fn test_result_map_ok_on_ok_applies_callback() {
     // Locks src/builtins/core.rs:42-46 — Ok(v) invokes callback with
     // v and rewraps as Ok(new_v). The Err passthrough is already
     // covered by test_result_map_ok_on_err in integration.rs.
-    let result = run(
-        r#"
+    let result = run(r#"
 import result
 fn main() { result.map_ok(Ok(6), { v -> v * 7 }) }
-    "#,
-    );
+    "#);
     assert_eq!(result, Value::Variant("Ok".into(), vec![Value::Int(42)]));
 }
 

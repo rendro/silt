@@ -397,8 +397,7 @@ impl Channel {
         if let Some(pos) = guard.iter().position(|(wid, _)| *wid == id) {
             guard.remove(pos);
             drop(guard);
-            self.waiting_receivers
-                .fetch_sub(1, AtomicOrdering::Release);
+            self.waiting_receivers.fetch_sub(1, AtomicOrdering::Release);
             true
         } else {
             false
