@@ -332,23 +332,23 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
                     // Inside a string interpolation: `{` deepens, `}`
                     // either decrements or closes the interp section
                     // and re-enters the string.
-                    if ch == '{' {
-                        if let Some(d) = interp_depths.last_mut() {
-                            *d += 1;
-                        }
+                    if ch == '{'
+                        && let Some(d) = interp_depths.last_mut()
+                    {
+                        *d += 1;
                         // Fall through so a `{`-scan still counts the
                         // nesting — `open == '{'` callers track this
                         // same char; non-`{}` callers (e.g. `(`/`)`)
                         // don't care about it.
-                    } else if ch == '}' {
-                        if let Some(d) = interp_depths.last_mut() {
-                            if *d == 0 {
-                                interp_depths.pop();
-                                in_string = true;
-                                continue;
-                            } else {
-                                *d -= 1;
-                            }
+                    } else if ch == '}'
+                        && let Some(d) = interp_depths.last_mut()
+                    {
+                        if *d == 0 {
+                            interp_depths.pop();
+                            in_string = true;
+                            continue;
+                        } else {
+                            *d -= 1;
                         }
                     }
                     // For brackets other than `{`/`}`, the expression
