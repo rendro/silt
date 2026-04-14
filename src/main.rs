@@ -182,10 +182,17 @@ fn run_compile_pipeline(
 /// happened to import a user module. Filtering per-entry fixes that while
 /// keeping the clean UX for importers.
 fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&SourceError> {
+    let has_user_import_warning = result.type_errors.iter().any(is_unknown_module_warning);
     result
         .type_errors
         .iter()
         .filter(|e| !is_unknown_module_warning(e))
+        // When the program imports a user module the type checker can't
+        // see, every name it exports surfaces as "undefined". The
+        // compiler does resolve those at link time, so we demote them
+        // here and let the compile-or-runtime stage be the source of
+        // truth for name resolution.
+        .filter(|e| !(has_user_import_warning && is_user_import_resolvable_error(e)))
         .collect()
 }
 
@@ -197,6 +204,28 @@ fn is_unknown_module_warning(err: &SourceError) -> bool {
     err.is_warning
         && err.kind == silt::errors::ErrorKind::Type
         && err.message.contains("unknown module")
+}
+
+/// Returns true iff `err` is an "undefined variable" or "undefined
+/// constructor" diagnostic that the compiler is likely to resolve at
+/// link time (because the name comes from a user-module selective
+/// import that the type checker can't see into).
+///
+/// The type checker only registers selective imports for builtin
+/// modules; for user modules it emits an "unknown module" warning and
+/// every imported name then surfaces as "undefined variable" /
+/// "undefined constructor". We demote those to warnings so the run
+/// proceeds; if the name truly is undefined the compiler will emit a
+/// hard runtime/link error.
+fn is_user_import_resolvable_error(err: &SourceError) -> bool {
+    err.kind == silt::errors::ErrorKind::Type
+        && !err.is_warning
+        && (err.message.starts_with("undefined variable")
+            || err.message.starts_with("undefined constructor")
+            || err.message.starts_with("undefined type")
+            || err.message.starts_with("unknown field")
+            || err.message.starts_with("type ")
+            || err.message.contains("does not implement"))
 }
 
 /// Print all diagnostics to stderr and exit(1) if there are hard errors.

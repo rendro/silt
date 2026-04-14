@@ -10,4 +10,6 @@ pub mod core;
 pub mod data;
 pub mod io;
 pub mod numeric;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 pub mod string;

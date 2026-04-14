@@ -22,6 +22,8 @@ lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
 http = ["dep:ureq", "dep:tiny_http"]
+postgres = ["dep:postgres", "dep:r2d2", "dep:r2d2_postgres", "dep:base64", "dep:fallible-iterator", "dep:uuid"]
+postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 
 [[bench]]
 name = "vm_bench"
@@ -39,6 +41,14 @@ serde_json = "1"
 sha2 = "0.10"
 ureq = { version = "3", optional = true }
 tiny_http = { version = "0.12", optional = true }
+postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }
+r2d2 = { version = "0.8", optional = true }
+r2d2_postgres = { version = "0.18", optional = true }
+base64 = { version = "0.22", optional = true }
+fallible-iterator = { version = "0.2", optional = true }
+uuid = { version = "1", optional = true, features = ["v7"] }
+native-tls = { version = "0.2", optional = true }
+postgres-native-tls = { version = "0.5", optional = true }
 
 [dev-dependencies]
 proptest = "1.4"
