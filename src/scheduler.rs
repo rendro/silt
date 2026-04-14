@@ -920,6 +920,11 @@ mod tests {
         // Write a fixture file (small, completes fast).
         let path = std::env::temp_dir().join("silt_sched_io_block_test.txt");
         std::fs::write(&path, "hello").unwrap();
+        // Forward-slash the path before embedding — Windows `temp_dir()`
+        // returns backslash paths, and the silt lexer treats `\U`, `\A`,
+        // etc. as unknown escape sequences in string literals. The
+        // filesystem APIs accept `/` on Windows too.
+        let path_str = path.display().to_string().replace('\\', "/");
         let src = format!(
             r#"
 import io
@@ -930,7 +935,7 @@ fn main() {{
   }}
 }}
         "#,
-            path.display()
+            path_str
         );
         let (task, handle) = make_task(1, &src);
         scheduler.submit(task).unwrap();
