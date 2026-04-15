@@ -35,6 +35,21 @@ pub(super) fn format_undefined_variable_message(
     } else {
         format!("undefined variable '{name_str}' {suffix}")
     };
+    // If the identifier is a keyword borrowed from another language
+    // that silt has no equivalent for, the edit-distance suggestion
+    // isn't useful — attach a targeted recommendation instead. These
+    // hints used to live in the parser's G1 guard, but that fired on
+    // any parenthesized reference and broke formatter roundtrip;
+    // resolving them here keeps the UX while staying syntax-neutral.
+    let foreign_keyword_hint = match name_str.as_str() {
+        "break" | "continue" => {
+            Some("silt has no 'break'/'continue' — return early or restructure the recursion")
+        }
+        _ => None,
+    };
+    if let Some(hint) = foreign_keyword_hint {
+        return format!("{base}\nhelp: {hint}");
+    }
     let mut candidates = BTreeSet::new();
     env.collect_names(&mut candidates);
     // Strip fully-qualified builtin names like `list.map` — those are

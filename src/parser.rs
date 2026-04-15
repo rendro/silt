@@ -1024,7 +1024,17 @@ impl Parser {
                 .unwrap_or(Token::Eof);
             let span = self.span();
 
-            // G1: if / while / for / break / continue
+            // G1: if / while / for
+            //
+            // `break` and `continue` used to be guarded here too, but the
+            // check fired on ANY bare identifier reference (next is
+            // Newline | RBrace | Eof), which made the formatter's
+            // paren-stripping non-roundtrip: `(break)` → `break` would
+            // re-parse as an error. Bare `break`/`continue` are valid
+            // identifier references syntactically; if they're not
+            // bound, the typechecker already produces an "undefined
+            // variable" diagnostic. So we drop them from the G1 hint
+            // and rely on the name-resolution error instead.
             let hint = match text.as_str() {
                 "if" => Some(
                     "silt has no 'if' keyword — use 'match cond { true -> ..., false -> ... }'",
@@ -1032,18 +1042,12 @@ impl Parser {
                 "while" | "for" => Some(
                     "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
                 ),
-                "break" | "continue" => Some(
-                    "silt has no 'break'/'continue' — return early or restructure the recursion",
-                ),
                 _ => None,
             };
             if let Some(msg) = hint {
                 // Fire only when the next token could plausibly start the
                 // erroneous construct: an expression-start token (paren,
-                // ident, literal, unary, brace) for `if`/`while`/`for`,
-                // or end-of-stmt (newline, `}`, eof) for `break`/`continue`.
-                // Skip when the next token is `=`, `.`, or `(` starting a
-                // call — those look like legitimate ident usages.
+                // ident, literal, unary, brace).
                 let looks_like_mistake = match text.as_str() {
                     "if" | "while" | "for" => matches!(
                         next,
@@ -1058,9 +1062,6 @@ impl Parser {
                             | Token::LBrace
                             | Token::LBracket
                     ),
-                    "break" | "continue" => {
-                        matches!(next, Token::Newline | Token::RBrace | Token::Eof)
-                    }
                     _ => false,
                 };
                 if looks_like_mistake {

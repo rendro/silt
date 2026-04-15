@@ -2541,3 +2541,76 @@ fn main() {
         "expected no type errors for list.reverse([1,2,3]), got: {errs:?}"
     );
 }
+
+// ── break/continue hint migrated from parser to typechecker ────────
+//
+// The parser used to reject bare `break`/`continue` in statement
+// position with a helpful "silt has no break/continue — restructure
+// the recursion" hint. That guard also fired on parenthesized refs
+// like `(break)`, which broke `format(source)` roundtrips for the
+// formatter-idempotence fuzzer. The hint now lives in the typechecker
+// as extra context on the standard "undefined variable" diagnostic.
+
+#[test]
+fn test_bare_break_reports_undefined_with_keyword_hint() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  break
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("undefined variable 'break'")),
+        "expected 'undefined variable break' diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("silt has no 'break'/'continue' — return early or restructure the recursion")
+        }),
+        "expected the keyword-migration hint to be attached, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_bare_continue_reports_undefined_with_keyword_hint() {
+    let errs = type_errors(
+        r#"
+fn main() {
+  continue
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("undefined variable 'continue'")),
+        "expected 'undefined variable continue' diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("silt has no 'break'/'continue' — return early or restructure the recursion")
+        }),
+        "expected the keyword-migration hint to be attached, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_parenthesized_break_parses_and_roundtrips_through_formatter() {
+    // Regression lock against the formatter/parser roundtrip failure
+    // that the removed G1 guard caused. `(break)` is syntactically a
+    // paren expression wrapping an ident reference, and the formatter
+    // strips redundant parens. The result must still parse — the G1
+    // guard used to reject it with a fake "syntax error" even though
+    // the token stream is perfectly valid ident-in-statement.
+    let src = "fn main() {\n  (break)\n}\n";
+    let formatted =
+        silt::formatter::format(src).expect("paren-wrapped break must format without error");
+    // parse_errors drops any typechecker diagnostics; we only care
+    // that the *parser* accepts the formatter's output.
+    let perrs = parse_errors(&formatted);
+    assert!(
+        perrs.is_empty(),
+        "parser must accept formatter output for (break); formatted={formatted:?}, errors={perrs:?}"
+    );
+}
