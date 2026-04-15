@@ -429,21 +429,25 @@ impl Lexer {
 
         let mut result_lines: Vec<&str> = Vec::new();
         for line in &lines {
-            if line.len() >= indent {
-                // Check that the prefix is indeed whitespace matching
-                let (prefix, rest) = line.split_at(indent);
-                if prefix.chars().all(|c| c == ' ' || c == '\t') {
-                    result_lines.push(rest);
-                } else {
-                    result_lines.push(line);
-                }
+            let bytes = line.as_bytes();
+            // `indent` is a byte count derived from a last_line that is
+            // entirely ASCII whitespace, so any matching whitespace
+            // prefix on another line is also ASCII and byte-equals
+            // char-indexed length. Check the prefix at the byte level —
+            // safe even when subsequent content contains multi-byte
+            // characters, because we never split inside one. Falling
+            // through to `push(line)` preserves a line whose leading
+            // bytes aren't all ASCII whitespace (e.g. a line starting
+            // with a box-drawing character), which previously panicked
+            // on a mid-char `split_at(indent)`.
+            if bytes.len() >= indent && bytes[..indent].iter().all(|&b| b == b' ' || b == b'\t') {
+                result_lines.push(&line[indent..]);
+            } else if bytes.iter().all(|&b| b == b' ' || b == b'\t') {
+                // Line is shorter than indent (or equal) and contains
+                // only ASCII whitespace — treat as blank.
+                result_lines.push("");
             } else {
-                // Line is shorter than indent — if it's all whitespace, treat as empty
-                if line.chars().all(|c| c == ' ' || c == '\t') {
-                    result_lines.push("");
-                } else {
-                    result_lines.push(line);
-                }
+                result_lines.push(line);
             }
         }
 
@@ -1074,6 +1078,20 @@ mod tests {
         let input = "\"\"\"\nhello\n\"\"\"";
         let tokens = lex(input);
         assert_eq!(tokens, vec![Token::StringLit("hello".into(), true),]);
+    }
+
+    #[test]
+    fn test_triple_quoted_line_starting_with_multibyte_char_does_not_panic() {
+        // Regression lock for a fuzz-discovered lexer panic: when a
+        // content line starts with a multi-byte character (e.g. `─`,
+        // U+2500, 3 UTF-8 bytes) and the closing `"""` indent would
+        // fall mid-character, `strip_triple_string_indentation` used
+        // to call `split_at(indent)` and crash with "byte index N is
+        // not a char boundary". The line should just be kept as-is
+        // since its leading bytes aren't ASCII whitespace.
+        let input = "\"\"\"\n─x\n  \"\"\"";
+        let tokens = lex(input);
+        assert_eq!(tokens, vec![Token::StringLit("─x".into(), true)]);
     }
 
     #[test]
