@@ -174,25 +174,25 @@ fn compute_cache_root() -> Result<PathBuf, GitError> {
 
 #[cfg(not(target_os = "windows"))]
 fn compute_cache_root() -> Result<PathBuf, GitError> {
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        if !xdg.is_empty() {
-            let mut p = PathBuf::from(xdg);
-            p.push("silt");
-            p.push("git");
-            return Ok(p);
-        }
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME")
+        && !xdg.is_empty()
+    {
+        let mut p = PathBuf::from(xdg);
+        p.push("silt");
+        p.push("git");
+        return Ok(p);
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            // Prefer the XDG-style default ($HOME/.cache) when XDG_CACHE_HOME
-            // is unset; the dotted ~/.silt/cache fallback below is only
-            // reached when even $HOME is missing.
-            let mut p = PathBuf::from(home);
-            p.push(".cache");
-            p.push("silt");
-            p.push("git");
-            return Ok(p);
-        }
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        // Prefer the XDG-style default ($HOME/.cache) when XDG_CACHE_HOME
+        // is unset; the dotted ~/.silt/cache fallback below is only
+        // reached when even $HOME is missing.
+        let mut p = PathBuf::from(home);
+        p.push(".cache");
+        p.push("silt");
+        p.push("git");
+        return Ok(p);
     }
     // Last-ditch: stash the cache under the system temp dir so the
     // operation can still succeed in headless / sandboxed environments
@@ -273,10 +273,10 @@ fn ls_remote_resolve(url: &str, refspec: &str) -> Result<Option<String>, GitErro
     // ref doesn't exist (we map this to RefNotFound at the caller).
     for line in output.lines() {
         let mut parts = line.split_whitespace();
-        if let (Some(sha), Some(name)) = (parts.next(), parts.next()) {
-            if name == refspec {
-                return Ok(Some(sha.to_lowercase()));
-            }
+        if let (Some(sha), Some(name)) = (parts.next(), parts.next())
+            && name == refspec
+        {
+            return Ok(Some(sha.to_lowercase()));
         }
     }
     Ok(None)
