@@ -29,10 +29,10 @@ cp target/release/silt ~/.local/bin/
 
 ```sh
 silt init
-silt run main.silt
+silt run
 ```
 
-`silt init` creates a starter `main.silt`. `silt run` executes it. That's the whole loop.
+`silt init` creates a `silt.toml` manifest and a starter `src/main.silt`. `silt run` (with no arguments, inside the package directory) executes the package's entry point. That's the whole loop.
 
 See `examples/` in the repository for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -184,17 +184,20 @@ silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
-silt init                  -- create a new main.silt
+silt init                  -- create a new silt package in the current directory
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
-silt update                -- update silt to the latest release
+silt self-update           -- update the silt binary to the latest release
+silt update                -- update package dependencies (coming in v0.7)
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically re-run on `.silt` file changes.
 
 ### Staying up to date
 
-Run `silt update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
+Run `silt self-update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
+
+(In v0.7 the bare `silt update` is being repurposed to update package dependencies; the binary self-update is now spelled `silt self-update`.)
 
 ## What's next
 
