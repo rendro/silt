@@ -224,7 +224,11 @@ fn absolutize(path: &Path) -> PathBuf {
 /// Silt identifier rules: lowercase ASCII letter or underscore start,
 /// followed by lowercase ASCII letters, digits, or underscores. Matches
 /// `^[a-z_][a-z0-9_]*$`.
-fn is_silt_identifier(name: &str) -> bool {
+///
+/// Public so other parts of the binary (notably `silt add`, which has to
+/// validate dep names before mutating the manifest) can apply the same
+/// rule without duplicating the regex.
+pub fn is_silt_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;

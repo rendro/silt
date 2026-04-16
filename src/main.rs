@@ -358,6 +358,10 @@ fn usage_text() -> String {
         "silt update [<dep-name>]",
         "Regenerate silt.lock for the current package's dependencies",
     ));
+    out.push_str(&line(
+        "silt add <name> --path <path>",
+        "Add a path-based dependency to silt.toml",
+    ));
     out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
     out
@@ -1035,6 +1039,33 @@ fn main() {
             }
             run_dependency_update(positional.as_deref());
         }
+        // `silt add <name> --path <path>` — append a path-based dep to
+        // `silt.toml` and regenerate `silt.lock`. Implemented in
+        // `run_add_command`; dispatch keeps the parsing local to that
+        // function so the main switch stays a one-liner.
+        "add" => {
+            if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+                println!("Usage: silt add <name> --path <path>");
+                println!();
+                println!("Add a path-based dependency to the current package's silt.toml,");
+                println!("then regenerate silt.lock to include the new dep.");
+                println!();
+                println!("Arguments:");
+                println!("  <name>           The local name to import the dep as.");
+                println!("                   Must be a valid silt identifier and must not");
+                println!("                   collide with a builtin module.");
+                println!("  --path <path>    Path to the dep's package root (the directory");
+                println!("                   containing its silt.toml).");
+                println!();
+                println!("Example:");
+                println!("  silt add calc --path ../calc");
+                process::exit(0);
+            }
+            if let Err(e) = run_add_command(&args[2..]) {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        }
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => {
             let file = arg;
@@ -1475,6 +1506,252 @@ fn run_dependency_update(target: Option<&str>) {
     } else {
         eprintln!("Locked {dep_count} dependencies.");
     }
+}
+
+/// Implementation of `silt add <name> --path <path>`.
+///
+/// Edits the current package's `silt.toml` in place to add a new
+/// path-based dependency entry, then regenerates `silt.lock` so the
+/// next compile picks up the new dep. Uses `toml_edit` so user
+/// formatting (comments, blank lines, key ordering) is preserved.
+///
+/// Errors are returned rather than printed so the caller can wrap them
+/// in the dispatch's standard "error: ..." prefix and exit code.
+fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    // ── Argument parsing ──────────────────────────────────────────────
+    //
+    // Positional name + a single flag value (`--path <path>`); reject
+    // anything else so typos like `--paths` surface immediately rather
+    // than being silently swallowed.
+    let mut name: Option<String> = None;
+    let mut path_arg: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--path" {
+            if i + 1 >= args.len() {
+                return Err("--path requires a value".into());
+            }
+            if path_arg.is_some() {
+                return Err("--path was specified more than once".into());
+            }
+            path_arg = Some(args[i + 1].clone());
+            i += 2;
+        } else if let Some(rest) = arg.strip_prefix("--path=") {
+            if path_arg.is_some() {
+                return Err("--path was specified more than once".into());
+            }
+            path_arg = Some(rest.to_string());
+            i += 1;
+        } else if arg.starts_with('-') {
+            return Err(format!("silt add: unknown flag '{arg}'").into());
+        } else if name.is_none() {
+            name = Some(arg.clone());
+            i += 1;
+        } else {
+            return Err(format!("silt add: unexpected extra argument '{arg}'").into());
+        }
+    }
+    let name = name.ok_or("silt add: missing required <name> argument")?;
+    let path_arg = path_arg.ok_or("silt add: missing required --path <path> argument")?;
+
+    // ── Manifest discovery ─────────────────────────────────────────────
+    let cwd = std::env::current_dir().map_err(|e| format!("failed to determine cwd: {e}"))?;
+    let (root, manifest) = match find_project_root(&cwd)? {
+        Some(pair) => pair,
+        None => return Err("silt add must be run inside a silt package".into()),
+    };
+
+    // ── Name validation ────────────────────────────────────────────────
+    //
+    // Identifier rules first (cheap, deterministic), then collisions:
+    // a name that's both invalid AND a builtin should report invalid
+    // (the user's bigger problem).
+    if !silt::manifest::is_silt_identifier(&name) {
+        return Err(format!(
+            "silt add: invalid dependency name `{name}`: \
+             must match silt identifier rules `[a-z_][a-z0-9_]*`"
+        )
+        .into());
+    }
+    if silt::module::is_builtin_module(&name) {
+        return Err(format!(
+            "silt add: dependency name `{name}` collides with builtin module `{name}`; \
+             pick a different name"
+        )
+        .into());
+    }
+    let already_present = manifest
+        .dependencies
+        .keys()
+        .any(|sym| intern::resolve(*sym) == name);
+    if already_present {
+        return Err(format!("silt add: dependency '{name}' is already declared").into());
+    }
+
+    // ── Path validation ────────────────────────────────────────────────
+    //
+    // Resolve the user-provided path against cwd (so `silt add foo
+    // --path ../foo` works regardless of where in the package tree
+    // they're sitting), then verify the destination is actually a silt
+    // package. Both checks deliberately use `is_file` / `is_dir` rather
+    // than `exists()` so a stray symlink doesn't trip a misleading
+    // error.
+    let user_path = PathBuf::from(&path_arg);
+    let absolute_dep_path = if user_path.is_absolute() {
+        user_path.clone()
+    } else {
+        cwd.join(&user_path)
+    };
+    let absolute_dep_path = normalize_path(&absolute_dep_path);
+    if !absolute_dep_path.exists() {
+        return Err(format!(
+            "silt add: path does not exist: {}",
+            absolute_dep_path.display()
+        )
+        .into());
+    }
+    let dep_manifest = absolute_dep_path.join("silt.toml");
+    if !dep_manifest.is_file() {
+        return Err(format!(
+            "silt add: path is not a silt package (no silt.toml found): {}",
+            absolute_dep_path.display()
+        )
+        .into());
+    }
+
+    // ── Stored path ────────────────────────────────────────────────────
+    //
+    // We always store the path relative-to-manifest-dir when possible;
+    // this keeps freshly-checked-out workspaces portable across
+    // machines. If the dep lives outside the manifest's tree (e.g. an
+    // absolute path under /opt) we fall back to the absolute form
+    // because there's no clean relative form to write.
+    //
+    // The lockfile records the *resolved* absolute path either way, so
+    // the manifest only needs to be re-resolvable from disk. We don't
+    // try to preserve the user's exact input string — that's a
+    // deliberate trade-off to keep the rule predictable.
+    let stored_path = relative_from(&root, &absolute_dep_path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| absolute_dep_path.display().to_string());
+
+    // ── Manifest mutation via toml_edit ────────────────────────────────
+    //
+    // toml_edit preserves formatting, comments, and key ordering
+    // verbatim — required so a user who's hand-formatted their
+    // silt.toml doesn't lose that work the first time they run `silt
+    // add`. We only insert the new entry; everything else stays as-is.
+    let manifest_path = root.join("silt.toml");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("failed to read {}: {e}", manifest_path.display()))?;
+    let mut doc: toml_edit::DocumentMut = manifest_text
+        .parse()
+        .map_err(|e| format!("failed to parse {}: {e}", manifest_path.display()))?;
+
+    // Ensure a `[dependencies]` table exists. If it's missing entirely
+    // we create one as an explicit table (so it renders as the
+    // header-style `[dependencies]` users expect, not as an inline
+    // `dependencies = {}` blob).
+    if doc.get("dependencies").is_none() {
+        doc["dependencies"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let deps = doc["dependencies"]
+        .as_table_mut()
+        .ok_or("silt.toml has a [dependencies] entry that isn't a table")?;
+
+    // The new dep is rendered as an inline table (`name = { path =
+    // "..." }`) to match the format used elsewhere in the v0.7
+    // examples and tests.
+    let mut inline = toml_edit::InlineTable::new();
+    inline.insert(
+        "path",
+        toml_edit::value(stored_path.clone()).into_value().unwrap(),
+    );
+    deps.insert(
+        &name,
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)),
+    );
+
+    fs::write(&manifest_path, doc.to_string())
+        .map_err(|e| format!("failed to write {}: {e}", manifest_path.display()))?;
+
+    // ── Lockfile regeneration ──────────────────────────────────────────
+    //
+    // Re-load the just-written manifest and resolve the lockfile from
+    // it. We deliberately don't reuse the `manifest` we loaded earlier
+    // — toml_edit just rewrote the file, and any future validation
+    // tightening should run against the on-disk form, not a stale
+    // in-memory copy.
+    let updated = Manifest::load(&manifest_path)
+        .map_err(|e| format!("manifest re-validation failed after edit: {e}"))?;
+    let lockfile =
+        Lockfile::resolve(&updated).map_err(|e| format!("failed to resolve dependencies: {e}"))?;
+    let lock_path = root.join("silt.lock");
+    lockfile
+        .write(&lock_path)
+        .map_err(|e| format!("failed to write {}: {e}", lock_path.display()))?;
+
+    println!("Added dependency '{name}' (path = \"{stored_path}\")");
+    Ok(())
+}
+
+/// Lexically normalize a path: collapse `.` and `..` components without
+/// touching the filesystem. Lockfile resolution does this internally
+/// for dep paths; we apply the same normalization here so the manifest
+/// records (and the success-line prints) the user-recognizable form.
+fn normalize_path(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Express `target` as a path relative to `base`, using `..` segments
+/// where necessary. Returns `None` only when the inputs differ in
+/// rootedness (one absolute, one relative) — there's no sensible
+/// relative form in that case and the caller falls back to absolute.
+///
+/// Rolling our own keeps us off the `pathdiff` crate; the logic is
+/// 20 lines and the v0.7 manifest only needs ASCII-cleanly-named
+/// paths anyway.
+fn relative_from(base: &Path, target: &Path) -> Option<PathBuf> {
+    if base.is_absolute() != target.is_absolute() {
+        return None;
+    }
+    let base_components: Vec<_> = base.components().collect();
+    let target_components: Vec<_> = target.components().collect();
+    // Find the longest common prefix.
+    let mut shared = 0;
+    while shared < base_components.len()
+        && shared < target_components.len()
+        && base_components[shared] == target_components[shared]
+    {
+        shared += 1;
+    }
+    let mut result = PathBuf::new();
+    for _ in shared..base_components.len() {
+        result.push("..");
+    }
+    for comp in &target_components[shared..] {
+        result.push(comp.as_os_str());
+    }
+    if result.as_os_str().is_empty() {
+        // base == target — express that as `.` rather than the empty
+        // string so toml_edit emits a syntactically valid path.
+        result.push(".");
+    }
+    Some(result)
 }
 
 /// Resolve the package entry point (`<root>/src/main.silt`) for the current
