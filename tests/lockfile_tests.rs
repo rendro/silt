@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use silt::git::GitRef;
+use silt::lockfile::{LockedPackage, LockedSource, Lockfile};
+
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn silt_cmd() -> Command {
@@ -500,5 +503,380 @@ fn test_silt_fmt_does_not_create_lockfile() {
         !app.join("silt.lock").exists(),
         "silt fmt should not create silt.lock; found one at {}",
         app.join("silt.lock").display()
+    );
+}
+
+// ── Hermetic git lockfile schema tests ────────────────────────────────
+//
+// These tests don't touch the network — they construct `Lockfile`
+// values in memory, write them to disk, and parse them back. They
+// pin the on-disk TOML schema for the three git ref forms (rev,
+// branch, tag) and guard against accidental drift in the renderer
+// or parser.
+
+#[test]
+fn test_lockfile_renders_git_source_with_rev() {
+    let ws = fresh_workspace("git_rev_roundtrip");
+    let lock_path = ws.join("silt.lock");
+    let lock = Lockfile {
+        version: 1,
+        packages: vec![
+            LockedPackage {
+                name: "rev_app".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Local,
+                checksum: String::new(),
+            },
+            LockedPackage {
+                name: "rev_dep".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Git {
+                    url: "https://example.com/rev_dep.git".into(),
+                    ref_spec: GitRef::Rev("abc1234".into()),
+                    resolved_sha: "abc1234".into(),
+                },
+                checksum: "sha256:deadbeef".into(),
+            },
+        ],
+    };
+    lock.write(&lock_path).expect("write lockfile");
+    let text = fs::read_to_string(&lock_path).unwrap();
+    // Rev form renders one `rev =` field, no `branch =` / `tag =`.
+    assert!(
+        text.contains("git = \"https://example.com/rev_dep.git\""),
+        "lockfile missing git URL:\n{text}"
+    );
+    assert!(
+        text.contains("rev = \"abc1234\""),
+        "lockfile missing rev field:\n{text}"
+    );
+    assert!(
+        !text.contains("branch ="),
+        "rev form should not emit branch:\n{text}"
+    );
+    assert!(
+        !text.contains("tag ="),
+        "rev form should not emit tag:\n{text}"
+    );
+
+    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    assert_eq!(parsed, lock, "git rev lockfile did not roundtrip");
+}
+
+#[test]
+fn test_lockfile_renders_git_source_with_branch() {
+    let ws = fresh_workspace("git_branch_roundtrip");
+    let lock_path = ws.join("silt.lock");
+    let resolved_sha = "0123456789abcdef0123456789abcdef01234567";
+    let lock = Lockfile {
+        version: 1,
+        packages: vec![
+            LockedPackage {
+                name: "branch_app".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Local,
+                checksum: String::new(),
+            },
+            LockedPackage {
+                name: "branch_dep".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Git {
+                    url: "https://example.com/branch_dep.git".into(),
+                    ref_spec: GitRef::Branch("main".into()),
+                    resolved_sha: resolved_sha.into(),
+                },
+                checksum: "sha256:deadbeef".into(),
+            },
+        ],
+    };
+    lock.write(&lock_path).expect("write lockfile");
+    let text = fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        text.contains("branch = \"main\""),
+        "branch form must preserve user intent:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("rev = \"{resolved_sha}\"")),
+        "branch form must pin resolved SHA:\n{text}"
+    );
+
+    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    assert_eq!(parsed, lock, "git branch lockfile did not roundtrip");
+}
+
+#[test]
+fn test_lockfile_renders_git_source_with_tag() {
+    let ws = fresh_workspace("git_tag_roundtrip");
+    let lock_path = ws.join("silt.lock");
+    let resolved_sha = "fedcba9876543210fedcba9876543210fedcba98";
+    let lock = Lockfile {
+        version: 1,
+        packages: vec![
+            LockedPackage {
+                name: "tag_app".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Local,
+                checksum: String::new(),
+            },
+            LockedPackage {
+                name: "tag_dep".into(),
+                version: "0.1.0".into(),
+                source: LockedSource::Git {
+                    url: "https://example.com/tag_dep.git".into(),
+                    ref_spec: GitRef::Tag("v1.0.0".into()),
+                    resolved_sha: resolved_sha.into(),
+                },
+                checksum: "sha256:cafebabe".into(),
+            },
+        ],
+    };
+    lock.write(&lock_path).expect("write lockfile");
+    let text = fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        text.contains("tag = \"v1.0.0\""),
+        "tag form must preserve user intent:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("rev = \"{resolved_sha}\"")),
+        "tag form must pin resolved SHA:\n{text}"
+    );
+
+    let parsed = Lockfile::load(&lock_path).expect("parse lockfile");
+    assert_eq!(parsed, lock, "git tag lockfile did not roundtrip");
+}
+
+#[test]
+fn test_lockfile_resolve_git_dep_validates_manifest() {
+    // A git dep with a malformed Rev (not a hex SHA) must error
+    // at resolve time without ever contacting the network. Rev shape
+    // validation is offline; the failure is `LockfileError::GitOperation`
+    // wrapping `GitError::RefNotFound`.
+    let ws = fresh_workspace("git_bad_rev");
+    let app = ws.join("app");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        app.join("silt.toml"),
+        "[package]\nname = \"bad_rev_app\"\nversion = \"0.1.0\"\n\n\
+         [dependencies]\n\
+         broken = { git = \"https://example.com/broken.git\", rev = \"not-a-sha\" }\n",
+    )
+    .unwrap();
+    let src = app.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("main.silt"), "fn main() {}\n").unwrap();
+
+    let out = silt_cmd().arg("update").current_dir(&app).output().unwrap();
+    assert!(
+        !out.status.success(),
+        "silt update should error on malformed rev; succeeded with stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("git dependency") && stderr.contains("https://example.com/broken.git"),
+        "expected git dependency error mentioning the URL; got: {stderr}"
+    );
+}
+
+// ── Git E2E tests (gated; require git on PATH) ────────────────────────
+//
+// Skipped by default; opt in with `SILT_GIT_INTEGRATION_TESTS=1`. These
+// tests don't reach the public internet — they spawn a local `git init
+// --bare` repo and point silt at a `file://` URL — but they do shell
+// out to git, which we keep opt-in to match the gating used by the
+// other PR 1/2 git tests and to keep `cargo test` fast/hermetic.
+
+fn skip_unless_network() -> bool {
+    std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err()
+}
+
+/// Create a bare git repo with a tiny silt library committed on `main`,
+/// returning `(file_url, head_sha)`. The library exports a single
+/// `pub fn answer() = 42` so dependents can both compile and run.
+fn make_local_git_silt_package(workspace: &Path) -> (String, String) {
+    let staging = workspace.join("staging");
+    let bare = workspace.join("bare.git");
+    fs::create_dir_all(&staging).unwrap();
+    fs::create_dir_all(&bare).unwrap();
+
+    // Author the package.
+    fs::write(
+        staging.join("silt.toml"),
+        "[package]\nname = \"locallib\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(staging.join("src")).unwrap();
+    fs::write(staging.join("src/lib.silt"), "pub fn answer() = 42\n").unwrap();
+
+    // Init the bare repo we'll publish to. Use `master` as the initial
+    // branch — older `git init` defaults to it; `--initial-branch=main`
+    // exists on newer git but we set the branch explicitly downstream
+    // anyway, so be agnostic.
+    let run = |cwd: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?} spawn failed: {e}"));
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    };
+
+    run(&bare, &["init", "--bare", "--initial-branch=main"]);
+
+    // Init the staging clone, set local identity (so commit doesn't
+    // require global config), commit, push to bare.
+    run(&staging, &["init", "--initial-branch=main"]);
+    run(&staging, &["config", "user.email", "tests@silt.local"]);
+    run(&staging, &["config", "user.name", "silt tests"]);
+    run(&staging, &["add", "."]);
+    run(&staging, &["commit", "-m", "initial"]);
+    let bare_url = format!("file://{}", bare.display());
+    run(&staging, &["remote", "add", "origin", bare_url.as_str()]);
+    run(&staging, &["push", "origin", "main"]);
+
+    let head = run(&staging, &["rev-parse", "HEAD"]);
+    let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    (bare_url, head_sha)
+}
+
+#[test]
+fn test_silt_update_git_branch_dep_locks_resolved_sha() {
+    if skip_unless_network() {
+        return;
+    }
+    let ws = fresh_workspace("git_branch_e2e");
+    let (repo_url, head_sha) = make_local_git_silt_package(&ws);
+    let app = ws.join("app");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        app.join("silt.toml"),
+        format!(
+            "[package]\nname = \"branch_e2e_app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlocallib = {{ git = \"{repo_url}\", branch = \"main\" }}\n",
+        ),
+    )
+    .unwrap();
+    let src = app.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("main.silt"), "fn main() {}\n").unwrap();
+
+    let out = silt_cmd().arg("update").current_dir(&app).output().unwrap();
+    assert!(
+        out.status.success(),
+        "silt update failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(
+        lock.contains("branch = \"main\""),
+        "lockfile missing branch intent:\n{lock}"
+    );
+    assert!(
+        lock.contains(&format!("rev = \"{head_sha}\"")),
+        "lockfile should pin the bare repo's HEAD `{head_sha}`:\n{lock}"
+    );
+}
+
+#[test]
+fn test_silt_update_git_rev_dep_no_op_on_second_call() {
+    if skip_unless_network() {
+        return;
+    }
+    // For a Rev dep, two consecutive `silt update` calls must produce
+    // byte-identical lockfiles — the SHA is locked verbatim and no
+    // network resolution can change it.
+    let ws = fresh_workspace("git_rev_idem");
+    let (repo_url, head_sha) = make_local_git_silt_package(&ws);
+    let app = ws.join("app");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        app.join("silt.toml"),
+        format!(
+            "[package]\nname = \"rev_idem_app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlocallib = {{ git = \"{repo_url}\", rev = \"{head_sha}\" }}\n",
+        ),
+    )
+    .unwrap();
+    let src = app.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("main.silt"), "fn main() {}\n").unwrap();
+
+    let first = silt_cmd().arg("update").current_dir(&app).output().unwrap();
+    assert!(
+        first.status.success(),
+        "first silt update failed: stderr={}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let lock1 = fs::read_to_string(app.join("silt.lock")).unwrap();
+    let second = silt_cmd().arg("update").current_dir(&app).output().unwrap();
+    assert!(
+        second.status.success(),
+        "second silt update failed: stderr={}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let lock2 = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert_eq!(
+        lock1, lock2,
+        "rev-dep lockfile should be byte-identical across `silt update` calls"
+    );
+}
+
+#[test]
+fn test_silt_run_with_git_dep_works() {
+    if skip_unless_network() {
+        return;
+    }
+    // Full E2E: declare a git dep on a local bare repo holding a real
+    // silt library, then `silt run` the consumer. The dep's
+    // `pub fn answer() = 42` should be importable and runnable.
+    let ws = fresh_workspace("git_run_e2e");
+    let (repo_url, _head) = make_local_git_silt_package(&ws);
+    let app = ws.join("app");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        app.join("silt.toml"),
+        format!(
+            "[package]\nname = \"run_e2e_app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlocallib = {{ git = \"{repo_url}\", branch = \"main\" }}\n",
+        ),
+    )
+    .unwrap();
+    let src = app.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        src.join("main.silt"),
+        "import locallib\nfn main() { println(locallib.answer()) }\n",
+    )
+    .unwrap();
+
+    let out = silt_cmd().arg("run").current_dir(&app).output().unwrap();
+    assert!(
+        out.status.success(),
+        "silt run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("42"),
+        "expected `42` in silt run output; got: {stdout}"
+    );
+
+    // Cache must contain the dep's silt.toml at the resolved SHA path.
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    let rev_idx = lock.find("rev = \"").expect("lockfile contains rev");
+    let after = &lock[rev_idx + "rev = \"".len()..];
+    let end = after.find('"').expect("rev string is closed");
+    let sha = &after[..end];
+    let cache_path = silt::git::cache_for(&repo_url, sha).expect("cache path");
+    assert!(
+        cache_path.join("silt.toml").is_file(),
+        "expected cache to contain silt.toml at {}",
+        cache_path.display()
     );
 }

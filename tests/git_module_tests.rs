@@ -45,9 +45,7 @@ fn test_cache_for_includes_url_hash_and_sha() {
         cache_root.display()
     );
     // Two subdirectory levels under the root: <url-hash>/<sha>.
-    let rel = dir
-        .strip_prefix(&cache_root)
-        .expect("dir under cache root");
+    let rel = dir.strip_prefix(&cache_root).expect("dir under cache root");
     assert_eq!(
         rel.components().count(),
         2,
@@ -70,7 +68,10 @@ fn test_cache_for_consistent_for_same_url_and_sha() {
 fn test_resolve_ref_rev_validates_format() {
     // `notahex` is not a valid SHA shape — should fail without ever
     // contacting the network.
-    let bad = git::resolve_ref("https://example.invalid/repo", &GitRef::Rev("notahex".into()));
+    let bad = git::resolve_ref(
+        "https://example.invalid/repo",
+        &GitRef::Rev("notahex".into()),
+    );
     assert!(bad.is_err(), "expected error for non-hex rev");
 
     // 7-hex SHA is the minimum acceptable shape; this should succeed
@@ -129,12 +130,15 @@ fn test_fetch_to_cache_actually_clones() {
         return;
     }
     // Resolve `main` first to get a known-good SHA, then fetch it.
-    let sha = git::resolve_ref(SILT_REPO, &GitRef::Branch("main".into()))
-        .expect("resolve main branch");
+    // (Silt's own repo isn't a silt package per the layout convention,
+    // so we can't assert on `silt.toml`; we just verify the clone
+    // produced *something* — the README is a stable canary file.)
+    let sha =
+        git::resolve_ref(SILT_REPO, &GitRef::Branch("main".into())).expect("resolve main branch");
     let dir = git::fetch_to_cache(SILT_REPO, &sha).expect("clone to cache");
     assert!(
-        dir.join("silt.toml").is_file(),
-        "expected cache dir to contain silt.toml, got {}",
+        dir.join("README.md").is_file(),
+        "expected cache dir to contain README.md, got {}",
         dir.display()
     );
     // Idempotency: a second call returns the same dir without re-cloning.

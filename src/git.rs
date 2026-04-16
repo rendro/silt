@@ -288,7 +288,11 @@ pub fn verify_reachable(url: &str) -> Result<(), GitError> {
     run_git(&["ls-remote", url, "HEAD"]).map(|_| ())
 }
 
-fn is_valid_sha_shape(s: &str) -> bool {
+/// Returns true if `s` is a plausibly-shaped commit SHA: a 7-40
+/// character hex string. Used both for offline `Rev` validation in
+/// `resolve_ref` and for `silt add --git --rev` shape-check before
+/// the network round-trip.
+pub fn is_valid_sha_shape(s: &str) -> bool {
     let len = s.len();
     if !(7..=40).contains(&len) {
         return false;
