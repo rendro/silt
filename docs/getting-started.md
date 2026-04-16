@@ -190,6 +190,7 @@ silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --dis
 silt self-update           -- update the silt binary to the latest release
 silt update                -- update package dependencies (coming in v0.7)
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
+silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dependency to silt.toml
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically re-run on `.silt` file changes.
