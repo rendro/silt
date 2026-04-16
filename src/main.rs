@@ -1549,12 +1549,9 @@ enum AddSource {
 ///
 /// Validation order: argument shape → name → URL/path well-formedness
 /// → (git only) `verify_reachable` → (git only) `resolve_ref` → manifest
-/// write → (path-only deps) lockfile regen. We deliberately *skip* the
-/// lockfile regen step when any git dep is present in the resulting
-/// manifest because PR 1's `Lockfile::resolve` stub errors on git deps;
-/// PR 3 lifts that restriction. Failing the whole `silt add` because
-/// of a stubbed-out resolver would be misleading — the manifest write
-/// did succeed.
+/// write → lockfile regen. Both path and git deps now flow through the
+/// same lockfile-regen step (git deps fetch into `<silt-cache>/git/...`
+/// and pin the resolved SHA in `silt.lock`).
 ///
 /// Errors are returned rather than printed so the caller can wrap them
 /// in the dispatch's standard "error: ..." prefix and exit code.
@@ -1818,7 +1815,7 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             if !looks_like_git_url(&url) {
                 return Err(format!(
                     "silt add: --git URL `{url}` doesn't look like a git URL \
-                     (expected http(s)://, git://, ssh://, or user@host:path)"
+                     (expected http(s)://, git://, ssh://, file://, or user@host:path)"
                 )
                 .into());
             }
@@ -1827,7 +1824,7 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             // eventually but the diagnostic is friendlier here, and we
             // also avoid a wasted roundtrip.
             if let silt::git::GitRef::Rev(sha) = &ref_spec
-                && !is_valid_sha_shape_for_add(sha)
+                && !silt::git::is_valid_sha_shape(sha)
             {
                 return Err(format!(
                     "silt add: --rev `{sha}` is not a valid commit SHA shape \
@@ -1917,25 +1914,7 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let updated = Manifest::load(&manifest_path)
         .map_err(|e| format!("manifest re-validation failed after edit: {e}"))?;
 
-    // PR-2 special case: `Lockfile::resolve` is stubbed to error on git
-    // deps until PR 3 wires the resolver. The manifest write is
-    // already correct; failing the whole `silt add` because of a
-    // stubbed-out resolver would be misleading. So if any dep in the
-    // re-read manifest is a git dep, skip the regen and emit a notice.
-    // PR 3 removes this branch entirely.
-    let has_git_dep = updated
-        .dependencies
-        .values()
-        .any(|d| matches!(d, silt::manifest::Dependency::Git { .. }));
     println!("{success_summary}");
-    if has_git_dep {
-        println!(
-            "Note: silt.lock not regenerated — git dep resolution wiring \
-             lands in PR 3 of v0.8. Run `silt update` after PR 3 to lock the \
-             new dep."
-        );
-        return Ok(());
-    }
 
     let lockfile =
         Lockfile::resolve(&updated).map_err(|e| format!("failed to resolve dependencies: {e}"))?;
@@ -1958,6 +1937,7 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 ///   - `http://...`, `https://...`
 ///   - `git://...`
 ///   - `ssh://...`
+///   - `file://...`
 ///   - `user@host:path` (the SCP-style git URL form: an `@` followed by a
 ///     `:` somewhere later, with no whitespace anywhere)
 fn looks_like_git_url(s: &str) -> bool {
@@ -1968,6 +1948,10 @@ fn looks_like_git_url(s: &str) -> bool {
         || s.starts_with("https://")
         || s.starts_with("git://")
         || s.starts_with("ssh://")
+        // `file://` is the canonical local-bare-repo URL form; git
+        // clone accepts it natively. Used by hermetic test fixtures
+        // and occasionally by users sharing repos via a local mount.
+        || s.starts_with("file://")
     {
         // Must have *something* after the scheme.
         return s.split("://").nth(1).is_some_and(|rest| !rest.is_empty());
@@ -1984,18 +1968,6 @@ fn looks_like_git_url(s: &str) -> bool {
         }
     }
     false
-}
-
-/// Local copy of `git::is_valid_sha_shape` — kept here as a private
-/// helper because the upstream function isn't `pub`. The rule is the
-/// same: 7-40 hex characters. PR 3 may consolidate this if other
-/// callers grow.
-fn is_valid_sha_shape_for_add(s: &str) -> bool {
-    let len = s.len();
-    if !(7..=40).contains(&len) {
-        return false;
-    }
-    s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Lexically normalize a path: collapse `.` and `..` components without

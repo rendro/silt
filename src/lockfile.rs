@@ -5,12 +5,12 @@
 //! next to `silt.toml` and is regenerated when the manifest changes
 //! (auto-update) or on demand via `silt update`.
 //!
-//! Phase-1 scope: only path dependencies are supported, so
-//! `LockedSource::Path { path }` is the only variant. Future phases will
-//! add `Git { url, rev }` and `Registry { name, version }` without
-//! requiring a schema-version bump (consumers default to "unknown
-//! source" and bail out if they don't recognise the variant — see the
-//! TOML write/parse path below).
+//! Supported source forms (as of v0.8): `LockedSource::Path` for path
+//! deps and `LockedSource::Git` for git deps (`{ url, ref_spec,
+//! resolved_sha }`). Future phases will add `Registry { name, version }`
+//! without requiring a schema-version bump (consumers default to
+//! "unknown source" and bail out if they don't recognise the variant —
+//! see the TOML write/parse path below).
 //!
 //! # Layout
 //!
@@ -26,6 +26,12 @@
 //! name = "calc"
 //! version = "0.1.0"
 //! source = { path = "/abs/path/to/calc" }
+//! checksum = "sha256:..."
+//!
+//! [[package]]
+//! name = "remote"
+//! version = "0.1.0"
+//! source = { git = "https://example.com/r.git", branch = "main", rev = "<40-hex>" }
 //! checksum = "sha256:..."
 //! ```
 //!
@@ -52,7 +58,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::git::GitRef;
+use crate::git::{self, GitError, GitRef};
 use crate::intern::{self, Symbol};
 use crate::manifest::{Dependency, Manifest, ManifestError};
 
@@ -124,9 +130,15 @@ pub enum LockfileError {
     /// The transitive manifest at one of the dep paths failed to load
     /// or validate. Carries the underlying [`ManifestError`].
     ManifestError(ManifestError),
-    /// Git dependency parsing succeeded, but the resolver isn't wired
-    /// up yet. Removed once the v0.8 git-resolution PR lands.
-    GitNotYetWired { name: String },
+    /// A git operation (ref resolution or fetch-to-cache) failed while
+    /// resolving a git dependency. Carries the URL + the user's chosen
+    /// ref form so the diagnostic can point at the specific entry, and
+    /// the underlying [`GitError`] for the transport-level details.
+    GitOperation {
+        url: String,
+        ref_spec: GitRef,
+        source: GitError,
+    },
 }
 
 impl fmt::Display for LockfileError {
@@ -149,10 +161,15 @@ impl fmt::Display for LockfileError {
                 path.display()
             ),
             LockfileError::ManifestError(err) => write!(f, "{err}"),
-            LockfileError::GitNotYetWired { name } => write!(
+            LockfileError::GitOperation {
+                url,
+                ref_spec,
+                source,
+            } => write!(
                 f,
-                "git dependency '{name}' recognized but resolution wiring lands in PR 3; \
-                 for now use --path"
+                "git dependency `{url}` ({} = `{}`): {source}",
+                ref_spec.kind(),
+                ref_spec.as_ref_string()
             ),
         }
     }
@@ -163,6 +180,7 @@ impl std::error::Error for LockfileError {
         match self {
             LockfileError::Io(err, _) => Some(err),
             LockfileError::ManifestError(err) => Some(err),
+            LockfileError::GitOperation { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -189,7 +207,11 @@ impl Lockfile {
         let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
         // Visited is keyed by the absolute path of the package root so
         // a diamond dep graph (X -> A -> Z, X -> B -> Z) only locks Z
-        // once and a cycle (A -> B -> A) terminates cleanly.
+        // once and a cycle (A -> B -> A) terminates cleanly. Git deps
+        // map to their per-(url, sha) cache directory which uniquely
+        // encodes the source — same git source = same cache path =
+        // single visited entry, so dedup-by-path keeps working without
+        // a separate (url, sha) key.
         let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
 
         // Root entry: no source / no checksum (it's not pinned by
@@ -210,13 +232,18 @@ impl Lockfile {
         // BFS over the manifest's direct deps, then their deps, etc.
         // We read each transitive manifest fresh — the lockfile must
         // reflect the on-disk state of every package in the graph.
-        let mut queue: Vec<PathBuf> = Vec::new();
+        // Each queue entry carries both the resolved root path (for
+        // recursion + dedup) and the constructed `LockedSource` (so the
+        // git arm can preserve the user's ref intent + the resolved SHA
+        // without re-resolving when we materialise the LockedPackage).
+        let mut queue: Vec<ResolvedDep> = Vec::new();
         for (name, dep) in &manifest.dependencies {
             let dep_name = intern::resolve(*name);
             queue.push(resolve_dep_path(&dep_name, dep, &root_dir)?);
         }
 
-        while let Some(dep_root) = queue.pop() {
+        while let Some(resolved) = queue.pop() {
+            let dep_root = resolved.root_path.clone();
             if !visited.insert(dep_root.clone()) {
                 continue;
             }
@@ -249,15 +276,13 @@ impl Lockfile {
             packages.entry(pkg_name.clone()).or_insert(LockedPackage {
                 name: pkg_name,
                 version: dep_manifest.package.version.clone(),
-                source: LockedSource::Path {
-                    path: dep_root.clone(),
-                },
+                source: resolved.source,
                 checksum,
             });
             for (sub_name, sub_dep) in &dep_manifest.dependencies {
-                let sub_root = resolve_dep_path(&intern::resolve(*sub_name), sub_dep, &dep_root)?;
-                if !visited.contains(&sub_root) {
-                    queue.push(sub_root);
+                let sub = resolve_dep_path(&intern::resolve(*sub_name), sub_dep, &dep_root)?;
+                if !visited.contains(&sub.root_path) {
+                    queue.push(sub);
                 }
             }
         }
@@ -298,6 +323,14 @@ impl Lockfile {
     /// versions — content drift in a path dep is what `silt update`
     /// is for; the auto-update path is just for "I added a new dep,
     /// run silt run, it should Just Work".
+    ///
+    /// Cargo-style git semantics: this comparison does NOT contact the
+    /// network to see if a branch dep's HEAD has advanced upstream. A
+    /// lockfile pinning `branch = "main"` to SHA `abc...` stays valid
+    /// across `silt run` invocations even when `main` has new commits;
+    /// `silt update` is the explicit refresh trigger. (If a future
+    /// maintainer "fixes" this by re-resolving here, every `silt run`
+    /// becomes a network operation — the wrong tradeoff.)
     pub fn matches_manifest(&self, manifest: &Manifest) -> bool {
         // Re-resolve the manifest to a fresh transitive set; if any
         // step fails we treat the lockfile as out of date so the
@@ -339,11 +372,18 @@ impl Lockfile {
                 LockedSource::Path { path } => {
                     roots.insert(intern::intern(&pkg.name), path.join("src"));
                 }
-                LockedSource::Git { .. } => {
-                    // PR 3 wires this: cache the git checkout under
-                    // `<silt-cache>/<url-hash>/<sha>/` and join `src`.
-                    // For now, git deps can't appear here because
-                    // `Lockfile::resolve` errors out on them.
+                LockedSource::Git {
+                    url, resolved_sha, ..
+                } => {
+                    // The cache layout (`<silt-cache>/<url-hash>/<sha>/`)
+                    // is computed deterministically from (url, sha), so
+                    // we can resolve the import root without rereading
+                    // the lockfile or hitting the network. The cache
+                    // directory must already exist — `Lockfile::resolve`
+                    // populates it before writing the lockfile.
+                    if let Ok(cache_path) = git::cache_for(url, resolved_sha) {
+                        roots.insert(intern::intern(&pkg.name), cache_path.join("src"));
+                    }
                 }
                 LockedSource::Local => {}
             }
@@ -383,22 +423,71 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::Error> {
 
 // ── Internals ──────────────────────────────────────────────────────────
 
-/// Resolve the absolute path of a [`Dependency`] relative to the
-/// directory holding the *consumer's* manifest.
+/// One step of dep-graph resolution: the on-disk root the consumer's
+/// `Lockfile::resolve` BFS should walk into, plus the [`LockedSource`]
+/// that should land in the corresponding [`LockedPackage`].
 ///
-/// PR 1 of v0.8 only knows how to resolve path deps — git deps return
-/// the [`LockfileError::GitNotYetWired`] stub error. PR 3 replaces that
-/// arm with the real `git::resolve_ref` + `git::fetch_to_cache` flow.
+/// Bundling these together lets the git arm pass the resolved SHA up
+/// to the BFS without re-running `git::resolve_ref`. For path deps
+/// the source is just `Path { path }`; for git deps it carries the
+/// user's ref intent and the network-resolved SHA.
+struct ResolvedDep {
+    root_path: PathBuf,
+    source: LockedSource,
+}
+
+/// Resolve a [`Dependency`] entry to the on-disk root the BFS should
+/// walk into, plus the [`LockedSource`] for the resulting lockfile entry.
+///
+/// Path deps lexically normalize relative to the consumer's manifest
+/// directory. Git deps run `git ls-remote` to convert branch/tag refs
+/// to a concrete SHA, then `git clone` (atomic via `<dir>.tmp` rename)
+/// into the per-(url, sha) cache directory and return that path.
+///
+/// The `name` is used only for future diagnostics — currently the
+/// caller materializes any `DepNotFound` / `DepNotPackage` errors with
+/// the directory name; git errors are tagged with their URL + ref.
 fn resolve_dep_path(
-    name: &str,
+    _name: &str,
     dep: &Dependency,
     parent_dir: &Path,
-) -> Result<PathBuf, LockfileError> {
+) -> Result<ResolvedDep, LockfileError> {
     match dep {
-        Dependency::Path { path } => Ok(normalize_path(&parent_dir.join(path))),
-        Dependency::Git { .. } => Err(LockfileError::GitNotYetWired {
-            name: name.to_string(),
-        }),
+        Dependency::Path { path } => {
+            let abs = normalize_path(&parent_dir.join(path));
+            Ok(ResolvedDep {
+                root_path: abs.clone(),
+                source: LockedSource::Path { path: abs },
+            })
+        }
+        Dependency::Git { url, ref_spec } => {
+            // Resolve user-specified ref (Rev/Branch/Tag) to a concrete
+            // commit SHA. For Rev this is offline; for Branch/Tag it
+            // hits the remote via `git ls-remote`.
+            let resolved_sha =
+                git::resolve_ref(url, ref_spec).map_err(|e| LockfileError::GitOperation {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                    source: e,
+                })?;
+            // Materialise the cache directory. Idempotent — a populated
+            // cache from a previous run is reused without re-cloning.
+            let cache_path = git::fetch_to_cache(url, &resolved_sha).map_err(|e| {
+                LockfileError::GitOperation {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                    source: e,
+                }
+            })?;
+            Ok(ResolvedDep {
+                root_path: cache_path,
+                source: LockedSource::Git {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                    resolved_sha,
+                },
+            })
+        }
     }
 }
 

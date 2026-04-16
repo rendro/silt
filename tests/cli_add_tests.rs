@@ -374,9 +374,6 @@ fn test_add_outside_package_errors() {
 // reachability stage and assert that the manifest was *not* written —
 // then a second batch of tests asserts the parser-level errors fire
 // without ever touching the network.
-//
-// Once PR 3 lands, the network-gated tests at the bottom of this
-// section can be promoted into the always-run set.
 
 /// A localhost URL on a port nothing should be bound to. Used to
 /// guarantee the `silt add --git` reachability check fails predictably
@@ -682,25 +679,27 @@ fn test_add_git_nonexistent_branch_errors() {
     );
 }
 
-/// Real repo + real branch — the actual happy path. Once PR 3 lands,
-/// the lockfile-skip notice should disappear and we can assert that
-/// silt.lock is created. For now we only assert the manifest was
-/// written and the notice was printed.
+/// Real repo + real branch — the actual happy path. PR 3 wires git
+/// resolution into `Lockfile::resolve`, so `silt add --git --branch`
+/// now writes both the manifest AND a complete `silt.lock` containing
+/// the resolved SHA. We point at a local bare git repo (built on the
+/// fly) holding a tiny silt package so the test stays self-contained.
 #[test]
 fn test_add_git_real_branch_writes_manifest() {
     if skip_unless_network() {
         return;
     }
     let ws = fresh_workspace("git_real_branch_net");
+    let (repo_url, head_sha) = make_local_git_silt_package(&ws);
     let app = ws.join("app");
     write_app_package(&app, "git_real_app", "fn main() {}\n");
 
     let out = silt_cmd()
         .args([
             "add",
-            "siltdep",
+            "locallib",
             "--git",
-            "https://github.com/rendro/silt",
+            repo_url.as_str(),
             "--branch",
             "main",
         ])
@@ -715,14 +714,78 @@ fn test_add_git_real_branch_writes_manifest() {
     );
     let manifest = fs::read_to_string(app.join("silt.toml")).unwrap();
     assert!(
-        manifest.contains("siltdep") && manifest.contains("git") && manifest.contains("branch"),
+        manifest.contains("locallib") && manifest.contains("git") && manifest.contains("branch"),
         "manifest missing git entry:\n{manifest}"
     );
-    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Lockfile must exist and pin the bare repo's HEAD commit.
+    let lock_path = app.join("silt.lock");
     assert!(
-        stdout.contains("PR 3"),
-        "expected PR-3 notice in stdout; got: {stdout}"
+        lock_path.is_file(),
+        "silt.lock should have been generated at {}",
+        lock_path.display()
     );
+    let lock = fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        lock.contains("name = \"locallib\""),
+        "lockfile missing locallib entry:\n{lock}"
+    );
+    assert!(
+        lock.contains("branch = \"main\""),
+        "lockfile missing user branch intent:\n{lock}"
+    );
+    assert!(
+        lock.contains(&format!("rev = \"{head_sha}\"")),
+        "lockfile should pin bare HEAD `{head_sha}`:\n{lock}"
+    );
+}
+
+/// Build a bare git repo holding a tiny silt library on `main` and
+/// return `(file://... URL, HEAD SHA)`. Mirrors the helper in
+/// `tests/lockfile_tests.rs`. Kept inline (rather than in a shared
+/// `tests/common/`) because the only caller in this file is the
+/// network-gated test below.
+fn make_local_git_silt_package(workspace: &Path) -> (String, String) {
+    let staging = workspace.join("staging");
+    let bare = workspace.join("bare.git");
+    fs::create_dir_all(&staging).unwrap();
+    fs::create_dir_all(&bare).unwrap();
+
+    fs::write(
+        staging.join("silt.toml"),
+        "[package]\nname = \"locallib\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(staging.join("src")).unwrap();
+    fs::write(staging.join("src/lib.silt"), "pub fn answer() = 42\n").unwrap();
+
+    let run = |cwd: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?} spawn failed: {e}"));
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    };
+
+    run(&bare, &["init", "--bare", "--initial-branch=main"]);
+    run(&staging, &["init", "--initial-branch=main"]);
+    run(&staging, &["config", "user.email", "tests@silt.local"]);
+    run(&staging, &["config", "user.name", "silt tests"]);
+    run(&staging, &["add", "."]);
+    run(&staging, &["commit", "-m", "initial"]);
+    let bare_url = format!("file://{}", bare.display());
+    run(&staging, &["remote", "add", "origin", bare_url.as_str()]);
+    run(&staging, &["push", "origin", "main"]);
+
+    let head = run(&staging, &["rev-parse", "HEAD"]);
+    let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    (bare_url, head_sha)
 }
 
 #[test]
