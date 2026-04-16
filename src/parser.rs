@@ -371,16 +371,18 @@ impl Parser {
         let where_clauses = self.parse_where_clauses_opt()?;
 
         self.skip_nl();
-        let body = if self.at(&Token::Eq) {
+        let (body, is_signature_only) = if self.at(&Token::Eq) {
             // Single-expression form: fn square(x) = x * x
             self.advance();
             self.skip_nl();
-            self.parse_expr()?
+            (self.parse_expr()?, false)
         } else if self.at(&Token::LBrace) {
-            self.parse_block()?
+            (self.parse_block()?, false)
         } else {
-            // Abstract method — no body (e.g. trait method declarations)
-            Expr::new(ExprKind::Unit, span)
+            // Abstract method — no body (e.g. trait method declarations).
+            // The Unit placeholder keeps the AST shape uniform; the
+            // is_signature_only flag is the authoritative signal.
+            (Expr::new(ExprKind::Unit, span), true)
         };
 
         Ok(FnDecl {
@@ -392,6 +394,7 @@ impl Parser {
             is_pub: false,
             span,
             is_recovery_stub: false,
+            is_signature_only,
         })
     }
 
@@ -520,11 +523,11 @@ impl Parser {
 
         self.skip_nl();
         // Body. On failure, emit a stub that preserves the header.
-        let body = if self.at(&Token::Eq) {
+        let (body, is_signature_only) = if self.at(&Token::Eq) {
             self.advance();
             self.skip_nl();
             match self.parse_expr() {
-                Ok(e) => e,
+                Ok(e) => (e, false),
                 Err(err) => {
                     return Err(Box::new((
                         self.make_recovery_stub(name, params, return_type, span),
@@ -534,7 +537,7 @@ impl Parser {
             }
         } else if self.at(&Token::LBrace) {
             match self.parse_block() {
-                Ok(b) => b,
+                Ok(b) => (b, false),
                 Err(err) => {
                     return Err(Box::new((
                         self.make_recovery_stub(name, params, return_type, span),
@@ -544,7 +547,7 @@ impl Parser {
             }
         } else {
             // Abstract method — no body.
-            Expr::new(ExprKind::Unit, span)
+            (Expr::new(ExprKind::Unit, span), true)
         };
 
         Ok(FnDecl {
@@ -556,6 +559,7 @@ impl Parser {
             is_pub: false,
             span,
             is_recovery_stub: false,
+            is_signature_only,
         })
     }
 
@@ -578,6 +582,7 @@ impl Parser {
             is_pub: false,
             span,
             is_recovery_stub: true,
+            is_signature_only: false,
         }
     }
 
