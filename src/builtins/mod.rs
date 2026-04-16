@@ -4,6 +4,7 @@
 //! `list.*`) and exposes a single `call` entry point that the main VM dispatch
 //! delegates to.
 
+pub mod bytes;
 pub mod collections;
 pub mod concurrency;
 pub mod core;

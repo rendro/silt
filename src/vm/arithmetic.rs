@@ -199,6 +199,7 @@ impl Vm {
             Value::VariantConstructor(..) => 16,
             Value::RecordDescriptor(_) => 17,
             Value::PrimitiveDescriptor(_) => 18,
+            Value::Bytes(_) => 19,
         }
     }
 

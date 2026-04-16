@@ -601,6 +601,7 @@ impl Vm {
             Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
             Value::Channel(_) => "Channel",
             Value::Handle(_) => "Handle",
+            Value::Bytes(_) => "Bytes",
             Value::Unit => "Unit",
         }
     }

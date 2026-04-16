@@ -65,6 +65,12 @@ pub enum Value {
     PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
+    /// Immutable byte sequence. Structural equality and hashing — two
+    /// `Bytes` values are equal iff they hold the same bytes. Forward-
+    /// compatible with a future `Type::Bytes` promotion: literal syntax
+    /// (`b"..."`), pattern matching, and method dispatch can be layered on
+    /// top of this variant without changing semantics.
+    Bytes(Arc<Vec<u8>>),
     Unit,
 }
 
@@ -724,6 +730,7 @@ impl fmt::Debug for Value {
             Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
+            Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
             Value::Unit => write!(f, "()"),
         }
     }
@@ -784,8 +791,26 @@ impl Value {
             Value::PrimitiveDescriptor(name) => format!("<type:{name}>"),
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
+            Value::Bytes(b) => format_bytes_preview(b),
             Value::Unit => "()".to_string(),
         }
+    }
+}
+
+/// Shared rendering for `Bytes` values: short hex preview + length.
+/// Truncates to the first 32 bytes with an ellipsis to keep output
+/// readable for large buffers (e.g. tcp.read(conn, 4096)).
+fn format_bytes_preview(b: &[u8]) -> String {
+    const PREVIEW: usize = 32;
+    if b.len() <= PREVIEW {
+        let hex: Vec<String> = b.iter().map(|byte| format!("{byte:02x}")).collect();
+        format!("bytes({}, length: {})", hex.join(" "), b.len())
+    } else {
+        let hex: Vec<String> = b[..PREVIEW]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        format!("bytes({} …, length: {})", hex.join(" "), b.len())
     }
 }
 
@@ -1010,6 +1035,7 @@ impl fmt::Display for Value {
             Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
+            Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
             Value::Unit => write!(f, "()"),
         }
     }
@@ -1146,6 +1172,11 @@ impl PartialEq for Value {
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a == b,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
+            // Structural equality — same content, regardless of Arc identity.
+            // This is the load-bearing forward-compat decision for the
+            // future native `Type::Bytes`: equality semantics must already
+            // match what a value-type byte array would do.
+            (Value::Bytes(a), Value::Bytes(b)) => a == b,
             _ => false,
         }
     }
@@ -1183,6 +1214,7 @@ impl Ord for Value {
                 Value::VariantConstructor(..) => 16,
                 Value::RecordDescriptor(_) => 17,
                 Value::PrimitiveDescriptor(_) => 18,
+                Value::Bytes(_) => 19,
             }
         };
         let d1 = disc(self);
@@ -1253,6 +1285,10 @@ impl Ord for Value {
             (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
+            // Structural lex comparison on bytes — required for Eq/Ord
+            // consistency with structural PartialEq above. BTreeMap/BTreeSet
+            // key contracts depend on this.
+            (Value::Bytes(a), Value::Bytes(b)) => a.as_slice().cmp(b.as_slice()),
             // Handle / VmClosure / BuiltinFn / VariantConstructor: PartialEq
             // returns `false` for every pair (catch-all `_ => false` arm at
             // ~line 1028), so Ord must never return `Equal` for distinct
@@ -1437,6 +1473,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::RecordDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
         Value::Channel(_) => "Channel",
         Value::Handle(_) => "Handle",
+        Value::Bytes(_) => "Bytes",
         Value::Unit => "Unit",
     }
 }
@@ -1512,6 +1549,12 @@ impl Hash for Value {
             }
             Value::Channel(ch) => ch.id.hash(state),
             Value::Handle(h) => h.id.hash(state),
+            // Content-hash bytes — Eq/Hash contract requires the same
+            // structural treatment as PartialEq.
+            Value::Bytes(b) => {
+                b.len().hash(state);
+                state.write(b.as_slice());
+            }
             Value::VmClosure(_) => {} // not meaningfully hashable
             Value::BuiltinFn(name) => name.hash(state),
             Value::VariantConstructor(name, arity) => {
