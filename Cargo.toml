@@ -37,8 +37,10 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
 rustyline = { version = "15", optional = true }
 parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 ureq = { version = "3", optional = true }
 tiny_http = { version = "0.12", optional = true }
 postgres = { version = "0.19", optional = true, features = ["with-uuid-1"] }

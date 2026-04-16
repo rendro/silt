@@ -27,6 +27,7 @@ pub mod intern;
 pub mod lexer;
 #[cfg(feature = "lsp")]
 pub mod lsp;
+pub mod manifest;
 pub mod module;
 pub mod parser;
 #[cfg(feature = "repl")]
