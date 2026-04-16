@@ -14,3 +14,5 @@ pub mod numeric;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod string;
+#[cfg(feature = "tcp")]
+pub mod tcp;

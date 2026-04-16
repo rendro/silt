@@ -200,6 +200,8 @@ impl Vm {
             Value::RecordDescriptor(_) => 17,
             Value::PrimitiveDescriptor(_) => 18,
             Value::Bytes(_) => 19,
+            Value::TcpListener(_) => 20,
+            Value::TcpStream(_) => 21,
         }
     }
 

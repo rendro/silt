@@ -71,7 +71,32 @@ pub enum Value {
     /// (`b"..."`), pattern matching, and method dispatch can be layered on
     /// top of this variant without changing semantics.
     Bytes(Arc<Vec<u8>>),
+    /// TCP listener handle. Identity-based equality (id field). Created by
+    /// `tcp.listen`; consumed by `tcp.accept`.
+    TcpListener(Arc<TcpListenerHandle>),
+    /// TCP stream handle. Identity-based equality. Wraps a trait object
+    /// so plain TCP and (future) TLS streams share the same handle type
+    /// transparently — the TLS layer in v0.9 PR 3 will substitute a
+    /// rustls-wrapped stream behind the same `Arc<Mutex<Box<dyn ReadWrite>>>`.
+    TcpStream(Arc<TcpStreamHandle>),
     Unit,
+}
+
+/// A combined Read + Write trait object used as the inner stream type for
+/// `TcpStreamHandle`. Plain TCP impls it via the blanket below; v0.9 PR 3
+/// adds rustls-wrapped streams as additional implementors.
+pub trait ReadWrite: std::io::Read + std::io::Write + Send {}
+impl<T: std::io::Read + std::io::Write + Send> ReadWrite for T {}
+
+pub struct TcpListenerHandle {
+    pub id: usize,
+    pub listener: std::net::TcpListener,
+}
+
+pub struct TcpStreamHandle {
+    pub id: usize,
+    pub inner: Mutex<Box<dyn ReadWrite>>,
+    pub closed: std::sync::atomic::AtomicBool,
 }
 
 /// A thread-safe channel with support for both buffered and rendezvous semantics.
@@ -731,6 +756,8 @@ impl fmt::Debug for Value {
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
+            Value::TcpListener(t) => write!(f, "<tcp-listener:{}>", t.id),
+            Value::TcpStream(t) => write!(f, "<tcp-stream:{}>", t.id),
             Value::Unit => write!(f, "()"),
         }
     }
@@ -792,6 +819,8 @@ impl Value {
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
             Value::Bytes(b) => format_bytes_preview(b),
+            Value::TcpListener(t) => format!("<tcp-listener:{}>", t.id),
+            Value::TcpStream(t) => format!("<tcp-stream:{}>", t.id),
             Value::Unit => "()".to_string(),
         }
     }
@@ -1036,6 +1065,8 @@ impl fmt::Display for Value {
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
             Value::Bytes(b) => write!(f, "{}", format_bytes_preview(b)),
+            Value::TcpListener(t) => write!(f, "<tcp-listener:{}>", t.id),
+            Value::TcpStream(t) => write!(f, "<tcp-stream:{}>", t.id),
             Value::Unit => write!(f, "()"),
         }
     }
@@ -1177,6 +1208,9 @@ impl PartialEq for Value {
             // future native `Type::Bytes`: equality semantics must already
             // match what a value-type byte array would do.
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
+            // Tcp handles: identity-based, like Channel/Handle.
+            (Value::TcpListener(a), Value::TcpListener(b)) => a.id == b.id,
+            (Value::TcpStream(a), Value::TcpStream(b)) => a.id == b.id,
             _ => false,
         }
     }
@@ -1215,6 +1249,8 @@ impl Ord for Value {
                 Value::RecordDescriptor(_) => 17,
                 Value::PrimitiveDescriptor(_) => 18,
                 Value::Bytes(_) => 19,
+                Value::TcpListener(_) => 20,
+                Value::TcpStream(_) => 21,
             }
         };
         let d1 = disc(self);
@@ -1289,6 +1325,9 @@ impl Ord for Value {
             // consistency with structural PartialEq above. BTreeMap/BTreeSet
             // key contracts depend on this.
             (Value::Bytes(a), Value::Bytes(b)) => a.as_slice().cmp(b.as_slice()),
+            // Tcp handles ordered by id (identity), matching PartialEq.
+            (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
+            (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
             // Handle / VmClosure / BuiltinFn / VariantConstructor: PartialEq
             // returns `false` for every pair (catch-all `_ => false` arm at
             // ~line 1028), so Ord must never return `Equal` for distinct
@@ -1474,6 +1513,8 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Channel(_) => "Channel",
         Value::Handle(_) => "Handle",
         Value::Bytes(_) => "Bytes",
+        Value::TcpListener(_) => "TcpListener",
+        Value::TcpStream(_) => "TcpStream",
         Value::Unit => "Unit",
     }
 }
@@ -1555,6 +1596,8 @@ impl Hash for Value {
                 b.len().hash(state);
                 state.write(b.as_slice());
             }
+            Value::TcpListener(t) => t.id.hash(state),
+            Value::TcpStream(t) => t.id.hash(state),
             Value::VmClosure(_) => {} // not meaningfully hashable
             Value::BuiltinFn(name) => name.hash(state),
             Value::VariantConstructor(name, arity) => {

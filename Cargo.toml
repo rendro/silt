@@ -16,7 +16,7 @@ name = "silt"
 path = "src/lib.rs"
 
 [features]
-default = ["repl", "lsp", "watch", "local-clock", "http"]
+default = ["repl", "lsp", "watch", "local-clock", "http", "tcp"]
 repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
@@ -24,6 +24,7 @@ local-clock = ["chrono/clock"]
 http = ["dep:ureq", "dep:tiny_http"]
 postgres = ["dep:postgres", "dep:r2d2", "dep:r2d2_postgres", "dep:fallible-iterator", "dep:uuid"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
+tcp = []
 
 [[bench]]
 name = "vm_bench"

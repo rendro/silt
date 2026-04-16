@@ -281,6 +281,11 @@ impl Vm {
                     "bytes",
                     AssertUnwindSafe(|| builtins::bytes::call(self, func, args)),
                 ),
+                #[cfg(feature = "tcp")]
+                "tcp" => catch_builtin_panic(
+                    "tcp",
+                    AssertUnwindSafe(|| builtins::tcp::call(self, func, args)),
+                ),
                 "fs" => catch_builtin_panic(
                     "fs",
                     AssertUnwindSafe(|| builtins::io::call_fs(self, func, args)),

@@ -384,6 +384,14 @@ impl Vm {
         self.next_task_id.fetch_add(1, Ordering::Relaxed) as usize
     }
 
+    /// Allocate a new unique tcp handle ID. Shares the task-id counter
+    /// because IDs are only compared within their own `Value` variant
+    /// (a TcpStream can never compare equal to a Handle), and avoiding
+    /// a third atomic keeps the Vm struct small.
+    pub(crate) fn next_tcp_id(&mut self) -> usize {
+        self.next_task_id.fetch_add(1, Ordering::Relaxed) as usize
+    }
+
     /// Load a compiled top-level function and execute it.
     pub fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
         let closure = Arc::new(VmClosure {
@@ -602,6 +610,8 @@ impl Vm {
             Value::Channel(_) => "Channel",
             Value::Handle(_) => "Handle",
             Value::Bytes(_) => "Bytes",
+            Value::TcpListener(_) => "TcpListener",
+            Value::TcpStream(_) => "TcpStream",
             Value::Unit => "Unit",
         }
     }
