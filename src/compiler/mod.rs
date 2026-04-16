@@ -443,19 +443,6 @@ impl Compiler {
         }
     }
 
-    /// Legacy single-root constructor.
-    ///
-    /// Wraps `with_package_roots` with a synthetic package name
-    /// (`__local__`) so the existing CLI and tests keep compiling
-    /// while PR 2 plumbs real package metadata through `main.rs`.
-    /// PR 2 will rip out this shim once it lands.
-    pub fn with_project_root(root: PathBuf) -> Self {
-        let local = intern("__local__");
-        let mut roots = HashMap::new();
-        roots.insert(local, root);
-        Self::with_package_roots(local, roots)
-    }
-
     /// Enable REPL mode. See the `repl_mode` field for semantics.
     pub fn set_repl_mode(&mut self, enabled: bool) {
         self.repl_mode = enabled;

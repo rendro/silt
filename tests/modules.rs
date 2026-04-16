@@ -1,12 +1,26 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use silt::compiler::Compiler;
+use silt::intern;
 use silt::lexer::Lexer;
 use silt::parser::Parser;
 use silt::value::Value;
 use silt::vm::Vm;
+
+/// Build a Compiler whose only package is the synthetic `__local__`,
+/// rooted at `root`. Equivalent to the pre-PR-4 `with_project_root`
+/// shim (which the compiler module rightly dropped) — preserved here
+/// so the legacy module tests don't have to be rewritten to stage a
+/// real `silt.toml`/`src/` layout.
+fn compiler_for_root(root: PathBuf) -> Compiler {
+    let local = intern::intern("__local__");
+    let mut roots = HashMap::new();
+    roots.insert(local, root);
+    Compiler::with_package_roots(local, roots)
+}
 
 /// Helper: create a temp directory with module files, parse and run the main program.
 fn run_module_test(files: &[(&str, &str)], main_source: &str) -> Value {
@@ -22,7 +36,7 @@ fn run_module_test(files: &[(&str, &str)], main_source: &str) -> Value {
     let tokens = Lexer::new(main_source).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
     let mut vm = Vm::new();
@@ -40,7 +54,7 @@ fn run_module_test_err(files: &[(&str, &str)], main_source: &str) -> String {
     let tokens = Lexer::new(main_source).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     match compiler.compile_program(&program) {
         Ok(functions) => {
             let script = Arc::new(functions.into_iter().next().unwrap());
@@ -709,7 +723,7 @@ fn main() {
         .parse_program()
         .expect("main parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     let err_msg = match compiler.compile_program(&program) {
         Ok(_) => panic!("expected compile error from broken module"),
         Err(e) => e.message,
@@ -784,7 +798,7 @@ fn main() {
         .parse_program()
         .expect("main parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     let err_msg = match compiler.compile_program(&program) {
         Ok(_) => panic!("expected compile error from broken module"),
         Err(e) => e.message,
@@ -843,7 +857,7 @@ fn test_module_parse_error_inner_snippet_rendered_once() {
         .parse_program()
         .expect("main parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     let compile_err = match compiler.compile_program(&program) {
         Ok(_) => panic!("expected compile error"),
         Err(e) => e,
@@ -903,7 +917,7 @@ fn test_module_parse_error_eof_renders_snippet() {
         .parse_program()
         .expect("main parse error");
     let _ = silt::typechecker::check(&mut program);
-    let mut compiler = Compiler::with_project_root(dir.clone());
+    let mut compiler = compiler_for_root(dir.clone());
     let err_msg = match compiler.compile_program(&program) {
         Ok(_) => panic!("expected compile error from truncated module"),
         Err(e) => e.message,

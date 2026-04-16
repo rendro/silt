@@ -25,6 +25,7 @@ pub mod errors;
 pub mod formatter;
 pub mod intern;
 pub mod lexer;
+pub mod lockfile;
 #[cfg(feature = "lsp")]
 pub mod lsp;
 pub mod manifest;
