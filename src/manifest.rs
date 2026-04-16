@@ -5,8 +5,8 @@
 //! manifests on disk. Subsequent PRs (project-root unification, dep
 //! resolution, lock file) build on the types defined here.
 //!
-//! Currently only path dependencies are supported; git and registry
-//! dependencies will be added in later phases of the package-manager rollout.
+//! Path and git dependencies are supported as of v0.8; registry deps are
+//! still future work.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 
 use crate::intern::{self, Symbol};
 use crate::module::BUILTIN_MODULES;
+
+// Re-exported for callers that want to construct or pattern-match
+// `Dependency::Git { ref_spec, .. }` without reaching into `crate::git`.
+pub use crate::git::GitRef;
 
 /// A loaded and validated `silt.toml` manifest.
 #[derive(Debug, Clone)]
@@ -41,7 +45,11 @@ pub enum Dependency {
     /// written in the manifest (relative to the manifest file). Resolve to
     /// absolute via `manifest_path.parent().unwrap().join(path)`.
     Path { path: PathBuf },
-    // Future variants: Git { url, rev }, Registry { version }.
+    /// Git-style dep: `foo = { git = "https://...", rev|branch|tag = "..." }`.
+    /// Resolution to a concrete commit SHA happens at lock time
+    /// (`Lockfile::resolve`), not at manifest load.
+    Git { url: String, ref_spec: GitRef },
+    // Future variants: Registry { version }.
 }
 
 /// Errors produced when loading or validating a manifest.
@@ -343,61 +351,156 @@ fn convert_dependency(
 ) -> Result<Dependency, ManifestError> {
     match raw {
         RawDependency::Inline(table) => {
-            // For Phase 1 we only recognise `path`. Anything else gets a
-            // tailored, forward-looking error message so the user knows
-            // which feature they hit and when it'll arrive.
-            if let Some(value) = table.get("git") {
-                let _ = value; // value content is irrelevant for the error
-                return Err(ManifestError::Validation {
-                    message: format!(
-                        "dependency `{name}`: git dependencies will be supported in v0.8; \
-                         for now only `path` deps work"
-                    ),
-                    path: manifest_path.to_path_buf(),
-                });
-            }
+            let has_path = table.contains_key("path");
+            let has_git = table.contains_key("git");
+
+            // Registry deps are still future work; surface a forward-looking
+            // diagnostic rather than silently treating `version` as garbage.
             if table.contains_key("version") || table.contains_key("registry") {
                 return Err(ManifestError::Validation {
                     message: format!(
                         "dependency `{name}`: registry/version dependencies are not yet \
-                         supported; for now only `path` deps work"
+                         supported; use `path` or `git` instead"
                     ),
                     path: manifest_path.to_path_buf(),
                 });
             }
 
-            let path_value = table.get("path").ok_or_else(|| ManifestError::Validation {
-                message: format!(
-                    "dependency `{name}`: missing required key `path` (only path deps are \
-                     supported in this version)"
-                ),
-                path: manifest_path.to_path_buf(),
-            })?;
-            let path_str = path_value
-                .as_str()
-                .ok_or_else(|| ManifestError::Validation {
-                    message: format!("dependency `{name}`: `path` must be a string"),
+            if has_path && has_git {
+                return Err(ManifestError::Validation {
+                    message: format!(
+                        "dependency `{name}`: cannot specify both `path` and `git`; pick one"
+                    ),
                     path: manifest_path.to_path_buf(),
-                })?;
-
-            // Reject any extra keys we don't understand so typos surface
-            // immediately rather than silently being ignored.
-            for key in table.keys() {
-                if key != "path" {
-                    return Err(ManifestError::Validation {
-                        message: format!(
-                            "dependency `{name}`: unknown key `{key}` (only `path` is recognized)"
-                        ),
-                        path: manifest_path.to_path_buf(),
-                    });
-                }
+                });
             }
 
-            Ok(Dependency::Path {
-                path: PathBuf::from(path_str),
-            })
+            if has_git {
+                return convert_git_dependency(name, &table, manifest_path);
+            }
+
+            // Default arm: path dependency.
+            convert_path_dependency(name, &table, manifest_path)
         }
     }
+}
+
+fn convert_path_dependency(
+    name: &str,
+    table: &BTreeMap<String, toml::Value>,
+    manifest_path: &Path,
+) -> Result<Dependency, ManifestError> {
+    let path_value = table.get("path").ok_or_else(|| ManifestError::Validation {
+        message: format!(
+            "dependency `{name}`: missing required key `path` (or use `git` for a git dep)"
+        ),
+        path: manifest_path.to_path_buf(),
+    })?;
+    let path_str = path_value
+        .as_str()
+        .ok_or_else(|| ManifestError::Validation {
+            message: format!("dependency `{name}`: `path` must be a string"),
+            path: manifest_path.to_path_buf(),
+        })?;
+
+    for key in table.keys() {
+        if key != "path" {
+            return Err(ManifestError::Validation {
+                message: format!(
+                    "dependency `{name}`: unknown key `{key}` (only `path` is recognized for path deps)"
+                ),
+                path: manifest_path.to_path_buf(),
+            });
+        }
+    }
+
+    Ok(Dependency::Path {
+        path: PathBuf::from(path_str),
+    })
+}
+
+fn convert_git_dependency(
+    name: &str,
+    table: &BTreeMap<String, toml::Value>,
+    manifest_path: &Path,
+) -> Result<Dependency, ManifestError> {
+    let url = table
+        .get("git")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ManifestError::Validation {
+            message: format!("dependency `{name}`: `git` must be a string URL"),
+            path: manifest_path.to_path_buf(),
+        })?
+        .to_string();
+
+    // Tally which ref forms are present so we can give a tailored error
+    // for the multiple-forms case rather than just "missing".
+    let mut ref_forms: Vec<(&str, &toml::Value)> = Vec::new();
+    for key in ["rev", "branch", "tag"] {
+        if let Some(v) = table.get(key) {
+            ref_forms.push((key, v));
+        }
+    }
+
+    let ref_spec = match ref_forms.len() {
+        0 => {
+            return Err(ManifestError::Validation {
+                message: format!(
+                    "dependency `{name}`: git dependency requires exactly one of `rev`, \
+                     `branch`, or `tag`"
+                ),
+                path: manifest_path.to_path_buf(),
+            });
+        }
+        1 => {
+            let (key, value) = ref_forms[0];
+            let s = value
+                .as_str()
+                .ok_or_else(|| ManifestError::Validation {
+                    message: format!("dependency `{name}`: `{key}` must be a string"),
+                    path: manifest_path.to_path_buf(),
+                })?
+                .to_string();
+            match key {
+                "rev" => GitRef::Rev(s),
+                "branch" => GitRef::Branch(s),
+                "tag" => GitRef::Tag(s),
+                _ => unreachable!("ref_forms keys are restricted above"),
+            }
+        }
+        _ => {
+            let mentioned: Vec<&str> = ref_forms.iter().map(|(k, _)| *k).collect();
+            return Err(ManifestError::Validation {
+                message: format!(
+                    "dependency `{name}`: git dependency must specify exactly one of `rev`, \
+                     `branch`, or `tag` (found: {})",
+                    mentioned.join(", ")
+                ),
+                path: manifest_path.to_path_buf(),
+            });
+        }
+    };
+
+    // Reject anything that isn't `git` + the chosen ref form. Caller
+    // already excluded `path`, `version`, `registry` upstream, but we
+    // still surface unknown keys here for typo-friendliness
+    // (e.g. `branch_pattern`).
+    for key in table.keys() {
+        match key.as_str() {
+            "git" | "rev" | "branch" | "tag" => {}
+            other => {
+                return Err(ManifestError::Validation {
+                    message: format!(
+                        "dependency `{name}`: unknown key `{other}` for a git dependency \
+                         (allowed keys: `git`, `rev`, `branch`, `tag`)"
+                    ),
+                    path: manifest_path.to_path_buf(),
+                });
+            }
+        }
+    }
+
+    Ok(Dependency::Git { url, ref_spec })
 }
 
 #[cfg(test)]

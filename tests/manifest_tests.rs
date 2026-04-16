@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use silt::intern;
-use silt::manifest::{Dependency, Manifest, ManifestError};
+use silt::manifest::{Dependency, GitRef, Manifest, ManifestError};
 
 // ── Test scaffolding ──────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@ bar = { path = "../bar" }
         Dependency::Path { path } => {
             assert_eq!(path, &PathBuf::from("../bar"));
         }
+        other => panic!("expected Path dep, got {other:?}"),
     }
 }
 
@@ -209,25 +210,6 @@ version = "{bad}"
 // ── Dependency validation ────────────────────────────────────────────
 
 #[test]
-fn test_unknown_dep_kind() {
-    let err = load_err(
-        r#"
-[package]
-name = "foo"
-version = "0.1.0"
-
-[dependencies]
-bar = { git = "https://example.com/bar.git" }
-"#,
-    );
-    let msg = err.to_string();
-    assert!(
-        msg.contains("git") && msg.contains("v0.8"),
-        "expected git-deps-coming-in-v0.8 message, got: {msg}"
-    );
-}
-
-#[test]
 fn test_unknown_dep_key() {
     let err = load_err(
         r#"
@@ -244,6 +226,213 @@ bar = { path = "../bar", branch = "main" }
         msg.contains("branch") && msg.to_lowercase().contains("unknown"),
         "expected unknown-key error, got: {msg}"
     );
+}
+
+// ── Git dependency parsing ────────────────────────────────────────────
+
+#[test]
+fn test_git_dep_with_rev_parses() {
+    let dir = tempdir();
+    let path = write_manifest(
+        &dir,
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", rev = "abc123def456" }
+"#,
+    );
+    let manifest = Manifest::load(&path).expect("load");
+    let bar_sym = intern::intern("bar");
+    let dep = manifest
+        .dependencies
+        .get(&bar_sym)
+        .expect("expected bar dependency");
+    match dep {
+        Dependency::Git { url, ref_spec } => {
+            assert_eq!(url, "https://example.com/bar.git");
+            match ref_spec {
+                GitRef::Rev(s) => assert_eq!(s, "abc123def456"),
+                other => panic!("expected GitRef::Rev, got {other:?}"),
+            }
+        }
+        other => panic!("expected Git dep, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_git_dep_with_branch_parses() {
+    let dir = tempdir();
+    let path = write_manifest(
+        &dir,
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", branch = "main" }
+"#,
+    );
+    let manifest = Manifest::load(&path).expect("load");
+    let bar_sym = intern::intern("bar");
+    let dep = manifest
+        .dependencies
+        .get(&bar_sym)
+        .expect("expected bar dependency");
+    match dep {
+        Dependency::Git { url, ref_spec } => {
+            assert_eq!(url, "https://example.com/bar.git");
+            match ref_spec {
+                GitRef::Branch(s) => assert_eq!(s, "main"),
+                other => panic!("expected GitRef::Branch, got {other:?}"),
+            }
+        }
+        other => panic!("expected Git dep, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_git_dep_with_tag_parses() {
+    let dir = tempdir();
+    let path = write_manifest(
+        &dir,
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", tag = "v1.2.3" }
+"#,
+    );
+    let manifest = Manifest::load(&path).expect("load");
+    let bar_sym = intern::intern("bar");
+    let dep = manifest
+        .dependencies
+        .get(&bar_sym)
+        .expect("expected bar dependency");
+    match dep {
+        Dependency::Git { url, ref_spec } => {
+            assert_eq!(url, "https://example.com/bar.git");
+            match ref_spec {
+                GitRef::Tag(s) => assert_eq!(s, "v1.2.3"),
+                other => panic!("expected GitRef::Tag, got {other:?}"),
+            }
+        }
+        other => panic!("expected Git dep, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_git_dep_missing_ref_form_errors() {
+    let err = load_err(
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git" }
+"#,
+    );
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("rev") && msg.contains("branch") && msg.contains("tag"),
+        "expected message naming rev/branch/tag, got: {msg}"
+    );
+}
+
+#[test]
+fn test_git_dep_multiple_ref_forms_errors() {
+    let err = load_err(
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", rev = "abc123", branch = "main" }
+"#,
+    );
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("exactly one") || msg.contains("only one"),
+        "expected exactly-one wording, got: {msg}"
+    );
+    assert!(msg.contains("rev"), "expected `rev` in message, got: {msg}");
+    assert!(
+        msg.contains("branch"),
+        "expected `branch` in message, got: {msg}"
+    );
+}
+
+#[test]
+fn test_git_dep_with_path_errors() {
+    let err = load_err(
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", rev = "abc123", path = "../bar" }
+"#,
+    );
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("path") && msg.contains("git"),
+        "expected message about both path and git, got: {msg}"
+    );
+}
+
+#[test]
+fn test_git_dep_unknown_key_errors() {
+    let err = load_err(
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { git = "https://example.com/bar.git", rev = "abc123", branch_pattern = "main-*" }
+"#,
+    );
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("branch_pattern") && msg.contains("unknown"),
+        "expected unknown-key error mentioning branch_pattern, got: {msg}"
+    );
+}
+
+#[test]
+fn test_path_dep_unchanged() {
+    // Regression check: existing path-dep behaviour is untouched by the
+    // git arm landing in v0.8.
+    let dir = tempdir();
+    let path = write_manifest(
+        &dir,
+        r#"
+[package]
+name = "foo"
+version = "0.1.0"
+
+[dependencies]
+bar = { path = "../bar" }
+"#,
+    );
+    let manifest = Manifest::load(&path).expect("load");
+    let bar_sym = intern::intern("bar");
+    let dep = manifest
+        .dependencies
+        .get(&bar_sym)
+        .expect("expected bar dependency");
+    match dep {
+        Dependency::Path { path } => assert_eq!(path, &PathBuf::from("../bar")),
+        other => panic!("expected Path dep, got {other:?}"),
+    }
 }
 
 #[test]
