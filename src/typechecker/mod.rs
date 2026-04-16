@@ -128,7 +128,18 @@ pub(super) struct RecordInfo {
 #[derive(Debug, Clone)]
 pub(super) struct TraitInfo {
     pub(super) _name: Symbol,
+    /// Supertrait names (e.g. `trait Ordered: Equal` yields `[Equal]`).
+    /// Implementing this trait on a type requires every supertrait to also
+    /// be implemented for the same type (validated in
+    /// `validate_trait_impls`). `expand_with_supertraits` walks this list
+    /// transitively to enable supertrait method calls inside `where`
+    /// clauses.
+    pub(super) supertraits: Vec<Symbol>,
     pub(super) methods: Vec<(Symbol, Type)>,
+    /// Source span of the trait declaration. Used by
+    /// `validate_trait_impls` to report unknown-supertrait errors at the
+    /// declaration site.
+    pub(super) decl_span: Span,
 }
 
 /// A registered trait method implementation (new trait system).
@@ -775,10 +786,12 @@ impl TypeChecker {
                 intern("Display"),
                 TraitInfo {
                     _name: intern("Display"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("display"),
                         Type::Fun(vec![display_self], Box::new(Type::String)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -789,10 +802,12 @@ impl TypeChecker {
                 intern("Compare"),
                 TraitInfo {
                     _name: intern("Compare"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("compare"),
                         Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -803,10 +818,12 @@ impl TypeChecker {
                 intern("Equal"),
                 TraitInfo {
                     _name: intern("Equal"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("equal"),
                         Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -816,10 +833,12 @@ impl TypeChecker {
                 intern("Hash"),
                 TraitInfo {
                     _name: intern("Hash"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("hash"),
                         Type::Fun(vec![hash_self], Box::new(Type::Int)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -1263,6 +1282,27 @@ impl TypeChecker {
     // ── Validate trait implementations ────────────────────────────────
 
     fn validate_trait_impls(&mut self) {
+        // (a) Validate supertrait names: every supertrait listed on every
+        // declared trait must itself be a declared trait. Done up-front so
+        // unknown-supertrait errors are surfaced even when the declaring
+        // trait has no impls. We snapshot the names+supertraits up-front
+        // because `self.error` borrows `self` mutably.
+        let trait_supertrait_pairs: Vec<(Symbol, Vec<Symbol>, Span)> = self
+            .traits
+            .iter()
+            .map(|(name, info)| (*name, info.supertraits.clone(), info.decl_span))
+            .collect();
+        for (trait_name, supertraits, decl_span) in &trait_supertrait_pairs {
+            for sup in supertraits {
+                if !self.traits.contains_key(sup) {
+                    self.error(
+                        format!("trait '{trait_name}' lists unknown supertrait '{sup}'"),
+                        *decl_span,
+                    );
+                }
+            }
+        }
+
         // Validate using method_table + trait_impl_set (the new system).
         let impl_pairs: Vec<(Symbol, Symbol)> = self.trait_impl_set.iter().cloned().collect();
         for (trait_name, type_name) in &impl_pairs {
@@ -1297,6 +1337,24 @@ impl TypeChecker {
                 .unwrap_or(false);
             if is_auto {
                 continue;
+            }
+
+            // (b) Supertrait obligation: implementing a trait on a type
+            // requires every supertrait to also be implemented for the
+            // same type. Auto-derived builtins (Display/Equal/Hash/Compare)
+            // do show up in `trait_impl_set`, so this also catches the
+            // common case `trait Ordered: Equal { ... }` followed by
+            // `trait Ordered for MyType { ... }` where MyType has not
+            // overridden Equal — auto-derived counts as implementing.
+            for supertrait in &trait_info.supertraits {
+                if !self.trait_impl_set.contains(&(*supertrait, *type_name)) {
+                    self.error(
+                        format!(
+                            "type '{type_name}' implements '{trait_name}' but does not implement supertrait '{supertrait}'"
+                        ),
+                        diag_span,
+                    );
+                }
             }
 
             // Check that all required methods are implemented with correct signature.
@@ -1942,7 +2000,9 @@ impl TypeChecker {
             t.name,
             TraitInfo {
                 _name: t.name,
+                supertraits: t.supertraits.clone(),
                 methods,
+                decl_span: t.span,
             },
         );
     }
@@ -2481,10 +2541,12 @@ impl ReplTypeContext {
                 intern("Display"),
                 TraitInfo {
                     _name: intern("Display"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("display"),
                         Type::Fun(vec![display_self], Box::new(Type::String)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -2495,10 +2557,12 @@ impl ReplTypeContext {
                 intern("Compare"),
                 TraitInfo {
                     _name: intern("Compare"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("compare"),
                         Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -2509,10 +2573,12 @@ impl ReplTypeContext {
                 intern("Equal"),
                 TraitInfo {
                     _name: intern("Equal"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("equal"),
                         Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }
@@ -2522,10 +2588,12 @@ impl ReplTypeContext {
                 intern("Hash"),
                 TraitInfo {
                     _name: intern("Hash"),
+                    supertraits: Vec::new(),
                     methods: vec![(
                         intern("hash"),
                         Type::Fun(vec![hash_self], Box::new(Type::Int)),
                     )],
+                    decl_span: Span::new(0, 0),
                 },
             );
         }

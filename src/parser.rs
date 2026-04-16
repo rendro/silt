@@ -780,6 +780,24 @@ impl Parser {
         self.expect(&Token::Trait)?;
         let (name, _) = self.expect_ident()?;
 
+        // Parse optional supertrait bounds: `trait Ordered: Equal + Hash { ... }`.
+        // Disambiguation: `:` after the trait name is unambiguous because impls
+        // use `for` and decls use `{` or `fn`.
+        let supertraits = if self.at(&Token::Colon) {
+            self.advance();
+            let mut traits = Vec::new();
+            let (t, _) = self.expect_ident()?;
+            traits.push(t);
+            while self.at(&Token::Plus) {
+                self.advance();
+                let (t, _) = self.expect_ident()?;
+                traits.push(t);
+            }
+            traits
+        } else {
+            Vec::new()
+        };
+
         self.skip_nl();
         // `trait Display for User { ... }` is an impl
         // `trait Display { ... }` is a declaration
@@ -797,11 +815,22 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(Decl::Trait(TraitDecl {
                 name,
+                supertraits,
                 methods,
                 span,
             }))
         } else {
-            // Must be `for Type { ... }`  or  `for Type(params...) { ... }`
+            // Must be `for Type { ... }`  or  `for Type(params...) { ... }`.
+            // Supertrait bounds (`trait X: A for Int { ... }`) are not allowed
+            // on impls — supertraits live on the trait decl only.
+            if !supertraits.is_empty() {
+                return Err(ParseError {
+                    message: "supertrait bounds (`: Trait`) are only allowed on trait \
+                              declarations, not on trait impls"
+                        .to_string(),
+                    span,
+                });
+            }
             self.expect(&Token::Ident(intern::intern("for")))?;
             let target_span = self.span();
             let target_te = self.parse_type_expr()?;

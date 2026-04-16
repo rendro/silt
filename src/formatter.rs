@@ -2200,7 +2200,19 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
     let prefix = indent(depth);
     let close_line = compute_block_end_line(t.span);
     let body = format_trait_methods(&t.methods, depth + 1, close_line);
-    format!("{prefix}trait {} {{\n{}\n{prefix}}}", t.name, body)
+    let supers = if t.supertraits.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ": {}",
+            t.supertraits
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" + ")
+        )
+    };
+    format!("{prefix}trait {}{supers} {{\n{}\n{prefix}}}", t.name, body)
 }
 
 fn format_trait_impl_with_comments(t: &TraitImpl, depth: usize) -> String {
