@@ -23,6 +23,7 @@ pub mod compiler;
 pub mod disassemble;
 pub mod errors;
 pub mod formatter;
+pub mod git;
 pub mod intern;
 pub mod lexer;
 pub mod lockfile;

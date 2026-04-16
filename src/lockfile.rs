@@ -52,6 +52,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::git::GitRef;
 use crate::intern::{self, Symbol};
 use crate::manifest::{Dependency, Manifest, ManifestError};
 
@@ -84,8 +85,8 @@ pub struct LockedPackage {
     pub checksum: String,
 }
 
-/// Where a locked package lives. The root entry uses `Local`; all
-/// transitive deps use `Path` in Phase 1 (Git/Registry come later).
+/// Where a locked package lives. The root entry uses `Local`; transitive
+/// deps use `Path` or `Git`. `Registry` will land in a later phase.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LockedSource {
     /// Marker for the local (root) package — no `source` or `checksum`
@@ -95,7 +96,15 @@ pub enum LockedSource {
     /// is portable across cwd changes (you still pay the price of moving
     /// the workspace, of course; that's a known limitation of path deps).
     Path { path: PathBuf },
-    // Future: Git { url, rev }, Registry { name, version }.
+    /// Git-style dependency. `url` and the user's chosen `ref_spec` are
+    /// preserved so `silt update` can re-resolve branch/tag deps;
+    /// `resolved_sha` is the concrete commit pinned at lock time.
+    Git {
+        url: String,
+        ref_spec: GitRef,
+        resolved_sha: String,
+    },
+    // Future: Registry { name, version }.
 }
 
 // ── Errors ─────────────────────────────────────────────────────────────
@@ -115,6 +124,9 @@ pub enum LockfileError {
     /// The transitive manifest at one of the dep paths failed to load
     /// or validate. Carries the underlying [`ManifestError`].
     ManifestError(ManifestError),
+    /// Git dependency parsing succeeded, but the resolver isn't wired
+    /// up yet. Removed once the v0.8 git-resolution PR lands.
+    GitNotYetWired { name: String },
 }
 
 impl fmt::Display for LockfileError {
@@ -137,6 +149,11 @@ impl fmt::Display for LockfileError {
                 path.display()
             ),
             LockfileError::ManifestError(err) => write!(f, "{err}"),
+            LockfileError::GitNotYetWired { name } => write!(
+                f,
+                "git dependency '{name}' recognized but resolution wiring lands in PR 3; \
+                 for now use --path"
+            ),
         }
     }
 }
@@ -193,11 +210,11 @@ impl Lockfile {
         // BFS over the manifest's direct deps, then their deps, etc.
         // We read each transitive manifest fresh — the lockfile must
         // reflect the on-disk state of every package in the graph.
-        let mut queue: Vec<PathBuf> = manifest
-            .dependencies
-            .iter()
-            .map(|(name, dep)| resolve_dep_path(&intern::resolve(*name), dep, &root_dir))
-            .collect();
+        let mut queue: Vec<PathBuf> = Vec::new();
+        for (name, dep) in &manifest.dependencies {
+            let dep_name = intern::resolve(*name);
+            queue.push(resolve_dep_path(&dep_name, dep, &root_dir)?);
+        }
 
         while let Some(dep_root) = queue.pop() {
             if !visited.insert(dep_root.clone()) {
@@ -238,7 +255,7 @@ impl Lockfile {
                 checksum,
             });
             for (sub_name, sub_dep) in &dep_manifest.dependencies {
-                let sub_root = resolve_dep_path(&intern::resolve(*sub_name), sub_dep, &dep_root);
+                let sub_root = resolve_dep_path(&intern::resolve(*sub_name), sub_dep, &dep_root)?;
                 if !visited.contains(&sub_root) {
                     queue.push(sub_root);
                 }
@@ -318,8 +335,17 @@ impl Lockfile {
             if pkg.name == local_name {
                 continue;
             }
-            if let LockedSource::Path { path } = &pkg.source {
-                roots.insert(intern::intern(&pkg.name), path.join("src"));
+            match &pkg.source {
+                LockedSource::Path { path } => {
+                    roots.insert(intern::intern(&pkg.name), path.join("src"));
+                }
+                LockedSource::Git { .. } => {
+                    // PR 3 wires this: cache the git checkout under
+                    // `<silt-cache>/<url-hash>/<sha>/` and join `src`.
+                    // For now, git deps can't appear here because
+                    // `Lockfile::resolve` errors out on them.
+                }
+                LockedSource::Local => {}
             }
         }
         roots
@@ -360,11 +386,19 @@ pub fn checksum_path_source(pkg_root: &Path) -> Result<String, std::io::Error> {
 /// Resolve the absolute path of a [`Dependency`] relative to the
 /// directory holding the *consumer's* manifest.
 ///
-/// `_name` is used only for future error reporting (currently the
-/// caller materializes `DepNotFound` / `DepNotPackage` with this name).
-fn resolve_dep_path(_name: &str, dep: &Dependency, parent_dir: &Path) -> PathBuf {
+/// PR 1 of v0.8 only knows how to resolve path deps — git deps return
+/// the [`LockfileError::GitNotYetWired`] stub error. PR 3 replaces that
+/// arm with the real `git::resolve_ref` + `git::fetch_to_cache` flow.
+fn resolve_dep_path(
+    name: &str,
+    dep: &Dependency,
+    parent_dir: &Path,
+) -> Result<PathBuf, LockfileError> {
     match dep {
-        Dependency::Path { path } => normalize_path(&parent_dir.join(path)),
+        Dependency::Path { path } => Ok(normalize_path(&parent_dir.join(path))),
+        Dependency::Git { .. } => Err(LockfileError::GitNotYetWired {
+            name: name.to_string(),
+        }),
     }
 }
 
@@ -456,6 +490,35 @@ fn render_lockfile(lock: &Lockfile) -> String {
                     "source = {{ path = {} }}\n",
                     toml_escape_str(&path.display().to_string())
                 ));
+                out.push_str(&format!("checksum = {}\n", toml_escape_str(&pkg.checksum)));
+            }
+            LockedSource::Git {
+                url,
+                ref_spec,
+                resolved_sha,
+            } => {
+                // Schema rules for branch/tag/rev:
+                //   - Rev(x): one `rev = x` field (the user's input *is* the
+                //     resolved SHA).
+                //   - Branch(name): both `branch = name` (user intent) and
+                //     `rev = <resolved_sha>` (reproducible pin).
+                //   - Tag(name): same shape as Branch but with `tag` instead.
+                let mut parts = String::new();
+                parts.push_str(&format!("git = {}", toml_escape_str(url)));
+                match ref_spec {
+                    GitRef::Rev(_) => {
+                        parts.push_str(&format!(", rev = {}", toml_escape_str(resolved_sha)));
+                    }
+                    GitRef::Branch(name) => {
+                        parts.push_str(&format!(", branch = {}", toml_escape_str(name)));
+                        parts.push_str(&format!(", rev = {}", toml_escape_str(resolved_sha)));
+                    }
+                    GitRef::Tag(name) => {
+                        parts.push_str(&format!(", tag = {}", toml_escape_str(name)));
+                        parts.push_str(&format!(", rev = {}", toml_escape_str(resolved_sha)));
+                    }
+                }
+                out.push_str(&format!("source = {{ {parts} }}\n"));
                 out.push_str(&format!("checksum = {}\n", toml_escape_str(&pkg.checksum)));
             }
         }
@@ -567,10 +630,56 @@ fn parse_lockfile(text: &str, path: &Path) -> Result<Lockfile, LockfileError> {
                             },
                             checksum,
                         )
+                    } else if let Some(url) = src_table.get("git").and_then(|v| v.as_str()) {
+                        // Required: `rev` (always the resolved SHA).
+                        // Optional: at most one of `branch` or `tag` to
+                        // recover the user's original ref intent.
+                        let resolved_sha = src_table
+                            .get("rev")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| LockfileError::Parse {
+                                message: format!(
+                                    "[[package]] `{name}` git source missing `rev` (the resolved SHA)"
+                                ),
+                                path: path.to_path_buf(),
+                            })?
+                            .to_string();
+                        let branch = src_table.get("branch").and_then(|v| v.as_str());
+                        let tag = src_table.get("tag").and_then(|v| v.as_str());
+                        let ref_spec = match (branch, tag) {
+                            (Some(_), Some(_)) => {
+                                return Err(LockfileError::Parse {
+                                    message: format!(
+                                        "[[package]] `{name}` git source has both `branch` and \
+                                         `tag` (only one is allowed)"
+                                    ),
+                                    path: path.to_path_buf(),
+                                });
+                            }
+                            (Some(b), None) => GitRef::Branch(b.to_string()),
+                            (None, Some(t)) => GitRef::Tag(t.to_string()),
+                            (None, None) => GitRef::Rev(resolved_sha.clone()),
+                        };
+                        let checksum = entry
+                            .get("checksum")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| LockfileError::Parse {
+                                message: format!("[[package]] `{name}` has source but no checksum"),
+                                path: path.to_path_buf(),
+                            })?
+                            .to_string();
+                        (
+                            LockedSource::Git {
+                                url: url.to_string(),
+                                ref_spec,
+                                resolved_sha,
+                            },
+                            checksum,
+                        )
                     } else {
                         return Err(LockfileError::Parse {
                             message: format!(
-                                "[[package]] `{name}` source is unrecognized (expected `path`)"
+                                "[[package]] `{name}` source is unrecognized (expected `path` or `git`)"
                             ),
                             path: path.to_path_buf(),
                         });
