@@ -364,6 +364,367 @@ fn test_add_outside_package_errors() {
     );
 }
 
+// ── Git-dep tests (PR 2 of v0.8) ───────────────────────────────────────
+//
+// These are hermetic: `silt add --git` does an `ls-remote` reachability
+// check + a ref resolution call before mutating the manifest. We point
+// at a localhost-loopback URL with a port we expect nothing to be
+// listening on so the network call fails fast and deterministically.
+// The "happy path" tests therefore expect a *failure* at the
+// reachability stage and assert that the manifest was *not* written —
+// then a second batch of tests asserts the parser-level errors fire
+// without ever touching the network.
+//
+// Once PR 3 lands, the network-gated tests at the bottom of this
+// section can be promoted into the always-run set.
+
+/// A localhost URL on a port nothing should be bound to. Used to
+/// guarantee the `silt add --git` reachability check fails predictably
+/// in hermetic mode (no DNS, no TLS handshake, just an immediate
+/// "Connection refused").
+const UNREACHABLE_GIT_URL: &str = "http://127.0.0.1:1/__silt_test_unreachable__.git";
+
+/// Hermetic happy-path: `silt add --git --rev` rejects the dep at the
+/// reachability step (no real server at the test URL), and the
+/// manifest is left unchanged. This is the best we can assert without
+/// network access; the network-gated tests below cover the success
+/// path against a real repo.
+#[test]
+fn test_add_git_with_rev_unreachable_blocks_manifest_write() {
+    let ws = fresh_workspace("git_rev");
+    let app = ws.join("app");
+    write_app_package(&app, "git_rev_app", "fn main() {}\n");
+    let pre = fs::read_to_string(app.join("silt.toml")).unwrap();
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            UNREACHABLE_GIT_URL,
+            "--rev",
+            "abc1234",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "expected unreachable URL to fail; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cannot reach"),
+        "expected reachability error; got: {stderr}"
+    );
+    let post = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert_eq!(
+        pre, post,
+        "manifest should not have been mutated when reachability fails"
+    );
+}
+
+/// Hermetic happy-path for `--branch` form: same shape as the rev test.
+#[test]
+fn test_add_git_with_branch_unreachable_blocks_manifest_write() {
+    let ws = fresh_workspace("git_branch");
+    let app = ws.join("app");
+    write_app_package(&app, "git_branch_app", "fn main() {}\n");
+    let pre = fs::read_to_string(app.join("silt.toml")).unwrap();
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            UNREACHABLE_GIT_URL,
+            "--branch",
+            "main",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "expected unreachable URL to fail");
+    let post = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert_eq!(pre, post, "manifest must remain untouched on failure");
+}
+
+/// Hermetic happy-path for `--tag` form: same shape as above.
+#[test]
+fn test_add_git_with_tag_unreachable_blocks_manifest_write() {
+    let ws = fresh_workspace("git_tag");
+    let app = ws.join("app");
+    write_app_package(&app, "git_tag_app", "fn main() {}\n");
+    let pre = fs::read_to_string(app.join("silt.toml")).unwrap();
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            UNREACHABLE_GIT_URL,
+            "--tag",
+            "v1.0.0",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "expected unreachable URL to fail");
+    let post = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert_eq!(pre, post, "manifest must remain untouched on failure");
+}
+
+/// `--git` and `--path` together is a usage error — the two source
+/// kinds are mutually exclusive.
+#[test]
+fn test_add_git_and_path_errors() {
+    let ws = fresh_workspace("git_and_path");
+    let app = ws.join("app");
+    write_app_package(&app, "ga_p_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            UNREACHABLE_GIT_URL,
+            "--path",
+            "../foo",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "should reject conflicting sources");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--path") && stderr.contains("--git") && stderr.contains("mutually"),
+        "expected mutual-exclusion diagnostic; got: {stderr}"
+    );
+}
+
+/// `--git URL` with no `--rev` / `--branch` / `--tag` is a usage error.
+#[test]
+fn test_add_git_without_ref_form_errors() {
+    let ws = fresh_workspace("git_noref");
+    let app = ws.join("app");
+    write_app_package(&app, "git_noref_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args(["add", "foo", "--git", UNREACHABLE_GIT_URL])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "should require a ref form");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--git")
+            && stderr.contains("--rev")
+            && stderr.contains("--branch")
+            && stderr.contains("--tag"),
+        "expected ref-form diagnostic; got: {stderr}"
+    );
+}
+
+/// `--git URL --rev X --branch main` is a usage error: only one ref
+/// form is allowed.
+#[test]
+fn test_add_git_with_multiple_ref_forms_errors() {
+    let ws = fresh_workspace("git_multiref");
+    let app = ws.join("app");
+    write_app_package(&app, "git_multi_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            UNREACHABLE_GIT_URL,
+            "--rev",
+            "abc1234",
+            "--branch",
+            "main",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "should reject multiple ref forms");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("multiple") && stderr.contains("--rev") && stderr.contains("--branch"),
+        "expected multi-ref-form diagnostic; got: {stderr}"
+    );
+}
+
+/// A bogus URL string that doesn't even look like a URL is rejected
+/// by the local shape check before any network traffic.
+#[test]
+fn test_add_git_with_invalid_url_errors() {
+    let ws = fresh_workspace("git_badurl");
+    let app = ws.join("app");
+    write_app_package(&app, "git_badurl_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args(["add", "foo", "--git", "not a url", "--branch", "main"])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "should reject non-URL input");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("doesn't look like a git URL"),
+        "expected URL-shape diagnostic; got: {stderr}"
+    );
+}
+
+/// `--rev` value must look like a SHA. This must run *before* any
+/// network call so the test stays hermetic — point at a known-bad URL
+/// to prove it.
+#[test]
+fn test_add_git_invalid_rev_format_errors() {
+    let ws = fresh_workspace("git_badrev");
+    let app = ws.join("app");
+    write_app_package(&app, "git_badrev_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            // Use a `localhost` URL that *does* shape-check as a URL
+            // but won't be reached because the SHA check fails first.
+            "https://example.com/foo.git",
+            "--rev",
+            "notahex!",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "should reject malformed SHA");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--rev") && stderr.contains("hexadecimal"),
+        "expected rev-shape diagnostic; got: {stderr}"
+    );
+    // And must not have written the manifest.
+    let post = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert!(
+        !post.contains("foo"),
+        "manifest should not have been touched: {post}"
+    );
+}
+
+// ── Network-gated tests (require SILT_GIT_INTEGRATION_TESTS=1) ────────
+
+fn skip_unless_network() -> bool {
+    std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err()
+}
+
+/// A URL that resolves at the DNS level but won't host a real repo.
+/// Only valuable when network access is enabled; in CI / hermetic mode
+/// the no-network unreachability test above covers the same surface.
+#[test]
+fn test_add_git_unreachable_url_errors() {
+    if skip_unless_network() {
+        return;
+    }
+    let ws = fresh_workspace("git_unreachable_net");
+    let app = ws.join("app");
+    write_app_package(&app, "git_unreach_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            "https://github.com/probably-does-not-exist-asdf-jkl/foo",
+            "--branch",
+            "main",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "expected unreachable github URL to fail"
+    );
+}
+
+/// Real repo, nonexistent branch. `verify_reachable` succeeds; the
+/// failure surfaces from `resolve_ref`.
+#[test]
+fn test_add_git_nonexistent_branch_errors() {
+    if skip_unless_network() {
+        return;
+    }
+    let ws = fresh_workspace("git_no_branch_net");
+    let app = ws.join("app");
+    write_app_package(&app, "git_no_branch_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "foo",
+            "--git",
+            "https://github.com/rendro/silt",
+            "--branch",
+            "nonexistent_xyz_123",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "expected nonexistent branch to fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cannot resolve") || stderr.contains("not found"),
+        "expected resolution-failure diagnostic; got: {stderr}"
+    );
+}
+
+/// Real repo + real branch — the actual happy path. Once PR 3 lands,
+/// the lockfile-skip notice should disappear and we can assert that
+/// silt.lock is created. For now we only assert the manifest was
+/// written and the notice was printed.
+#[test]
+fn test_add_git_real_branch_writes_manifest() {
+    if skip_unless_network() {
+        return;
+    }
+    let ws = fresh_workspace("git_real_branch_net");
+    let app = ws.join("app");
+    write_app_package(&app, "git_real_app", "fn main() {}\n");
+
+    let out = silt_cmd()
+        .args([
+            "add",
+            "siltdep",
+            "--git",
+            "https://github.com/rendro/silt",
+            "--branch",
+            "main",
+        ])
+        .current_dir(&app)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "silt add --git --branch failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = fs::read_to_string(app.join("silt.toml")).unwrap();
+    assert!(
+        manifest.contains("siltdep") && manifest.contains("git") && manifest.contains("branch"),
+        "manifest missing git entry:\n{manifest}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("PR 3"),
+        "expected PR-3 notice in stdout; got: {stdout}"
+    );
+}
+
 #[test]
 fn test_add_then_run_works() {
     let ws = fresh_workspace("e2e");
