@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,9 @@ use silt::bytecode::Function;
 use silt::compiler::Compiler;
 use silt::disassemble::disassemble_function;
 use silt::errors::SourceError;
+use silt::intern::{self, Symbol};
 use silt::lexer::Lexer;
+use silt::lockfile::{Lockfile, LockfileError};
 use silt::manifest::{Manifest, ManifestError};
 use silt::parser::Parser;
 use silt::typechecker;
@@ -51,10 +54,15 @@ struct CompilePipelineResult {
 /// - `skip_compile`: skip the compilation step (used by `check_file` which only needs diagnostics).
 /// - `typecheck_on_parse_errors`: run the type checker even when there are parse errors
 ///   (used by `check_file` to report as many diagnostics as possible).
+/// - `auto_update_lock`: when true and the file lives inside a silt
+///   package, regenerate `silt.lock` if it's missing or stale before
+///   compilation. Set to `false` for read-only commands like `silt
+///   disasm` and `silt fmt` so they don't mutate user files.
 fn run_compile_pipeline(
     path: &str,
     skip_compile: bool,
     typecheck_on_parse_errors: bool,
+    auto_update_lock: bool,
 ) -> CompilePipelineResult {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
@@ -124,14 +132,21 @@ fn run_compile_pipeline(
         };
     }
 
-    // Derive project root: prefer the nearest enclosing `silt.toml`'s
-    // directory (so multi-file packages always resolve `import foo` to
-    // `<package>/src/foo.silt`), falling back to the file's own parent
-    // for ad-hoc scripts that aren't part of a package.
-    let project_root = derive_project_root_for_file(path);
+    // Derive the package_roots map: when `path` is inside a silt
+    // package, this loads `silt.toml` and (for dep-resolving commands)
+    // auto-regenerates `silt.lock` if stale before resolving the dep
+    // tree. For ad-hoc scripts outside any package, falls back to a
+    // synthetic local-only setup keyed off the file's parent directory.
+    //
+    // The `auto_update_lock` flag distinguishes mutation-allowed
+    // callers (`silt run`, `silt check`, `silt test`) from read-only
+    // callers (`silt disasm`, `silt fmt`). Read-only callers still
+    // need a dep map; they just resolve in-memory rather than writing
+    // a refreshed lockfile to disk.
+    let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
 
     // Compile.
-    let mut compiler = Compiler::with_project_root(project_root);
+    let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
     match compiler.compile_program(&program) {
         Ok(functions) => {
             let compile_warnings: Vec<SourceError> = compiler
@@ -230,7 +245,15 @@ fn is_user_import_resolvable_error(err: &SourceError) -> bool {
 /// Print all diagnostics to stderr and exit(1) if there are hard errors.
 /// Returns the compiled functions and source on success.
 fn compile_file(path: &str) -> (Vec<Function>, String) {
-    let result = run_compile_pipeline(path, false, false);
+    compile_file_with_options(path, true)
+}
+
+/// Like [`compile_file`] but lets the caller opt out of lockfile
+/// auto-regeneration. `silt disasm` is the only read-only caller that
+/// uses `false` here — it inspects bytecode without the side effect of
+/// writing `silt.lock`.
+fn compile_file_with_options(path: &str, auto_update_lock: bool) -> (Vec<Function>, String) {
+    let result = run_compile_pipeline(path, false, false, auto_update_lock);
 
     // Filter per-entry: drop the "unknown module" warnings the compiler will
     // resolve, but keep every other type diagnostic so real errors still
@@ -332,8 +355,8 @@ fn usage_text() -> String {
         "Update the silt binary to the latest release",
     ));
     out.push_str(&line(
-        "silt update",
-        "Update package dependencies (coming in v0.7)",
+        "silt update [<dep-name>]",
+        "Regenerate silt.lock for the current package's dependencies",
     ));
     out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
@@ -945,51 +968,72 @@ fn main() {
                 process::exit(1);
             }
         }
-        // Back-compat shim for the old `silt update` (binary self-update).
-        // In v0.7 the name `silt update` is being repurposed for package
-        // dependency updates (PR 4). Until then, this command must NEVER
-        // silently fall back to the self-updater — that would break scripts
-        // that run `silt update` from inside a package thinking they're
-        // doing the new dependency-update operation.
+        // `silt update` manages package dependencies in v0.7+. It also
+        // keeps a back-compat redirect for legacy self-update flags so
+        // scripts that ran `silt update --dry-run` against old binaries
+        // get a clear pointer to `silt self-update` rather than a
+        // confusing "must be run inside a package" error.
         //
-        // Behavior:
-        //  - If invoked with old self-update flags (--dry-run / --force /
-        //    --version=...) OR if no `silt.toml` is reachable from cwd, we
-        //    print a redirect to `silt self-update` and exit 2.
-        //  - If invoked inside a package with NO old flags, we say the
-        //    new dependency-update behavior is "coming in PR 4" and exit 2.
-        //
-        // PR 4 will replace the inner branch with the real dep-update path.
+        // Argument shapes:
+        //  - `silt update` (no args): regenerate the lock for the
+        //    current package's full dep tree.
+        //  - `silt update <name>`: regenerate the lock, optionally
+        //    targeting just one dep. For Phase-1 path-only deps this
+        //    behaves like the no-arg form (path deps don't have
+        //    versions to bump), but the API is wired up so PR-future-2
+        //    can implement targeted updates without touching the
+        //    dispatch.
+        //  - Legacy self-update flags (`--dry-run`, `--force`,
+        //    `--version=...`): print the redirect to `self-update` and
+        //    exit 2. Never silently invoke either path — that would
+        //    bite anyone scripting the old API.
         "update" => {
             let mut saw_self_update_flag = false;
             let mut wants_help = false;
+            let mut positional: Option<String> = None;
             for arg in &args[2..] {
                 match arg.as_str() {
                     "--help" | "-h" => wants_help = true,
                     "--dry-run" | "--force" => saw_self_update_flag = true,
                     other if other.starts_with("--version=") => saw_self_update_flag = true,
-                    _ => {}
+                    other if other.starts_with('-') => {
+                        eprintln!("silt update: unknown flag '{other}'");
+                        eprintln!("Run 'silt update --help' for usage.");
+                        process::exit(1);
+                    }
+                    other if positional.is_none() => positional = Some(other.to_string()),
+                    other => {
+                        eprintln!("silt update: unexpected extra argument '{other}'");
+                        process::exit(1);
+                    }
                 }
             }
             if wants_help {
-                println!("Usage: silt update");
+                println!("Usage: silt update [<dep-name>]");
                 println!();
-                println!("`silt update` will manage package dependencies starting in v0.7 (PR 4).");
+                println!("Regenerate `silt.lock` from the current package's `silt.toml`.");
+                println!("Resolves the full dependency tree, computes content checksums,");
+                println!("and writes the result next to `silt.toml`.");
+                println!();
+                println!("Arguments:");
+                println!("  <dep-name>     Update only the named dep (Phase-1 path deps");
+                println!("                 are re-resolved the same way as the no-arg form;");
+                println!("                 the argument exists for forward compat).");
+                println!();
                 println!("To update the silt binary itself, use `silt self-update` instead.");
                 process::exit(0);
             }
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
-            if saw_self_update_flag || !in_package {
+            // Legacy redirect: keep firing on `--dry-run` / `--force` /
+            // `--version=...` no matter where we are, because anyone
+            // passing those flags is clearly trying to drive the old
+            // self-updater.
+            if saw_self_update_flag {
                 eprintln!(
-                    "silt update has been renamed to silt self-update; the new silt update will manage package dependencies (coming in PR 4). For now, use 'silt self-update' to update the silt binary."
+                    "silt update has been renamed to silt self-update; the new silt update manages package dependencies. To update the silt binary itself, use 'silt self-update'."
                 );
                 process::exit(2);
             }
-            eprintln!(
-                "silt update for dependencies is coming in v0.7 (PR 4). For now, use 'silt self-update' to update the silt binary."
-            );
-            process::exit(2);
+            run_dependency_update(positional.as_deref());
         }
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => {
@@ -1239,28 +1283,197 @@ fn die_on_manifest_error(err: ManifestError) -> ! {
     process::exit(1);
 }
 
-/// Derive the project root used by the compiler for module resolution
-/// when invoked with an explicit `<file>` argument.
+/// Synthetic package name used when compiling a `.silt` file outside any
+/// silt package (REPL-style invocations, ad-hoc scripts, the
+/// `silt run script.silt` legacy path). Matches what
+/// `Compiler::with_project_root` used internally pre-PR-4 so any
+/// downstream code keying on the local package name keeps working.
+const ANONYMOUS_LOCAL_PACKAGE: &str = "__local__";
+
+/// Derive the package_roots map and local-package symbol the compiler
+/// needs to resolve `import` statements from `path`.
 ///
-/// Resolution order:
-///  1. Nearest `silt.toml` walking up from the file's parent directory.
-///  2. Fallback: the file's own parent directory (legacy behavior).
+/// Two modes:
+///   - `path` lives inside a silt package (manifest reachable above its
+///     parent): we resolve the dep tree from `silt.lock`, optionally
+///     auto-regenerating the lock if it's missing or stale (controlled
+///     by `auto_update_lock`). The local package is registered under
+///     its real name from `silt.toml`; deps are registered under the
+///     names from their respective manifests.
+///   - No manifest reachable: we synthesise a single-root setup under
+///     [`ANONYMOUS_LOCAL_PACKAGE`] mapped to the file's parent
+///     directory. This preserves the legacy "ad-hoc script" behavior
+///     where `import foo` resolves to a sibling `foo.silt`.
 ///
-/// Manifest *load* failures here are non-fatal — we just fall through to
-/// the legacy file-parent behavior. The full diagnostic surfaces later
-/// when a command that strictly needs the manifest (e.g. dep resolution
-/// in PR 4) tries to load it explicitly.
-fn derive_project_root_for_file(path: &str) -> PathBuf {
+/// `auto_update_lock = false` is what `silt fmt` and `silt disasm` use:
+/// they should never mutate the lockfile (read-only operations); if
+/// the lock is missing or stale they just resolve from the existing
+/// (possibly empty) lockfile, which is fine because the local package
+/// always loads regardless and missing deps surface naturally as
+/// import errors.
+///
+/// Manifest or lockfile errors are fatal — they're rendered to stderr
+/// and the process exits with code 1. Run/check/test paths can't
+/// proceed without a coherent dep graph.
+fn package_setup_for_file(
+    path: &str,
+    auto_update_lock: bool,
+) -> (Symbol, HashMap<Symbol, PathBuf>) {
     let file_parent = Path::new(path)
         .canonicalize()
         .unwrap_or_else(|_| Path::new(path).to_path_buf())
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    if let Some(manifest_dir) = Manifest::find(&file_parent) {
-        manifest_dir
+
+    match find_project_root(&file_parent) {
+        Ok(Some((root, manifest))) => {
+            let lockfile_path = root.join("silt.lock");
+            let lockfile = if auto_update_lock {
+                ensure_fresh_lockfile(&manifest, &lockfile_path)
+            } else {
+                load_or_resolve_lockfile(&manifest, &lockfile_path)
+            };
+            let package_roots = lockfile.package_roots(&manifest);
+            (manifest.package.name, package_roots)
+        }
+        Ok(None) => fallback_package_setup(&file_parent),
+        Err(e) => die_on_manifest_error(e),
+    }
+}
+
+/// Construct the no-package fallback: synthetic local package name
+/// mapped to `dir` so legacy ad-hoc scripts continue to resolve
+/// `import foo` against sibling files.
+fn fallback_package_setup(dir: &Path) -> (Symbol, HashMap<Symbol, PathBuf>) {
+    let local = intern::intern(ANONYMOUS_LOCAL_PACKAGE);
+    let mut roots = HashMap::new();
+    roots.insert(local, dir.to_path_buf());
+    (local, roots)
+}
+
+/// Auto-update path: regenerate `silt.lock` if it's missing or stale
+/// relative to `manifest`. Prints a single notice line to stderr when
+/// a regeneration happens so the user knows the file changed.
+///
+/// Any lockfile error (resolve, parse, write) is fatal. We deliberately
+/// don't fall back silently — a half-resolved lockfile is worse than
+/// no lockfile because it would let imports succeed against stale
+/// content checksums.
+fn ensure_fresh_lockfile(manifest: &Manifest, lockfile_path: &Path) -> Lockfile {
+    let existing = match Lockfile::load(lockfile_path) {
+        Ok(lock) => Some(lock),
+        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => die_on_lockfile_error(e),
+    };
+    let needs_refresh = match &existing {
+        None => true,
+        Some(lock) => !lock.matches_manifest(manifest),
+    };
+    if !needs_refresh {
+        return existing.expect("checked above");
+    }
+    if existing.is_some() {
+        eprintln!("Updating silt.lock for new dependencies in silt.toml");
+    }
+    let fresh = match Lockfile::resolve(manifest) {
+        Ok(l) => l,
+        Err(e) => die_on_lockfile_error(e),
+    };
+    if let Err(e) = fresh.write(lockfile_path) {
+        die_on_lockfile_error(e);
+    }
+    fresh
+}
+
+/// Read-only path: load `silt.lock` if it exists, otherwise resolve
+/// from the manifest in-memory without writing. Used by `silt fmt`
+/// and `silt disasm`, which shouldn't touch the lockfile.
+fn load_or_resolve_lockfile(manifest: &Manifest, lockfile_path: &Path) -> Lockfile {
+    match Lockfile::load(lockfile_path) {
+        Ok(lock) => lock,
+        Err(LockfileError::Io(err, _)) if err.kind() == std::io::ErrorKind::NotFound => {
+            // No lockfile on disk, but we still need *some* dep map for
+            // the compiler. Resolve in-memory; if that fails the user
+            // gets a clear error (and can run `silt update` to write a
+            // real lock and see the same diagnostic).
+            match Lockfile::resolve(manifest) {
+                Ok(l) => l,
+                Err(e) => die_on_lockfile_error(e),
+            }
+        }
+        Err(e) => die_on_lockfile_error(e),
+    }
+}
+
+fn die_on_lockfile_error(err: LockfileError) -> ! {
+    eprintln!("error: {err}");
+    process::exit(1);
+}
+
+/// Implementation of `silt update [<dep-name>]`.
+///
+/// Walks up from cwd to find a `silt.toml`, resolves the full dep tree
+/// fresh from disk, computes checksums, and writes `silt.lock` next to
+/// the manifest. Always rewrites the entire lock — even when a single
+/// dep was named — so other entries refresh in tandem. (For Phase-1
+/// path deps this is fine; PR-future-2 will need a richer policy when
+/// version arithmetic enters the picture.)
+///
+/// Outside any package (no `silt.toml` reachable) we print a fixed
+/// error message and exit 1 — this is the canonical "must be run
+/// inside a silt package" diagnostic that tests pin to.
+fn run_dependency_update(target: Option<&str>) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (root, manifest) = match find_project_root(&cwd) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => {
+            eprintln!(
+                "silt update must be run inside a silt package (no silt.toml found in this directory or any parent)"
+            );
+            process::exit(1);
+        }
+        Err(e) => die_on_manifest_error(e),
+    };
+
+    if let Some(name) = target {
+        // Validate that the named dep actually exists in the manifest
+        // before doing the work. Otherwise a typo silently rewrites the
+        // lock with the existing dep set and the user is left wondering
+        // why their requested update didn't happen.
+        let known = manifest
+            .dependencies
+            .keys()
+            .any(|sym| intern::resolve(*sym) == name);
+        if !known {
+            eprintln!(
+                "silt update: dependency `{name}` is not declared in {}",
+                manifest.manifest_path.display()
+            );
+            process::exit(1);
+        }
+    }
+
+    let lockfile = match Lockfile::resolve(&manifest) {
+        Ok(l) => l,
+        Err(e) => die_on_lockfile_error(e),
+    };
+    let lockfile_path = root.join("silt.lock");
+    if let Err(e) = lockfile.write(&lockfile_path) {
+        die_on_lockfile_error(e);
+    }
+
+    // Count of pinned (non-root) packages. Quiet single-line summary
+    // matches the tone of `cargo update`'s default output.
+    let dep_count = lockfile
+        .packages
+        .iter()
+        .filter(|p| !matches!(p.source, silt::lockfile::LockedSource::Local))
+        .count();
+    if dep_count == 1 {
+        eprintln!("Locked 1 dependency.");
     } else {
-        file_parent
+        eprintln!("Locked {dep_count} dependencies.");
     }
 }
 
@@ -1633,7 +1846,10 @@ fn vm_run_file(path: &str) {
 /// Disassemble a file's bytecode without running it.
 fn disasm_file(path: &str) {
     silt::intern::reset();
-    let (functions, _source) = compile_file(path);
+    // Read-only command — never mutates `silt.lock`. If the lock is
+    // stale or missing we resolve in-memory and continue; the user
+    // can still get a useful disassembly without a lockfile write.
+    let (functions, _source) = compile_file_with_options(path, false);
 
     // Print disassembly of each function
     for func in &functions {
@@ -1652,7 +1868,7 @@ fn check_file(path: &str, format: OutputFormat) {
     // import. Previously this path skipped compile entirely AND emitted
     // every warning, which produced spurious "unknown module" warnings
     // on programs that `silt run` handles cleanly.
-    let result = run_compile_pipeline(path, false, true);
+    let result = run_compile_pipeline(path, false, true, true);
 
     // Filter per-entry: drop the "unknown module" warnings the compiler
     // will resolve, but keep every other diagnostic so real errors still
@@ -1951,12 +2167,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             continue;
         }
 
-        // Compile all declarations (without calling main).  Project root
-        // resolution mirrors `silt run`: prefer the nearest enclosing
+        // Compile all declarations (without calling main).  Package
+        // setup mirrors `silt run`: prefer the nearest enclosing
         // `silt.toml` so cross-file `import foo` resolves consistently
-        // regardless of which file `silt test` was pointed at.
-        let test_root = derive_project_root_for_file(path.as_str());
-        let mut compiler = Compiler::with_project_root(test_root);
+        // regardless of which file `silt test` was pointed at, and
+        // auto-update the lockfile when the manifest has new deps.
+        let (local_pkg, package_roots) = package_setup_for_file(path.as_str(), true);
+        let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
         let functions = match compiler.compile_declarations(&program) {
             Ok(f) => f,
             Err(e) => {

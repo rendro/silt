@@ -600,7 +600,14 @@ fn all_doc_fn_main_blocks_compile() {
                 .collect();
 
             // Compile. This is where the missing-import error surfaces.
-            let mut compiler = Compiler::with_project_root(project_root.clone());
+            // Use the lower-level `with_package_roots` API directly with
+            // a synthetic single-package map; doc blocks don't import
+            // sibling .silt files, so the root is just here to satisfy
+            // the compiler's invariant.
+            let local_pkg = silt::intern::intern("__doc_block__");
+            let mut roots = std::collections::HashMap::new();
+            roots.insert(local_pkg, project_root.clone());
+            let mut compiler = Compiler::with_package_roots(local_pkg, roots);
             match compiler.compile_program(&program) {
                 Ok(_) => {
                     if !hard_type_errors.is_empty() {
