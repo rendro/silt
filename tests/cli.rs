@@ -359,6 +359,9 @@ fn test_fmt_continues_past_error_in_multi_file() {
 
 #[test]
 fn test_init_creates_file() {
+    // v0.7 init creates a Cargo-style package layout: silt.toml + src/main.silt.
+    // The full behavior matrix lives in tests/cli_init_tests.rs; this test
+    // pins the bare-minimum integration smoke (init runs, both files exist).
     let dir = std::env::temp_dir().join("silt_cli_tests_init");
     // Clean up from any prior run
     let _ = fs::remove_dir_all(&dir);
@@ -376,8 +379,10 @@ fn test_init_creates_file() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let main_silt = dir.join("main.silt");
-    assert!(main_silt.exists(), "expected main.silt to be created");
+    let manifest = dir.join("silt.toml");
+    let main_silt = dir.join("src").join("main.silt");
+    assert!(manifest.exists(), "expected silt.toml to be created");
+    assert!(main_silt.exists(), "expected src/main.silt to be created");
 
     let content = fs::read_to_string(&main_silt).expect("failed to read main.silt");
     assert!(
@@ -391,8 +396,8 @@ fn test_init_creates_file() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("created main.silt"),
-        "expected creation message in stdout, got: {stdout}"
+        stdout.contains("silt.toml") && stdout.contains("main.silt"),
+        "expected creation message naming both files in stdout, got: {stdout}"
     );
 
     // Clean up
@@ -403,12 +408,15 @@ fn test_init_creates_file() {
 
 #[test]
 fn test_init_refuses_overwrite() {
+    // v0.7 init refuses to clobber an existing silt.toml; the message
+    // mentions the file by name. (Refusal on existing src/main.silt is
+    // covered separately in tests/cli_init_tests.rs.)
     let dir = std::env::temp_dir().join("silt_cli_tests_init_overwrite");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
-    // Create an existing main.silt
-    fs::write(dir.join("main.silt"), "existing content").unwrap();
+    // Create an existing silt.toml (the new project marker).
+    fs::write(dir.join("silt.toml"), "existing content").unwrap();
 
     let output = silt_cmd()
         .current_dir(&dir)
@@ -425,7 +433,7 @@ fn test_init_refuses_overwrite() {
     );
 
     // Verify original file was not overwritten
-    let content = fs::read_to_string(dir.join("main.silt")).unwrap();
+    let content = fs::read_to_string(dir.join("silt.toml")).unwrap();
     assert_eq!(
         content, "existing content",
         "original file should not be modified"

@@ -146,7 +146,7 @@ fn main() {
 curl -fsSL https://silt-lang.com/install.sh | sh
 ```
 
-The installer verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted or tampered archive can't land on disk. To upgrade an existing install without re-running the curl pipe, use `silt update` (which performs the same verification).
+The installer verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted or tampered archive can't land on disk. To upgrade an existing install without re-running the curl pipe, use `silt self-update` (which performs the same verification).
 
 Or build from source:
 
@@ -160,8 +160,10 @@ Then:
 
 ```sh
 silt init
-silt run main.silt
+silt run
 ```
+
+`silt init` writes a `silt.toml` manifest and a starter `src/main.silt`; `silt run` (no arguments, inside a package) executes the entry point.
 
 See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -176,9 +178,10 @@ silt test [path]           Run test functions
 silt fmt [files...]        Format source code
 silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
-silt init                  Create a new main.silt
+silt init                  Create a new silt package in the current directory
 silt lsp                   Start the language server
 silt disasm <file.silt>    Show bytecode disassembly (same as `silt run --disassemble`)
+silt self-update           Update the silt binary to the latest release
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.

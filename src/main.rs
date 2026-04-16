@@ -9,6 +9,7 @@ use silt::compiler::Compiler;
 use silt::disassemble::disassemble_function;
 use silt::errors::SourceError;
 use silt::lexer::Lexer;
+use silt::manifest::{Manifest, ManifestError};
 use silt::parser::Parser;
 use silt::typechecker;
 use silt::vm::Vm;
@@ -123,13 +124,11 @@ fn run_compile_pipeline(
         };
     }
 
-    // Derive project root from the input file's directory.
-    let project_root = Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(path).to_path_buf())
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    // Derive project root: prefer the nearest enclosing `silt.toml`'s
+    // directory (so multi-file packages always resolve `import foo` to
+    // `<package>/src/foo.silt`), falling back to the file's own parent
+    // for ad-hoc scripts that aren't part of a package.
+    let project_root = derive_project_root_for_file(path);
 
     // Compile.
     let mut compiler = Compiler::with_project_root(project_root);
@@ -316,7 +315,10 @@ fn usage_text() -> String {
     out.push_str(&line("silt test [--watch] [path]", "Run test functions"));
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
-    out.push_str(&line("silt init", "Create a new main.silt"));
+    out.push_str(&line(
+        "silt init",
+        "Create a new silt package in this directory",
+    ));
     out.push_str(&line(
         "silt lsp",
         "Start the language server  [feature: lsp]",
@@ -326,8 +328,12 @@ fn usage_text() -> String {
         "Show bytecode disassembly",
     ));
     out.push_str(&line(
-        "silt update [--dry-run] [--force]",
-        "Update silt to the latest release",
+        "silt self-update [--dry-run] [--force]",
+        "Update the silt binary to the latest release",
+    ));
+    out.push_str(&line(
+        "silt update",
+        "Update package dependencies (coming in v0.7)",
     ));
     out.push('\n');
     out.push_str(&format!("Enabled features: {}\n", enabled_features()));
@@ -340,6 +346,21 @@ fn usage_text() -> String {
 /// tests/cli.rs asserts the two banners are byte-identical.
 fn check_usage_banner() -> &'static str {
     "silt check [--format json] [--watch] <file.silt>"
+}
+
+/// Single source of truth for the `silt run` usage banner line.
+///
+/// Four code paths print this — `--help`, no-args, the watch
+/// dry-validation gate, and the missing-file-after-flags fallback.
+/// Keeping them all rendering from this helper is locked by
+/// `tests/run_banner_consistency_tests.rs::test_silt_run_banner_consistency_all_paths`.
+///
+/// We deliberately keep `<file.silt>` (without optional brackets) so the
+/// banner stays byte-identical across paths even though `silt run` now
+/// also accepts no file argument when invoked inside a package — the
+/// optional-no-arg behavior is documented separately in the help text.
+fn run_usage_banner() -> &'static str {
+    "silt run [--watch] [--disassemble] <file.silt>"
 }
 
 /// Comma-separated list of Cargo features compiled into this binary.
@@ -425,6 +446,11 @@ fn main() {
         // case (first positional after the subcommand name is missing or
         // is another flag); the subcommand's own validator handles the
         // harder cases after the watcher reruns.
+        //
+        // Exception: `run`, `check`, and `disasm` no longer require an
+        // explicit file when the cwd is inside a silt package (manifest
+        // discoverable). In that case the subcommand resolves the entry
+        // point to `<root>/src/main.silt`, so we let the watcher start.
         if let Some(sub) = filtered.first().map(|s| s.as_str()) {
             let requires_file = matches!(sub, "run" | "check" | "disasm");
             // `silt test` and `silt fmt` take an optional file / path, so
@@ -453,15 +479,23 @@ fn main() {
                     break;
                 }
                 if !has_positional {
-                    let banner = match sub {
-                        "run" => "Usage: silt run [--watch] [--disassemble] <file.silt>",
-                        // Keep in sync with check_usage_banner().
-                        "check" => "Usage: silt check [--format json] [--watch] <file.silt>",
-                        "disasm" => "Usage: silt disasm <file.silt>",
-                        _ => unreachable!(),
-                    };
-                    eprintln!("{banner}");
-                    process::exit(1);
+                    // No positional path — only allowed if we're inside a
+                    // silt package (manifest reachable from cwd).
+                    let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
+                    let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
+                    if !in_package {
+                        let banner = match sub {
+                            "run" => format!("Usage: {}", run_usage_banner()),
+                            // Keep in sync with check_usage_banner().
+                            "check" => {
+                                format!("Usage: {}", check_usage_banner())
+                            }
+                            "disasm" => "Usage: silt disasm <file.silt>".to_string(),
+                            _ => unreachable!(),
+                        };
+                        eprintln!("{banner}");
+                        process::exit(1);
+                    }
                 }
             }
         }
@@ -510,21 +544,18 @@ fn main() {
         }
         "run" => {
             if args[2..].iter().any(|a| a == "--help" || a == "-h") {
-                println!("Usage: silt run [--watch] [--disassemble] <file.silt>");
+                println!("Usage: {}", run_usage_banner());
                 println!();
                 println!("Options:");
                 println!("  --watch, -w     Re-run on file changes");
                 println!("  --disassemble   Show bytecode disassembly instead of running");
                 println!();
                 println!("Examples:");
+                println!("  silt run                      (inside a package, runs src/main.silt)");
                 println!("  silt run main.silt");
                 println!("  silt run --watch main.silt");
                 println!("  silt run --disassemble main.silt");
                 process::exit(0);
-            }
-            if args.len() < 3 {
-                eprintln!("Usage: silt run [--watch] [--disassemble] <file.silt>");
-                process::exit(1);
             }
             let mut disasm = false;
             let mut file: Option<String> = None;
@@ -544,9 +575,20 @@ fn main() {
                     file = Some(arg.clone());
                 }
             }
-            let Some(file) = file else {
-                eprintln!("Usage: silt run [--watch] [--disassemble] <file.silt>");
-                process::exit(1);
+            // No explicit file → look for an enclosing silt package and use
+            // its `src/main.silt`. If we're not inside a package, preserve
+            // the legacy "missing argument" error so non-package users
+            // see a familiar message.
+            let file = match file {
+                Some(f) => f,
+                None => match resolve_package_entry_point() {
+                    Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                    Ok(None) => {
+                        eprintln!("Usage: {}", run_usage_banner());
+                        process::exit(1);
+                    }
+                    Err(()) => process::exit(1),
+                },
             };
             if disasm {
                 disasm_file(&file);
@@ -572,9 +614,10 @@ fn main() {
         }
         "disasm" => {
             if args[2..].iter().any(|a| a == "--help" || a == "-h") {
-                println!("Usage: silt disasm <file.silt>");
+                println!("Usage: silt disasm [<file.silt>]");
                 println!();
                 println!("Prints the compiled bytecode disassembly for <file.silt>.");
+                println!("Inside a package with no file argument, disassembles src/main.silt.");
                 println!();
                 println!("Example:");
                 println!("  silt disasm main.silt");
@@ -588,11 +631,19 @@ fn main() {
                     process::exit(1);
                 }
             }
-            if args.len() < 3 {
-                eprintln!("Usage: silt disasm <file.silt>");
-                process::exit(1);
-            }
-            disasm_file(&args[2]);
+            let path = if args.len() < 3 {
+                match resolve_package_entry_point() {
+                    Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                    Ok(None) => {
+                        eprintln!("Usage: silt disasm <file.silt>");
+                        process::exit(1);
+                    }
+                    Err(()) => process::exit(1),
+                }
+            } else {
+                args[2].clone()
+            };
+            disasm_file(&path);
         }
         "test" => {
             let mut file: Option<String> = None;
@@ -669,9 +720,16 @@ fn main() {
                     i += 1;
                 }
             }
-            let Some(path) = file else {
-                eprintln!("Usage: {}", check_usage_banner());
-                process::exit(1);
+            let path = match file {
+                Some(p) => p,
+                None => match resolve_package_entry_point() {
+                    Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                    Ok(None) => {
+                        eprintln!("Usage: {}", check_usage_banner());
+                        process::exit(1);
+                    }
+                    Err(()) => process::exit(1),
+                },
             };
             check_file(&path, format);
         }
@@ -773,7 +831,15 @@ fn main() {
             let implicit_recursive = files.is_empty();
             if implicit_recursive {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let has_anchor = project_anchor(&cwd).is_some();
+                // Project boundary is now defined exclusively by `silt.toml`.
+                // The previous heuristic accepted `.git` as well; that is gone
+                // because v0.7 makes manifest discovery the canonical answer
+                // to "am I inside a silt package?".
+                let has_anchor = match find_project_root(&cwd) {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(e) => die_on_manifest_error(e),
+                };
                 files = find_silt_files(Path::new("."));
                 if files.is_empty() {
                     eprintln!("no .silt files found in current directory");
@@ -781,7 +847,7 @@ fn main() {
                 }
                 if !has_anchor && !explicit_dot {
                     eprintln!(
-                        "silt fmt: refusing to recursively format {} — no project anchor (silt.toml or .git) found",
+                        "silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
                         cwd.display()
                     );
                     eprintln!("         pass an explicit `.` or file paths to format anyway.");
@@ -827,7 +893,9 @@ fn main() {
                 if arg == "--help" || arg == "-h" {
                     println!("Usage: silt init");
                     println!();
-                    println!("Create a new main.silt file in the current directory.");
+                    println!("Create a new silt package in the current directory.");
+                    println!("Writes silt.toml and src/main.silt; the package name is");
+                    println!("derived from the directory name.");
                     process::exit(0);
                 }
             }
@@ -841,13 +909,13 @@ fn main() {
             }
             init_project();
         }
-        "update" => {
+        "self-update" => {
             let mut dry_run = false;
             let mut force = false;
             for arg in &args[2..] {
                 match arg.as_str() {
                     "--help" | "-h" => {
-                        println!("Usage: silt update [--dry-run] [--force]");
+                        println!("Usage: silt self-update [--dry-run] [--force]");
                         println!();
                         println!("Download the latest release binary and replace this one.");
                         println!();
@@ -865,8 +933,8 @@ fn main() {
                             "--h" | "-help" => " (did you mean --help?)",
                             _ => "",
                         };
-                        eprintln!("silt update: unknown flag '{other}'{suggestion}");
-                        eprintln!("Run 'silt update --help' for usage.");
+                        eprintln!("silt self-update: unknown flag '{other}'{suggestion}");
+                        eprintln!("Run 'silt self-update --help' for usage.");
                         process::exit(1);
                     }
                 }
@@ -877,13 +945,59 @@ fn main() {
                 process::exit(1);
             }
         }
+        // Back-compat shim for the old `silt update` (binary self-update).
+        // In v0.7 the name `silt update` is being repurposed for package
+        // dependency updates (PR 4). Until then, this command must NEVER
+        // silently fall back to the self-updater — that would break scripts
+        // that run `silt update` from inside a package thinking they're
+        // doing the new dependency-update operation.
+        //
+        // Behavior:
+        //  - If invoked with old self-update flags (--dry-run / --force /
+        //    --version=...) OR if no `silt.toml` is reachable from cwd, we
+        //    print a redirect to `silt self-update` and exit 2.
+        //  - If invoked inside a package with NO old flags, we say the
+        //    new dependency-update behavior is "coming in PR 4" and exit 2.
+        //
+        // PR 4 will replace the inner branch with the real dep-update path.
+        "update" => {
+            let mut saw_self_update_flag = false;
+            let mut wants_help = false;
+            for arg in &args[2..] {
+                match arg.as_str() {
+                    "--help" | "-h" => wants_help = true,
+                    "--dry-run" | "--force" => saw_self_update_flag = true,
+                    other if other.starts_with("--version=") => saw_self_update_flag = true,
+                    _ => {}
+                }
+            }
+            if wants_help {
+                println!("Usage: silt update");
+                println!();
+                println!("`silt update` will manage package dependencies starting in v0.7 (PR 4).");
+                println!("To update the silt binary itself, use `silt self-update` instead.");
+                process::exit(0);
+            }
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
+            if saw_self_update_flag || !in_package {
+                eprintln!(
+                    "silt update has been renamed to silt self-update; the new silt update will manage package dependencies (coming in PR 4). For now, use 'silt self-update' to update the silt binary."
+                );
+                process::exit(2);
+            }
+            eprintln!(
+                "silt update for dependencies is coming in v0.7 (PR 4). For now, use 'silt self-update' to update the silt binary."
+            );
+            process::exit(2);
+        }
         // If the argument looks like a file, treat as `silt run <file> [flags...]`
         arg if arg.ends_with(".silt") => {
             let file = arg;
             let mut disasm = false;
             for extra in &args[2..] {
                 if extra == "--help" || extra == "-h" {
-                    println!("Usage: silt run [--watch] [--disassemble] <file.silt>");
+                    println!("Usage: {}", run_usage_banner());
                     println!();
                     println!("Options:");
                     println!("  --watch, -w     Re-run on file changes");
@@ -916,22 +1030,101 @@ fn main() {
     }
 }
 
-fn init_project() {
-    let path = "main.silt";
-    if Path::new(path).exists() {
-        eprintln!("main.silt already exists");
-        process::exit(1);
+/// Sanitize a directory name into a valid silt identifier:
+/// - lowercase
+/// - replace any non-`[a-z0-9_]` character with `_`
+/// - prefix with `_` if the first character is a digit
+///
+/// Returns `None` if the result is empty (e.g. dirname was just punctuation
+/// that all collapsed to underscores trimmed away — empty/blank input).
+fn sanitize_package_name(dirname: &str) -> Option<String> {
+    let lowered = dirname.to_ascii_lowercase();
+    let mut out = String::with_capacity(lowered.len());
+    for ch in lowered.chars() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
     }
-    let content = r#"fn main() {
-  println("hello, silt!")
+    // Reject if empty (dirname was empty to begin with).
+    if out.is_empty() {
+        return None;
+    }
+    // If the first character is a digit, prefix with underscore so the
+    // result still satisfies `[a-z_][a-z0-9_]*`.
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        out.insert(0, '_');
+    }
+    Some(out)
 }
-"#;
-    if let Err(e) = fs::write(path, content) {
-        eprintln!("error writing {path}: {e}");
+
+fn init_project() {
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        eprintln!("error: failed to determine current directory: {e}");
+        process::exit(1);
+    });
+
+    let manifest_path = cwd.join("silt.toml");
+    if manifest_path.exists() {
+        eprintln!("silt.toml already exists at {}", manifest_path.display());
         process::exit(1);
     }
-    println!("created {path}");
-    println!("  run:   silt run main.silt");
+    let main_path = cwd.join("src").join("main.silt");
+    if main_path.exists() {
+        eprintln!("src/main.silt already exists at {}", main_path.display());
+        process::exit(1);
+    }
+
+    let dirname = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let package_name = match sanitize_package_name(dirname) {
+        Some(name) => name,
+        None => {
+            eprintln!(
+                "error: cannot derive a package name from the current directory `{}`",
+                cwd.display()
+            );
+            eprintln!(
+                "       the directory needs a name that contains at least one lowercase letter,"
+            );
+            eprintln!("       digit, or underscore (or rename it to a valid silt identifier).");
+            process::exit(1);
+        }
+    };
+
+    let manifest_contents = format!("[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n");
+    let main_contents = "fn main() {\n  println(\"hello, silt!\")\n}\n";
+
+    // Create src/ first so a failure there doesn't leave a stray manifest.
+    if let Err(e) = fs::create_dir_all(main_path.parent().unwrap()) {
+        eprintln!(
+            "error: failed to create directory {}: {e}",
+            main_path.parent().unwrap().display()
+        );
+        process::exit(1);
+    }
+    if let Err(e) = fs::write(&main_path, main_contents) {
+        eprintln!("error writing {}: {e}", main_path.display());
+        process::exit(1);
+    }
+    if let Err(e) = fs::write(&manifest_path, manifest_contents) {
+        eprintln!("error writing {}: {e}", manifest_path.display());
+        // Best-effort cleanup so a partial init doesn't leave a stray
+        // src/main.silt without a manifest pinning it to a package.
+        let _ = fs::remove_file(&main_path);
+        process::exit(1);
+    }
+
+    println!("created silt package `{package_name}`:");
+    println!("  {}", manifest_path.display());
+    println!("  {}", main_path.display());
+    println!();
+    println!("  run:   silt run");
     println!("  test:  silt test");
 }
 
@@ -1022,25 +1215,79 @@ fn looks_like_test_file(source: &str) -> bool {
     false
 }
 
-/// Walk upward from `start` looking for a project anchor — `silt.toml` or a
-/// `.git` directory. Returns the anchor path if found, else `None`. Used by
-/// `silt fmt` to avoid recursively formatting everything when invoked outside
-/// any recognisable project.
-fn project_anchor(start: &Path) -> Option<PathBuf> {
-    let mut cur = start.to_path_buf();
-    loop {
-        let toml = cur.join("silt.toml");
-        if toml.exists() {
-            return Some(toml);
+/// Walk up from `start` looking for the nearest `silt.toml`. Returns the
+/// project root directory and the loaded `Manifest` if found, or `None`
+/// if no manifest is reachable before the filesystem root.
+///
+/// Replaces the heuristic `project_anchor()` which looked for `silt.toml`
+/// OR `.git`. With first-class manifest support, only `silt.toml` matters
+/// for project boundaries.
+pub fn find_project_root(start: &Path) -> Result<Option<(PathBuf, Manifest)>, ManifestError> {
+    match Manifest::find(start) {
+        Some(dir) => {
+            let manifest = Manifest::load(&dir.join("silt.toml"))?;
+            Ok(Some((dir, manifest)))
         }
-        let git = cur.join(".git");
-        if git.exists() {
-            return Some(git);
-        }
-        if !cur.pop() {
-            return None;
-        }
+        None => Ok(None),
     }
+}
+
+/// Print a manifest error to stderr and exit. Used by callers that need
+/// the manifest to proceed (e.g. `silt run` resolving the entry point).
+fn die_on_manifest_error(err: ManifestError) -> ! {
+    eprintln!("error: {err}");
+    process::exit(1);
+}
+
+/// Derive the project root used by the compiler for module resolution
+/// when invoked with an explicit `<file>` argument.
+///
+/// Resolution order:
+///  1. Nearest `silt.toml` walking up from the file's parent directory.
+///  2. Fallback: the file's own parent directory (legacy behavior).
+///
+/// Manifest *load* failures here are non-fatal — we just fall through to
+/// the legacy file-parent behavior. The full diagnostic surfaces later
+/// when a command that strictly needs the manifest (e.g. dep resolution
+/// in PR 4) tries to load it explicitly.
+fn derive_project_root_for_file(path: &str) -> PathBuf {
+    let file_parent = Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    if let Some(manifest_dir) = Manifest::find(&file_parent) {
+        manifest_dir
+    } else {
+        file_parent
+    }
+}
+
+/// Resolve the package entry point (`<root>/src/main.silt`) for the current
+/// directory.
+///
+/// Returns:
+/// - `Ok(Some(path))` — we are inside a package and `src/main.silt` exists.
+/// - `Ok(None)` — there is no enclosing package (no `silt.toml` in any parent).
+/// - `Err(())` — entry point check failed and we already wrote a diagnostic.
+///   The caller should propagate the failure as a non-zero exit.
+fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (root, _manifest) = match find_project_root(&cwd) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => return Ok(None),
+        Err(e) => die_on_manifest_error(e),
+    };
+    let entry = root.join("src").join("main.silt");
+    if !entry.is_file() {
+        eprintln!(
+            "package has no entry point — expected `src/main.silt` at {}",
+            entry.display()
+        );
+        return Err(());
+    }
+    Ok(Some(entry))
 }
 
 /// Recursively find all .silt files in a directory.
@@ -1704,13 +1951,11 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             continue;
         }
 
-        // Compile all declarations (without calling main)
-        let test_root = Path::new(path.as_str())
-            .canonicalize()
-            .unwrap_or_else(|_| Path::new(path.as_str()).to_path_buf())
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+        // Compile all declarations (without calling main).  Project root
+        // resolution mirrors `silt run`: prefer the nearest enclosing
+        // `silt.toml` so cross-file `import foo` resolves consistently
+        // regardless of which file `silt test` was pointed at.
+        let test_root = derive_project_root_for_file(path.as_str());
         let mut compiler = Compiler::with_project_root(test_root);
         let functions = match compiler.compile_declarations(&program) {
             Ok(f) => f,
