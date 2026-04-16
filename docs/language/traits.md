@@ -92,7 +92,71 @@ trait Ordered for MyInt { ... }
 -- (only fires when MyInt does not have an Equal impl — auto-derived counts)
 ```
 
-## Self Type
+## Default Methods
+
+A trait method can carry a body inside the trait declaration itself. The
+body is the **default** implementation: any impl that omits the method
+inherits it as if the impl had pasted the body in directly. Impls remain
+free to override the default.
+
+```silt
+trait Display {
+  fn show(self) -> String { "default" }   -- default body
+  fn debug(self) -> String                 -- abstract method (no body)
+}
+
+type Item { v: Int }
+
+trait Display for Item {
+  fn debug(self) -> String { "item-debug" }
+  -- show() is omitted — the default "default" is used at runtime
+}
+
+Item { v: 1 }.show()    -- "default"
+Item { v: 1 }.debug()   -- "item-debug"
+```
+
+A trait can mix default and abstract methods freely:
+
+- Methods with `{ ... }` or `= ...` bodies are **defaults**. Impls may
+  omit them; if they do, the default body is used.
+- Methods without a body are **abstract**. Impls must provide them.
+
+Overriding a default is just writing the method in the impl as usual:
+
+```silt
+trait Display for Item {
+  fn show(self) -> String { "explicit-show" }   -- overrides the default
+  fn debug(self) -> String { "item-debug" }
+}
+```
+
+Default bodies can call other trait methods on `self`, including
+abstract ones the impl is required to provide. Dispatch routes the call
+to the impl's version, so the default acts as a template that
+specialises per impl:
+
+```silt
+trait Describable {
+  fn name(self) -> String                              -- abstract
+  fn greet(self) -> String { "hi, " + self.name() }    -- default uses name()
+}
+
+type Person { who: String }
+
+trait Describable for Person {
+  fn name(self) -> String { self.who }
+}
+
+Person { who: "alice" }.greet()    -- "hi, alice"
+```
+
+Defaults compose with supertraits: a default body may call a supertrait
+method on `self`, and the obligation that the supertrait be implemented
+is enforced as usual.
+
+Defaults work on parameterized impl targets too — `trait X for Box(a) { }`
+inherits every default the trait declares.
 
 Use `Self` in trait method signatures to refer to the implementing type:
 

@@ -140,6 +140,14 @@ pub(super) struct TraitInfo {
     /// `validate_trait_impls` to report unknown-supertrait errors at the
     /// declaration site.
     pub(super) decl_span: Span,
+    /// Default method bodies declared inside the trait. Maps method name
+    /// to the full FnDecl (with body). Impls that omit a method whose
+    /// name appears here are not "missing method" errors — instead the
+    /// FnDecl is cloned into the impl's `methods` vec by
+    /// `synthesize_default_methods` so the rest of the pipeline (signature
+    /// registration, body checking, dispatch, compilation) treats it
+    /// identically to an explicitly-written method.
+    pub(super) default_method_bodies: HashMap<Symbol, FnDecl>,
 }
 
 /// A registered trait method implementation (new trait system).
@@ -792,6 +800,7 @@ impl TypeChecker {
                         Type::Fun(vec![display_self], Box::new(Type::String)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -808,6 +817,7 @@ impl TypeChecker {
                         Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -824,6 +834,7 @@ impl TypeChecker {
                         Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -839,6 +850,7 @@ impl TypeChecker {
                         Type::Fun(vec![hash_self], Box::new(Type::Int)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -1052,14 +1064,32 @@ impl TypeChecker {
             }
         }
 
-        // Second pass: register all function signatures, trait impls, and top-level lets
+        // Second pass: register trait declarations FIRST (so default
+        // method bodies are recorded in TraitInfo) before synthesizing
+        // missing defaults into trait impls. We split the original
+        // single-pass loop into three sub-passes so the synthesis step
+        // can mutate `program.decls` after every TraitInfo is known but
+        // before any TraitImpl is registered into method_table.
+        for decl in &program.decls {
+            if let Decl::Trait(t) = decl {
+                self.register_trait_decl(t);
+            }
+        }
+
+        // 2b: Synthesize default-method bodies into impls that omitted
+        // them. Mutates `program.decls`. After this pass, any impl that
+        // "uses the default" looks identical (in the AST) to one that
+        // re-typed the default body inline — so signature registration,
+        // body checking, dispatch, and code generation all flow through
+        // the existing machinery unmodified.
+        self.synthesize_default_methods(&mut program.decls);
+
+        // 2c: Register fn signatures and trait impls (now seeing
+        // synthesized methods alongside explicit ones).
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => {
                     self.register_fn_decl(f, &mut env);
-                }
-                Decl::Trait(t) => {
-                    self.register_trait_decl(t);
                 }
                 Decl::TraitImpl(ti) => {
                     self.register_trait_impl(ti, &mut env);
@@ -1374,7 +1404,16 @@ impl TypeChecker {
                         fvs.into_iter().map(|v| (v, self.fresh_var())).collect();
                     let expected = substitute_vars(trait_method_type, &mapping);
                     self.unify(&impl_type, &expected, impl_span);
-                } else {
+                } else if !trait_info.default_method_bodies.contains_key(method_name) {
+                    // No impl method AND the trait does not provide a
+                    // default body — the impl is genuinely missing a
+                    // required method. Methods with default bodies are
+                    // synthesized into the impl by
+                    // `synthesize_default_methods` before this validator
+                    // runs the second time, so a missing-with-default
+                    // entry here means synthesis hasn't happened yet
+                    // (which is the normal pre-synthesis path) — silent
+                    // is correct.
                     self.error(
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
@@ -1996,6 +2035,16 @@ impl TypeChecker {
             })
             .collect();
 
+        // Collect default-bodied methods. Methods whose `is_signature_only`
+        // flag is false carry a real (non-placeholder) body and are eligible
+        // to be cloned into impls that omit them.
+        let default_method_bodies: HashMap<Symbol, FnDecl> = t
+            .methods
+            .iter()
+            .filter(|m| !m.is_signature_only)
+            .map(|m| (m.name, (*m).clone()))
+            .collect();
+
         self.traits.insert(
             t.name,
             TraitInfo {
@@ -2003,6 +2052,7 @@ impl TypeChecker {
                 supertraits: t.supertraits.clone(),
                 methods,
                 decl_span: t.span,
+                default_method_bodies,
             },
         );
     }
@@ -2018,6 +2068,45 @@ impl TypeChecker {
             "Bool" => Type::Bool,
             "String" => Type::String,
             _ => Type::Generic(name, vec![]),
+        }
+    }
+
+    /// For every `Decl::TraitImpl` in `decls`, find missing methods that
+    /// the trait provides default bodies for and clone the default
+    /// FnDecls into the impl's `methods` vec. Runs between trait-decl
+    /// registration and trait-impl registration so the synthesized
+    /// methods participate in the normal method_table population /
+    /// body-check / compile pipeline as if the user had written them
+    /// inline.
+    ///
+    /// We intentionally mutate the AST (rather than carrying defaults
+    /// out-of-band) because every downstream consumer — register_trait_impl,
+    /// the pass-3 body checker loop, the compiler's emit-impl-methods
+    /// loop — already iterates `ti.methods`. Cloning the default into
+    /// the impl is the smallest delta that makes the existing code
+    /// "just work".
+    fn synthesize_default_methods(&self, decls: &mut [Decl]) {
+        for decl in decls.iter_mut() {
+            let Decl::TraitImpl(ti) = decl else {
+                continue;
+            };
+            let Some(trait_info) = self.traits.get(&ti.trait_name) else {
+                // Unknown trait — let validate_trait_impls / dispatch
+                // surface the diagnostic; nothing to synthesize here.
+                continue;
+            };
+            let impl_method_names: std::collections::HashSet<Symbol> =
+                ti.methods.iter().map(|m| m.name).collect();
+            // Walk methods in the order they appear on the trait so the
+            // synthesized FnDecls land in a deterministic order.
+            for (method_name, _ty) in &trait_info.methods {
+                if impl_method_names.contains(method_name) {
+                    continue;
+                }
+                if let Some(default_fn) = trait_info.default_method_bodies.get(method_name) {
+                    ti.methods.push(default_fn.clone());
+                }
+            }
         }
     }
 
@@ -2547,6 +2636,7 @@ impl ReplTypeContext {
                         Type::Fun(vec![display_self], Box::new(Type::String)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -2563,6 +2653,7 @@ impl ReplTypeContext {
                         Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -2579,6 +2670,7 @@ impl ReplTypeContext {
                         Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -2594,6 +2686,7 @@ impl ReplTypeContext {
                         Type::Fun(vec![hash_self], Box::new(Type::Int)),
                     )],
                     decl_span: Span::new(0, 0),
+                    default_method_bodies: HashMap::new(),
                 },
             );
         }
@@ -2807,14 +2900,22 @@ impl ReplTypeContext {
             }
         }
 
-        // Register function signatures, trait impls, and top-level lets
+        // Register trait declarations first so default-method synthesis
+        // sees every TraitInfo before any TraitImpl is processed.
+        for decl in &program.decls {
+            if let Decl::Trait(t) = decl {
+                self.checker.register_trait_decl(t);
+            }
+        }
+
+        // Synthesize default method bodies into impls that omitted them.
+        self.checker.synthesize_default_methods(&mut program.decls);
+
+        // Register fn signatures and trait impls.
         for decl in &program.decls {
             match decl {
                 Decl::Fn(f) => {
                     self.checker.register_fn_decl(f, &mut self.env);
-                }
-                Decl::Trait(t) => {
-                    self.checker.register_trait_decl(t);
                 }
                 Decl::TraitImpl(ti) => {
                     self.checker.register_trait_impl(ti, &mut self.env);
@@ -3815,11 +3916,15 @@ fn main() {
 
     #[test]
     fn test_trait_impl_missing_method() {
+        // Both trait methods are abstract (no body) so omitting `detail`
+        // in the impl is genuinely missing — not silently filled in by a
+        // default. With the default-method feature, a method with a body
+        // would be synthesized into the impl rather than reported.
         let errors = check_program(
             r#"
             trait Showable {
-                fn show(self) -> String { "default" }
-                fn detail(self) -> String { "detail" }
+                fn show(self) -> String
+                fn detail(self) -> String
             }
             trait Showable for Item {
                 fn show(self) -> String { "item" }
@@ -4770,12 +4875,14 @@ fn main() {
 
     #[test]
     fn test_trait_impl_with_wrong_method_signature() {
-        // Impl that is missing one of the required methods
+        // Both trait methods are declared abstract (no body) so the impl
+        // genuinely owes both. Methods with default bodies are now
+        // synthesized into impls rather than reported as missing.
         let errors = check_program(
             r#"
 trait Describable {
-  fn describe(self) -> String { "default" }
-  fn summary(self) -> String { "summary" }
+  fn describe(self) -> String
+  fn summary(self) -> String
 }
 
 type Widget { label: String }

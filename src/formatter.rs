@@ -1897,6 +1897,21 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         format!(" where {}", clauses.join(", "))
     };
 
+    // Abstract trait method (signature only, no body). The parser stores
+    // a placeholder Unit body; rendering `= ()` would change the meaning
+    // when reparsed (it would become a concrete method returning unit
+    // and thus not eligible to be filled in by a default — and would
+    // also drop the abstract-method semantic). Emit just the signature.
+    if f.is_signature_only {
+        let trailing = take_trailing_for_line(f.span.line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default();
+        return format!(
+            "{prefix}{pub_prefix}fn {}({params}){ret}{where_clause}{trailing}",
+            f.name,
+        );
+    }
+
     // Check if body is a simple expression (single-expression function using =)
     if is_simple_body(&f.body) {
         let body_str = format_expr(&f.body, depth);
