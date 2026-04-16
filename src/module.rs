@@ -238,17 +238,26 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "get",
             "eq",
         ],
-        "tcp" => vec![
-            "listen",
-            "accept",
-            "connect",
-            "read",
-            "read_exact",
-            "write",
-            "close",
-            "peer_addr",
-            "set_nodelay",
-        ],
+        "tcp" => {
+            #[allow(unused_mut)]
+            let mut fns = vec![
+                "listen",
+                "accept",
+                "connect",
+                "read",
+                "read_exact",
+                "write",
+                "close",
+                "peer_addr",
+                "set_nodelay",
+            ];
+            #[cfg(feature = "tcp-tls")]
+            {
+                fns.push("connect_tls");
+                fns.push("accept_tls");
+            }
+            fns
+        }
         _ => vec![],
     }
 }

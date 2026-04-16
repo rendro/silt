@@ -702,10 +702,32 @@ impl TypeChecker {
         env.define(
             intern("tcp.set_nodelay"),
             Scheme::mono(Type::Fun(
-                vec![stream_ty, Type::Bool],
+                vec![stream_ty.clone(), Type::Bool],
                 Box::new(result(Type::Unit, Type::String)),
             )),
         );
+
+        #[cfg(feature = "tcp-tls")]
+        {
+            let listener_ty_tls = Type::Generic(intern("TcpListener"), vec![]);
+            let bytes_ty_tls = Type::Generic(intern("Bytes"), vec![]);
+            // tcp.connect_tls: (String, String) -> Result(TcpStream, String)
+            env.define(
+                intern("tcp.connect_tls"),
+                Scheme::mono(Type::Fun(
+                    vec![Type::String, Type::String],
+                    Box::new(result(stream_ty.clone(), Type::String)),
+                )),
+            );
+            // tcp.accept_tls: (TcpListener, Bytes, Bytes) -> Result(TcpStream, String)
+            env.define(
+                intern("tcp.accept_tls"),
+                Scheme::mono(Type::Fun(
+                    vec![listener_ty_tls, bytes_ty_tls.clone(), bytes_ty_tls],
+                    Box::new(result(stream_ty, Type::String)),
+                )),
+            );
+        }
     }
 
     fn register_bytes_builtins(&mut self, env: &mut TypeEnv) {

@@ -43,7 +43,7 @@ fn main() {
       loop {
         match tcp.accept(listener) {
           Ok(conn) -> {
-            task.spawn(fn() {
+            let _ = task.spawn(fn() {
               match tcp.read(conn, 4096) {
                 Ok(buf) -> {
                   let _ = tcp.write(conn, buf)
@@ -83,11 +83,40 @@ has logically finished with.
 
 ## Notes
 
-- v0.9 PR 2 ships the core read/write/accept/connect surface. `peer_addr`
-  and `set_nodelay` return Err in PR 2 (they require unwrapping the
-  trait-object stream); they are scheduled to be wired up alongside the TLS
-  feature in PR 3.
-- TLS (`tcp.connect_tls`, `tcp.accept_tls`) is opt-in via the `tcp-tls`
-  Cargo feature, shipping in PR 3.
+- `peer_addr` and `set_nodelay` return Err in v0.9 (they require unwrapping
+  the trait-object stream). They will be wired up in a later release.
 - silt does not use async/await. The scheduler does cooperative yielding via
   the same I/O pool used by `io.read_file`, `fs.list_dir`, etc.
+
+## TLS (opt-in feature)
+
+The `tcp-tls` Cargo feature adds TLS support via `rustls`. Build silt with
+`--features tcp-tls` to enable.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `accept_tls` | `(TcpListener, Bytes, Bytes) -> Result(TcpStream, String)` | Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key |
+| `connect_tls` | `(String, String) -> Result(TcpStream, String)` | Open a TCP connection then complete the TLS client handshake against `hostname` |
+
+Returned `TcpStream` handles are interchangeable with plain TCP streams —
+`tcp.read`, `tcp.write`, and `tcp.close` work identically. Trust anchors
+for `connect_tls` come from the `webpki-roots` crate (Mozilla CA bundle).
+Authentication is delegated to your system: silt does not add a separate
+credential layer.
+
+```text
+import bytes
+import tcp
+
+fn main() {
+  -- Open a TLS-protected connection and echo a small payload.
+  -- (Build silt with `--features tcp-tls` for these functions.)
+  match tcp.connect_tls("example.com:443", "example.com") {
+    Ok(conn) -> {
+      let _ = tcp.write(conn, bytes.from_string("hello"))
+      tcp.close(conn)
+    }
+    Err(e) -> println("connect_tls err: {e}")
+  }
+}
+```

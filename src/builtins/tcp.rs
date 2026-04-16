@@ -37,7 +37,249 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         "close" => close(args),
         "peer_addr" => peer_addr(args),
         "set_nodelay" => set_nodelay(args),
+        #[cfg(feature = "tcp-tls")]
+        "connect_tls" => tls::connect_tls(vm, args),
+        #[cfg(feature = "tcp-tls")]
+        "accept_tls" => tls::accept_tls(vm, args),
         _ => Err(VmError::new(format!("unknown tcp function: {name}"))),
+    }
+}
+
+#[cfg(feature = "tcp-tls")]
+mod tls {
+    //! TLS extension for the tcp module — gated by the `tcp-tls` feature.
+    //!
+    //! Both `connect_tls` and `accept_tls` return regular `Value::TcpStream`
+    //! handles. The `Box<dyn ReadWrite>` inside the handle now carries a
+    //! `rustls::StreamOwned<...>` instead of a bare `TcpStream`; from the
+    //! caller's perspective `tcp.read` / `tcp.write` / `tcp.close` work
+    //! identically. This is the payoff of PR 2's trait-object design.
+
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use parking_lot::Mutex;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+    use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
+
+    use super::{
+        BlockReason, ReadWrite, TcpStreamHandle, Value, Vm, VmError, err, ok, require_bytes,
+        require_listener, require_string,
+    };
+
+    /// `connect_tls(addr, hostname) -> Result(TcpStream, String)`. Opens a
+    /// TCP connection then performs the TLS client handshake using
+    /// `webpki-roots` for trust anchors. The returned stream wraps a
+    /// `rustls::StreamOwned<ClientConnection, TcpStream>` behind the same
+    /// `TcpStreamHandle` as plain TCP.
+    pub fn connect_tls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+        if args.len() != 2 {
+            return Err(VmError::new("tcp.connect_tls takes 2 arguments".into()));
+        }
+        let addr = require_string(&args[0], "tcp.connect_tls")?.to_string();
+        let hostname = require_string(&args[1], "tcp.connect_tls")?.to_string();
+
+        if let Some(r) = vm.io_entry_guard(args)? {
+            return Ok(r);
+        }
+        if vm.is_scheduled_task {
+            let next_id = vm.next_tcp_id();
+            let completion = vm.runtime.io_pool.submit(move || {
+                match do_connect_tls(&addr, &hostname, next_id) {
+                    Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                }
+            });
+            vm.pending_io = Some(completion.clone());
+            vm.block_reason = Some(BlockReason::Io(completion));
+            for arg in args {
+                vm.push(arg.clone());
+            }
+            return Err(VmError::yield_signal());
+        }
+        let next_id = vm.next_tcp_id();
+        match do_connect_tls(&addr, &hostname, next_id) {
+            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
+            Err(e) => Ok(err(e)),
+        }
+    }
+
+    /// `accept_tls(listener, cert_pem, key_pem) -> Result(TcpStream, String)`.
+    /// Waits for an incoming TCP connection then performs the TLS server
+    /// handshake using the supplied PEM-encoded cert chain + private key.
+    /// Returned stream is the same opaque `TcpStream` handle as plain TCP.
+    pub fn accept_tls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+        if args.len() != 3 {
+            return Err(VmError::new("tcp.accept_tls takes 3 arguments".into()));
+        }
+        let listener = require_listener(&args[0], "tcp.accept_tls")?.clone();
+        let cert_pem = require_bytes(&args[1], "tcp.accept_tls")?;
+        let key_pem = require_bytes(&args[2], "tcp.accept_tls")?;
+
+        if let Some(r) = vm.io_entry_guard(args)? {
+            return Ok(r);
+        }
+        if vm.is_scheduled_task {
+            let next_id = vm.next_tcp_id();
+            let cert_clone = cert_pem.clone();
+            let key_clone = key_pem.clone();
+            let completion = vm.runtime.io_pool.submit(move || {
+                match do_accept_tls(&listener.listener, &cert_clone, &key_clone, next_id) {
+                    Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                }
+            });
+            vm.pending_io = Some(completion.clone());
+            vm.block_reason = Some(BlockReason::Io(completion));
+            for arg in args {
+                vm.push(arg.clone());
+            }
+            return Err(VmError::yield_signal());
+        }
+        let next_id = vm.next_tcp_id();
+        match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
+            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
+            Err(e) => Ok(err(e)),
+        }
+    }
+
+    fn do_connect_tls(
+        addr: &str,
+        hostname: &str,
+        next_id: usize,
+    ) -> Result<Arc<TcpStreamHandle>, String> {
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let server_name = ServerName::try_from(hostname.to_string())
+            .map_err(|e| format!("invalid hostname '{hostname}': {e}"))?;
+        let conn = ClientConnection::new(Arc::new(config), server_name)
+            .map_err(|e| format!("client connection setup: {e}"))?;
+        let sock = TcpStream::connect(addr).map_err(|e| format!("tcp connect {addr}: {e}"))?;
+        let stream = rustls::StreamOwned::new(conn, sock);
+        // StreamOwned owns the connection + socket; once placed in the
+        // trait object the caller can't reach into rustls internals,
+        // matching plain TCP semantics.
+        let mut wrapper = ClientStreamWrapper { inner: stream };
+        // Force the handshake by performing one byte-less read attempt; if
+        // the handshake fails it surfaces here rather than at first read.
+        // We swallow WouldBlock since the TcpStream is blocking by default.
+        wrapper.complete_io_handshake()?;
+        Ok(Arc::new(TcpStreamHandle {
+            id: next_id,
+            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
+            closed: AtomicBool::new(false),
+        }))
+    }
+
+    fn do_accept_tls(
+        listener: &std::net::TcpListener,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        next_id: usize,
+    ) -> Result<Arc<TcpStreamHandle>, String> {
+        let certs = parse_cert_chain(cert_pem)?;
+        let key = parse_private_key(key_pem)?;
+        let config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| format!("server config: {e}"))?;
+        let (sock, _addr) = listener.accept().map_err(|e| format!("tcp accept: {e}"))?;
+        let conn = ServerConnection::new(Arc::new(config))
+            .map_err(|e| format!("server connection setup: {e}"))?;
+        let stream = rustls::StreamOwned::new(conn, sock);
+        let mut wrapper = ServerStreamWrapper { inner: stream };
+        wrapper.complete_io_handshake()?;
+        Ok(Arc::new(TcpStreamHandle {
+            id: next_id,
+            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
+            closed: AtomicBool::new(false),
+        }))
+    }
+
+    fn parse_cert_chain(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
+        let mut reader = std::io::BufReader::new(pem);
+        let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut reader).collect();
+        let certs = certs.map_err(|e| format!("parse cert chain: {e}"))?;
+        if certs.is_empty() {
+            return Err("cert PEM contains no certificates".into());
+        }
+        Ok(certs)
+    }
+
+    fn parse_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>, String> {
+        let mut reader = std::io::BufReader::new(pem);
+        rustls_pemfile::private_key(&mut reader)
+            .map_err(|e| format!("parse private key: {e}"))?
+            .ok_or_else(|| "key PEM contains no private key".into())
+    }
+
+    /// Newtype wrappers so we can implement `Read`/`Write` for both client
+    /// and server `StreamOwned` types behind the same trait object. The
+    /// inner `StreamOwned` type already implements `Read + Write`, but the
+    /// monomorphised type names differ (`ClientConnection` vs
+    /// `ServerConnection`), so we wrap rather than carrying a bound through.
+    struct ClientStreamWrapper {
+        inner: rustls::StreamOwned<ClientConnection, TcpStream>,
+    }
+    impl ClientStreamWrapper {
+        fn complete_io_handshake(&mut self) -> Result<(), String> {
+            // rustls::StreamOwned negotiates lazily on first read/write.
+            // Force handshake completion now so connect_tls failures are
+            // reported synchronously rather than at the first I/O call.
+            while self.inner.conn.is_handshaking() {
+                self.inner
+                    .conn
+                    .complete_io(&mut self.inner.sock)
+                    .map_err(|e| format!("tls handshake: {e}"))?;
+            }
+            Ok(())
+        }
+    }
+    impl Read for ClientStreamWrapper {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+    impl Write for ClientStreamWrapper {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    struct ServerStreamWrapper {
+        inner: rustls::StreamOwned<ServerConnection, TcpStream>,
+    }
+    impl ServerStreamWrapper {
+        fn complete_io_handshake(&mut self) -> Result<(), String> {
+            while self.inner.conn.is_handshaking() {
+                self.inner
+                    .conn
+                    .complete_io(&mut self.inner.sock)
+                    .map_err(|e| format!("tls handshake: {e}"))?;
+            }
+            Ok(())
+        }
+    }
+    impl Read for ServerStreamWrapper {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+    impl Write for ServerStreamWrapper {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush()
+        }
     }
 }
 
@@ -62,6 +304,14 @@ fn require_int(arg: &Value, fn_label: &str) -> Result<i64, VmError> {
     match arg {
         Value::Int(n) => Ok(*n),
         _ => Err(VmError::new(format!("{fn_label} requires Int"))),
+    }
+}
+
+#[cfg(feature = "tcp-tls")]
+fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
+    match arg {
+        Value::Bytes(b) => Ok(b.clone()),
+        _ => Err(VmError::new(format!("{fn_label} requires Bytes"))),
     }
 }
 
