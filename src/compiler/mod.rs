@@ -266,21 +266,84 @@ fn jumpback_fits_u16(jump_back_dist: usize, span: Span) -> Result<(), CompileErr
 
 // ── Compiler ──────────────────────────────────────────────────────────
 
+/// Result of resolving an `import foo` segment to a concrete file.
+///
+/// Carried internally between `compile_file_module` and its inner
+/// implementation so the file path, owning package, and per-package cache
+/// key are all derived in one place.
+struct ResolvedImport {
+    /// Absolute (or project-relative) path to the `.silt` file to load.
+    file_path: PathBuf,
+    /// Symbol identifying the package the resolved module belongs to.
+    /// Pushed on `compiling_package_stack` for the duration of the
+    /// inner compile, so nested imports can resolve relative to it.
+    package: Symbol,
+    /// Bare module name *within* `package` (e.g. `"lib"` for a dep's
+    /// entry point, `"helpers"` for a local sub-module). Used by the
+    /// cycle-message renderer to drop package prefixes when a cycle
+    /// stays inside a single package.
+    module: String,
+    /// Package-qualified key used for `compiled_modules` /
+    /// `compiling_modules*`. Format: `"{pkg_name}::{module_path}"`. The
+    /// qualification ensures the same module name living in two packages
+    /// doesn't share cache state and that cycle messages render clearly
+    /// (`pkg_a::lib -> pkg_b::lib -> pkg_a::lib`).
+    cache_key: String,
+}
+
+/// One frame of `compiling_modules_stack`. Stored as a struct (rather
+/// than just the qualified key) so the cycle renderer can produce
+/// readable messages: bare module names for in-package cycles,
+/// `pkg::module` qualified names for cycles that cross package
+/// boundaries.
+struct CompilingFrame {
+    cache_key: String,
+    package: Symbol,
+    module: String,
+}
+
 pub struct Compiler {
     contexts: Vec<CompileContext>,
     /// Accumulated compiled functions (one per `Decl::Fn`).
     functions: Vec<Function>,
-    /// Project root directory for resolving file-based modules.
-    project_root: Option<PathBuf>,
+    /// Source roots for every package in scope (local + path deps),
+    /// keyed by package name (the import segment users type). The
+    /// value is the directory containing that package's `.silt`
+    /// source files (typically `<pkg_root>/src/`).
+    ///
+    /// `import calc` resolves first against `package_roots`: if `calc`
+    /// is a key here it is treated as a cross-package import (loads
+    /// `<calc_src>/lib.silt`); otherwise the import is local to the
+    /// current package and resolves under `local_package`'s root.
+    package_roots: HashMap<Symbol, PathBuf>,
+    /// The local package's name. When set, imports that don't match
+    /// any entry in `package_roots` fall back to this package's source
+    /// directory. Stays `None` for the legacy single-root case (REPL,
+    /// ad-hoc scripts) where there's no manifest.
+    local_package: Option<Symbol>,
     /// Modules already compiled in this compilation unit (avoids double-compile).
+    /// Keys are package-qualified (`{pkg}::{module}`) so the same module
+    /// name in two packages doesn't collide.
     compiled_modules: HashSet<String>,
     /// Modules currently being compiled (for circular import detection).
     /// The HashSet gives O(1) membership checks for the hot path, and the
     /// parallel Vec preserves insertion order so a detected cycle can be
-    /// rendered as an arrow-chain (`a -> b -> c -> a`). Both fields are
-    /// always pushed/popped together by `compile_file_module`.
+    /// rendered as an arrow-chain. Both fields are always pushed/popped
+    /// together by `compile_file_module`. Keys are package-qualified
+    /// strings (`{pkg}::{module}`) so a `lib` module in two different
+    /// packages doesn't collide.
     compiling_modules: HashSet<String>,
-    compiling_modules_stack: Vec<String>,
+    /// Parallel to `compiling_modules` but preserves insertion order.
+    /// Each entry stores the package-qualified key plus the package and
+    /// bare module name; the cycle renderer uses the latter pair to
+    /// produce a clean message that drops package prefixes when the
+    /// whole cycle lives in one package.
+    compiling_modules_stack: Vec<CompilingFrame>,
+    /// Stack of packages whose modules are currently being compiled.
+    /// Pushed/popped alongside `compiling_modules_stack` so nested
+    /// `import` decls inside a dep's `lib.silt` resolve relative to
+    /// the dep's source root, not the consumer's.
+    compiling_package_stack: Vec<Symbol>,
     /// Warnings emitted during compilation.
     warnings: Vec<CompileWarning>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
@@ -329,10 +392,12 @@ impl Compiler {
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
-            project_root: None,
+            package_roots: HashMap::new(),
+            local_package: None,
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
             compiling_modules_stack: Vec::new(),
+            compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
@@ -344,15 +409,29 @@ impl Compiler {
         }
     }
 
-    /// Create a compiler that can resolve file-based imports relative to `root`.
-    pub fn with_project_root(root: PathBuf) -> Self {
+    /// Create a compiler with a registered set of package source roots
+    /// and a designated local package.
+    ///
+    /// `local_package` MUST be a key in `package_roots`; the constructor
+    /// panics otherwise (programmer error). Imports that don't match any
+    /// dep package name resolve relative to `package_roots[&local_package]`.
+    pub fn with_package_roots(
+        local_package: Symbol,
+        package_roots: HashMap<Symbol, PathBuf>,
+    ) -> Self {
+        assert!(
+            package_roots.contains_key(&local_package),
+            "with_package_roots: local_package symbol must appear in package_roots"
+        );
         Self {
             contexts: Vec::new(),
             functions: Vec::new(),
-            project_root: Some(root),
+            package_roots,
+            local_package: Some(local_package),
             compiled_modules: HashSet::new(),
             compiling_modules: HashSet::new(),
             compiling_modules_stack: Vec::new(),
+            compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
@@ -362,6 +441,19 @@ impl Compiler {
             repl_mode: false,
             known_enum_variants: HashMap::new(),
         }
+    }
+
+    /// Legacy single-root constructor.
+    ///
+    /// Wraps `with_package_roots` with a synthetic package name
+    /// (`__local__`) so the existing CLI and tests keep compiling
+    /// while PR 2 plumbs real package metadata through `main.rs`.
+    /// PR 2 will rip out this shim once it lands.
+    pub fn with_project_root(root: PathBuf) -> Self {
+        let local = intern("__local__");
+        let mut roots = HashMap::new();
+        roots.insert(local, root);
+        Self::with_package_roots(local, roots)
     }
 
     /// Enable REPL mode. See the `repl_mode` field for semantics.
@@ -829,33 +921,66 @@ impl Compiler {
     /// unit. Each public declaration is registered as a global named
     /// `"module_name.decl_name"`. Returns the list of public names exported by
     /// this module.
+    ///
+    /// `module_name` is the import segment as it appears in user code
+    /// (e.g. `import calc` → `module_name = "calc"`). Resolution rules:
+    /// - If `module_name` matches a key in `package_roots`, this is a
+    ///   cross-package import; load the dep's `lib.silt`, register globals
+    ///   under the dep's name, and key the cycle/cache state under
+    ///   `{module_name}::lib`.
+    /// - Otherwise this is local to the package on top of
+    ///   `compiling_package_stack` (or `local_package` if the stack is empty);
+    ///   load `<pkg_root>/{module_name}.silt`, key under `{pkg}::{module_name}`.
     fn compile_file_module(
         &mut self,
         module_name: &str,
         span: Span,
     ) -> Result<Vec<String>, CompileError> {
-        // Guard against double-compilation.
-        if self.compiled_modules.contains(module_name) {
+        // Resolve which package this import belongs to and where its
+        // source file lives. The resolution is the only place
+        // `package_roots` participates; everything downstream uses the
+        // resolved (file_path, package, cache_key) triple.
+        let resolved = self.resolve_import(module_name, span)?;
+
+        // Guard against double-compilation. Cache key is package-qualified
+        // so two packages can each have a `lib` module without clashing.
+        if self.compiled_modules.contains(&resolved.cache_key) {
             return Ok(vec![]);
         }
 
-        // Detect circular imports. When detected, render the full
-        // chain from the cycle's entry point (the first re-occurrence
-        // of `module_name` in the stack) through to the re-entry, so
-        // the user can trace the path: e.g. `a -> b -> c -> a`.
-        // Lock: tests/modules.rs
-        // `test_circular_import_error_includes_full_chain`.
-        if self.compiling_modules.contains(module_name) {
+        // Detect circular imports. When detected, render the full chain
+        // from the cycle's entry point (the first re-occurrence of the
+        // qualified key in the stack) through to the re-entry. Cycles
+        // confined to a single package render with bare module names
+        // (`a -> b -> c -> a`); cross-package cycles use the qualified
+        // `pkg::module` form so the boundary is visible in the message.
+        // Lock: tests/modules.rs `test_circular_import_error_includes_full_chain`.
+        if self.compiling_modules.contains(&resolved.cache_key) {
             let cycle_start = self
                 .compiling_modules_stack
                 .iter()
-                .position(|m| m == module_name)
+                .position(|f| f.cache_key == resolved.cache_key)
                 .unwrap_or(0);
-            let mut chain: Vec<&str> = self.compiling_modules_stack[cycle_start..]
+            let cycle_frames = &self.compiling_modules_stack[cycle_start..];
+            // Single-package cycle? All frames share the same package
+            // symbol AND match the re-entered package. If so, prefer
+            // bare names for readability.
+            let single_pkg = cycle_frames.iter().all(|f| f.package == resolved.package);
+            let mut chain: Vec<String> = cycle_frames
                 .iter()
-                .map(|s| s.as_str())
+                .map(|f| {
+                    if single_pkg {
+                        f.module.clone()
+                    } else {
+                        f.cache_key.clone()
+                    }
+                })
                 .collect();
-            chain.push(module_name);
+            chain.push(if single_pkg {
+                resolved.module.clone()
+            } else {
+                resolved.cache_key.clone()
+            });
             let rendered_chain = chain.join(" -> ");
             return Err(CompileError {
                 message: format!(
@@ -864,26 +989,111 @@ impl Compiler {
                 span,
             });
         }
-        self.compiling_modules.insert(module_name.to_string());
-        self.compiling_modules_stack.push(module_name.to_string());
+        self.compiling_modules.insert(resolved.cache_key.clone());
+        self.compiling_modules_stack.push(CompilingFrame {
+            cache_key: resolved.cache_key.clone(),
+            package: resolved.package,
+            module: resolved.module.clone(),
+        });
+        self.compiling_package_stack.push(resolved.package);
 
-        let result = self.compile_file_module_inner(module_name, span);
+        let result = self.compile_file_module_inner(module_name, &resolved.file_path, span);
 
-        self.compiling_modules.remove(module_name);
+        self.compiling_modules.remove(&resolved.cache_key);
         // Pop the matching frame from the stack; normally this is the
         // last element, but we remove by position to be robust against
         // any inner path that would violate LIFO ordering.
         if let Some(pos) = self
             .compiling_modules_stack
             .iter()
-            .rposition(|m| m == module_name)
+            .rposition(|f| f.cache_key == resolved.cache_key)
         {
             self.compiling_modules_stack.remove(pos);
         }
+        if let Some(pos) = self
+            .compiling_package_stack
+            .iter()
+            .rposition(|p| *p == resolved.package)
+        {
+            self.compiling_package_stack.remove(pos);
+        }
         if result.is_ok() {
-            self.compiled_modules.insert(module_name.to_string());
+            self.compiled_modules.insert(resolved.cache_key);
         }
         result
+    }
+
+    /// Resolve an import segment to a concrete file path and package
+    /// context. See [`compile_file_module`] for the resolution rules.
+    fn resolve_import(
+        &self,
+        module_name: &str,
+        span: Span,
+    ) -> Result<ResolvedImport, CompileError> {
+        let segment_sym = intern(module_name);
+
+        // Cross-package import? `module_name` matches a registered package.
+        // We require the dep to expose `src/lib.silt` as its public surface
+        // — internal modules of a dep are NOT reachable from a consumer
+        // (this matches Cargo's `lib.rs` discipline; silt's import syntax
+        // doesn't admit multi-segment cross-package imports anyway).
+        if let Some(pkg_root) = self.package_roots.get(&segment_sym) {
+            // Disambiguate from "the local package importing one of its own
+            // modules whose name happens to equal the local package name":
+            // if we're currently compiling a module that lives in the same
+            // package, treat this as a local import.
+            let current_pkg = self.current_package();
+            let is_local_self_import = current_pkg == Some(segment_sym);
+            if !is_local_self_import {
+                let lib_path = pkg_root.join("lib.silt");
+                if !lib_path.exists() {
+                    return Err(CompileError {
+                        message: format!(
+                            "package '{module_name}' has no library entry point — \
+                             expected `src/lib.silt` in the dep at {}",
+                            pkg_root.display()
+                        ),
+                        span,
+                    });
+                }
+                return Ok(ResolvedImport {
+                    file_path: lib_path,
+                    package: segment_sym,
+                    module: "lib".to_string(),
+                    cache_key: format!("{module_name}::lib"),
+                });
+            }
+        }
+
+        // Local-package or nested-inside-dep import: resolve relative to
+        // whichever package is currently being compiled.
+        let pkg = self.current_package().or(self.local_package);
+        let pkg_root = match pkg.and_then(|p| self.package_roots.get(&p)) {
+            Some(root) => root,
+            None => {
+                return Err(CompileError {
+                    message: format!(
+                        "cannot import module '{module_name}': no project root set \
+                         (use Compiler::with_package_roots)"
+                    ),
+                    span,
+                });
+            }
+        };
+        let pkg_name = resolve(pkg.unwrap());
+        let file_path = pkg_root.join(format!("{module_name}.silt"));
+        Ok(ResolvedImport {
+            file_path,
+            package: pkg.unwrap(),
+            module: module_name.to_string(),
+            cache_key: format!("{pkg_name}::{module_name}"),
+        })
+    }
+
+    /// Top of `compiling_package_stack`; the package whose source we are
+    /// currently inside, if any.
+    fn current_package(&self) -> Option<Symbol> {
+        self.compiling_package_stack.last().copied()
     }
 
     /// Inner implementation of file module compilation, separated so that
@@ -891,18 +1101,10 @@ impl Compiler {
     fn compile_file_module_inner(
         &mut self,
         module_name: &str,
+        file_path: &std::path::Path,
         span: Span,
     ) -> Result<Vec<String>, CompileError> {
-        let project_root = self.project_root.as_ref().ok_or_else(|| {
-            CompileError {
-                message: format!("cannot import module '{module_name}': no project root set (use Compiler::with_project_root)"),
-                span,
-            }
-        })?;
-
-        // Resolve, read, lex, parse the module file.
-        let file_path = project_root.join(format!("{module_name}.silt"));
-        let source = std::fs::read_to_string(&file_path).map_err(|e| CompileError {
+        let source = std::fs::read_to_string(file_path).map_err(|e| CompileError {
             message: format!("cannot load module '{module_name}': {e}"),
             span,
         })?;
