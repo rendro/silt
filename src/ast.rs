@@ -293,6 +293,12 @@ pub struct TypeDecl {
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: Symbol,
+    /// Supertrait names (e.g. `trait Ordered: Equal + Hash` yields
+    /// `[Equal, Hash]`). Implementing this trait on a type requires
+    /// the type to also implement every supertrait. Inside a
+    /// `where a: Ordered` context, methods from supertraits are also
+    /// callable on `a`.
+    pub supertraits: Vec<Symbol>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }

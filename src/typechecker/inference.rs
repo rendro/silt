@@ -238,6 +238,35 @@ impl TypeChecker {
         self.apply(&instantiated_ty)
     }
 
+    /// Expand a list of trait names to include all transitive supertraits.
+    ///
+    /// Walks each trait's `supertraits` chain: `[Ordered]` with
+    /// `trait Ordered: Equal` returns `[Ordered, Equal]`. Used when
+    /// populating `active_constraints` so that `where a: Ordered` enables
+    /// the `Equal` methods on `a` inside the body — the FieldAccess arm
+    /// for `Type::Var(v)` only checks methods of traits listed in
+    /// `active_constraints[v]`.
+    ///
+    /// Cycle-safe: a `seen` set prevents infinite loops on pathological
+    /// inputs like `trait A: B { } trait B: A { }`. Cycle behaviour at
+    /// the data level is otherwise unspecified for v0.6 — we don't reject
+    /// cycles, we just don't blow the stack on them.
+    pub(super) fn expand_with_supertraits(&self, traits: &[Symbol]) -> Vec<Symbol> {
+        use std::collections::HashSet;
+        let mut expanded = Vec::new();
+        let mut stack: Vec<Symbol> = traits.to_vec();
+        let mut seen: HashSet<Symbol> = HashSet::new();
+        while let Some(t) = stack.pop() {
+            if seen.insert(t) {
+                expanded.push(t);
+                if let Some(info) = self.traits.get(&t) {
+                    stack.extend(info.supertraits.iter().copied());
+                }
+            }
+        }
+        expanded
+    }
+
     // ── Check function body ─────────────────────────────────────────
 
     pub(super) fn check_fn_body(&mut self, f: &mut FnDecl, env: &TypeEnv) {
@@ -285,13 +314,18 @@ impl TypeChecker {
         };
 
         // Populate active constraints so method resolution on type variables
-        // can check trait methods during body inference.
+        // can check trait methods during body inference. Each declared
+        // constraint expands to include the transitive supertrait closure
+        // — `where a: Ordered` with `trait Ordered: Equal` makes both
+        // `Ordered`'s and `Equal`'s methods callable on `a`.
         let prev_constraints = std::mem::take(&mut self.active_constraints);
         for (tv, trait_name) in &constraints {
-            self.active_constraints
-                .entry(*tv)
-                .or_default()
-                .push(*trait_name);
+            for expanded in self.expand_with_supertraits(&[*trait_name]) {
+                let entry = self.active_constraints.entry(*tv).or_default();
+                if !entry.contains(&expanded) {
+                    entry.push(expanded);
+                }
+            }
         }
 
         // B4: capture the instantiated param tyvars so call-site where-

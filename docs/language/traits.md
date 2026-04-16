@@ -28,6 +28,70 @@ trait Display for Shape {
 Circle(5.0).display()   -- "Circle(r=5)"
 ```
 
+## Supertrait Bounds
+
+A trait can declare other traits as **supertraits** using `: Trait` after
+the trait name. Implementing the subtrait then requires the type to also
+implement every supertrait, and methods from the supertrait become
+callable through the subtrait constraint:
+
+```silt
+trait Equal {
+  fn equal(self, other: Self) -> Bool
+}
+
+trait Ordered: Equal {
+  fn less(self, other: Self) -> Bool
+}
+```
+
+Implementing `Ordered` on `Int` requires `Int` to also implement `Equal`
+(the four built-in traits — `Equal`, `Hash`, `Compare`, `Display` — are
+auto-derived for every type, so the obligation is satisfied automatically).
+
+Multiple supertraits separate with `+`:
+
+```silt
+trait Printable: Display + Hash {
+  fn print_with_hash(self) -> String
+}
+```
+
+### Constraint expansion
+
+Inside a `where a: Ordered` body, methods from `Equal` (the supertrait)
+are also callable on `a`:
+
+```silt
+fn check(a: t, b: t) -> Bool where t: Ordered {
+  -- a.equal(b) works because Equal is a supertrait of Ordered
+  if a.equal(b) { true } else { a.less(b) }
+}
+```
+
+The expansion is transitive: with `trait C: B { ... }` and
+`trait B: A { ... }`, a `where x: C` constraint enables methods from
+`A`, `B`, and `C` on `x`, and implementing `C` on a type requires impls
+of `A`, `B`, and `C`.
+
+### Errors
+
+Unknown supertrait names are rejected at the trait declaration:
+
+```silt
+trait Foo: NotATrait { ... }
+-- error: trait 'Foo' lists unknown supertrait 'NotATrait'
+```
+
+Implementing a subtrait without the supertrait fails:
+
+```silt
+type MyInt { v: Int }
+trait Ordered for MyInt { ... }
+-- error: type 'MyInt' implements 'Ordered' but does not implement supertrait 'Equal'
+-- (only fires when MyInt does not have an Equal impl — auto-derived counts)
+```
+
 ## Self Type
 
 Use `Self` in trait method signatures to refer to the implementing type:
