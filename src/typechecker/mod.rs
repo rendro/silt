@@ -227,6 +227,16 @@ pub struct TypeChecker {
     /// diagnostic in `validate_trait_impls` can point at the impl
     /// block's real source location instead of `Span::new(0, 0)`.
     pub(super) trait_impl_spans: HashMap<(Symbol, Symbol), Span>,
+    /// Maps `(trait_name, target_head)` → impl-level where-clause
+    /// obligations expressed as `(target_arg_index, required_trait)`
+    /// pairs. Populated from `register_trait_impl` so that constraint
+    /// resolution at call sites can recursively verify that the
+    /// concrete type arguments of the matched impl themselves satisfy
+    /// the impl's own where clauses (e.g. `Box(Box(String)): Greet`
+    /// with `trait Greet for Box(a) where a: Greet` must reject because
+    /// String does not impl Greet, even though `(Greet, Box)` is in
+    /// `trait_impl_set`).
+    pub(super) impl_constraints: HashMap<(Symbol, Symbol), Vec<(usize, Symbol)>>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -327,6 +337,7 @@ impl TypeChecker {
             method_table: HashMap::new(),
             trait_impl_set: std::collections::HashSet::new(),
             trait_impl_spans: HashMap::new(),
+            impl_constraints: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
@@ -757,6 +768,72 @@ impl TypeChecker {
             Type::Fun(_, _) => Some(intern("Fun")),
             Type::Var(_) => None, // unresolved
             _ => None,
+        }
+    }
+
+    /// Return the positional type arguments of a (concrete) type. Mirrors
+    /// the inverse of `register_trait_impl`'s self_type construction:
+    /// `Type::Generic(_, args)` yields `args`; the parameterized builtin
+    /// containers (List, Set, Channel, Map) yield their element types in
+    /// declaration order. Anything else (Int, String, Record without type
+    /// params, etc.) has no positional args. Used by `verify_trait_obligation`
+    /// to walk into an impl's where-clause obligations.
+    pub(super) fn type_args_of(ty: &Type) -> Vec<Type> {
+        match ty {
+            Type::Generic(_, args) => args.clone(),
+            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
+                vec![(**inner).clone()]
+            }
+            Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Recursively verify that `ty` implements `trait_name`, walking the
+    /// matched impl's own where clauses against `ty`'s positional type
+    /// arguments. Emits `"type 'X' does not implement trait 'Y'"` once for
+    /// each unsatisfied obligation in the chain.
+    ///
+    /// This is the fix for the nested-where-clause propagation bug:
+    /// `Box(Box(String)): Greet` with `trait Greet for Box(a) where a: Greet`
+    /// previously typechecked because `(Greet, Box)` was in `trait_impl_set`.
+    /// Now we additionally consult `impl_constraints` and recurse into the
+    /// impl's `(target_arg_index, required_trait)` obligations against the
+    /// matched `ty`'s type arguments.
+    ///
+    /// Recursion terminates because each step strips one layer of type
+    /// wrapping; finite types finish in O(depth).
+    pub(super) fn verify_trait_obligation(&mut self, trait_name: Symbol, ty: &Type, span: Span) {
+        let resolved = self.apply(ty);
+        if matches!(resolved, Type::Error | Type::Never) {
+            return;
+        }
+        let Some(type_name) = self.type_name_for_impl(&resolved) else {
+            // Unresolved tyvar — caller is responsible for deferring or
+            // reporting (e.g. via active_constraints or pending_where).
+            return;
+        };
+        if !self.trait_impl_set.contains(&(trait_name, type_name)) {
+            self.error(
+                format!(
+                    "type '{}' does not implement trait '{}'",
+                    type_name, trait_name
+                ),
+                span,
+            );
+            return;
+        }
+        // Walk the matched impl's own where clauses against the actual
+        // type arguments. Clone the obligation list so the recursive
+        // `self.error` call doesn't conflict with the borrow.
+        let Some(obligations) = self.impl_constraints.get(&(trait_name, type_name)).cloned() else {
+            return;
+        };
+        let args = Self::type_args_of(&resolved);
+        for (idx, sub_trait) in obligations {
+            if let Some(arg_ty) = args.get(idx).cloned() {
+                self.verify_trait_obligation(sub_trait, &arg_ty, span);
+            }
         }
     }
 
@@ -2225,20 +2302,33 @@ impl TypeChecker {
                 Type::Generic(ti.target_type, args)
             }
         } else {
-            // Arity check for user-declared record/enum targets.
+            // Arity check. Covers user-declared record/enum targets via
+            // record_param_var_ids / self.enums, AND builtin parameterized
+            // containers (List, Set, Channel, Map) whose arities are fixed
+            // by the language. Without the builtin arm, `trait X for List(a, b)`
+            // fell through to `_ => Type::Generic("List", [a, b])` below,
+            // silently producing a phantom 2-arg List type with no diagnostic.
+            let name_str_for_arity = resolve(ti.target_type);
+            let builtin_arity: Option<(usize, &'static str)> = match name_str_for_arity.as_str() {
+                "List" => Some((1, "builtin")),
+                "Set" => Some((1, "builtin")),
+                "Channel" => Some((1, "builtin")),
+                "Map" => Some((2, "builtin")),
+                _ => None,
+            };
             let expected_arity = self
                 .record_param_var_ids
                 .get(&ti.target_type)
-                .map(|v| v.len())
-                .or_else(|| self.enums.get(&ti.target_type).map(|e| e.params.len()));
-            if let Some(expected) = expected_arity
+                .map(|v| (v.len(), "record"))
+                .or_else(|| {
+                    self.enums
+                        .get(&ti.target_type)
+                        .map(|e| (e.params.len(), "enum"))
+                })
+                .or(builtin_arity);
+            if let Some((expected, kind)) = expected_arity
                 && expected != ti.target_type_args.len()
             {
-                let kind = if self.records.contains_key(&ti.target_type) {
-                    "record"
-                } else {
-                    "enum"
-                };
                 self.error(
                     format!(
                         "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
@@ -2289,6 +2379,11 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<(TyVar, Symbol)> = Vec::new();
+        // Parallel structure indexed by target_param_names position, used to
+        // populate self.impl_constraints below so that call-site constraint
+        // resolution can recursively verify the impl's own where clauses
+        // against the actual concrete type arguments at the call site.
+        let mut impl_obligations_by_index: Vec<(usize, Symbol)> = Vec::new();
         for (type_param, trait_name) in &ti.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
@@ -2310,6 +2405,9 @@ impl TypeChecker {
                     }
                     // If resolved is concrete (shouldn't happen — impl_param_map
                     // only inserts fresh Var entries) treat it as a tautology.
+                    if let Some(idx) = ti.target_param_names.iter().position(|n| n == type_param) {
+                        impl_obligations_by_index.push((idx, *trait_name));
+                    }
                 }
                 None => {
                     self.error(
@@ -2325,6 +2423,10 @@ impl TypeChecker {
                     );
                 }
             }
+        }
+        if !impl_obligations_by_index.is_empty() {
+            self.impl_constraints
+                .insert((ti.trait_name, ti.target_type), impl_obligations_by_index);
         }
 
         let self_sym = intern("self");

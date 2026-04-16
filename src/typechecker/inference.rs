@@ -220,18 +220,10 @@ impl TypeChecker {
                     }
                 }
                 _ => {
-                    // Concrete receiver — check trait impl exists now.
-                    if let Some(type_name) = self.type_name_for_impl(&resolved)
-                        && !self.trait_impl_set.contains(&(trait_name, type_name))
-                    {
-                        self.error(
-                            format!(
-                                "type '{}' does not implement trait '{}'",
-                                type_name, trait_name
-                            ),
-                            span,
-                        );
-                    }
+                    // Concrete receiver — check trait impl exists now,
+                    // recursively walking the impl's own where clauses
+                    // against the receiver's type arguments.
+                    self.verify_trait_obligation(trait_name, &resolved, span);
                 }
             }
         }
@@ -565,16 +557,10 @@ impl TypeChecker {
             if matches!(resolved, Type::Error | Type::Never) {
                 continue;
             }
-            if let Some(type_name) = self.type_name_for_impl(&resolved) {
-                if !self.trait_impl_set.contains(&(trait_name, type_name)) {
-                    self.error(
-                        format!(
-                            "type '{}' does not implement trait '{}'",
-                            type_name, trait_name
-                        ),
-                        span,
-                    );
-                }
+            if self.type_name_for_impl(&resolved).is_some() {
+                // Recursively walk the matched impl's where clauses
+                // against the resolved type's arguments.
+                self.verify_trait_obligation(trait_name, &resolved, span);
                 continue;
             }
             if let Type::Var(v) = &resolved {
@@ -2038,16 +2024,10 @@ impl TypeChecker {
                         // Check where clause constraints using instantiated TyVars
                         for (tyvar, trait_name) in &where_constraints {
                             let resolved = self.apply(&Type::Var(*tyvar));
-                            if let Some(type_name) = self.type_name_for_impl(&resolved)
-                                && !self.trait_impl_set.contains(&(*trait_name, type_name))
-                            {
-                                self.error(
-                                    format!(
-                                        "type '{}' does not implement trait '{}'",
-                                        type_name, trait_name
-                                    ),
-                                    span,
-                                );
+                            if self.type_name_for_impl(&resolved).is_some() {
+                                // Recursively walk the matched impl's where
+                                // clauses against the resolved type's args.
+                                self.verify_trait_obligation(*trait_name, &resolved, span);
                             } else if matches!(&resolved, Type::Var(_))
                                 && !self.covered_by_active_constraint(&resolved, *trait_name)
                             {
@@ -2311,16 +2291,10 @@ impl TypeChecker {
                 // Check where clause constraints using instantiated TyVars
                 for (tyvar, trait_name) in &where_constraints {
                     let resolved = self.apply(&Type::Var(*tyvar));
-                    if let Some(type_name) = self.type_name_for_impl(&resolved)
-                        && !self.trait_impl_set.contains(&(*trait_name, type_name))
-                    {
-                        self.error(
-                            format!(
-                                "type '{}' does not implement trait '{}'",
-                                type_name, trait_name
-                            ),
-                            span,
-                        );
+                    if self.type_name_for_impl(&resolved).is_some() {
+                        // Recursively walk the matched impl's where clauses
+                        // against the resolved type's arguments.
+                        self.verify_trait_obligation(*trait_name, &resolved, span);
                     } else if matches!(&resolved, Type::Var(_))
                         && !self.covered_by_active_constraint(&resolved, *trait_name)
                     {
