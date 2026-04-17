@@ -26,12 +26,6 @@ pub(crate) struct CompilePipelineResult {
     pub(crate) parse_errors: Vec<SourceError>,
     /// Type errors and warnings.
     pub(crate) type_errors: Vec<SourceError>,
-    /// Whether any hard error (parse or type) was encountered. Callers
-    /// typically recompute the "real" hard-error flag after filtering
-    /// suppressible warnings (see `reportable_type_errors`), so this is
-    /// kept for completeness / future callers but not currently read.
-    #[allow(dead_code)]
-    pub(crate) has_hard_errors: bool,
     /// Compiled functions — `None` if hard errors prevented compilation.
     pub(crate) functions: Option<Vec<Function>>,
     /// Compile errors (if compilation was attempted but failed).
@@ -75,7 +69,6 @@ pub(crate) fn run_compile_pipeline(
                 source,
                 parse_errors: vec![source_err],
                 type_errors: Vec::new(),
-                has_hard_errors: true,
                 functions: None,
                 compile_errors: Vec::new(),
                 compile_warnings: Vec::new(),
@@ -93,21 +86,15 @@ pub(crate) fn run_compile_pipeline(
 
     // Skip the type checker when there are parse errors, unless the caller opted in
     // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
-    let (type_errors, has_type_hard_errors) = if !has_parse_errors || typecheck_on_parse_errors {
+    let type_errors: Vec<SourceError> = if !has_parse_errors || typecheck_on_parse_errors {
         let raw_type_errors = typechecker::check(&mut program);
-        let hard = raw_type_errors
-            .iter()
-            .any(|e| e.severity == typechecker::Severity::Error);
-        let errs: Vec<SourceError> = raw_type_errors
+        raw_type_errors
             .iter()
             .map(|e| SourceError::from_type_error(e, &source, path))
-            .collect();
-        (errs, hard)
+            .collect()
     } else {
-        (Vec::new(), false)
+        Vec::new()
     };
-
-    let has_hard_errors = has_parse_errors || has_type_hard_errors;
 
     // If there are parse errors or compilation is not requested, skip compile.
     // Type errors do NOT block compilation — the compiler resolves modules
@@ -118,7 +105,6 @@ pub(crate) fn run_compile_pipeline(
             source,
             parse_errors,
             type_errors,
-            has_hard_errors,
             functions: None,
             compile_errors: Vec::new(),
             compile_warnings: Vec::new(),
@@ -151,7 +137,6 @@ pub(crate) fn run_compile_pipeline(
                 source,
                 parse_errors,
                 type_errors,
-                has_hard_errors,
                 functions: Some(functions),
                 compile_errors: Vec::new(),
                 compile_warnings,
@@ -163,7 +148,6 @@ pub(crate) fn run_compile_pipeline(
                 source,
                 parse_errors,
                 type_errors,
-                has_hard_errors: true,
                 functions: None,
                 compile_errors: vec![source_err],
                 compile_warnings: Vec::new(),

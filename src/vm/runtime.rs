@@ -272,10 +272,6 @@ impl IoPool {
 /// Shared, read-only-after-init state for a Silt program.
 /// Created once during initialization, then shared across spawned tasks via `Arc`.
 pub struct Runtime {
-    /// Maps variant tag names to their parent type name, for method dispatch.
-    #[allow(dead_code)]
-    pub(super) variant_types: HashMap<String, String>,
-
     // ── Foreign function interface ──────────────────────────────
     pub(super) foreign_fns: HashMap<String, ForeignFn>,
 

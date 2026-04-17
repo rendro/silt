@@ -91,7 +91,6 @@ struct CompileContext {
 struct LoopInfo {
     first_slot: u16,
     loop_start: usize,
-    #[allow(dead_code)]
     binding_count: u8,
 }
 

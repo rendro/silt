@@ -160,7 +160,6 @@ pub(super) struct TraitInfo {
 
 /// A registered trait method implementation (new trait system).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(super) struct MethodEntry {
     pub(super) method_type: Type,
     pub(super) span: Span,
@@ -855,7 +854,6 @@ impl TypeChecker {
         });
     }
 
-    #[allow(dead_code)]
     pub(super) fn warning(&mut self, message: std::string::String, span: Span) {
         self.errors.push(TypeError {
             message,
@@ -872,208 +870,10 @@ impl TypeChecker {
         // Register builtins in the type environment
         self.register_builtins(&mut env);
 
-        // Register built-in traits
-        {
-            let display_self = self.fresh_var();
-            self.traits.insert(
-                intern("Display"),
-                TraitInfo {
-                    _name: intern("Display"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("display"),
-                        Type::Fun(vec![display_self], Box::new(Type::String)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let compare_a = self.fresh_var();
-            let compare_b = self.fresh_var();
-            self.traits.insert(
-                intern("Compare"),
-                TraitInfo {
-                    _name: intern("Compare"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("compare"),
-                        Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let equal_a = self.fresh_var();
-            let equal_b = self.fresh_var();
-            self.traits.insert(
-                intern("Equal"),
-                TraitInfo {
-                    _name: intern("Equal"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("equal"),
-                        Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let hash_self = self.fresh_var();
-            self.traits.insert(
-                intern("Hash"),
-                TraitInfo {
-                    _name: intern("Hash"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("hash"),
-                        Type::Fun(vec![hash_self], Box::new(Type::Int)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-
-        // Register builtin trait implementations for primitive types.
-        // These allow where clauses like `where a: Equal` to resolve
-        // when `a` is Int, String, Bool, etc.
-        {
-            let dummy_span = Span {
-                line: 0,
-                col: 0,
-                offset: 0,
-            };
-            let primitive_types = ["Int", "Float", "Bool", "String", "()"];
-            let all_traits = BUILTIN_TRAIT_NAMES;
-            macro_rules! make_trait_methods {
-                ($self:expr) => {
-                    vec![
-                        (
-                            "display",
-                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::String)),
-                        ),
-                        (
-                            "equal",
-                            Type::Fun(
-                                vec![$self.fresh_var(), $self.fresh_var()],
-                                Box::new(Type::Bool),
-                            ),
-                        ),
-                        (
-                            "compare",
-                            Type::Fun(
-                                vec![$self.fresh_var(), $self.fresh_var()],
-                                Box::new(Type::Int),
-                            ),
-                        ),
-                        (
-                            "hash",
-                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::Int)),
-                        ),
-                    ]
-                };
-            }
-            for type_name in &primitive_types {
-                for trait_name in all_traits {
-                    self.trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
-                for (method_name, method_type) in &trait_methods {
-                    self.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            // L5: The VM's compare() (src/vm/arithmetic.rs) only supports
-            // ordering for List/Range and primitives. Tuple, Map, and Set
-            // are NOT orderable at runtime, so they only auto-derive
-            // Equal/Hash/Display — not Compare.
-            let non_ordering_traits = ["Equal", "Hash", "Display"];
-            for type_name in &["List"] {
-                for trait_name in all_traits {
-                    self.trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
-                for (method_name, method_type) in &trait_methods {
-                    self.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            // Tuple/Map/Set: Equal, Hash, Display only (no Compare).
-            for type_name in &["Tuple", "Map", "Set"] {
-                for trait_name in &non_ordering_traits {
-                    self.trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
-                for (method_name, method_type) in &trait_methods {
-                    // Skip "compare" for these types.
-                    if *method_name == "compare" {
-                        continue;
-                    }
-                    self.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            // B10: Option and Result auto-derive Equal, Hash, Display.
-            // (Compare is not supported because ordering on Variants is
-            // limited to same-name variants at runtime.) Both types wrap
-            // generic parameters, but the auto-derived methods are stored
-            // as polymorphic templates and instantiated at each call site.
-            for type_name in &["Option", "Result"] {
-                for trait_name in &non_ordering_traits {
-                    self.trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(self);
-                for (method_name, method_type) in &trait_methods {
-                    if *method_name == "compare" {
-                        continue;
-                    }
-                    self.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-        }
+        // Register built-in traits and auto-derived impls (shared with
+        // `ReplTypeContext::new` so `silt check` and the REPL stay in
+        // sync on derive policy).
+        register_builtin_trait_impls(self);
 
         // Process imports: register selective/aliased import names in the type environment
         for decl in &program.decls {
@@ -2713,6 +2513,191 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
     }
 }
 
+/// Register built-in trait declarations (Display/Compare/Equal/Hash)
+/// and their auto-derived impls for primitives and builtin containers.
+///
+/// This is the single source of truth for derive policy. Both
+/// `TypeChecker::check_program` and `ReplTypeContext::new` call it so
+/// `silt check` and the REPL never diverge on which types implement
+/// which traits.
+///
+/// Derive policy:
+/// - `Int`, `Float`, `Bool`, `String`, `()`, `List` get all four
+///   built-in traits (Equal, Compare, Hash, Display).
+/// - `Tuple`, `Map`, `Set` get Equal/Hash/Display only — the VM's
+///   `compare()` (src/vm/arithmetic.rs) does not support ordering for
+///   these, so registering Compare would type-check code that then
+///   panics at runtime.
+/// - `Option`, `Result` get Equal/Hash/Display only. They wrap generic
+///   parameters; the auto-derived methods are stored as polymorphic
+///   templates and instantiated at each call site. Compare is
+///   excluded because ordering on Variants is limited to same-name
+///   variants at runtime.
+pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
+    // ── Register built-in trait declarations ────────────────────
+    {
+        let display_self = checker.fresh_var();
+        checker.traits.insert(
+            intern("Display"),
+            TraitInfo {
+                _name: intern("Display"),
+                supertraits: Vec::new(),
+                methods: vec![(
+                    intern("display"),
+                    Type::Fun(vec![display_self], Box::new(Type::String)),
+                )],
+                decl_span: Span::new(0, 0),
+                default_method_bodies: HashMap::new(),
+            },
+        );
+    }
+    {
+        let compare_a = checker.fresh_var();
+        let compare_b = checker.fresh_var();
+        checker.traits.insert(
+            intern("Compare"),
+            TraitInfo {
+                _name: intern("Compare"),
+                supertraits: Vec::new(),
+                methods: vec![(
+                    intern("compare"),
+                    Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
+                )],
+                decl_span: Span::new(0, 0),
+                default_method_bodies: HashMap::new(),
+            },
+        );
+    }
+    {
+        let equal_a = checker.fresh_var();
+        let equal_b = checker.fresh_var();
+        checker.traits.insert(
+            intern("Equal"),
+            TraitInfo {
+                _name: intern("Equal"),
+                supertraits: Vec::new(),
+                methods: vec![(
+                    intern("equal"),
+                    Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
+                )],
+                decl_span: Span::new(0, 0),
+                default_method_bodies: HashMap::new(),
+            },
+        );
+    }
+    {
+        let hash_self = checker.fresh_var();
+        checker.traits.insert(
+            intern("Hash"),
+            TraitInfo {
+                _name: intern("Hash"),
+                supertraits: Vec::new(),
+                methods: vec![(
+                    intern("hash"),
+                    Type::Fun(vec![hash_self], Box::new(Type::Int)),
+                )],
+                decl_span: Span::new(0, 0),
+                default_method_bodies: HashMap::new(),
+            },
+        );
+    }
+
+    // ── Register auto-derived impls ─────────────────────────────
+    let all_traits: &[&str] = BUILTIN_TRAIT_NAMES;
+    let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
+
+    // Primitives + List: all four traits.
+    register_auto_derived_impls_for(
+        checker,
+        &["Int", "Float", "Bool", "String", "()"],
+        all_traits,
+    );
+    register_auto_derived_impls_for(checker, &["List"], all_traits);
+    // Tuple/Map/Set: Equal/Hash/Display only.
+    register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
+    // Option/Result: Equal/Hash/Display only (generic wrappers, stored
+    // as polymorphic templates).
+    register_auto_derived_impls_for(checker, &["Option", "Result"], non_ordering_traits);
+}
+
+/// Register auto-derived trait impls and method-table entries for a
+/// group of types against a set of trait names. Shared helper used by
+/// `register_builtin_trait_impls` and the `time` builtin module so
+/// the set of derived methods stays consistent.
+///
+/// The four built-in trait methods are always considered. A method is
+/// registered only when its parent trait appears in `trait_names`:
+/// - `display` ← Display
+/// - `equal`   ← Equal
+/// - `compare` ← Compare
+/// - `hash`    ← Hash
+pub(super) fn register_auto_derived_impls_for(
+    checker: &mut TypeChecker,
+    type_names: &[&str],
+    trait_names: &[&str],
+) {
+    let dummy_span = Span {
+        line: 0,
+        col: 0,
+        offset: 0,
+    };
+    let has_display = trait_names.contains(&"Display");
+    let has_equal = trait_names.contains(&"Equal");
+    let has_compare = trait_names.contains(&"Compare");
+    let has_hash = trait_names.contains(&"Hash");
+    for type_name in type_names {
+        for trait_name in trait_names {
+            checker
+                .trait_impl_set
+                .insert((intern(trait_name), intern(type_name)));
+        }
+        // Build method entries only for traits in `trait_names`.
+        let mut methods: Vec<(&str, Type)> = Vec::with_capacity(4);
+        if has_display {
+            methods.push((
+                "display",
+                Type::Fun(vec![checker.fresh_var()], Box::new(Type::String)),
+            ));
+        }
+        if has_equal {
+            methods.push((
+                "equal",
+                Type::Fun(
+                    vec![checker.fresh_var(), checker.fresh_var()],
+                    Box::new(Type::Bool),
+                ),
+            ));
+        }
+        if has_compare {
+            methods.push((
+                "compare",
+                Type::Fun(
+                    vec![checker.fresh_var(), checker.fresh_var()],
+                    Box::new(Type::Int),
+                ),
+            ));
+        }
+        if has_hash {
+            methods.push((
+                "hash",
+                Type::Fun(vec![checker.fresh_var()], Box::new(Type::Int)),
+            ));
+        }
+        for (method_name, method_type) in &methods {
+            checker.method_table.insert(
+                (intern(type_name), intern(method_name)),
+                MethodEntry {
+                    method_type: method_type.clone(),
+                    span: dummy_span,
+                    is_auto_derived: true,
+                    trait_name: None,
+                    method_constraints: Vec::new(),
+                },
+            );
+        }
+    }
+}
+
 /// Run the type checker on a program. Returns a list of type errors (warnings).
 pub fn check(program: &mut Program) -> Vec<TypeError> {
     let mut checker = TypeChecker::new();
@@ -2748,205 +2733,10 @@ impl ReplTypeContext {
         // Register builtins in the type environment
         checker.register_builtins(&mut env);
 
-        // Register built-in traits (mirrors check_program init)
-        {
-            let display_self = checker.fresh_var();
-            checker.traits.insert(
-                intern("Display"),
-                TraitInfo {
-                    _name: intern("Display"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("display"),
-                        Type::Fun(vec![display_self], Box::new(Type::String)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let compare_a = checker.fresh_var();
-            let compare_b = checker.fresh_var();
-            checker.traits.insert(
-                intern("Compare"),
-                TraitInfo {
-                    _name: intern("Compare"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("compare"),
-                        Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let equal_a = checker.fresh_var();
-            let equal_b = checker.fresh_var();
-            checker.traits.insert(
-                intern("Equal"),
-                TraitInfo {
-                    _name: intern("Equal"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("equal"),
-                        Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-        {
-            let hash_self = checker.fresh_var();
-            checker.traits.insert(
-                intern("Hash"),
-                TraitInfo {
-                    _name: intern("Hash"),
-                    supertraits: Vec::new(),
-                    methods: vec![(
-                        intern("hash"),
-                        Type::Fun(vec![hash_self], Box::new(Type::Int)),
-                    )],
-                    decl_span: Span::new(0, 0),
-                    default_method_bodies: HashMap::new(),
-                },
-            );
-        }
-
-        // Register builtin trait implementations for primitive types.
-        // Each insert uses a `Scheme` with the free vars quantified so
-        // lookup sites can instantiate and get fresh type variables.
-        {
-            let dummy_span = Span {
-                line: 0,
-                col: 0,
-                offset: 0,
-            };
-            let primitive_types = ["Int", "Float", "Bool", "String", "()"];
-            let all_traits = BUILTIN_TRAIT_NAMES;
-            macro_rules! make_trait_methods {
-                ($self:expr) => {
-                    vec![
-                        (
-                            "display",
-                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::String)),
-                        ),
-                        (
-                            "equal",
-                            Type::Fun(
-                                vec![$self.fresh_var(), $self.fresh_var()],
-                                Box::new(Type::Bool),
-                            ),
-                        ),
-                        (
-                            "compare",
-                            Type::Fun(
-                                vec![$self.fresh_var(), $self.fresh_var()],
-                                Box::new(Type::Int),
-                            ),
-                        ),
-                        (
-                            "hash",
-                            Type::Fun(vec![$self.fresh_var()], Box::new(Type::Int)),
-                        ),
-                    ]
-                };
-            }
-            for type_name in &primitive_types {
-                for trait_name in all_traits {
-                    checker
-                        .trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
-                for (method_name, method_type) in &trait_methods {
-                    checker.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            // L5: See check_program — the VM only supports ordering for
-            // List/Range among collection types. Tuple/Map/Set get
-            // Equal/Hash/Display but not Compare.
-            let non_ordering_traits = ["Equal", "Hash", "Display"];
-            for type_name in &["List"] {
-                for trait_name in all_traits {
-                    checker
-                        .trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
-                for (method_name, method_type) in &trait_methods {
-                    checker.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            for type_name in &["Tuple", "Map", "Set"] {
-                for trait_name in &non_ordering_traits {
-                    checker
-                        .trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
-                for (method_name, method_type) in &trait_methods {
-                    if *method_name == "compare" {
-                        continue;
-                    }
-                    checker.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-            // B10: Option and Result auto-derive Equal, Hash, Display.
-            for type_name in &["Option", "Result"] {
-                for trait_name in &non_ordering_traits {
-                    checker
-                        .trait_impl_set
-                        .insert((intern(trait_name), intern(type_name)));
-                }
-                let trait_methods: Vec<(&str, Type)> = make_trait_methods!(checker);
-                for (method_name, method_type) in &trait_methods {
-                    if *method_name == "compare" {
-                        continue;
-                    }
-                    checker.method_table.insert(
-                        (intern(type_name), intern(method_name)),
-                        MethodEntry {
-                            method_type: method_type.clone(),
-                            span: dummy_span,
-                            is_auto_derived: true,
-                            trait_name: None,
-                            method_constraints: Vec::new(),
-                        },
-                    );
-                }
-            }
-        }
+        // Register built-in traits and auto-derived impls. Shared with
+        // `check_program` so the REPL and `silt check` never drift on
+        // derive policy.
+        register_builtin_trait_impls(&mut checker);
 
         Self { checker, env }
     }
@@ -3160,6 +2950,66 @@ pub fn builtin_type_signatures() -> std::collections::HashMap<String, String> {
         }
     }
     sigs
+}
+
+/// Test-only introspection: collect the auto-derived trait-impl and
+/// method registrations produced by the two init paths so the parity
+/// test under `tests/trait_init_parity_tests.rs` can assert they agree.
+///
+/// Returns `(trait_impls, method_keys)` where:
+/// - `trait_impls` is the set of `"Trait:Type"` pairs registered in
+///   `trait_impl_set`.
+/// - `method_keys` is the set of `"Type.method"` pairs in
+///   `method_table`.
+///
+/// Stringifies the `Symbol` keys so test code doesn't need access to
+/// the crate-private `Symbol`/`intern` types.
+#[doc(hidden)]
+pub fn __trait_init_fingerprint_check_program() -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    use std::collections::BTreeSet;
+    let mut checker = TypeChecker::new();
+    let mut env = TypeEnv::new();
+    checker.register_builtins(&mut env);
+    register_builtin_trait_impls(&mut checker);
+    let trait_impls: BTreeSet<String> = checker
+        .trait_impl_set
+        .iter()
+        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
+        .collect();
+    let method_keys: BTreeSet<String> = checker
+        .method_table
+        .keys()
+        .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
+        .collect();
+    (trait_impls, method_keys)
+}
+
+/// Test-only introspection: same as
+/// `__trait_init_fingerprint_check_program` but runs the REPL init path
+/// (`ReplTypeContext::new`).
+#[doc(hidden)]
+pub fn __trait_init_fingerprint_repl() -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    use std::collections::BTreeSet;
+    let ctx = ReplTypeContext::new();
+    let trait_impls: BTreeSet<String> = ctx
+        .checker
+        .trait_impl_set
+        .iter()
+        .map(|(tr, ty)| format!("{}:{}", resolve(*tr), resolve(*ty)))
+        .collect();
+    let method_keys: BTreeSet<String> = ctx
+        .checker
+        .method_table
+        .keys()
+        .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
+        .collect();
+    (trait_impls, method_keys)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

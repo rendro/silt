@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::builtins::data::FieldType;
-use crate::bytecode::{Chunk, Function, VmClosure};
+use crate::bytecode::{Function, VmClosure};
 use crate::scheduler::Scheduler;
 use crate::value::{FromValue, IntoValue, IoCompletion, Value};
 use runtime::{IoPool, RegexCache, TimerManager};
@@ -188,7 +188,6 @@ impl Vm {
     pub fn new() -> Self {
         let mut vm = Vm {
             runtime: Arc::new(Runtime {
-                variant_types: HashMap::new(),
                 foreign_fns: HashMap::new(),
                 scheduler: parking_lot::Mutex::new(None),
                 timer: TimerManager::new(),
@@ -513,11 +512,6 @@ impl Vm {
         self.frames
             .last_mut()
             .ok_or_else(|| VmError::new("internal: no call frame".to_string()))
-    }
-
-    #[allow(dead_code)]
-    fn current_chunk(&self) -> Result<&Chunk, VmError> {
-        Ok(&self.current_frame()?.closure.function.chunk)
     }
 
     /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
