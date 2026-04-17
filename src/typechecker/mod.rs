@@ -2421,11 +2421,9 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
         (Type::List(o), Type::List(n)) => align_tyvars_into(o, n, map),
         (Type::Set(o), Type::Set(n)) => align_tyvars_into(o, n, map),
         (Type::Channel(o), Type::Channel(n)) => align_tyvars_into(o, n, map),
-        (Type::Tuple(o), Type::Tuple(n)) => {
-            if o.len() == n.len() {
-                for (a, b) in o.iter().zip(n.iter()) {
-                    align_tyvars_into(a, b, map);
-                }
+        (Type::Tuple(o), Type::Tuple(n)) if o.len() == n.len() => {
+            for (a, b) in o.iter().zip(n.iter()) {
+                align_tyvars_into(a, b, map);
             }
         }
         (Type::Map(ok, ov), Type::Map(nk, nv)) => {

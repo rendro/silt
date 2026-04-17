@@ -613,10 +613,8 @@ fn drop_n(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         }
         loop {
             match in_ch.receive_blocking() {
-                TryReceiveResult::Value(v) => {
-                    if !push(&out_clone, &v) {
-                        break;
-                    }
+                TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
+                    break;
                 }
                 TryReceiveResult::Closed => break,
                 _ => {}
@@ -851,10 +849,8 @@ fn merge(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         std::thread::spawn(move || {
             loop {
                 match in_ch.receive_blocking() {
-                    TryReceiveResult::Value(v) => {
-                        if !push(&out_clone, &v) {
-                            break;
-                        }
+                    TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
+                        break;
                     }
                     TryReceiveResult::Closed => break,
                     _ => {}
@@ -923,11 +919,9 @@ fn concat(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         for ch in channels {
             loop {
                 match ch.receive_blocking() {
-                    TryReceiveResult::Value(v) => {
-                        if !push(&out_clone, &v) {
-                            out_clone.close();
-                            return;
-                        }
+                    TryReceiveResult::Value(v) if !push(&out_clone, &v) => {
+                        out_clone.close();
+                        return;
                     }
                     TryReceiveResult::Closed => break,
                     _ => {}

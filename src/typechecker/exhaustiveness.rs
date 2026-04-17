@@ -689,10 +689,10 @@ impl TypeChecker {
                 let mut specialized_rest: Vec<Pattern> = Vec::new();
                 for pat in matrix {
                     match &pat.kind {
-                        PatternKind::Tuple(ps) if ps.len() == arity => {
-                            if Self::first_col_matches(&ps[0], ctor) {
-                                specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
-                            }
+                        PatternKind::Tuple(ps)
+                            if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
+                        {
+                            specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                         }
                         PatternKind::Wildcard | PatternKind::Ident(_) => {
                             let wilds: Vec<Pattern> = (0..arity - 1)
@@ -720,10 +720,10 @@ impl TypeChecker {
             let mut witness_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
                 match &pat.kind {
-                    PatternKind::Tuple(ps) if ps.len() == arity => {
-                        if Self::is_fully_covering_pattern(&ps[0]) {
-                            witness_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
-                        }
+                    PatternKind::Tuple(ps)
+                        if ps.len() == arity && Self::is_fully_covering_pattern(&ps[0]) =>
+                    {
+                        witness_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                     }
                     PatternKind::Wildcard | PatternKind::Ident(_) => {
                         let wilds: Vec<Pattern> = (0..arity - 1)
@@ -751,10 +751,10 @@ impl TypeChecker {
             let mut specialized_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
                 match &pat.kind {
-                    PatternKind::Tuple(ps) if ps.len() == arity => {
-                        if Self::first_col_matches(&ps[0], ctor) {
-                            specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
-                        }
+                    PatternKind::Tuple(ps)
+                        if ps.len() == arity && Self::first_col_matches(&ps[0], ctor) =>
+                    {
+                        specialized_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                     }
                     PatternKind::Wildcard | PatternKind::Ident(_) => {
                         let wilds: Vec<Pattern> = (0..arity - 1)

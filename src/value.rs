@@ -1215,17 +1215,13 @@ fn list_eq_range(list: &[Value], lo: i64, hi: i64) -> bool {
     if len == 0 {
         return true;
     }
-    let mut cur = lo;
-    for item in list.iter() {
+    // Zip the list against an increasing counter so the intent (one
+    // list item per integer in [lo, hi]) is structural.
+    for (cur, item) in (lo..=hi).zip(list.iter()) {
         match item {
             Value::Int(n) if *n == cur => {}
             _ => return false,
         }
-        // Avoid overflow on the final iteration: only increment while cur < hi.
-        if cur == hi {
-            break;
-        }
-        cur += 1;
     }
     true
 }

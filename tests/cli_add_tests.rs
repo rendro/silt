@@ -69,7 +69,9 @@ fn test_add_to_fresh_manifest() {
         "manifest missing [dependencies]:\n{manifest}"
     );
     assert!(
-        manifest.contains("calc") && manifest.contains("path") && manifest.contains("../calc"),
+        manifest.contains("calc")
+            && manifest.contains("path")
+            && (manifest.contains("../calc") || manifest.contains("..\\calc")),
         "manifest missing calc entry:\n{manifest}"
     );
     assert!(

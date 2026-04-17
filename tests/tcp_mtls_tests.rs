@@ -9,8 +9,13 @@
 //!
 //! The `tcp-tls` feature is opt-in; the entire file is gated so
 //! `cargo test` without `--features tcp-tls` skips it.
+//!
+//! Under cargo-tarpaulin instrumentation the rustls handshake exceeds
+//! the test harness's implicit timeouts (coverage probes dilate every
+//! fn call), so the whole file is skipped under tarpaulin. Real CI
+//! still exercises these via `Check & Test`.
 
-#![cfg(all(feature = "tcp", feature = "tcp-tls"))]
+#![cfg(all(feature = "tcp", feature = "tcp-tls", not(tarpaulin)))]
 
 use std::io::Write;
 use std::net::TcpStream;
