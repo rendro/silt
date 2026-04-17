@@ -504,6 +504,21 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 
                 match reason {
                     Some(BlockReason::Receive(ch)) => {
+                        // Capture the handle BEFORE registering the waker.
+                        // `register_recv_waker_guard` may synchronously invoke
+                        // the waker closure if a peer is already parked at the
+                        // rendezvous (e.g. a sender already waiting). That
+                        // closure takes `task_slot`, leaving it `None` — so
+                        // cloning the handle afterwards would panic on
+                        // `expect("task_slot just initialized")`. The slot was
+                        // initialized above this `match` and nothing mutates
+                        // it between there and here.
+                        let handle_for_cancel = task_slot
+                            .lock()
+                            .as_ref()
+                            .expect("task_slot just initialized")
+                            .handle
+                            .clone();
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         let reg = ch.register_recv_waker_guard(Box::new(move || {
@@ -527,12 +542,6 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let cancel_slot = task_slot.clone();
                         let cancel_inner = inner.clone();
                         let cancel_task_id = id;
-                        let handle_for_cancel = task_slot
-                            .lock()
-                            .as_ref()
-                            .expect("task_slot just initialized")
-                            .handle
-                            .clone();
                         handle_for_cancel.set_cancel_cleanup(Box::new(move || {
                             // Move the guard into the body so its Drop
                             // runs at the end of this scope (cancel
@@ -557,6 +566,21 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Send(ch)) => {
+                        // Capture the handle BEFORE registering the waker.
+                        // `register_send_waker_guard` may synchronously invoke
+                        // the waker closure if a peer is already parked at
+                        // the rendezvous (e.g. a receiver already waiting).
+                        // That closure takes `task_slot`, leaving it `None` —
+                        // so cloning the handle afterwards would panic on
+                        // `expect("task_slot just initialized")`. The slot
+                        // was initialized above this `match` and nothing
+                        // mutates it between there and here.
+                        let handle_for_cancel = task_slot
+                            .lock()
+                            .as_ref()
+                            .expect("task_slot just initialized")
+                            .handle
+                            .clone();
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         let reg = ch.register_send_waker_guard(Box::new(move || {
@@ -570,12 +594,6 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let cancel_slot = task_slot.clone();
                         let cancel_inner = inner.clone();
                         let cancel_task_id = id;
-                        let handle_for_cancel = task_slot
-                            .lock()
-                            .as_ref()
-                            .expect("task_slot just initialized")
-                            .handle
-                            .clone();
                         handle_for_cancel.set_cancel_cleanup(Box::new(move || {
                             let _reg = reg;
                             if cancel_slot.lock().take().is_none() {
