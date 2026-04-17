@@ -153,8 +153,9 @@ fn local_captured_field_stays_deleted() {
     let local_struct_start = COMPILER_MOD_RS
         .find("struct Local {")
         .expect("struct Local exists");
+    // Accept either `}\n` (Unix) or `}\r\n` (Windows autocrlf checkout).
     let local_struct_end = COMPILER_MOD_RS[local_struct_start..]
-        .find("}\n")
+        .find('}')
         .map(|i| local_struct_start + i)
         .expect("struct Local is closed");
     let struct_body = &COMPILER_MOD_RS[local_struct_start..local_struct_end];
