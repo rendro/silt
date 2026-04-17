@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::value::{Channel, IoCompletion, TaskHandle, Value, WakerId};
+use crate::value::{IoCompletion, TaskHandle, Value, WakerRegistration};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
@@ -506,18 +506,92 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     Some(BlockReason::Receive(ch)) => {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
-                        ch.register_recv_waker(Box::new(move || {
+                        let reg = ch.register_recv_waker_guard(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task, false);
+                            }
+                        }));
+                        // Re-install the cancel cleanup so it ALSO owns
+                        // the `WakerRegistration` guard. The guard's
+                        // Drop deregisters the recv waker from the
+                        // channel on any path that drops the closure
+                        // (cancel → `complete` fires it, then closure
+                        // drops; or normal wake → `requeue` calls
+                        // `clear_cancel_cleanup`, closure drops).
+                        // Without this, round-27 B1/B2 leak the waker
+                        // into `recv_wakers` and permanently inflate
+                        // `waiting_receivers`: a later unrelated
+                        // `try_send` sees a phantom receiver (B1), or
+                        // a real receiver behind the dead waker in the
+                        // FIFO never wakes (B2).
+                        let cancel_slot = task_slot.clone();
+                        let cancel_inner = inner.clone();
+                        let cancel_task_id = id;
+                        let handle_for_cancel = task_slot
+                            .lock()
+                            .as_ref()
+                            .expect("task_slot just initialized")
+                            .handle
+                            .clone();
+                        handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                            // Move the guard into the body so its Drop
+                            // runs at the end of this scope (cancel
+                            // path) or when the closure itself is
+                            // dropped (normal wake path).
+                            let _reg = reg;
+                            if cancel_slot.lock().take().is_none() {
+                                return;
+                            }
+                            cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                            if was_io {
+                                cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                                cancel_inner.watchdog.remove(cancel_task_id);
+                            }
+                            cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                            let mut handles = cancel_inner.blocked_handles.lock();
+                            if let Some(pos) =
+                                handles.iter().position(|h| h.id == cancel_task_id)
+                            {
+                                handles.swap_remove(pos);
                             }
                         }));
                     }
                     Some(BlockReason::Send(ch)) => {
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
-                        ch.register_send_waker(Box::new(move || {
+                        let reg = ch.register_send_waker_guard(Box::new(move || {
                             if let Some(task) = slot.lock().take() {
                                 requeue(&inner2, task, false);
+                            }
+                        }));
+                        // See the Receive arm: cancel cleanup owns the
+                        // guard so Drop deregisters the send waker on
+                        // cancel (round-27 B3/B4).
+                        let cancel_slot = task_slot.clone();
+                        let cancel_inner = inner.clone();
+                        let cancel_task_id = id;
+                        let handle_for_cancel = task_slot
+                            .lock()
+                            .as_ref()
+                            .expect("task_slot just initialized")
+                            .handle
+                            .clone();
+                        handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                            let _reg = reg;
+                            if cancel_slot.lock().take().is_none() {
+                                return;
+                            }
+                            cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                            if was_io {
+                                cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                                cancel_inner.watchdog.remove(cancel_task_id);
+                            }
+                            cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                            let mut handles = cancel_inner.blocked_handles.lock();
+                            if let Some(pos) =
+                                handles.iter().position(|h| h.id == cancel_task_id)
+                            {
+                                handles.swap_remove(pos);
                             }
                         }));
                     }
@@ -532,59 +606,25 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // and return `Sent` with no real receiver waiting —
                         // a broken rendezvous handshake.
                         let cancelled = Arc::new(AtomicBool::new(false));
-                        // Shared table of (channel, kind, minted WakerId).
-                        // Wakers capture this table so that when one wins
-                        // the task, it iterates and deregisters the others.
-                        type SelectEntry = (Arc<Channel>, SelectOpKind, Option<WakerId>);
-                        let entries: Arc<Mutex<Vec<SelectEntry>>> = Arc::new(Mutex::new(
-                            ops.iter()
-                                .map(|(ch, kind)| (ch.clone(), kind.clone(), None))
-                                .collect(),
-                        ));
-                        // Cleanup closure: deregister every sibling still
-                        // present in its channel's queue. `winning_idx`
-                        // identifies the entry whose waker is firing; that
-                        // entry is skipped because it's already been
-                        // popped by `wake_recv` / `wake_send` (and the
-                        // counter was decremented there). `None` means
-                        // "remove ALL entries" — used by cancel cleanup
-                        // when the task is cancelled while blocked.
-                        let cleanup_entries = entries.clone();
-                        let cleanup = Arc::new(move |winning_idx: Option<usize>| {
-                            let drained: Vec<(Arc<Channel>, SelectOpKind, WakerId)> = {
-                                let mut guard = cleanup_entries.lock();
-                                let mut out = Vec::with_capacity(guard.len());
-                                for (i, entry) in guard.iter_mut().enumerate() {
-                                    if Some(i) == winning_idx {
-                                        entry.2 = None;
-                                        continue;
-                                    }
-                                    if let Some(wid) = entry.2.take() {
-                                        out.push((entry.0.clone(), entry.1.clone(), wid));
-                                    }
-                                }
-                                out
-                            };
-                            for (ch, kind, wid) in drained {
-                                match kind {
-                                    SelectOpKind::Receive => {
-                                        ch.remove_recv_waker(wid);
-                                    }
-                                    SelectOpKind::Send => {
-                                        ch.remove_send_waker(wid);
-                                    }
-                                }
-                            }
-                        });
+                        // Shared vec of registration guards. Whoever wins
+                        // (winning waker OR cancel) drains the vec; dropping
+                        // the drained guards deregisters every still-pending
+                        // sibling from its channel. The winning waker's own
+                        // entry is also drained but its `Drop` is idempotent:
+                        // `remove_*_waker` returns false when the entry has
+                        // already been popped by `wake_recv` / `wake_send`.
+                        let entries: Arc<Mutex<Vec<WakerRegistration>>> =
+                            Arc::new(Mutex::new(Vec::with_capacity(ops.len())));
                         // Replace the generic cancel_cleanup (set above)
                         // with a select-aware version: same counter
-                        // bookkeeping, plus sibling-waker removal. Select
-                        // is never I/O, so `was_io` is false here.
+                        // bookkeeping, plus sibling-waker removal via the
+                        // guard vec. Select is never I/O, so `was_io` is
+                        // false here.
                         let select_slot = task_slot.clone();
                         let select_inner = inner.clone();
                         let select_task_id = id;
-                        let select_cleanup_for_cancel = cleanup.clone();
                         let cancelled_for_cancel = cancelled.clone();
+                        let entries_for_cancel = entries.clone();
                         let handle_for_select = task_slot
                             .lock()
                             .as_ref()
@@ -604,10 +644,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                 handles.swap_remove(pos);
                             }
                             drop(handles);
-                            // Remove every still-pending waker.
-                            select_cleanup_for_cancel(None);
+                            // Drop every still-pending registration guard;
+                            // each Drop calls remove_*_waker.
+                            drop(std::mem::take(&mut *entries_for_cancel.lock()));
                         }));
-                        for (idx, (ch, kind)) in ops.iter().enumerate() {
+                        for (ch, kind) in ops.iter() {
                             if cancelled.load(Ordering::Acquire) {
                                 // An earlier iteration's waker fired
                                 // inline during its double-check. Don't
@@ -618,35 +659,36 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             let slot = task_slot.clone();
                             let inner2 = inner.clone();
                             let cancelled2 = cancelled.clone();
-                            let cleanup2 = cleanup.clone();
+                            let entries2 = entries.clone();
                             let waker = Box::new(move || {
                                 if cancelled2.load(Ordering::Acquire) {
                                     return; // Another waker already fired
                                 }
                                 if let Some(task) = slot.lock().take() {
                                     cancelled2.store(true, Ordering::Release);
-                                    // Deregister sibling wakers before
-                                    // requeuing. Our own entry (`idx`)
-                                    // is skipped inside cleanup — it
-                                    // was popped from its channel by
-                                    // `wake_recv` / `wake_send`.
-                                    cleanup2(Some(idx));
+                                    // Drain and drop sibling guards —
+                                    // each Drop calls remove_*_waker.
+                                    // Our own entry's guard is also in
+                                    // the vec, but its Drop is a no-op
+                                    // because `wake_*` already popped it.
+                                    drop(std::mem::take(&mut *entries2.lock()));
                                     requeue(&inner2, task, false);
                                 }
                             });
-                            let wid = match kind {
-                                SelectOpKind::Receive => ch.register_recv_waker(waker),
-                                SelectOpKind::Send => ch.register_send_waker(waker),
+                            let reg = match kind {
+                                SelectOpKind::Receive => ch.register_recv_waker_guard(waker),
+                                SelectOpKind::Send => ch.register_send_waker_guard(waker),
                             };
-                            // Record the minted id in the shared table
-                            // only if the waker didn't already fire
-                            // inline during registration's double-check.
-                            // Inline-fire has already run cleanup for
-                            // its winning index, so our entry's slot
-                            // stays None.
+                            // If the waker fired inline during the
+                            // double-check inside register_*_waker, the
+                            // winning waker already drained the vec and
+                            // set `cancelled = true`. In that case drop
+                            // our fresh guard immediately (idempotent
+                            // no-op) and stop iterating.
                             if !cancelled.load(Ordering::Acquire) {
-                                entries.lock()[idx].2 = Some(wid);
+                                entries.lock().push(reg);
                             } else {
+                                drop(reg);
                                 break;
                             }
                         }

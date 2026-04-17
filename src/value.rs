@@ -44,6 +44,82 @@ pub type Waker = Box<dyn FnOnce() + Send>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WakerId(pub u64);
 
+/// Which side of a channel a `WakerRegistration` holds — selects the
+/// correct `remove_*_waker` call on drop.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WakerKind {
+    Recv,
+    Send,
+}
+
+/// RAII guard that owns a registered waker on a `Channel` and
+/// deregisters it on drop. Construct via `Channel::register_recv_waker_guard`
+/// or `Channel::register_send_waker_guard`.
+///
+/// Previously every cancellation / select-loser / main-thread watchdog
+/// iteration had to call `remove_recv_waker` / `remove_send_waker` by
+/// hand, carrying the raw `WakerId` through layers of closures. Missed
+/// sites leaked wakers into the channel's FIFO, which caused four
+/// observable cancel-path bugs (round-27 B1–B4):
+///
+/// - **B1** phantom rendezvous send after cancel-during-receive:
+///   cancelled receiver's waker stayed in `recv_wakers` with
+///   `waiting_receivers > 0`, so a later unrelated `try_send` dropped
+///   into the handoff slot with no real peer.
+/// - **B2** receiver starvation: dead waker at FIFO head shadowed a
+///   real receiver; `wake_recv` popped the dead entry as a no-op.
+/// - **B3** / **B4** symmetric sender starvation on rendezvous and
+///   buffered channels.
+///
+/// With a guard, "register" and "deregister" are the same lifetime.
+/// Dropping the guard is the only way to release the registration, so
+/// forgetting a cancel path is a compile-time (lifetime) impossibility.
+///
+/// The guard's `Drop` invokes `remove_recv_waker` / `remove_send_waker`,
+/// both of which are idempotent: if the waker already fired (i.e. was
+/// popped by `wake_recv` / `wake_send`), `remove_*_waker` returns
+/// `false` without adjusting the counter, matching the accounting
+/// already performed by the wake path.
+pub struct WakerRegistration {
+    channel: Arc<Channel>,
+    id: WakerId,
+    kind: WakerKind,
+}
+
+impl WakerRegistration {
+    /// Expose the channel this registration is on. Useful for tests
+    /// that want to query `waiting_receivers_count` / queue length
+    /// without re-plumbing the channel separately.
+    pub fn channel(&self) -> &Arc<Channel> {
+        &self.channel
+    }
+
+    /// Expose the underlying `WakerId`. Primarily for introspection in
+    /// tests; production code should not need this because the guard
+    /// owns deregistration.
+    pub fn id(&self) -> WakerId {
+        self.id
+    }
+
+    /// Expose whether this guard is for a recv or send waker.
+    pub fn kind(&self) -> WakerKind {
+        self.kind
+    }
+}
+
+impl Drop for WakerRegistration {
+    fn drop(&mut self) {
+        match self.kind {
+            WakerKind::Recv => {
+                self.channel.remove_recv_waker(self.id);
+            }
+            WakerKind::Send => {
+                self.channel.remove_send_waker(self.id);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Int(i64),
@@ -434,6 +510,40 @@ impl Channel {
             }
         }
         id
+    }
+
+    /// Register a recv waker and return a `WakerRegistration` RAII
+    /// guard that deregisters the entry on drop. This is the preferred
+    /// entry point for anything that needs to manage waker lifetime
+    /// (scheduler BlockReason arms, main-thread watchdog loops,
+    /// `channel.select` siblings). See [`WakerRegistration`] for why a
+    /// guard is required — bare `register_recv_waker` + manual
+    /// `remove_recv_waker` has leaked repeatedly through the cancel
+    /// path (round-27 B1–B4).
+    pub fn register_recv_waker_guard(
+        self: &Arc<Self>,
+        waker: Waker,
+    ) -> WakerRegistration {
+        let id = self.register_recv_waker(waker);
+        WakerRegistration {
+            channel: self.clone(),
+            id,
+            kind: WakerKind::Recv,
+        }
+    }
+
+    /// Register a send waker and return a `WakerRegistration` RAII
+    /// guard. See [`register_recv_waker_guard`](Self::register_recv_waker_guard).
+    pub fn register_send_waker_guard(
+        self: &Arc<Self>,
+        waker: Waker,
+    ) -> WakerRegistration {
+        let id = self.register_send_waker(waker);
+        WakerRegistration {
+            channel: self.clone(),
+            id,
+            kind: WakerKind::Send,
+        }
     }
 
     /// Remove a previously-registered recv waker by id, decrementing
