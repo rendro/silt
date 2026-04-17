@@ -712,21 +712,21 @@ const MAIN_THREAD_WATCHDOG_TICK: std::time::Duration = std::time::Duration::from
 
 /// Determine whether the scheduler could still make progress on our
 /// behalf. Returns `true` if there is at least one scheduled task that
-/// is not currently blocked (so it could still reach the channel), or
-/// if there is no scheduler at all but the channel has pending wakers
-/// on the opposite side (rare edge case we treat as "still progressing").
-///
+/// is not currently blocked (so it could still reach the channel), OR
+/// at least one task has been submitted / requeued but not yet dequeued
+/// by a worker — the latter covers the race between `submit` (bumps
+/// `live_tasks` + queue push) and worker pickup, where a freshly-spawned
+/// sender is in flight but has not registered its send waker yet.
 /// Returns `false` when we are certain no scheduled task could unblock
 /// us — the caller should treat this as a deadlock.
+///
+/// When there is no scheduler at all, we conservatively report no
+/// progress: a main thread blocked on a channel with no scheduler can
+/// never be unblocked by a task (there are no tasks).
 fn scheduler_can_make_progress(vm: &Vm) -> bool {
     match vm.current_scheduler() {
         None => false, // No scheduler exists — no task could wake us.
-        Some(sched) => {
-            let (live, blocked) = sched.progress_snapshot();
-            // If any task is live and not currently blocked it might
-            // still run and reach our channel.
-            live > 0 && live > blocked
-        }
+        Some(sched) => sched.can_make_progress(),
     }
 }
 

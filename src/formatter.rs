@@ -1735,22 +1735,46 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
 
     let mut result = String::new();
 
-    // Comments before first declaration
+    // Header comment block emitted before the imports / first declaration.
+    //
+    // Idempotency: on a second formatting pass, any comments that appear
+    // before the first top-level declaration land in `buckets[0]` and are
+    // emitted as a header block (comments + blank line + imports). But on
+    // the first pass, if sorting moved an import that originally had
+    // mid-list comments to the very front, those comments would otherwise
+    // be emitted as an attached `comment_block` without the blank-line
+    // separator — producing a different output than pass 2 would see.
+    //
+    // To keep `fmt(fmt(x)) == fmt(x)`, we promote the first sorted
+    // import's `comment_block` into the same header emission as
+    // `buckets[0]`, so that after any pass the comments immediately
+    // preceding the first import are a contiguous block followed by a
+    // single blank line.
+    let mut header_comments = String::new();
     for c in &buckets[0] {
-        result.push_str(&top_level_comment_text(&c.text));
-        result.push('\n');
+        header_comments.push_str(&top_level_comment_text(&c.text));
+        header_comments.push('\n');
     }
-    if !buckets[0].is_empty() {
+    let first_import_cb_promoted = !import_pairs.is_empty() && !import_pairs[0].0.is_empty();
+    if first_import_cb_promoted {
+        header_comments.push_str(&import_pairs[0].0);
+    }
+    result.push_str(&header_comments);
+    if !header_comments.is_empty() {
         result.push('\n');
     }
 
     // Emit sorted imports grouped together (single newline between them).
-    // Each import may have preceding comments that travel with it.
+    // Each import may have preceding comments that travel with it; the
+    // first sorted import's comment_block has already been emitted above
+    // as part of the header block (see note on idempotency).
     for (i, (comment_block, imp)) in import_pairs.iter().enumerate() {
         if i > 0 {
             result.push('\n');
         }
-        if !comment_block.is_empty() {
+        if i == 0 && first_import_cb_promoted {
+            // already emitted as part of the header block
+        } else if !comment_block.is_empty() {
             result.push_str(comment_block);
         }
         result.push_str(imp);
@@ -4305,9 +4329,12 @@ fn bar() = 2
 import a
 "#;
         let result = format(source).unwrap();
-        // After sorting, `import a` should come first and its comment should precede it
+        // After sorting, `import a` should come first and its comment should precede it.
+        // When the sort promotes an import with an attached comment to the first slot,
+        // the comment is emitted as a header block (comments + blank line + imports)
+        // so that a second formatting pass produces the same output (idempotency).
         assert!(
-            result.contains("-- This explains why we need a\nimport a"),
+            result.contains("-- This explains why we need a\n\nimport a"),
             "comment should move with its associated import, got: {result}"
         );
         let a_pos = result.find("import a").unwrap();
@@ -4316,6 +4343,9 @@ import a
             a_pos < b_pos,
             "import a should come before import b after sorting, got: {result}"
         );
+        // Idempotency: formatting the output again must not change it.
+        let again = format(&result).unwrap();
+        assert_eq!(result, again, "import-sort output must be idempotent");
     }
 
     #[test]
@@ -4341,8 +4371,11 @@ import b
 import a
 "#;
         let result = format(source).unwrap();
+        // Multiple comments attached to a mid-list import are promoted to
+        // the header block when the sort moves that import to the first
+        // slot (keeping the output idempotent).
         assert!(
-            result.contains("-- first comment for a\n-- second comment for a\nimport a"),
+            result.contains("-- first comment for a\n-- second comment for a\n\nimport a"),
             "multiple comments should move with their import, got: {result}"
         );
         let a_pos = result.find("import a").unwrap();
@@ -4351,6 +4384,9 @@ import a
             a_pos < z_pos,
             "import a should come before import z after sorting, got: {result}"
         );
+        // Idempotency: formatting the output again must not change it.
+        let again = format(&result).unwrap();
+        assert_eq!(result, again, "import-sort output must be idempotent");
     }
 
     #[test]

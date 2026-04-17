@@ -62,12 +62,6 @@ fn pick_port() -> String {
 // ─────────────────────────────────────────────────────────────────────
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows shutdown(Both) does not reliably unblock a parked recv; \
-              Linux/macOS lock the invariant. Follow-up: use closesocket + \
-              shutdown sequence on Windows."
-)]
 fn test_close_unblocks_concurrent_reader_on_same_stream() {
     let addr = pick_port();
     // Layout:
@@ -136,9 +130,12 @@ fn main() {{
     );
 
     // Budget: the inner sleep is 50ms; a healthy run completes well
-    // under 1s on Linux/macOS. This test is skipped on Windows
-    // entirely (see cfg_attr on the fn); Windows recv semantics
-    // don't reliably unblock on shutdown(Both).
+    // under 1s on Linux/macOS. Windows uses the same 5s budget — the
+    // `close()` implementation additionally drops the cloned TcpStream
+    // on Windows (closesocket on the duplicate handle) to cancel
+    // pending I/O on a parked recv, since Winsock's `shutdown(SD_BOTH)`
+    // alone doesn't unblock an in-progress blocking recv on a sibling
+    // handle.
     let started = Instant::now();
     let v = run_with_timeout(src, Duration::from_secs(5))
         .expect("tcp.close did not unblock concurrent tcp.read within 5s — shutdown regression");

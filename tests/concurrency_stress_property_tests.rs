@@ -935,16 +935,13 @@ fn main() {
     /// races; the fan-in shape stresses parallel send-waker FIFO
     /// management and cleanup.
     ///
-    /// Skipped on Windows: the default 15.6ms timer resolution plus
-    /// slower subprocess spawn makes the 20-trial fan-in flaky
-    /// (deadlock detector occasionally fires before all 16 spawned
-    /// senders register their wakers). The Linux + macOS runs cover
-    /// the scheduler invariant; Windows relaxes timing, not logic.
+    /// Previously carried a Windows-ignore because the deadlock
+    /// detector would occasionally fire before all 16 spawned senders
+    /// registered their wakers. That false positive is closed by the
+    /// `pending_spawn` counter — see
+    /// `tests/scheduler_deadlock_detector_tests.rs` — so the test now
+    /// runs on every platform with a strict per-trial assertion.
     #[test]
-    #[cfg_attr(
-        windows,
-        ignore = "timer-resolution flake on Windows subprocess harness"
-    )]
     fn hand_fan_in_rendezvous_16() {
         let src = r#"
 import channel
@@ -972,15 +969,9 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Run a handful of trials. The panic fingerprint lock is
-        // non-negotiable on every trial. Silt's deadlock detector can
-        // fire a legitimate false positive on this pattern when all 16
-        // senders haven't registered their wakers by the time main's
-        // receive checks for progress — that's a separate known
-        // scheduler quirk, not the round-27 race. We require only that
-        // at least one trial produces sum=136; the important invariant
-        // is that no trial ever panics.
-        let mut successes = 0;
+        // Every trial must exit 0 and print sum=136. The deadlock
+        // false positive that used to be tolerated is now a hard
+        // failure (scheduler fix.)
         for trial in 0..3 {
             let out = run(&format!("handcrafted_fan_in_16_trial{trial}"), src);
             assert!(
@@ -1001,14 +992,25 @@ fn main() {
                 "trial {trial}: generic panic detected; stderr={}",
                 out.stderr
             );
-            if out.stdout.contains("sum=136") {
-                successes += 1;
-            }
+            assert!(
+                !out.stderr.contains("deadlock"),
+                "trial {trial}: deadlock-detector false positive; stderr={}",
+                out.stderr
+            );
+            assert_eq!(
+                out.exit,
+                Some(0),
+                "trial {trial}: non-zero exit; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
+            assert!(
+                out.stdout.contains("sum=136"),
+                "trial {trial}: expected sum=136; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
         }
-        assert!(
-            successes > 0,
-            "fan-in 16: expected at least one trial to reach sum=136; all 3 deadlock-detected"
-        );
     }
 
     /// Select with a timeout channel that fires before any other

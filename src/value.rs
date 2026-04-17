@@ -178,11 +178,18 @@ pub struct TcpStreamHandle {
     /// `inner`'s mutex (which a concurrent `tcp.read` on another task may
     /// be holding). Obtained via `TcpStream::try_clone` at construction
     /// time; for TLS streams this is a clone of the socket that was
-    /// subsequently handed to `rustls::StreamOwned`. A `shutdown(Both)`
-    /// on any clone affects the shared fd, causing any blocked reader to
-    /// return EOF promptly. `None` only if cloning the fd failed at
-    /// construction (best-effort — callers fall back to Drop semantics).
-    pub shutdown_sock: Option<std::net::TcpStream>,
+    /// subsequently handed to `rustls::StreamOwned`. On Unix, a
+    /// `shutdown(Both)` on any clone affects the shared fd, causing any
+    /// blocked reader to return EOF promptly. On Windows, `shutdown`
+    /// alone does NOT reliably unblock a parked `recv`; after the
+    /// shutdown we take the cloned handle out of this slot and drop it
+    /// (which calls `closesocket` on the duplicate handle) to cancel
+    /// pending I/O on the underlying socket. Wrapped in a `Mutex` so
+    /// `close()` can `take()` the handle out from `&self` without having
+    /// to contend for `inner`'s mutex. `None` if cloning the fd failed
+    /// at construction (best-effort — callers fall back to Drop
+    /// semantics) or after `close()` has consumed it on Windows.
+    pub shutdown_sock: Mutex<Option<std::net::TcpStream>>,
 }
 
 /// A thread-safe channel with support for both buffered and rendezvous semantics.

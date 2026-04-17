@@ -239,7 +239,7 @@ mod tls {
             id: next_id,
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
-            shutdown_sock,
+            shutdown_sock: Mutex::new(shutdown_sock),
         }))
     }
 
@@ -269,7 +269,7 @@ mod tls {
             id: next_id,
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
-            shutdown_sock,
+            shutdown_sock: Mutex::new(shutdown_sock),
         }))
     }
 
@@ -315,7 +315,7 @@ mod tls {
             id: next_id,
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
-            shutdown_sock,
+            shutdown_sock: Mutex::new(shutdown_sock),
         }))
     }
 
@@ -467,7 +467,7 @@ fn make_stream(stream: TcpStream, vm: &mut Vm) -> Value {
         id,
         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
         closed: AtomicBool::new(false),
-        shutdown_sock,
+        shutdown_sock: Mutex::new(shutdown_sock),
     }))
 }
 
@@ -513,9 +513,43 @@ fn close(args: &[Value]) -> Result<Value, VmError> {
         // (EBADF, ENOTCONN, peer already closed, etc.) are ignored —
         // close() ergonomically can't surface a partial failure and the
         // `closed` flag is already set so subsequent ops will error.
-        if let Some(sock) = s.shutdown_sock.as_ref() {
+        //
+        // Platform-specific unblock behavior:
+        //   * Unix: `shutdown(Both)` on any fd sharing the underlying
+        //     open-file description delivers EOF to a parked `recv` on
+        //     a sibling clone. We keep the cloned fd alive so buffered
+        //     data in the socket receive queue (if any) can still be
+        //     drained by late readers before they notice the shutdown.
+        //   * Windows: Winsock's `shutdown(SD_BOTH)` does NOT cancel an
+        //     already-in-progress blocking `recv` on a duplicate handle.
+        //     After issuing the shutdown, we also drop our cloned
+        //     `TcpStream` (which invokes `closesocket` on the duplicate
+        //     handle via its `Drop` impl). On Windows this cancels
+        //     pending I/O on the underlying socket, which is what
+        //     unblocks a `recv` parked on a sibling handle held by the
+        //     `inner` stream. Caveat: this also prevents any further
+        //     reads from draining already-buffered receive data on that
+        //     handle — but since the user called `close`, that's the
+        //     intended semantics.
+        // `mut` is required on Windows where we `take()` the handle
+        // out of the slot; on Unix we only call `shutdown` through a
+        // shared ref. The `#[allow]` keeps both cfgs clean.
+        #[allow(unused_mut)]
+        let mut slot = s.shutdown_sock.lock();
+        if let Some(sock) = slot.as_ref() {
             let _ = sock.shutdown(Shutdown::Both);
         }
+        // On Windows, drop the cloned TcpStream (via `take()`) to
+        // invoke `closesocket` on the duplicate handle. This cancels
+        // pending I/O on the underlying socket — which is what
+        // unblocks a sibling-handle `recv` parked in another task,
+        // since Winsock's `shutdown(SD_BOTH)` alone doesn't do that.
+        // No new deps, no manual `AsRawSocket` extern needed.
+        #[cfg(windows)]
+        {
+            let _ = slot.take();
+        }
+        drop(slot);
     }
     Ok(Value::Unit)
 }
@@ -568,7 +602,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                         id: next_id,
                         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                         closed: AtomicBool::new(false),
-                        shutdown_sock,
+                        shutdown_sock: Mutex::new(shutdown_sock),
                     });
                     Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                 }
@@ -609,7 +643,7 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                             id: next_id,
                             inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                             closed: AtomicBool::new(false),
-                            shutdown_sock,
+                            shutdown_sock: Mutex::new(shutdown_sock),
                         });
                         Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                     }
