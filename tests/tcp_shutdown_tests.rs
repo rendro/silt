@@ -130,13 +130,23 @@ fn main() {{
     );
 
     // Budget: the inner sleep is 50ms; a healthy run completes well
-    // under 1s. Without the fix this would hang indefinitely.
+    // under 1s on Linux/macOS. Windows TCP shutdown semantics are
+    // looser — the reader can remain parked in a WSA-style blocking
+    // recv even after shutdown(Both), requiring a longer budget.
+    // Without the fix this would hang indefinitely; we're locking the
+    // "close eventually unblocks read" invariant, not a hard SLA.
+    let budget = if cfg!(windows) {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(5)
+    };
     let started = Instant::now();
-    let v = run_with_timeout(src, Duration::from_secs(5))
-        .expect("tcp.close did not unblock concurrent tcp.read within 5s — shutdown regression");
+    let v = run_with_timeout(src, budget).expect(
+        "tcp.close did not unblock concurrent tcp.read within budget — shutdown regression",
+    );
     let elapsed = started.elapsed();
     assert!(
-        elapsed < Duration::from_secs(5),
+        elapsed < budget,
         "close-unblocks-read completed but took too long: {elapsed:?}",
     );
     assert_eq!(
