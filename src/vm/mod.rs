@@ -64,12 +64,31 @@ pub struct Vm {
     /// from a resume.
     pub(crate) deadline_stack: Vec<Option<Instant>>,
     /// Saved state from an `invoke_callable` that was interrupted by a yield.
+    ///
+    /// Invariant: this Option is the TOP of a LIFO stack of suspended invokes.
+    /// Deeper (older) suspended states live in `suspended_invoke_outer`. When
+    /// a yield happens while another suspended_invoke is already parked
+    /// (e.g. nested `task.deadline` + I/O), the existing top is spilled into
+    /// the outer vec before the new state overwrites the slot. When the top
+    /// is taken on resume, the next state is auto-promoted from the vec back
+    /// into the slot so nested-resume bytecode paths still observe
+    /// `.is_some()` correctly. See `Vm::push_suspended_invoke` /
+    /// `Vm::take_suspended_invoke`. Audit round 26, fix B5.
     pub(crate) suspended_invoke: Option<runtime::SuspendedInvoke>,
+    /// Deeper suspended-invoke states (older, further from the current
+    /// resume frontier). Top of stack = last element. See the doc on
+    /// `suspended_invoke` for the stack invariant.
+    pub(crate) suspended_invoke_outer: Vec<runtime::SuspendedInvoke>,
     /// Saved iteration state for a higher-order builtin (e.g. `list.map`)
     /// whose callback yielded (e.g. via I/O).  On resume, the outer
     /// `CallBuiltin` re-dispatches the same builtin, which picks up its
     /// iteration state from this slot instead of restarting from index 0.
+    ///
+    /// Same LIFO stack discipline as `suspended_invoke`: deeper (older)
+    /// states live in `suspended_builtin_outer`.
     pub(crate) suspended_builtin: Option<runtime::SuspendedBuiltin>,
+    /// Deeper suspended-builtin states. Top of stack = last element.
+    pub(crate) suspended_builtin_outer: Vec<runtime::SuspendedBuiltin>,
 
     /// Diagnostic log of callers that were elided by tail-call replacement.
     /// Each entry is `(frame_depth, caller_name, caller_span)` where
@@ -191,7 +210,9 @@ impl Vm {
             current_deadline: None,
             deadline_stack: Vec::new(),
             suspended_invoke: None,
+            suspended_invoke_outer: Vec::new(),
             suspended_builtin: None,
+            suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
         };
@@ -341,7 +362,9 @@ impl Vm {
             current_deadline: None,
             deadline_stack: Vec::new(),
             suspended_invoke: None,
+            suspended_invoke_outer: Vec::new(),
             suspended_builtin: None,
+            suspended_builtin_outer: Vec::new(),
             regex_cache: RegexCache::new(),
             tco_elided: Vec::new(),
         }

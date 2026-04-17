@@ -654,17 +654,20 @@ fn main() { println(classify((1, Red))) }
 fn test_where_constraint_propagation_rejects_missing_declaration() {
     let errs = type_errors(
         r#"
-trait Display {
-  fn display(self) -> String
+trait Showable {
+  fn present(self) -> String
 }
-fn show(x: a) -> String where a: Display { x.display() }
+trait Showable for Int {
+  fn present(self) -> String { "i" }
+}
+fn show(x: a) -> String where a: Showable { x.present() }
 fn indirect(x: a) -> String { show(x) }
 fn main() { println(indirect(5)) }
 "#,
     );
     assert!(
         errs.iter().any(|e| e.contains(
-            "enclosing function does not declare constraint required by call to 'show': `a: Display`"
+            "enclosing function does not declare constraint required by call to 'show': `a: Showable`"
         )),
         "expected constraint-propagation error, got: {errs:?}"
     );
@@ -673,14 +676,19 @@ fn main() { println(indirect(5)) }
 #[test]
 fn test_where_constraint_propagation_accepts_declared_constraint() {
     // Positive lock: when the enclosing fn declares the same
-    // constraint, the indirect call typechecks.
+    // constraint, the indirect call typechecks. Use a non-builtin
+    // trait name (round-26 B3 rejects user redeclaration of
+    // Equal/Compare/Hash/Display).
     let errs = type_errors(
         r#"
-trait Display {
-  fn display(self) -> String
+trait Showable {
+  fn present(self) -> String
 }
-fn show(x: a) -> String where a: Display { x.display() }
-fn indirect(x: a) -> String where a: Display { show(x) }
+trait Showable for Int {
+  fn present(self) -> String { "i" }
+}
+fn show(x: a) -> String where a: Showable { x.present() }
+fn indirect(x: a) -> String where a: Showable { show(x) }
 fn main() { println(indirect(5)) }
 "#,
     );

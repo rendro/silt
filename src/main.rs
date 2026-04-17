@@ -312,9 +312,14 @@ fn usage_text() -> String {
     //
     // Alignment is structural: each row is `  <signature (padded to SIG_WIDTH)>  <desc>`.
     // Widen SIG_WIDTH if a new signature exceeds it — the help-row
-    // alignment test in tests/cli_test_rendering_tests.rs will fail
-    // otherwise.
-    const SIG_WIDTH: usize = 46;
+    // alignment tests in tests/cli_test_rendering_tests.rs and
+    // tests/cli_round26_tests.rs will fail otherwise.
+    //
+    // Round-26 L9.2: SIG_WIDTH widened to fit the full
+    // `silt add <name> --git <url> [--rev|--branch|--tag <ref>]`
+    // signature (58 chars) so its description column aligns with the
+    // other rows instead of being pushed right by 12 characters.
+    const SIG_WIDTH: usize = 58;
     let line = |sig: &str, desc: &str| format!("  {sig:<SIG_WIDTH$}  {desc}\n");
     let run_desc: String = {
         let mut d = String::from("Run a program");
@@ -332,10 +337,13 @@ fn usage_text() -> String {
         &run_desc,
     ));
     out.push_str(&line(
-        "silt check [--watch] <file.silt>",
+        "silt check [--format json] [--watch] <file.silt>",
         "Type-check without running",
     ));
-    out.push_str(&line("silt test [--watch] [path]", "Run test functions"));
+    out.push_str(&line(
+        "silt test [--filter <pattern>] [--watch] [path]",
+        "Run test functions",
+    ));
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
@@ -347,7 +355,7 @@ fn usage_text() -> String {
         "Start the language server  [feature: lsp]",
     ));
     out.push_str(&line(
-        "silt disasm <file.silt>",
+        "silt disasm [--watch] [<file.silt>]",
         "Show bytecode disassembly",
     ));
     out.push_str(&line(
@@ -394,9 +402,42 @@ fn run_usage_banner() -> &'static str {
     "silt run [--watch] [--disassemble] <file.silt>"
 }
 
+/// Single source of truth for the `silt disasm` usage banner line.
+///
+/// Three code paths print this — `--help`, the watch dry-validation
+/// gate when outside a package, and the bare-invocation fallback
+/// outside a package. The bracketed form reflects that `<file.silt>`
+/// is optional when invoked inside a silt package (the entry point is
+/// resolved from the manifest). The round-26 `cli_round26_tests.rs`
+/// suite locks this helper so the three banners can't drift apart.
+fn disasm_usage_banner() -> &'static str {
+    "silt disasm [<file.silt>]"
+}
+
+/// Full body of `silt run --help`, rendered to stdout. Shared by the
+/// explicit `silt run --help` path and the legacy
+/// `silt <file>.silt --help` convenience shim so the two can't drift
+/// apart (round-26 G4).
+fn run_help_text() -> String {
+    let mut s = String::new();
+    s.push_str(&format!("Usage: {}\n", run_usage_banner()));
+    s.push('\n');
+    s.push_str("Options:\n");
+    s.push_str("  --watch, -w     Re-run on file changes\n");
+    s.push_str("  --disassemble   Show bytecode disassembly instead of running\n");
+    s.push('\n');
+    s.push_str("Examples:\n");
+    s.push_str("  silt run                      (inside a package, runs src/main.silt)\n");
+    s.push_str("  silt run main.silt\n");
+    s.push_str("  silt run --watch main.silt\n");
+    s.push_str("  silt run --disassemble main.silt\n");
+    s
+}
+
 /// Comma-separated list of Cargo features compiled into this binary.
-/// Shown in `silt --help` so users can tell at a glance whether the
-/// optional `repl`, `lsp`, and `watch` subcommands are available.
+/// Shown in `silt --help` so users can tell at a glance which optional
+/// subcommands (repl, lsp) and capabilities (watch, local-clock, http,
+/// tcp, tcp-tls, postgres, postgres-tls) are available.
 fn enabled_features() -> String {
     let mut feats: Vec<&'static str> = Vec::new();
     if cfg!(feature = "repl") {
@@ -413,6 +454,18 @@ fn enabled_features() -> String {
     }
     if cfg!(feature = "http") {
         feats.push("http");
+    }
+    if cfg!(feature = "tcp") {
+        feats.push("tcp");
+    }
+    if cfg!(feature = "tcp-tls") {
+        feats.push("tcp-tls");
+    }
+    if cfg!(feature = "postgres") {
+        feats.push("postgres");
+    }
+    if cfg!(feature = "postgres-tls") {
+        feats.push("postgres-tls");
     }
     if feats.is_empty() {
         "(none)".to_string()
@@ -521,7 +574,7 @@ fn main() {
                             "check" => {
                                 format!("Usage: {}", check_usage_banner())
                             }
-                            "disasm" => "Usage: silt disasm <file.silt>".to_string(),
+                            "disasm" => format!("Usage: {}", disasm_usage_banner()),
                             _ => unreachable!(),
                         };
                         eprintln!("{banner}");
@@ -575,17 +628,7 @@ fn main() {
         }
         "run" => {
             if args[2..].iter().any(|a| a == "--help" || a == "-h") {
-                println!("Usage: {}", run_usage_banner());
-                println!();
-                println!("Options:");
-                println!("  --watch, -w     Re-run on file changes");
-                println!("  --disassemble   Show bytecode disassembly instead of running");
-                println!();
-                println!("Examples:");
-                println!("  silt run                      (inside a package, runs src/main.silt)");
-                println!("  silt run main.silt");
-                println!("  silt run --watch main.silt");
-                println!("  silt run --disassemble main.silt");
+                print!("{}", run_help_text());
                 process::exit(0);
             }
             let mut disasm = false;
@@ -645,10 +688,13 @@ fn main() {
         }
         "disasm" => {
             if args[2..].iter().any(|a| a == "--help" || a == "-h") {
-                println!("Usage: silt disasm [<file.silt>]");
+                println!("Usage: {}", disasm_usage_banner());
                 println!();
                 println!("Prints the compiled bytecode disassembly for <file.silt>.");
                 println!("Inside a package with no file argument, disassembles src/main.silt.");
+                println!();
+                println!("Options:");
+                println!("  --watch, -w     Re-run on file changes");
                 println!();
                 println!("Example:");
                 println!("  silt disasm main.silt");
@@ -666,7 +712,7 @@ fn main() {
                 match resolve_package_entry_point() {
                     Ok(Some(p)) => p.to_string_lossy().into_owned(),
                     Ok(None) => {
-                        eprintln!("Usage: silt disasm <file.silt>");
+                        eprintln!("Usage: {}", disasm_usage_banner());
                         process::exit(1);
                     }
                     Err(()) => process::exit(1),
@@ -1091,11 +1137,7 @@ fn main() {
             let mut disasm = false;
             for extra in &args[2..] {
                 if extra == "--help" || extra == "-h" {
-                    println!("Usage: {}", run_usage_banner());
-                    println!();
-                    println!("Options:");
-                    println!("  --watch, -w     Re-run on file changes");
-                    println!("  --disassemble   Show bytecode disassembly instead of running");
+                    print!("{}", run_help_text());
                     process::exit(0);
                 } else if extra == "--disassemble" {
                     disasm = true;
@@ -1630,7 +1672,14 @@ fn run_add_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             tag_arg = Some(rest.to_string());
             i += 1;
         } else if arg.starts_with('-') {
-            return Err(format!("silt add: unknown flag '{arg}'").into());
+            // Round-26 G6: every other subcommand emits a `Run 'silt <sub> --help'
+            // for usage.` nudge on a second stderr line. Match that shape here
+            // by embedding the nudge in the error string (the top-level
+            // dispatch renders `error: {e}` with `\n` passthrough).
+            return Err(format!(
+                "silt add: unknown flag '{arg}'\nRun 'silt add --help' for usage."
+            )
+            .into());
         } else if name.is_none() {
             name = Some(arg.clone());
             i += 1;

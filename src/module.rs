@@ -113,17 +113,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "io" => vec!["read_file", "write_file", "read_line", "args", "inspect"],
         "int" => vec!["parse", "abs", "min", "max", "to_float", "to_string"],
         "float" => vec![
-            "parse",
-            "round",
-            "ceil",
-            "floor",
-            "abs",
-            "to_string",
-            "to_int",
-            "min",
-            "max",
-            "min_value",
-            "max_value",
+            "parse", "round", "ceil", "floor", "abs", "to_string", "to_int", "min", "max",
         ],
         "result" => vec![
             "unwrap_or",
@@ -299,9 +289,23 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
 
 /// Returns the list of builtin constants (non-function values) for a module.
 /// E.g., for "math" returns ["pi", "e"].
+///
+/// Keep this in sync with the constants registered in
+/// `src/typechecker/builtins.rs` (`register_math_builtins` /
+/// `register_float_builtins`). LSP dot-completion (`src/lsp.rs::dot_completions`)
+/// consults this list so editor autocompletion surfaces module constants.
 pub fn builtin_module_constants(module: &str) -> Vec<&'static str> {
     match module {
         "math" => vec!["pi", "e"],
+        "float" => vec![
+            "max_value",
+            "min_value",
+            "epsilon",
+            "min_positive",
+            "infinity",
+            "neg_infinity",
+            "nan",
+        ],
         _ => vec![],
     }
 }

@@ -258,6 +258,20 @@ impl TypeChecker {
                 ));
                 self.is_useful(matrix, &open, ty, depth + 1)
             }
+            // B4 (round 26): Unit has exactly one inhabitant, `()`. The
+            // parser emits that inhabitant as `PatternKind::Tuple(vec![])`
+            // (same shape the round-23 bind/check_pattern unification
+            // accepts). Without this arm, Unit scrutinees fell through to
+            // the "infinite type" case below, which only sees a
+            // wildcard/ident row as covering the column — so
+            // `match u { () -> ... }` on `let u: () = ()` was wrongly
+            // reported non-exhaustive. Treat any row whose pattern is an
+            // empty tuple OR a bare wildcard/ident as covering the unit
+            // value.
+            Type::Unit => !matrix.iter().any(|p| {
+                matches!(p.kind, PatternKind::Wildcard | PatternKind::Ident(_))
+                    || matches!(&p.kind, PatternKind::Tuple(ts) if ts.is_empty())
+            }),
             // Infinite types: wildcard is useful iff no wildcard/ident in matrix.
             _ => !matrix
                 .iter()
@@ -626,16 +640,25 @@ impl TypeChecker {
         // wildcard/ident, so the Red literal row is dropped and the
         // recursive wildcard check on the rest column surfaces the
         // missing `(_, Red)` arm as non-exhaustive.
-        let is_infinite_scalar = matches!(
-            &first_ty,
-            Type::Int | Type::Float | Type::ExtFloat | Type::String
-        );
+        //
+        // B1 (round 26): the same hazard applies to any first-column type
+        // that `constructors_for_query` cannot fully enumerate — notably
+        // Records, nested Tuples, Lists, Maps, Sets and non-enum Generics.
+        // For those, `constructors_for_query` falls through to a single
+        // `[Wildcard]`, which once again pretends specific-value patterns
+        // in the matrix cover the whole column. Treat these as the
+        // "infinite" case too: the witness pass (Pass 2) drops rows whose
+        // first column is a specific value, so `(Pair{a:0,b:0}, _)` no
+        // longer masks the missing `(Pair{a:1,b:2}, _)` case. Pass 1 is
+        // only useful for literal-dedupe reporting and stays a no-op when
+        // the first column has no recognised literal shapes.
+        let is_first_col_non_enumerable = Self::first_col_non_enumerable(&first_ty, self);
         let query_first_is_wild = matches!(
             query_first.kind,
             PatternKind::Wildcard | PatternKind::Ident(_)
         );
 
-        if is_infinite_scalar && query_first_is_wild {
+        if is_first_col_non_enumerable && query_first_is_wild {
             // Collect distinct literal constructors seen in the first
             // column of the matrix.
             let mut literal_ctors: Vec<Pattern> = Vec::new();
@@ -686,12 +709,19 @@ impl TypeChecker {
                 }
             }
             // Pass 2: synthetic "not in matrix" witness — only rows whose
-            // first column is already wildcard/ident survive.
+            // first column covers every value of the column type survive.
+            // B1 (round 26): a record pattern whose fields are all
+            // bindings/wildcards (e.g. `Pair{a, b}`) or a nested tuple
+            // pattern of bindings (e.g. `(x, y)`) also covers every value
+            // of the column, even though the outer pattern isn't itself a
+            // wildcard/ident. Without this, a row like
+            // `(Pair{a, b}, _) -> _` is dropped from the witness matrix
+            // and the match is wrongly flagged non-exhaustive.
             let mut witness_rest: Vec<Pattern> = Vec::new();
             for pat in matrix {
                 match &pat.kind {
                     PatternKind::Tuple(ps) if ps.len() == arity => {
-                        if matches!(ps[0].kind, PatternKind::Wildcard | PatternKind::Ident(_)) {
+                        if Self::is_fully_covering_pattern(&ps[0]) {
                             witness_rest.push(synth(PatternKind::Tuple(ps[1..].to_vec())));
                         }
                     }
@@ -741,6 +771,49 @@ impl TypeChecker {
             }
         }
         false
+    }
+
+    /// B1 helper: decide whether `pat` covers every value of its column
+    /// type syntactically. Top-level wildcards/idents obviously do; so
+    /// does a record pattern whose every field is a covering pattern,
+    /// and a tuple pattern whose every element is covering (since
+    /// records and tuples are single-constructor product types). This
+    /// is intentionally conservative — it only examines the pattern's
+    /// shape and doesn't try to prove coverage via reasoning about the
+    /// column type. That's fine for Pass 2 of the witness-split, whose
+    /// job is to identify rows that unconditionally cover the synthetic
+    /// "not-in-matrix" first-column value.
+    fn is_fully_covering_pattern(pat: &Pattern) -> bool {
+        match &pat.kind {
+            PatternKind::Wildcard | PatternKind::Ident(_) => true,
+            PatternKind::Record { fields, .. } => fields
+                .iter()
+                .all(|(_, sub)| match sub {
+                    Some(p) => Self::is_fully_covering_pattern(p),
+                    None => true,
+                }),
+            PatternKind::Tuple(ps) => ps.iter().all(Self::is_fully_covering_pattern),
+            PatternKind::Or(alts) => alts.iter().any(Self::is_fully_covering_pattern),
+            _ => false,
+        }
+    }
+
+    /// B1 helper: decide whether the first-column type of a tuple is one
+    /// where `constructors_for_query` cannot fully enumerate constructors,
+    /// so the usefulness algorithm must fall back to the witness-split
+    /// path. The only first-column types with a faithful enumeration are
+    /// `Bool` (two cases) and `Type::Generic(name)` where `name` is a
+    /// registered enum. Everything else — scalars, records, tuples,
+    /// lists, maps, sets, channels, generics that map to records or are
+    /// unknown, and inference artefacts — must be witness-split to avoid
+    /// pretending a handful of specific-value rows cover the whole
+    /// column.
+    fn first_col_non_enumerable(ty: &Type, tc: &TypeChecker) -> bool {
+        match ty {
+            Type::Bool => false,
+            Type::Generic(name, _) => !tc.enums.contains_key(name),
+            _ => true,
+        }
     }
 
     /// B3 helper: structural equality for literal-constructor patterns used

@@ -182,6 +182,9 @@ silt init                  Create a new silt package in the current directory
 silt lsp                   Start the language server
 silt disasm <file.silt>    Show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           Update the silt binary to the latest release
+silt update [<dep-name>]   Regenerate silt.lock for the current package's dependencies
+silt add <name> --path <path>                             Add a path-based dependency to silt.toml
+silt add <name> --git <url> [--rev|--branch|--tag <ref>]  Add a git-based dependency to silt.toml
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, and `test`. It watches the project directory for `.silt` file changes and automatically re-runs the command.

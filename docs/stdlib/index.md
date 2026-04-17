@@ -27,3 +27,7 @@ Complete API reference for every built-in function in silt.
 | [channel / task](channel-task.md) | Bounded channels for concurrent task communication, spawn and join tasks |
 | [time](time.md) | Dates, times, instants, durations, formatting, parsing, and arithmetic |
 | [http](http.md) | HTTP client and server |
+| [bytes](bytes.md) | Immutable byte sequences for binary I/O, hashing, and encoding/decoding |
+| [tcp](tcp.md) | Raw TCP listeners and streams with cooperative I/O (optional TLS via `tcp-tls`) |
+| [stream](stream.md) | Channel-backed sources, transforms, and sinks with backpressure |
+| [postgres](postgres.md) | PostgreSQL pools, queries, transactions, streams, cursors, and LISTEN/NOTIFY (opt-in) |

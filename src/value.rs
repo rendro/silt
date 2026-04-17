@@ -1211,6 +1211,26 @@ impl PartialEq for Value {
             // Tcp handles: identity-based, like Channel/Handle.
             (Value::TcpListener(a), Value::TcpListener(b)) => a.id == b.id,
             (Value::TcpStream(a), Value::TcpStream(b)) => a.id == b.id,
+            // Handle / VmClosure / BuiltinFn / VariantConstructor: without
+            // explicit arms here, the catch-all `_ => false` would violate
+            // reflexivity (`h == h` returning false) and break the Eq/Ord
+            // contract — `impl Ord` (below) returns `Equal` for identical
+            // instances while `PartialEq` returned `false`, so BTreeSet /
+            // BTreeMap silently dropped duplicates. Mirror the identity
+            // rules from `impl Ord`:
+            //   - Handle: id equality (TaskHandle is heap-allocated, id is unique).
+            //   - VmClosure: Arc pointer equality (closures carry captured
+            //     upvalues; two closures of the same function with different
+            //     upvalues must NOT compare equal).
+            //   - BuiltinFn: string equality (builtins are by name).
+            //   - VariantConstructor: name + arity equality.
+            // Cross-kind pairs still fall through to `_ => false`.
+            (Value::Handle(a), Value::Handle(b)) => a.id == b.id,
+            (Value::VmClosure(a), Value::VmClosure(b)) => Arc::ptr_eq(a, b),
+            (Value::BuiltinFn(a), Value::BuiltinFn(b)) => a == b,
+            (Value::VariantConstructor(na, aa), Value::VariantConstructor(nb, ab)) => {
+                na == nb && aa == ab
+            }
             _ => false,
         }
     }

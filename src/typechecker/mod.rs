@@ -22,6 +22,14 @@ pub(super) use crate::types::*;
 
 pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
 
+/// Names of builtin traits that the compiler registers automatically
+/// with auto-derived impls for every primitive and builtin container.
+/// User code cannot redeclare a trait with any of these names — doing
+/// so would shadow the compiler's TraitInfo (different method names,
+/// different signatures) and produce nonsensical cascade errors when
+/// the preregistered impls get revalidated against the user's body.
+pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
+
 // ── Type environment ────────────────────────────────────────────────
 
 /// A typing environment mapping names to type schemes.
@@ -942,7 +950,7 @@ impl TypeChecker {
                 offset: 0,
             };
             let primitive_types = ["Int", "Float", "Bool", "String", "()"];
-            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let all_traits = BUILTIN_TRAIT_NAMES;
             macro_rules! make_trait_methods {
                 ($self:expr) => {
                     vec![
@@ -972,7 +980,7 @@ impl TypeChecker {
                 };
             }
             for type_name in &primitive_types {
-                for trait_name in &all_traits {
+                for trait_name in all_traits {
                     self.trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
@@ -996,7 +1004,7 @@ impl TypeChecker {
             // Equal/Hash/Display — not Compare.
             let non_ordering_traits = ["Equal", "Hash", "Display"];
             for type_name in &["List"] {
-                for trait_name in &all_traits {
+                for trait_name in all_traits {
                     self.trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
                 }
@@ -2087,6 +2095,26 @@ impl TypeChecker {
     // ── Register trait declarations ─────────────────────────────────
 
     fn register_trait_decl(&mut self, t: &TraitDecl) {
+        // Reject redefinition of builtin trait names. The compiler has
+        // already preregistered TraitInfo + auto-derived impls for these
+        // names; letting a user `trait Equal { fn eq(self) -> Bool }`
+        // overwrite them would produce a cascade of bogus
+        // "missing method" errors when validate_trait_impls runs the
+        // preregistered impls against the user's new body.
+        let trait_name_str = resolve(t.name);
+        if BUILTIN_TRAIT_NAMES
+            .iter()
+            .any(|b| *b == trait_name_str.as_str())
+        {
+            self.error(
+                format!(
+                    "trait '{trait_name_str}' is a builtin trait and cannot be redefined"
+                ),
+                t.span,
+            );
+            return;
+        }
+
         let self_var = self.fresh_var();
         let methods: Vec<(Symbol, Type)> = t
             .methods
@@ -2803,7 +2831,7 @@ impl ReplTypeContext {
                 offset: 0,
             };
             let primitive_types = ["Int", "Float", "Bool", "String", "()"];
-            let all_traits = ["Equal", "Compare", "Hash", "Display"];
+            let all_traits = BUILTIN_TRAIT_NAMES;
             macro_rules! make_trait_methods {
                 ($self:expr) => {
                     vec![
@@ -2833,7 +2861,7 @@ impl ReplTypeContext {
                 };
             }
             for type_name in &primitive_types {
-                for trait_name in &all_traits {
+                for trait_name in all_traits {
                     checker
                         .trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));
@@ -2857,7 +2885,7 @@ impl ReplTypeContext {
             // Equal/Hash/Display but not Compare.
             let non_ordering_traits = ["Equal", "Hash", "Display"];
             for type_name in &["List"] {
-                for trait_name in &all_traits {
+                for trait_name in all_traits {
                     checker
                         .trait_impl_set
                         .insert((intern(trait_name), intern(type_name)));

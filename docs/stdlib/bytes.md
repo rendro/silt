@@ -103,5 +103,5 @@ error message:
   for stable serialization.
 - A future silt release may promote `Bytes` to a language-level type with
   literal syntax (e.g. `b"hello"`) and method-form access. Today's API
-  is forward-compatible: programs written against the v0.9 module surface
-  will continue to behave identically.
+  is forward-compatible: programs written against the current `bytes`
+  module surface will continue to behave identically.

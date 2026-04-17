@@ -372,11 +372,9 @@ fn test_watchdog_env_var_fires_pending_io_surfaces_timeout_err() {
     // test, the watchdog-writes-Err-to-completion path is covered
     // only by scheduler unit tests, never end-to-end.
     //
-    // NOTE: ignored pending prod fix — see #[ignore] message above.
-    // The test body is correct and should pass once the scheduler
-    // deadlock is resolved. Keeping the body live (rather than
-    // deleted) preserves the regression lock so the fix can un-ignore
-    // and verify in a single step.
+    // Round-23 (commit 590c2d8) resolved the scheduler deadlock this
+    // test was gated against, so it now runs unconditionally as a
+    // regression lock for the watchdog-writes-Err-to-completion path.
     let src = r#"
 import io
 import task

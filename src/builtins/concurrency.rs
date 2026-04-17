@@ -183,8 +183,21 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 return Err(VmError::yield_signal());
             }
 
-            // Main thread: block on a shared condvar.
+            // Main thread: block on a shared condvar. Capture every
+            // registered WakerId so we can deregister the still-pending
+            // siblings before we return — otherwise the losing channels'
+            // `waiting_receivers` counter stays inflated and a later
+            // rendezvous `try_send` sees a phantom receiver (same bug
+            // class as the scheduled-task path fix in src/scheduler.rs
+            // around lines 524-655).
             let pair = Arc::new((Mutex::new(false), Condvar::new()));
+            // (channel, kind, Option<WakerId>). `None` means we did not
+            // register on that op (closed channel at registration time).
+            let mut registrations: Vec<(
+                Arc<Channel>,
+                SelectOpKind,
+                Option<crate::value::WakerId>,
+            )> = Vec::with_capacity(ops.len());
             for op in &ops {
                 let pair2 = pair.clone();
                 let waker = Box::new(move || {
@@ -194,16 +207,42 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 });
                 match op {
                     SelectOp::Receive(ch) if !ch.is_closed() => {
-                        ch.register_recv_waker(waker);
+                        let id = ch.register_recv_waker(waker);
+                        registrations.push((ch.clone(), SelectOpKind::Receive, Some(id)));
                     }
                     SelectOp::Send(ch, _) if !ch.is_closed() => {
-                        ch.register_send_waker(waker);
+                        let id = ch.register_send_waker(waker);
+                        registrations.push((ch.clone(), SelectOpKind::Send, Some(id)));
                     }
-                    _ => {}
+                    SelectOp::Receive(ch) => {
+                        registrations.push((ch.clone(), SelectOpKind::Receive, None));
+                    }
+                    SelectOp::Send(ch, _) => {
+                        registrations.push((ch.clone(), SelectOpKind::Send, None));
+                    }
                 }
             }
+            // Cleanup: remove every still-pending waker (wakers that
+            // already fired were popped from the channel's queue by
+            // `wake_recv` / `wake_send` and `remove_*_waker` returns
+            // false for them — that's the correct idempotent behavior).
+            let cleanup = |regs: &[(Arc<Channel>, SelectOpKind, Option<crate::value::WakerId>)]| {
+                for (ch, kind, id) in regs {
+                    if let Some(wid) = id {
+                        match kind {
+                            SelectOpKind::Receive => {
+                                ch.remove_recv_waker(*wid);
+                            }
+                            SelectOpKind::Send => {
+                                ch.remove_send_waker(*wid);
+                            }
+                        }
+                    }
+                }
+            };
             loop {
                 if let Some(result) = try_select_sweep(&ops)? {
+                    cleanup(&registrations);
                     return Ok(result);
                 }
                 let (lock, cvar) = &*pair;
@@ -723,29 +762,57 @@ fn main_thread_wait_for_send(
     vm: &Vm,
 ) -> Result<Value, VmError> {
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    // Track the most recently registered send-waker id so we can
+    // deregister it on the next iteration — the channel only drains
+    // wakers on successful receive/close, so without this every
+    // watchdog tick leaves a stale waker closure in the queue
+    // (unbounded growth on a channel that nobody is draining).
+    let mut last_waker_id: Option<crate::value::WakerId> = None;
     loop {
         // Try first so we don't miss a send slot that just opened.
         match ch.try_send(val.clone()) {
-            TrySendResult::Sent => return Ok(Value::Unit),
+            TrySendResult::Sent => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_send_waker(id);
+                }
+                return Ok(Value::Unit);
+            }
             TrySendResult::Closed => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_send_waker(id);
+                }
                 return Err(VmError::new(format!("send on closed channel {}", ch.id)));
             }
             TrySendResult::Full => {}
         }
-        // Register a send waker that pokes our local condvar. The
-        // channel drains wakers on successful receive/close, so we
-        // must re-register each iteration.
+        // Deregister the previous iteration's waker (if it's still
+        // pending) before minting a new one. `remove_send_waker`
+        // returns false if the waker already fired — that's the
+        // idempotent no-op case.
+        if let Some(id) = last_waker_id.take() {
+            ch.remove_send_waker(id);
+        }
+        // Register a send waker that pokes our local condvar.
         let pair2 = pair.clone();
-        ch.register_send_waker(Box::new(move || {
+        let wid = ch.register_send_waker(Box::new(move || {
             let (lock, cvar) = &*pair2;
             *lock.lock() = true;
             cvar.notify_one();
         }));
+        last_waker_id = Some(wid);
         // Re-check after registering to avoid a lost wakeup race
         // between try_send above and register_send_waker.
         match ch.try_send(val.clone()) {
-            TrySendResult::Sent => return Ok(Value::Unit),
+            TrySendResult::Sent => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_send_waker(id);
+                }
+                return Ok(Value::Unit);
+            }
             TrySendResult::Closed => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_send_waker(id);
+                }
                 return Err(VmError::new(format!("send on closed channel {}", ch.id)));
             }
             TrySendResult::Full => {}
@@ -764,8 +831,16 @@ fn main_thread_wait_for_send(
             // Give one last try in case a task completed between
             // the wait and the check.
             match ch.try_send(val.clone()) {
-                TrySendResult::Sent => return Ok(Value::Unit),
+                TrySendResult::Sent => {
+                    if let Some(id) = last_waker_id.take() {
+                        ch.remove_send_waker(id);
+                    }
+                    return Ok(Value::Unit);
+                }
                 TrySendResult::Closed => {
+                    if let Some(id) = last_waker_id.take() {
+                        ch.remove_send_waker(id);
+                    }
                     return Err(VmError::new(format!("send on closed channel {}", ch.id)));
                 }
                 TrySendResult::Full => {}
@@ -774,6 +849,9 @@ fn main_thread_wait_for_send(
             // close is not a deadlock.
             if ch.has_pending_timer_close() {
                 continue;
+            }
+            if let Some(id) = last_waker_id.take() {
+                ch.remove_send_waker(id);
             }
             return Err(VmError::new(
                 "deadlock on main thread: channel send with no counterparty".into(),
@@ -789,28 +867,57 @@ fn main_thread_wait_for_receive(
     vm: &Vm,
 ) -> Result<Value, VmError> {
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    // Track the most recently registered recv-waker id so we can
+    // deregister it on the next iteration (or on return). Without
+    // this, each watchdog tick re-registers a waker whose `WakerId`
+    // is dropped — `waiting_receivers` inflates unboundedly per
+    // iteration, and a later rendezvous `try_send` from another task
+    // sees a phantom receiver, places a value into the handoff slot,
+    // and returns `Sent` with no real receiver. Values are lost.
+    // See round-26 B6.
+    let mut last_waker_id: Option<crate::value::WakerId> = None;
     loop {
         match ch.try_receive() {
             TryReceiveResult::Value(val) => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_recv_waker(id);
+                }
                 return Ok(Value::Variant("Message".into(), vec![val]));
             }
             TryReceiveResult::Closed => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_recv_waker(id);
+                }
                 return Ok(Value::Variant("Closed".into(), vec![]));
             }
             TryReceiveResult::Empty => {}
         }
+        // Deregister the previous iteration's waker (if it's still
+        // pending) before minting a new one. `remove_recv_waker`
+        // returns false if the waker already fired — that's the
+        // idempotent no-op case.
+        if let Some(id) = last_waker_id.take() {
+            ch.remove_recv_waker(id);
+        }
         let pair2 = pair.clone();
-        ch.register_recv_waker(Box::new(move || {
+        let wid = ch.register_recv_waker(Box::new(move || {
             let (lock, cvar) = &*pair2;
             *lock.lock() = true;
             cvar.notify_one();
         }));
+        last_waker_id = Some(wid);
         // Re-check after registration to avoid a lost wakeup.
         match ch.try_receive() {
             TryReceiveResult::Value(val) => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_recv_waker(id);
+                }
                 return Ok(Value::Variant("Message".into(), vec![val]));
             }
             TryReceiveResult::Closed => {
+                if let Some(id) = last_waker_id.take() {
+                    ch.remove_recv_waker(id);
+                }
                 return Ok(Value::Variant("Closed".into(), vec![]));
             }
             TryReceiveResult::Empty => {}
@@ -826,9 +933,15 @@ fn main_thread_wait_for_receive(
         if !scheduler_can_make_progress(vm) {
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
+                    if let Some(id) = last_waker_id.take() {
+                        ch.remove_recv_waker(id);
+                    }
                     return Ok(Value::Variant("Message".into(), vec![val]));
                 }
                 TryReceiveResult::Closed => {
+                    if let Some(id) = last_waker_id.take() {
+                        ch.remove_recv_waker(id);
+                    }
                     return Ok(Value::Variant("Closed".into(), vec![]));
                 }
                 TryReceiveResult::Empty => {}
@@ -840,6 +953,9 @@ fn main_thread_wait_for_receive(
             // deadlock check before the 50ms timer fires.
             if ch.has_pending_timer_close() {
                 continue;
+            }
+            if let Some(id) = last_waker_id.take() {
+                ch.remove_recv_waker(id);
             }
             return Err(VmError::new(
                 "deadlock on main thread: channel receive with no counterparty".into(),

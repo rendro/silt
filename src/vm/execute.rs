@@ -628,6 +628,65 @@ impl Vm {
         }
     }
 
+    // ── Suspended-state stacks (B5, audit round 26) ─────────────
+    //
+    // `suspended_invoke` and `suspended_builtin` are the TOP of a LIFO
+    // stack of suspended states (see field docs on `Vm`). Deeper states
+    // live in `suspended_invoke_outer` / `suspended_builtin_outer`.
+    // Nested yield scenarios (e.g. nested `task.deadline` + I/O, or
+    // nested `list.map` with a yielding callback) can park several
+    // suspended states at once; before the fix in round 26, the outer
+    // yield would overwrite the inner state in the single Option slot
+    // and the inner callback got re-run from scratch on resume.
+
+    /// Push `s` onto the `suspended_invoke` stack. If the Option slot is
+    /// already occupied (an inner yield happened first), spill the current
+    /// occupant into `suspended_invoke_outer` before replacing the slot.
+    pub(crate) fn push_suspended_invoke(&mut self, s: SuspendedInvoke) {
+        if let Some(existing) = self.suspended_invoke.take() {
+            self.suspended_invoke_outer.push(existing);
+        }
+        self.suspended_invoke = Some(s);
+    }
+
+    /// Pop the top of the `suspended_invoke` stack (i.e. take the Option
+    /// slot) and auto-promote the next deeper state from
+    /// `suspended_invoke_outer` into the slot so subsequent `.is_some()`
+    /// checks on the field correctly reflect "a state is still parked
+    /// below". Returns the state that was on top (or None if the stack
+    /// is empty).
+    pub(crate) fn take_suspended_invoke(&mut self) -> Option<SuspendedInvoke> {
+        let head = self.suspended_invoke.take();
+        if head.is_some()
+            && let Some(next) = self.suspended_invoke_outer.pop()
+        {
+            self.suspended_invoke = Some(next);
+        }
+        head
+    }
+
+    /// Push `s` onto the `suspended_builtin` stack, with the same
+    /// spill-on-overwrite discipline as `push_suspended_invoke`.
+    pub(crate) fn push_suspended_builtin(&mut self, s: SuspendedBuiltin) {
+        if let Some(existing) = self.suspended_builtin.take() {
+            self.suspended_builtin_outer.push(existing);
+        }
+        self.suspended_builtin = Some(s);
+    }
+
+    /// Pop the top of the `suspended_builtin` stack, auto-promoting the
+    /// next deeper state into the Option slot. Returns the state that
+    /// was on top.
+    pub(crate) fn take_suspended_builtin(&mut self) -> Option<SuspendedBuiltin> {
+        let head = self.suspended_builtin.take();
+        if head.is_some()
+            && let Some(next) = self.suspended_builtin_outer.pop()
+        {
+            self.suspended_builtin = Some(next);
+        }
+        head
+    }
+
     /// Call a callable Value and return its result. Used for higher-order builtins.
     pub(crate) fn invoke_callable(
         &mut self,
@@ -723,10 +782,13 @@ impl Vm {
                             }
                             // Save the extra frames and stack so the caller
                             // (e.g. channel.each) can resume instead of
-                            // re-running the callback from scratch.
+                            // re-running the callback from scratch.  Use the
+                            // stack-aware push so an inner suspended state
+                            // that yielded first (nested yield: B5) is NOT
+                            // overwritten.
                             let extra_frames = self.frames.split_off(saved_frame_count);
                             let extra_stack = self.stack.split_off(func_slot);
-                            self.suspended_invoke = Some(SuspendedInvoke {
+                            self.push_suspended_invoke(SuspendedInvoke {
                                 frames: extra_frames,
                                 stack: extra_stack,
                                 func_slot,
@@ -743,6 +805,13 @@ impl Vm {
                             // deferred, round 16 fix.)
                             let enriched = self.enrich_error(e);
                             self.frames.truncate(saved_frame_count);
+                            // Prune tail-call elided diagnostic entries for
+                            // the frames we just truncated, mirroring the
+                            // Return/EarlyReturn arms. Without this, stale
+                            // tco_elided entries from the callback can bleed
+                            // into later unrelated call_stack renders.
+                            // (Audit round 26 L7 — mirror fix for round-22.)
+                            self.prune_tco_elided(self.frames.len());
                             self.stack.truncate(func_slot);
                             return Err(enriched);
                         }
@@ -772,7 +841,10 @@ impl Vm {
     /// `self.suspended_invoke`.  This method restores them and continues
     /// the execution loop until the callback returns a result.
     pub(crate) fn resume_suspended_invoke(&mut self) -> Result<Value, VmError> {
-        let suspended = self.suspended_invoke.take().ok_or_else(|| {
+        // Pop via the stack-aware helper so any deeper suspended state
+        // (e.g. inner yield from a nested `task.deadline`) is auto-promoted
+        // into the top slot for subsequent `.is_some()` checks. (B5.)
+        let suspended = self.take_suspended_invoke().ok_or_else(|| {
             VmError::new("internal: resume_suspended_invoke called with no suspended state".into())
         })?;
         let saved_frame_count = self.frames.len();
@@ -832,7 +904,10 @@ impl Vm {
                     }
                     let extra_frames = self.frames.split_off(saved_frame_count);
                     let extra_stack = self.stack.split_off(func_slot);
-                    self.suspended_invoke = Some(SuspendedInvoke {
+                    // Push onto the stack; if an even-deeper suspended
+                    // state exists (nested-yield case), it's preserved in
+                    // `suspended_invoke_outer`. (B5 fix.)
+                    self.push_suspended_invoke(SuspendedInvoke {
                         frames: extra_frames,
                         stack: extra_stack,
                         func_slot,
@@ -852,6 +927,10 @@ impl Vm {
                     // disappears (snaps back to the `channel.each` call site).
                     let enriched = self.enrich_error(e);
                     self.frames.truncate(saved_frame_count);
+                    // Mirror Return/EarlyReturn's prune so stale tco_elided
+                    // entries don't bleed into later call_stack renders.
+                    // (Audit round 26 L7 — mirror fix for round-22.)
+                    self.prune_tco_elided(self.frames.len());
                     self.stack.truncate(func_slot);
                     return Err(enriched);
                 }
@@ -914,16 +993,16 @@ impl Vm {
             let fresh_items = items;
             let fresh_callback = callback;
             let fresh_acc = seeded_acc;
-            if let Some(susp) = self.suspended_builtin.take() {
+            if let Some(susp) = self.take_suspended_builtin() {
                 if susp.name == kind.name() {
                     (susp.items, susp.next_index, susp.acc, susp.callback)
                 } else {
                     // The suspended state belongs to a different builtin.
-                    // Restore it and start fresh — this shouldn't happen in
-                    // practice because yields propagate immediately, but be
-                    // safe and put it back so the correct builtin can pick
-                    // it up.
-                    self.suspended_builtin = Some(susp);
+                    // Put it back onto the top of the stack so the correct
+                    // builtin can pick it up on its own re-dispatch. Use
+                    // the stack-aware push in case `take_suspended_builtin`
+                    // auto-promoted a deeper state we don't want to lose.
+                    self.push_suspended_builtin(susp);
                     (fresh_items, 0, fresh_acc, fresh_callback)
                 }
             } else {
@@ -941,7 +1020,7 @@ impl Vm {
                 Ok(v) => v,
                 Err(e) if e.is_yield => {
                     // Still yielding — stash our state and re-push args.
-                    self.suspended_builtin = Some(SuspendedBuiltin {
+                    self.push_suspended_builtin(SuspendedBuiltin {
                         name: kind.name().to_string(),
                         items,
                         next_index: index,
@@ -988,7 +1067,7 @@ impl Vm {
                 },
                 Err(e) if e.is_yield => {
                     // Callback yielded.  Save state and re-push args.
-                    self.suspended_builtin = Some(SuspendedBuiltin {
+                    self.push_suspended_builtin(SuspendedBuiltin {
                         name: kind.name().to_string(),
                         items,
                         next_index: index,

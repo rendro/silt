@@ -649,7 +649,10 @@ impl Server {
     fn dot_completions(&self, doc: &Document, prefix: &str, cursor: usize) -> Vec<CompletionItem> {
         let mut items = Vec::new();
 
-        // 1. Builtin module → return its functions with type signatures
+        // 1. Builtin module → return its functions and constants with type signatures.
+        //    Module constants (e.g. `math.pi`, `float.infinity`) are distinct from
+        //    functions and must be surfaced here so editor autocompletion after
+        //    `math.` / `float.` offers them alongside `sin`, `cos`, `parse`, etc.
         if module::is_builtin_module(prefix) {
             for func in module::builtin_module_functions(prefix) {
                 let qualified = format!("{prefix}.{func}");
@@ -661,6 +664,20 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
+            for constant in module::builtin_module_constants(prefix) {
+                let qualified = format!("{prefix}.{constant}");
+                let detail = self.builtin_sigs.get(&qualified).cloned();
+                items.push(CompletionItem {
+                    label: constant.to_string(),
+                    kind: Some(CompletionItemKind::CONSTANT),
+                    detail,
+                    ..CompletionItem::default()
+                });
+            }
+            // Deterministic ordering so clients/tests see a stable list, and
+            // dedupe in case a name was declared as both function and constant.
+            items.sort_by(|a, b| a.label.cmp(&b.label));
+            items.dedup_by(|a, b| a.label == b.label);
             return items;
         }
 
@@ -2631,24 +2648,12 @@ fn builtins() -> Vec<(String, CompletionItemKind)> {
         ("false".to_string(), CompletionItemKind::CONSTANT),
     ];
 
-    let constants: std::collections::HashSet<String> = module::BUILTIN_MODULES
-        .iter()
-        .flat_map(|m| {
-            module::builtin_module_constants(m)
-                .into_iter()
-                .map(move |c| format!("{m}.{c}"))
-        })
-        .collect();
-
     for &m in module::BUILTIN_MODULES {
         for func in module::builtin_module_functions(m) {
-            let qualified = format!("{m}.{func}");
-            let kind = if constants.contains(&qualified) {
-                CompletionItemKind::CONSTANT
-            } else {
-                CompletionItemKind::FUNCTION
-            };
-            items.push((qualified, kind));
+            items.push((format!("{m}.{func}"), CompletionItemKind::FUNCTION));
+        }
+        for constant in module::builtin_module_constants(m) {
+            items.push((format!("{m}.{constant}"), CompletionItemKind::CONSTANT));
         }
     }
 

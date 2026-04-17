@@ -83,7 +83,7 @@ has logically finished with.
 
 ## Notes
 
-- `peer_addr` and `set_nodelay` return Err in v0.9 (they require unwrapping
+- `peer_addr` and `set_nodelay` currently return Err (they require unwrapping
   the trait-object stream). They will be wired up in a later release.
 - silt does not use async/await. The scheduler does cooperative yielding via
   the same I/O pool used by `io.read_file`, `fs.list_dir`, etc.

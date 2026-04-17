@@ -188,7 +188,7 @@ silt init                  -- create a new silt package in the current directory
 silt lsp                   -- start the language server
 silt disasm <file.silt>    -- show bytecode disassembly (same as `silt run --disassemble`)
 silt self-update           -- update the silt binary to the latest release
-silt update                -- update package dependencies (coming in v0.7)
+silt update [<dep-name>]   -- regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>  -- add a path-based dependency to silt.toml
 silt add <name> --git <url> [--rev|--branch|--tag <ref>]  -- add a git-based dependency to silt.toml
 ```
@@ -199,7 +199,7 @@ The `--watch` / `-w` flag works with `run`, `check`, and `test` to automatically
 
 Run `silt self-update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
 
-(In v0.7 the bare `silt update` is being repurposed to update package dependencies; the binary self-update is now spelled `silt self-update`.)
+The bare `silt update` command regenerates `silt.lock` from the current package's `silt.toml`. Use `silt self-update` for binary self-updates.
 
 ## What's next
 

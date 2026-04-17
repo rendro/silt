@@ -14,6 +14,20 @@ pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &
     if n == 1 { singular } else { plural_form }
 }
 
+/// BROKEN (round 26 B2): render a set of symbols for a user-facing
+/// diagnostic. `BTreeSet<Symbol>` formatted with `{:?}` leaks the
+/// interner's Debug form (`Symbol(6: "x")`) — awful to read and exposes
+/// implementation detail. This helper resolves each symbol to its
+/// source-level name and joins them inside `{}` braces in sorted order
+/// (the BTreeSet iteration order is already lexicographic on symbol
+/// id, so we sort by the resolved string to keep output stable across
+/// interning permutations). Example output: `{x}`, `{a, b, c}`, `{}`.
+pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
+    let mut names: Vec<String> = set.iter().map(|s| resolve(*s)).collect();
+    names.sort();
+    format!("{{{}}}", names.join(", "))
+}
+
 /// Format an "undefined variable '<typo>'" error message with an
 /// optional "did you mean `<cand>`?" hint appended as a `help:` body
 /// line so `SourceError::Display` renders it as a `= help:` continuation
@@ -83,6 +97,28 @@ pub(super) fn format_unknown_module_function_message(field: Symbol, module_str: 
     merged.sort();
     merged.dedup();
     if let Some(hint) = suggest_similar(&field_str, merged.iter()) {
+        format!("{base}\nhelp: did you mean `{hint}`?")
+    } else {
+        base
+    }
+}
+
+/// GAP (round 26 L5): append a "did you mean `<cand>`?" hint when a
+/// record-field diagnostic mentions a name that's close in edit
+/// distance to one of the record's declared fields. Used by every
+/// "record 'X' has no field 'Y'" / "unknown field 'Y' in X" site so
+/// `u.nam` on `type User { name, age }` gets `did you mean \`name\`?`.
+/// Delegates to `suggest::suggest_similar` for the threshold policy
+/// (matches the round-24 short-name tightening — single-edit only for
+/// names up to 5 chars; scaled for longer names).
+pub(super) fn format_record_field_suggestion(
+    base: String,
+    field: Symbol,
+    record_fields: &[(Symbol, Type)],
+) -> String {
+    let field_str = resolve(field);
+    let candidates: Vec<String> = record_fields.iter().map(|(n, _)| resolve(*n)).collect();
+    if let Some(hint) = suggest_similar(&field_str, candidates.iter()) {
         format!("{base}\nhelp: did you mean `{hint}`?")
     } else {
         base
@@ -834,8 +870,29 @@ impl TypeChecker {
                     }
                     return;
                 }
-                // Fallback: report error and bind sub-patterns with fresh vars
-                self.error(format!("undefined constructor '{name}' in pattern"), span);
+                // LATENT (round 26 L1): mirror round-23's check_pattern
+                // behavior — if `name` refers to a declared record type,
+                // emit the record-syntax hint instead of the generic
+                // "undefined constructor" message. The previous fallback
+                // only existed on check_pattern, so `let Circle(r) = c`
+                // gave a confusing error when the real issue was shape,
+                // not existence.
+                // LATENT (round 26 L3): also point the caret at
+                // `pattern.span`, not the outer `span` (the outer span
+                // is the enclosing let/match scrutinee).
+                if self.records.contains_key(name) {
+                    self.error(
+                        format!(
+                            "'{name}' is a record type; use record-pattern syntax `{name} {{ ... }}` instead of constructor-pattern syntax"
+                        ),
+                        pattern.span,
+                    );
+                } else {
+                    self.error(
+                        format!("undefined constructor '{name}' in pattern"),
+                        pattern.span,
+                    );
+                }
                 for sp in sub_pats {
                     let tv = self.fresh_var();
                     self.bind_pattern(sp, &tv, env, span);
@@ -950,8 +1007,13 @@ impl TypeChecker {
                                 env.define(*field_name, Scheme::mono(ft.clone()));
                             }
                         } else {
+                            // GAP (round 26 L5): append a did-you-mean
+                            // hint when a near edit-distance field
+                            // exists on this record.
+                            let base =
+                                format!("record '{rec_name}' has no field '{field_name}'");
                             self.error(
-                                format!("record '{rec_name}' has no field '{field_name}'"),
+                                format_record_field_suggestion(base, *field_name, field_types),
                                 span,
                             );
                             if let Some(sp) = sub_pat {
@@ -972,8 +1034,12 @@ impl TypeChecker {
                                 env.define(*field_name, Scheme::mono(ft.clone()));
                             }
                         } else {
+                            // GAP (round 26 L5): same hint on the generic
+                            // resolution path.
+                            let base =
+                                format!("record '{rec_name}' has no field '{field_name}'");
                             self.error(
-                                format!("record '{rec_name}' has no field '{field_name}'"),
+                                format_record_field_suggestion(base, *field_name, &field_types),
                                 span,
                             );
                             if let Some(sp) = sub_pat {
@@ -1022,13 +1088,17 @@ impl TypeChecker {
                         let alt_vars: BTreeSet<Symbol> =
                             collect_pattern_vars(alt).into_iter().collect();
                         if first_vars != alt_vars {
+                            // BROKEN (round 26 B2): `{:?}` on a BTreeSet<Symbol>
+                            // leaks `Symbol(N: "x")` debug output into a
+                            // user-facing diagnostic. Render the sets as
+                            // sorted comma-separated lists of resolved names.
                             self.error(
                                 format!(
                                     "or-pattern alternatives must bind the same variables; \
-                                     first alternative binds {:?}, alternative {} binds {:?}",
-                                    first_vars,
+                                     first alternative binds {}, alternative {} binds {}",
+                                    format_symbol_set(&first_vars),
                                     i + 1,
-                                    alt_vars
+                                    format_symbol_set(&alt_vars)
                                 ),
                                 span,
                             );
@@ -1134,8 +1204,10 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(ty, &pinned_ty, span);
                 } else {
+                    // LATENT (round 26 L4): point the caret at the pin
+                    // pattern, not the enclosing match/let scrutinee.
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error(msg, span);
+                    self.error(msg, pattern.span);
                 }
             }
         }
@@ -1419,8 +1491,13 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         } else {
+                            // GAP (round 26 L5): append a did-you-mean
+                            // hint when a near edit-distance field
+                            // exists on this record.
+                            let base =
+                                format!("record {rec_name} has no field or method '{field}'");
                             self.error(
-                                format!("record {rec_name} has no field or method '{field}'"),
+                                format_record_field_suggestion(base, field, fields),
                                 span,
                             );
                             Type::Error
@@ -2405,7 +2482,18 @@ impl TypeChecker {
                         rec_info.fields.iter().map(|(n, _)| *n).collect();
                     for (field_name, _) in &field_types {
                         if !declared.contains(field_name) {
-                            self.error(format!("unknown field '{}' in {}", field_name, name), span);
+                            // GAP (round 26 L5): append a did-you-mean
+                            // hint for record-literal typos — e.g.
+                            // `User { nam: ... }` → `did you mean \`name\`?`.
+                            let base = format!("unknown field '{}' in {}", field_name, name);
+                            self.error(
+                                format_record_field_suggestion(
+                                    base,
+                                    *field_name,
+                                    &rec_info.fields,
+                                ),
+                                span,
+                            );
                         }
                     }
 
@@ -2443,7 +2531,13 @@ impl TypeChecker {
                         if let Some(declared_ty) = declared.get(field_name) {
                             self.unify(&ft, declared_ty, span);
                         } else {
-                            self.error(format!("unknown field '{field_name}' in {rec_name}"), span);
+                            // GAP (round 26 L5): did-you-mean on record-update.
+                            let base =
+                                format!("unknown field '{field_name}' in {rec_name}");
+                            self.error(
+                                format_record_field_suggestion(base, *field_name, rec_fields),
+                                span,
+                            );
                         }
                     }
                     handled = true;
@@ -2483,8 +2577,16 @@ impl TypeChecker {
                         if let Some(declared_ty) = declared.get(field_name) {
                             self.unify(&ft, declared_ty, span);
                         } else {
+                            // GAP (round 26 L5): did-you-mean on the
+                            // generic-record update path.
+                            let base =
+                                format!("unknown field '{field_name}' in {type_name}");
                             self.error(
-                                format!("unknown field '{field_name}' in {type_name}"),
+                                format_record_field_suggestion(
+                                    base,
+                                    *field_name,
+                                    &instantiated_fields,
+                                ),
                                 span,
                             );
                         }
@@ -2851,9 +2953,16 @@ impl TypeChecker {
                                 // pattern itself — point at the
                                 // constructor pattern's own span rather
                                 // than the enclosing match scrutinee.
+                                // LATENT (round 26 L2): include the
+                                // constructor name to match bind_pattern's
+                                // wording ("constructor 'Some' expects ..."),
+                                // otherwise the user has no idea which
+                                // alternative arm is wrong when multiple
+                                // constructors appear in a match.
                                 self.error(
                                     format!(
-                                        "constructor expects {} {}, but pattern has {}",
+                                        "constructor '{}' expects {} {}, but pattern has {}",
+                                        name,
                                         expected,
                                         plural(expected, "field", "fields"),
                                         sub_pats.len()
@@ -2904,8 +3013,15 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    // Unknown constructor — report error and bind sub-patterns with fresh vars
-                    self.error(format!("undefined constructor '{name}' in pattern"), span);
+                    // Unknown constructor — report error and bind sub-patterns with fresh vars.
+                    // LATENT (round 26 L3): point the caret at the
+                    // constructor pattern, not the enclosing match
+                    // scrutinee — round-17 F4 threaded pattern.span
+                    // through arity sites but missed this fallback.
+                    self.error(
+                        format!("undefined constructor '{name}' in pattern"),
+                        pattern.span,
+                    );
                     for sp in sub_pats {
                         let tv = self.fresh_var();
                         self.check_pattern(sp, &tv, env, span);
@@ -2959,8 +3075,17 @@ impl TypeChecker {
                             } else {
                                 // BROKEN-3: Reject unknown field names in
                                 // match record patterns at compile time.
+                                // GAP (round 26 L5): append a did-you-mean
+                                // hint when a near edit-distance field
+                                // exists on the record.
+                                let base =
+                                    format!("record '{rec_name}' has no field '{field_name}'");
                                 self.error(
-                                    format!("record '{rec_name}' has no field '{field_name}'"),
+                                    format_record_field_suggestion(
+                                        base,
+                                        *field_name,
+                                        &instantiated_fields,
+                                    ),
                                     span,
                                 );
                                 if let Some(sp) = sub_pat {
@@ -3001,13 +3126,17 @@ impl TypeChecker {
                         let alt_vars: BTreeSet<Symbol> =
                             collect_pattern_vars(alt).into_iter().collect();
                         if first_vars != alt_vars {
+                            // BROKEN (round 26 B2): `{:?}` on a BTreeSet<Symbol>
+                            // leaks `Symbol(N: "x")` debug output into a
+                            // user-facing diagnostic. Render the sets as
+                            // sorted comma-separated lists of resolved names.
                             self.error(
                                 format!(
                                     "or-pattern alternatives must bind the same variables; \
-                                     first alternative binds {:?}, alternative {} binds {:?}",
-                                    first_vars,
+                                     first alternative binds {}, alternative {} binds {}",
+                                    format_symbol_set(&first_vars),
                                     i + 1,
-                                    alt_vars
+                                    format_symbol_set(&alt_vars)
                                 ),
                                 span,
                             );
@@ -3101,8 +3230,10 @@ impl TypeChecker {
                     let pinned_ty = self.instantiate(&scheme);
                     self.unify(expected, &pinned_ty, span);
                 } else {
+                    // LATENT (round 26 L4): point the caret at the pin
+                    // pattern, not the enclosing match scrutinee.
                     let msg = format_undefined_variable_message(*name, env, "in pin pattern");
-                    self.error(msg, span);
+                    self.error(msg, pattern.span);
                 }
             }
         }
