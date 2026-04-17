@@ -96,6 +96,7 @@ The `tcp-tls` Cargo feature adds TLS support via `rustls`. Build silt with
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `accept_tls` | `(TcpListener, Bytes, Bytes) -> Result(TcpStream, String)` | Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key |
+| `accept_tls_mtls` | `(TcpListener, Bytes, Bytes, Bytes) -> Result(TcpStream, String)` | Like `accept_tls`, but also requires the client to present a cert chaining to the supplied CA PEM bundle (mutual TLS) |
 | `connect_tls` | `(String, String) -> Result(TcpStream, String)` | Open a TCP connection then complete the TLS client handshake against `hostname` |
 
 Returned `TcpStream` handles are interchangeable with plain TCP streams —
@@ -117,6 +118,51 @@ fn main() {
       tcp.close(conn)
     }
     Err(e) -> println("connect_tls err: {e}")
+  }
+}
+```
+
+### Mutual TLS (mTLS)
+
+`accept_tls_mtls` adds client-certificate verification on top of
+`accept_tls`. The fourth argument is a PEM-encoded bundle of CA
+certificates — every connecting client must present a certificate that
+chains to one of those CAs, or the TLS handshake fails and the call
+returns `Err(msg)`. This is appropriate for service-to-service APIs,
+internal mesh traffic, and any flow where you want cryptographic client
+identity rather than bearer tokens.
+
+Under the hood the server uses rustls'
+`WebPkiClientVerifier::builder(roots).build()`, which requires
+authentication by default (anonymous clients are rejected).
+
+```text
+import bytes
+import io
+import tcp
+
+fn main() {
+  -- Load the server identity and the CA bundle that signs your
+  -- clients. (Build silt with `--features tcp-tls` for this function.)
+  match io.read_file("server.crt") {
+    Ok(cert) -> match io.read_file("server.key") {
+      Ok(key) -> match io.read_file("clients-ca.crt") {
+        Ok(client_ca) -> match tcp.listen("0.0.0.0:8443") {
+          Ok(listener) -> match tcp.accept_tls_mtls(listener, cert, key, client_ca) {
+            Ok(conn) -> {
+              -- Peer is authenticated by cert at this point.
+              let _ = tcp.write(conn, bytes.from_string("hello, authenticated client"))
+              tcp.close(conn)
+            }
+            Err(e) -> println("mTLS handshake failed: {e}")
+          }
+          Err(e) -> println("listen err: {e}")
+        }
+        Err(e) -> println("ca load err: {e}")
+      }
+      Err(e) -> println("key load err: {e}")
+    }
+    Err(e) -> println("cert load err: {e}")
   }
 }
 ```

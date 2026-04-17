@@ -93,7 +93,9 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     #[cfg(feature = "tcp-tls")]
     {
         let listener_ty_tls = Type::Generic(intern("TcpListener"), vec![]);
+        let listener_ty_mtls = Type::Generic(intern("TcpListener"), vec![]);
         let bytes_ty_tls = Type::Generic(intern("Bytes"), vec![]);
+        let bytes_ty_mtls = Type::Generic(intern("Bytes"), vec![]);
         // tcp.connect_tls: (String, String) -> Result(TcpStream, String)
         env.define(
             intern("tcp.connect_tls"),
@@ -107,6 +109,22 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("tcp.accept_tls"),
             Scheme::mono(Type::Fun(
                 vec![listener_ty_tls, bytes_ty_tls.clone(), bytes_ty_tls],
+                Box::new(result(stream_ty.clone(), Type::String)),
+            )),
+        );
+        // tcp.accept_tls_mtls: (TcpListener, Bytes, Bytes, Bytes)
+        //   -> Result(TcpStream, String)
+        // Same as accept_tls, plus a client-CA PEM bundle used to verify
+        // the peer's client certificate (mutual TLS).
+        env.define(
+            intern("tcp.accept_tls_mtls"),
+            Scheme::mono(Type::Fun(
+                vec![
+                    listener_ty_mtls,
+                    bytes_ty_mtls.clone(),
+                    bytes_ty_mtls.clone(),
+                    bytes_ty_mtls,
+                ],
                 Box::new(result(stream_ty, Type::String)),
             )),
         );

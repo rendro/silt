@@ -222,10 +222,10 @@ fn docs_do_not_claim_drifting_example_count() {
                 // (next char is not alphanumeric/underscore), so we don't
                 // treat "function" inside "functional" as a hit.
                 let tail = &haystack.as_bytes()[idx + noun.len()..];
-                if let Some(&b) = tail.first() {
-                    if b.is_ascii_alphanumeric() || b == b'_' {
-                        continue;
-                    }
+                if let Some(&b) = tail.first()
+                    && (b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    continue;
                 }
 
                 // Walk backwards over optional whitespace, then require '+',
@@ -282,10 +282,10 @@ fn docs_do_not_claim_drifting_example_count() {
             for (idx, _) in haystack.match_indices(noun) {
                 // Right-side word boundary check.
                 let tail = &haystack.as_bytes()[idx + noun.len()..];
-                if let Some(&b) = tail.first() {
-                    if b.is_ascii_alphanumeric() || b == b'_' {
-                        continue;
-                    }
+                if let Some(&b) = tail.first()
+                    && (b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    continue;
                 }
                 // Walk backwards over one or more spaces, then digits.
                 let prefix = &haystack.as_bytes()[..idx];
@@ -878,10 +878,10 @@ fn all_doc_fn_test_blocks_compile() {
             if let Some(after) = rest {
                 // The char right after must look like an identifier continuation
                 // so we don't match `fn test` as a bare-word false positive.
-                if let Some(c) = after.chars().next() {
-                    if c.is_ascii_alphanumeric() || c == '_' {
-                        return true;
-                    }
+                if let Some(c) = after.chars().next()
+                    && (c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return true;
                 }
             }
         }

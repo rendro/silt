@@ -235,7 +235,7 @@ mod tests {
         let since = SystemTime::now();
 
         assert!(
-            !any_silt_path_mtime_newer(&[path.clone()], since),
+            !any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
             "unmodified .silt file should not count as newer"
         );
 
@@ -246,7 +246,7 @@ mod tests {
         drop(f);
 
         assert!(
-            any_silt_path_mtime_newer(&[path.clone()], since),
+            any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
             ".silt file with mtime > since should count as newer"
         );
 
@@ -266,7 +266,7 @@ mod tests {
 
         let since = SystemTime::UNIX_EPOCH;
         assert!(
-            !any_silt_path_mtime_newer(&[path.clone()], since),
+            !any_silt_path_mtime_newer(std::slice::from_ref(&path), since),
             "non-silt path must never satisfy the silt mtime check"
         );
 

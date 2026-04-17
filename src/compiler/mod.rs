@@ -110,9 +110,6 @@ struct Local {
     name: Symbol,
     depth: usize,
     slot: u16,
-    /// Whether this local is captured by a nested closure.
-    #[allow(dead_code)]
-    captured: bool,
 }
 
 // ── Compiler warnings ────────────────────────────────────────────────
@@ -2680,12 +2677,7 @@ impl Compiler {
     fn add_local(&mut self, name: Symbol) -> u16 {
         let depth = self.ctx().scope_depth;
         let slot = self.ctx().locals.len() as u16;
-        self.ctx_mut().locals.push(Local {
-            name,
-            depth,
-            slot,
-            captured: false,
-        });
+        self.ctx_mut().locals.push(Local { name, depth, slot });
         slot
     }
 
@@ -2772,11 +2764,9 @@ impl Compiler {
         };
 
         if let Some(slot) = local_slot {
-            // Mark the local as captured.
-            let enclosing = &mut self.contexts[enclosing_idx];
-            if let Some(local) = enclosing.locals.iter_mut().find(|l| l.name == name) {
-                local.captured = true;
-            }
+            // Upvalues are captured by value (Silt is immutable); the
+            // local itself needs no open/closed tracking — see
+            // VmClosure doc in src/bytecode.rs.
             let index = if slot > u8::MAX as u16 {
                 return Err(CompileError {
                     message: format!(

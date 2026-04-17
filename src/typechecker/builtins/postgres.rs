@@ -30,9 +30,34 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let result_exec = Type::Generic(intern("Result"), vec![exec_result, pg_error.clone()]);
 
     // postgres.connect: (String) -> Result(PgPool, PgError)
+    //
+    // Thin wrapper over `connect_with(url, #{})`. Kept as a separate
+    // builtin so most callers don't need to spell out an empty opts
+    // map; shape-for-shape equivalent to `connect_with` with no opts.
     env.define(
         intern("postgres.connect"),
-        Scheme::mono(Type::Fun(vec![Type::String], Box::new(result_pool))),
+        Scheme::mono(Type::Fun(vec![Type::String], Box::new(result_pool.clone()))),
+    );
+
+    // postgres.connect_with: (String, Map(String, Int)) -> Result(PgPool, PgError)
+    //
+    // Options bag for tunables that are orthogonal to the URL. Unknown
+    // keys are ignored at runtime so new options can be added without
+    // a source-breaking change. Current keys:
+    //   - `max_pool_size: Int` — override r2d2's default of 10.
+    //
+    // We type the bag as `Map(String, Int)` rather than a nominal
+    // record because silt has no row-polymorphic / optional-field
+    // records. An empty call is simply `postgres.connect_with(url, #{})`.
+    env.define(
+        intern("postgres.connect_with"),
+        Scheme::mono(Type::Fun(
+            vec![
+                Type::String,
+                Type::Map(Box::new(Type::String), Box::new(Type::Int)),
+            ],
+            Box::new(result_pool),
+        )),
     );
 
     // postgres.query: (T, String, List(Value)) -> Result(QueryResult, PgError)

@@ -273,8 +273,8 @@ mod genp {
     }
 
     /// A generated program: channels (with capacities + closeable flag)
-    /// + worker task bodies + a supervisor body that references worker
-    /// handles.
+    /// plus worker task bodies and a supervisor body that references
+    /// worker handles.
     #[derive(Clone, Debug)]
     pub struct Program {
         /// capacities[i] = buffer capacity for channel i.
@@ -549,7 +549,7 @@ fn emit_program(p: &genp::Program) -> String {
     }
 
     // Supervisor task.
-    src.push_str(&format!("  let hsup = task.spawn(fn() {{\n"));
+    src.push_str("  let hsup = task.spawn(fn() {\n");
     for op in &p.supervisor {
         src.push_str(&emit_op(op, "    ", None));
     }

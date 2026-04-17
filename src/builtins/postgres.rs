@@ -31,7 +31,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use fallible_iterator::FallibleIterator;
 use postgres::NoTls;
-use postgres::config::SslMode;
 use postgres::types::{IsNull, Kind, ToSql, Type as PgType};
 use r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
@@ -259,31 +258,96 @@ fn err(v: Value) -> Value {
     Value::Variant("Err".into(), vec![v])
 }
 
+/// Scrub a Postgres error message before it crosses the VM boundary
+/// into silt.
+///
+/// `detail_redacted: true` — we drop `DETAIL:`, `WHERE:`, and `HINT:`
+/// follow-on lines because Postgres routinely embeds *user row values*
+/// in those fields (e.g. `DETAIL: Key (email)=(alice@example.com)
+/// already exists.`). A silt web handler that echoes an `Err(_)` into a
+/// 5xx body would otherwise leak those values to unauthenticated
+/// callers. The short `message()` / `severity` / SQLSTATE code remain
+/// intact so callers can still discriminate on error kind.
+///
+/// We ALSO defensively strip parenthesised `Key (col)=(val)` segments
+/// from the short message itself — Postgres occasionally rolls row
+/// values into the primary message via extensions or custom
+/// constraints. Keeping just the pre-`Key (` prefix preserves the
+/// constraint-kind text without the offending values.
+///
+/// Rust callers that need the full un-redacted error can still call
+/// `postgres::Error::as_db_error()` directly on the original error.
+/// The scrub only applies to strings destined for silt-side `PgError`.
+#[doc(hidden)] // Exposed for integration tests (tests/postgres_hardening_tests.rs).
+pub fn redact_pg_message(s: &str) -> String {
+    // Drop follow-on lines that Postgres uses for user-data callouts.
+    let mut out = String::with_capacity(s.len());
+    for (i, line) in s.split('\n').enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("DETAIL:")
+            || trimmed.starts_with("WHERE:")
+            || trimmed.starts_with("HINT:")
+        {
+            continue;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
+    }
+    // Strip inline `Key (col)=(val)` artefacts from whatever remains.
+    // Postgres writes these as `Key (col1, col2)=(v1, v2)` — match the
+    // leading `Key (` and cut everything after it on the same segment.
+    if let Some(idx) = out.find("Key (") {
+        // Preserve any trailing period / clause after the closing `)`
+        // is unlikely to add signal and may itself carry data; drop it.
+        out.truncate(idx);
+        out = out.trim_end().to_string();
+    }
+    out
+}
+
 /// Build a `PgError` variant matching the silt-side `pg.silt` ADT.
+///
+/// Strings inside each variant are run through `redact_pg_message` so
+/// that DETAIL / WHERE / HINT follow-on text (which routinely contains
+/// user row values) is stripped before silt code ever sees it. See
+/// `redact_pg_message`'s docstring for the `detail_redacted: true`
+/// rationale.
 fn pg_error_value(e: &postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
-        let detail = db.message().to_string();
+        // `db.message()` is the short primary message, NOT the Display
+        // output of the DbError — Display additionally appends
+        // `\nDETAIL: ...` / `\nHINT: ...` lines. We intentionally avoid
+        // using `format!("{db}")` here for that reason. The redaction
+        // helper is applied as defence-in-depth for custom constraints
+        // that may embed row values in the primary message itself.
+        let message = redact_pg_message(db.message());
         let sqlstate = db.code().code().to_string();
         match sqlstate.as_str() {
-            "23505" => Value::Variant("UniqueViolation".into(), vec![Value::String(detail)]),
-            "23503" => Value::Variant("ForeignKeyViolation".into(), vec![Value::String(detail)]),
-            "23502" => Value::Variant("NotNullViolation".into(), vec![Value::String(detail)]),
-            "23514" => Value::Variant("CheckViolation".into(), vec![Value::String(detail)]),
+            "23505" => Value::Variant("UniqueViolation".into(), vec![Value::String(message)]),
+            "23503" => Value::Variant("ForeignKeyViolation".into(), vec![Value::String(message)]),
+            "23502" => Value::Variant("NotNullViolation".into(), vec![Value::String(message)]),
+            "23514" => Value::Variant("CheckViolation".into(), vec![Value::String(message)]),
             "40001" | "40P01" => Value::Variant("SerializationFailure".into(), vec![]),
             code if code.starts_with("08") => {
-                Value::Variant("ConnectionError".into(), vec![Value::String(detail)])
+                Value::Variant("ConnectionError".into(), vec![Value::String(message)])
             }
             _ => Value::Variant(
                 "Other".into(),
-                vec![Value::String(sqlstate), Value::String(detail)],
+                vec![Value::String(sqlstate), Value::String(message)],
             ),
         }
     } else {
         // Non-DB error (transport, protocol, etc.). Treat as ConnectionError
-        // when we can't read a SQLSTATE.
+        // when we can't read a SQLSTATE. The `postgres::Error` Display
+        // for non-DB kinds is a fixed short string without row data, but
+        // wrapped sources (e.g. an io::Error chained via source()) could
+        // theoretically carry path / user data — run through the scrub
+        // to be safe.
         Value::Variant(
             "ConnectionError".into(),
-            vec![Value::String(format!("{e}"))],
+            vec![Value::String(redact_pg_message(&format!("{e}")))],
         )
     }
 }
@@ -291,7 +355,7 @@ fn pg_error_value(e: &postgres::Error) -> Value {
 fn pool_error_value(e: &r2d2::Error) -> Value {
     Value::Variant(
         "ConnectionError".into(),
-        vec![Value::String(format!("{e}"))],
+        vec![Value::String(redact_pg_message(&format!("{e}")))],
     )
 }
 
@@ -831,6 +895,19 @@ fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
 // ── Blocking workers (run inside io_pool) ───────────────────────────
 
 fn do_connect(url: String) -> Value {
+    do_connect_with(url, ConnectOpts::default())
+}
+
+/// Structured options for `postgres.connect_with`. Fields are `Option`
+/// so absent keys fall through to built-in defaults rather than a
+/// zero value that could silently disable something.
+#[derive(Default, Clone, Debug)]
+struct ConnectOpts {
+    /// Override r2d2's default `max_size` (10). `None` → library default.
+    max_pool_size: Option<u32>,
+}
+
+fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
     // Pre-parse `sslmode` out of the query string: `postgres::Config`
     // only recognises `disable` / `prefer` / `require` and rejects
     // `verify-ca` / `verify-full` with a parse error. We also want the
@@ -856,19 +933,31 @@ fn do_connect(url: String) -> Value {
         }
     };
 
-    // Derive effective TLS mode. If an extended mode (`verify-ca` /
-    // `verify-full`) was stripped from the URL, it takes precedence
-    // over the `SslMode` on the Config (which can only be D/P/R).
-    let effective = ext.mode.unwrap_or_else(|| match cfg.get_ssl_mode() {
-        SslMode::Disable => EffectiveSslMode::Disable,
-        SslMode::Prefer => EffectiveSslMode::Prefer,
-        SslMode::Require => EffectiveSslMode::Require,
-        // `SslMode` is #[non_exhaustive]; treat unknown future modes as
-        // Prefer to keep forward-compat.
-        _ => EffectiveSslMode::Prefer,
-    });
+    // Derive effective TLS mode.
+    //
+    // Security default (HIGH-4 hardening): when the URL omits
+    // `sslmode=` entirely, we default to **`verify-full`** rather than
+    // libpq's historical `prefer`. Opting in to `prefer` / `require` /
+    // `disable` now requires an explicit parameter. If the user DID
+    // write `sslmode=require`, we honour that (encryption-only, no
+    // cert/hostname validation) because it's an explicit request.
+    //
+    // Priority:
+    //   1. `ext.mode` — explicit `sslmode=` query param, including
+    //      extended modes (`verify-ca` / `verify-full`) that
+    //      `postgres::Config` doesn't parse natively.
+    //   2. If absent, `VerifyFull` (the new safe default).
+    //
+    // Note: we do NOT fall back to `cfg.get_ssl_mode()`. The
+    // `postgres::Config` parser defaults its internal SslMode to
+    // `Prefer` when nothing is specified, which is exactly the
+    // unverified-TLS behaviour this fix is intended to prevent.
+    let effective = match ext.mode {
+        Some(m) => m,
+        None => EffectiveSslMode::VerifyFull,
+    };
 
-    match build_pool(cfg, effective, ext.root_cert.as_deref()) {
+    match build_pool(cfg, effective, ext.root_cert.as_deref(), opts) {
         Ok(pool) => {
             let id = insert_pool(pool);
             ok(make_pool_handle(id))
@@ -880,13 +969,27 @@ fn do_connect(url: String) -> Value {
 /// Effective `sslmode` once we've parsed both `postgres`-crate-native
 /// values (`Disable` / `Prefer` / `Require`) and the extended modes
 /// (`verify-ca` / `verify-full`) that we detect manually.
+#[doc(hidden)] // public so integration tests can verify the default mode resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffectiveSslMode {
+pub enum EffectiveSslMode {
     Disable,
     Prefer,
     Require,
     VerifyCa,
     VerifyFull,
+}
+
+/// Compute the effective SSL mode that `do_connect` would use for a
+/// given URL, WITHOUT actually opening a connection. Integration tests
+/// use this to lock the HIGH-4 fix: a URL that omits `sslmode=`
+/// resolves to `VerifyFull`, NOT the libpq-default `Prefer`.
+#[doc(hidden)]
+pub fn resolve_effective_sslmode_for_tests(url: &str) -> Result<EffectiveSslMode, String> {
+    let (_, ext) = extract_ssl_url_params(url)?;
+    Ok(match ext.mode {
+        Some(m) => m,
+        None => EffectiveSslMode::VerifyFull,
+    })
 }
 
 #[derive(Default)]
@@ -956,37 +1059,54 @@ fn build_pool(
     cfg: postgres::Config,
     mode: EffectiveSslMode,
     root_cert_path: Option<&str>,
+    opts: ConnectOpts,
 ) -> Result<PgPool, Value> {
     #[cfg(feature = "postgres-tls")]
     {
         match mode {
-            EffectiveSslMode::Disable => build_pool_notls(cfg),
-            EffectiveSslMode::Prefer => build_pool_prefer_tls(cfg, root_cert_path),
-            EffectiveSslMode::Require => build_pool_tls(cfg, root_cert_path, false, false),
-            EffectiveSslMode::VerifyCa => build_pool_tls(cfg, root_cert_path, true, false),
-            EffectiveSslMode::VerifyFull => build_pool_tls(cfg, root_cert_path, true, true),
+            EffectiveSslMode::Disable => build_pool_notls(cfg, &opts),
+            EffectiveSslMode::Prefer => build_pool_prefer_tls(cfg, root_cert_path, &opts),
+            EffectiveSslMode::Require => build_pool_tls(cfg, root_cert_path, false, false, &opts),
+            EffectiveSslMode::VerifyCa => build_pool_tls(cfg, root_cert_path, true, false, &opts),
+            EffectiveSslMode::VerifyFull => build_pool_tls(cfg, root_cert_path, true, true, &opts),
         }
     }
     #[cfg(not(feature = "postgres-tls"))]
     {
         let _ = root_cert_path; // unused without TLS
         match mode {
-            EffectiveSslMode::Disable | EffectiveSslMode::Prefer => build_pool_notls(cfg),
+            EffectiveSslMode::Disable | EffectiveSslMode::Prefer => build_pool_notls(cfg, &opts),
             EffectiveSslMode::Require
             | EffectiveSslMode::VerifyCa
             | EffectiveSslMode::VerifyFull => Err(Value::Variant(
                 "ConnectionError".into(),
                 vec![Value::String(
-                    "TLS required but silt was built without the postgres-tls feature".into(),
+                    "TLS required but silt was built without the postgres-tls feature \
+                     (URL had no `sslmode=`, which now defaults to verify-full; \
+                     use `?sslmode=disable` to connect without TLS)"
+                        .into(),
                 )],
             )),
         }
     }
 }
 
-fn build_pool_notls(cfg: postgres::Config) -> Result<PgPool, Value> {
+/// Apply `ConnectOpts` overrides to an `r2d2::Builder`. Centralised so
+/// every pool-construction path (TLS / NoTLS / prefer) picks up the
+/// same tunables.
+fn apply_pool_opts<M: r2d2::ManageConnection>(
+    mut builder: r2d2::Builder<M>,
+    opts: &ConnectOpts,
+) -> r2d2::Builder<M> {
+    if let Some(n) = opts.max_pool_size {
+        builder = builder.max_size(n);
+    }
+    builder
+}
+
+fn build_pool_notls(cfg: postgres::Config, opts: &ConnectOpts) -> Result<PgPool, Value> {
     let manager = PostgresConnectionManager::new(cfg, NoTls);
-    let pool = Pool::builder()
+    let pool = apply_pool_opts(Pool::builder(), opts)
         .build(manager)
         .map_err(|e| pool_error_value(&e))?;
     Ok(PgPool::NoTls(pool))
@@ -1039,6 +1159,7 @@ fn build_pool_tls(
     root_cert_path: Option<&str>,
     verify_ca: bool,
     verify_hostname: bool,
+    opts: &ConnectOpts,
 ) -> Result<PgPool, Value> {
     // `danger_accept_invalid_certs` = skip CA validation. Invert the
     // verify flags: verify_ca=true → accept_invalid_certs=false.
@@ -1050,7 +1171,7 @@ fn build_pool_tls(
         accept_invalid_hostnames,
     )?;
     let manager = PostgresConnectionManager::new(cfg, connector);
-    let pool = Pool::builder()
+    let pool = apply_pool_opts(Pool::builder(), opts)
         .build(manager)
         .map_err(|e| pool_error_value(&e))?;
     Ok(PgPool::Tls(pool))
@@ -1064,23 +1185,24 @@ fn build_pool_tls(
 fn build_pool_prefer_tls(
     cfg: postgres::Config,
     root_cert_path: Option<&str>,
+    opts: &ConnectOpts,
 ) -> Result<PgPool, Value> {
     // In "prefer" mode we don't validate the cert — the libpq docs say
     // prefer is opportunistic encryption, not an authentication hop.
     match build_tls_connector(root_cert_path, true, true) {
         Ok(connector) => {
             let manager = PostgresConnectionManager::new(cfg.clone(), connector);
-            match Pool::builder().build(manager) {
+            match apply_pool_opts(Pool::builder(), opts).build(manager) {
                 Ok(pool) => {
                     // Probe: does the server actually accept TLS? r2d2's
                     // `build` already ran a test connection, so if we're
                     // here the TLS handshake succeeded.
                     Ok(PgPool::Tls(pool))
                 }
-                Err(_) => build_pool_notls(cfg),
+                Err(_) => build_pool_notls(cfg, opts),
             }
         }
-        Err(_) => build_pool_notls(cfg),
+        Err(_) => build_pool_notls(cfg, opts),
     }
 }
 
@@ -1530,6 +1652,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
 pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "connect" => connect(vm, args),
+        "connect_with" => connect_with(vm, args),
         "query" => query(vm, args),
         "execute" => execute(vm, args),
         "transact" => transact(vm, args),
@@ -1571,6 +1694,88 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::yield_signal());
     }
     Ok(do_connect(url.clone()))
+}
+
+/// Test-only mirror of `parse_connect_opts`'s `max_pool_size`
+/// extraction so integration tests can lock the shape without a live
+/// DB. Returns `Ok(Some(n))` if the opts map carries a valid
+/// `max_pool_size` key, `Ok(None)` if the key is absent, `Err` if the
+/// shape is invalid.
+#[doc(hidden)]
+pub fn read_max_pool_size_for_tests(opts: &Value) -> Result<Option<u32>, String> {
+    let parsed = parse_connect_opts(opts)?;
+    Ok(parsed.max_pool_size)
+}
+
+/// Parse a silt-side `#{ "key": Int }` options map into the Rust
+/// `ConnectOpts` struct. Unknown keys are ignored so options-bag
+/// additions stay backwards-compatible.
+fn parse_connect_opts(v: &Value) -> Result<ConnectOpts, String> {
+    let Value::Map(m) = v else {
+        return Err("postgres.connect_with: opts must be a Map (e.g. #{})".to_string());
+    };
+    let mut out = ConnectOpts::default();
+    for (k, val) in m.iter() {
+        let Value::String(key) = k else {
+            return Err("postgres.connect_with: opts key must be a String".to_string());
+        };
+        match key.as_str() {
+            "max_pool_size" => {
+                let Value::Int(n) = val else {
+                    return Err("postgres.connect_with: max_pool_size must be an Int".to_string());
+                };
+                if *n <= 0 {
+                    return Err(format!(
+                        "postgres.connect_with: max_pool_size must be > 0, got {n}"
+                    ));
+                }
+                // r2d2 takes u32. Clamp to avoid a silent wrap.
+                let clamped: u32 = (*n).min(i64::from(u32::MAX)) as u32;
+                out.max_pool_size = Some(clamped);
+            }
+            _ => {
+                // Unknown keys: ignore so we can add fields later
+                // without breaking callers. Silently accepted.
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn connect_with(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new(
+            "postgres.connect_with takes 2 arguments (url, opts)".into(),
+        ));
+    }
+    let Value::String(url) = &args[0] else {
+        return Err(VmError::new(
+            "postgres.connect_with: url must be a String".into(),
+        ));
+    };
+    let opts = match parse_connect_opts(&args[1]) {
+        Ok(o) => o,
+        Err(msg) => return Ok(err(other_error(msg))),
+    };
+
+    if let Some(r) = vm.io_entry_guard(args)? {
+        return Ok(r);
+    }
+    if vm.is_scheduled_task {
+        let url = url.clone();
+        let opts = opts.clone();
+        let completion = vm
+            .runtime
+            .io_pool
+            .submit(move || do_connect_with(url, opts));
+        vm.pending_io = Some(completion.clone());
+        vm.block_reason = Some(BlockReason::Io(completion));
+        for arg in args {
+            vm.push(arg.clone());
+        }
+        return Err(VmError::yield_signal());
+    }
+    Ok(do_connect_with(url.clone(), opts))
 }
 
 fn query(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {

@@ -173,6 +173,16 @@ pub struct TcpStreamHandle {
     pub id: usize,
     pub inner: Mutex<Box<dyn ReadWrite>>,
     pub closed: std::sync::atomic::AtomicBool,
+    /// Side-channel handle to the underlying `TcpStream` fd, used by
+    /// `tcp.close` to call `shutdown(Both)` without having to acquire
+    /// `inner`'s mutex (which a concurrent `tcp.read` on another task may
+    /// be holding). Obtained via `TcpStream::try_clone` at construction
+    /// time; for TLS streams this is a clone of the socket that was
+    /// subsequently handed to `rustls::StreamOwned`. A `shutdown(Both)`
+    /// on any clone affects the shared fd, causing any blocked reader to
+    /// return EOF promptly. `None` only if cloning the fd failed at
+    /// construction (best-effort — callers fall back to Drop semantics).
+    pub shutdown_sock: Option<std::net::TcpStream>,
 }
 
 /// A thread-safe channel with support for both buffered and rendezvous semantics.

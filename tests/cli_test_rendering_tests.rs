@@ -312,8 +312,7 @@ fn test_silt_help_fmt_row_alignment() {
     // substring so we don't depend on exact wording beyond the command
     // signature.
     let find = |needle: &str| -> &str {
-        *rows
-            .iter()
+        rows.iter()
             .find(|r| r.contains(needle))
             .unwrap_or_else(|| panic!("no row for {needle:?} in:\n{stdout}"))
     };

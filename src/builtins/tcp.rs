@@ -17,7 +17,7 @@
 //! so concurrent silt tasks do not deadlock.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -41,6 +41,8 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         "connect_tls" => tls::connect_tls(vm, args),
         #[cfg(feature = "tcp-tls")]
         "accept_tls" => tls::accept_tls(vm, args),
+        #[cfg(feature = "tcp-tls")]
+        "accept_tls_mtls" => tls::accept_tls_mtls(vm, args),
         _ => Err(VmError::new(format!("unknown tcp function: {name}"))),
     }
 }
@@ -62,6 +64,7 @@ mod tls {
 
     use parking_lot::Mutex;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+    use rustls::server::WebPkiClientVerifier;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
     use super::{
@@ -145,6 +148,63 @@ mod tls {
         }
     }
 
+    /// `accept_tls_mtls(listener, cert_pem, key_pem, client_ca_pem)
+    /// -> Result(TcpStream, String)`. Like `accept_tls` but also requires
+    /// the connecting client to present a certificate chaining to one of
+    /// the CAs in `client_ca_pem`. Built using
+    /// `rustls::server::WebPkiClientVerifier::builder(roots).build()`.
+    /// If the client does not present a cert, or the presented cert does
+    /// not chain to the supplied CA bundle, the handshake fails and the
+    /// call returns `Err(msg)`.
+    pub fn accept_tls_mtls(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
+        if args.len() != 4 {
+            return Err(VmError::new("tcp.accept_tls_mtls takes 4 arguments".into()));
+        }
+        let listener = require_listener(&args[0], "tcp.accept_tls_mtls")?.clone();
+        let cert_pem = require_bytes(&args[1], "tcp.accept_tls_mtls")?;
+        let key_pem = require_bytes(&args[2], "tcp.accept_tls_mtls")?;
+        let client_ca_pem = require_bytes(&args[3], "tcp.accept_tls_mtls")?;
+
+        if let Some(r) = vm.io_entry_guard(args)? {
+            return Ok(r);
+        }
+        if vm.is_scheduled_task {
+            let next_id = vm.next_tcp_id();
+            let cert_clone = cert_pem.clone();
+            let key_clone = key_pem.clone();
+            let ca_clone = client_ca_pem.clone();
+            let completion = vm.runtime.io_pool.submit(move || {
+                match do_accept_tls_mtls(
+                    &listener.listener,
+                    &cert_clone,
+                    &key_clone,
+                    &ca_clone,
+                    next_id,
+                ) {
+                    Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
+                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                }
+            });
+            vm.pending_io = Some(completion.clone());
+            vm.block_reason = Some(BlockReason::Io(completion));
+            for arg in args {
+                vm.push(arg.clone());
+            }
+            return Err(VmError::yield_signal());
+        }
+        let next_id = vm.next_tcp_id();
+        match do_accept_tls_mtls(
+            &listener.listener,
+            &cert_pem,
+            &key_pem,
+            &client_ca_pem,
+            next_id,
+        ) {
+            Ok(handle) => Ok(ok(Value::TcpStream(handle))),
+            Err(e) => Ok(err(e)),
+        }
+    }
+
     fn do_connect_tls(
         addr: &str,
         hostname: &str,
@@ -160,6 +220,12 @@ mod tls {
         let conn = ClientConnection::new(Arc::new(config), server_name)
             .map_err(|e| format!("client connection setup: {e}"))?;
         let sock = TcpStream::connect(addr).map_err(|e| format!("tcp connect {addr}: {e}"))?;
+        // Clone the fd for the shutdown side-channel BEFORE handing the
+        // socket to rustls. `StreamOwned` takes the socket by value, and
+        // once inside rustls we can no longer reach the raw fd through
+        // the trait object. Both handles reference the same OS fd, so a
+        // `shutdown(Both)` on the clone is observed by the rustls stream.
+        let shutdown_sock = sock.try_clone().ok();
         let stream = rustls::StreamOwned::new(conn, sock);
         // StreamOwned owns the connection + socket; once placed in the
         // trait object the caller can't reach into rustls internals,
@@ -173,6 +239,7 @@ mod tls {
             id: next_id,
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
+            shutdown_sock,
         }))
     }
 
@@ -191,6 +258,10 @@ mod tls {
         let (sock, _addr) = listener.accept().map_err(|e| format!("tcp accept: {e}"))?;
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
+        // See `do_connect_tls`: clone the fd before handing it to rustls
+        // so `tcp.close` can `shutdown(Both)` the underlying socket even
+        // while a concurrent read is parked inside `StreamOwned::read`.
+        let shutdown_sock = sock.try_clone().ok();
         let stream = rustls::StreamOwned::new(conn, sock);
         let mut wrapper = ServerStreamWrapper { inner: stream };
         wrapper.complete_io_handshake()?;
@@ -198,6 +269,53 @@ mod tls {
             id: next_id,
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
+            shutdown_sock,
+        }))
+    }
+
+    fn do_accept_tls_mtls(
+        listener: &std::net::TcpListener,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        client_ca_pem: &[u8],
+        next_id: usize,
+    ) -> Result<Arc<TcpStreamHandle>, String> {
+        let certs = parse_cert_chain(cert_pem)?;
+        let key = parse_private_key(key_pem)?;
+        let ca_certs =
+            parse_cert_chain(client_ca_pem).map_err(|e| format!("client CA bundle: {e}"))?;
+        let mut roots = RootCertStore::empty();
+        for ca in ca_certs {
+            roots
+                .add(ca)
+                .map_err(|e| format!("client CA trust anchor: {e}"))?;
+        }
+        // Build a WebPkiClientVerifier that *requires* a client cert
+        // chaining to the supplied CA bundle. `builder(...).build()`
+        // defaults to required-auth (use `allow_unauthenticated()` on
+        // the builder if anonymous clients should be accepted). If no
+        // cert is offered, or the offered cert does not chain, the
+        // handshake fails and `complete_io_handshake` surfaces the
+        // error via `Err`.
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .map_err(|e| format!("client verifier: {e}"))?;
+        let config = ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certs, key)
+            .map_err(|e| format!("server config: {e}"))?;
+        let (sock, _addr) = listener.accept().map_err(|e| format!("tcp accept: {e}"))?;
+        let conn = ServerConnection::new(Arc::new(config))
+            .map_err(|e| format!("server connection setup: {e}"))?;
+        let shutdown_sock = sock.try_clone().ok();
+        let stream = rustls::StreamOwned::new(conn, sock);
+        let mut wrapper = ServerStreamWrapper { inner: stream };
+        wrapper.complete_io_handshake()?;
+        Ok(Arc::new(TcpStreamHandle {
+            id: next_id,
+            inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
+            closed: AtomicBool::new(false),
+            shutdown_sock,
         }))
     }
 
@@ -341,10 +459,15 @@ fn require_stream<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Arc<TcpStrea
 
 fn make_stream(stream: TcpStream, vm: &mut Vm) -> Value {
     let id = vm.next_tcp_id();
+    // Clone the fd for the side-channel shutdown path. `try_clone` can only
+    // fail on resource exhaustion; if it does, we drop back to Drop-based
+    // close semantics (the closed flag still prevents further ops).
+    let shutdown_sock = stream.try_clone().ok();
     Value::TcpStream(Arc::new(TcpStreamHandle {
         id,
         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
         closed: AtomicBool::new(false),
+        shutdown_sock,
     }))
 }
 
@@ -373,16 +496,26 @@ fn close(args: &[Value]) -> Result<Value, VmError> {
     }
     let s = require_stream(&args[0], "tcp.close")?;
     if !s.closed.swap(true, Ordering::SeqCst) {
-        // Best-effort shutdown. We don't surface errors — a closed-twice
-        // stream returning Ok matches typical close() ergonomics elsewhere
-        // in the stdlib.
-        let mut guard = s.inner.lock();
-        let _ = guard.flush();
-        // Safe-downcast for the shutdown call: only plain TcpStream has
-        // shutdown(). Trait-object form means we can't call it directly
-        // without unsafe-ish downcast machinery, so we rely on Drop to
-        // close the underlying fd when the Arc count hits zero. Mark as
-        // closed to make future operations error.
+        // Best-effort flush of anything buffered in the Rust-side writer.
+        // We use `try_lock` so we do not block here — a concurrent
+        // `tcp.read` on another task holds `inner` while parked on the fd,
+        // and calling `lock()` would deadlock until that read returns.
+        // The subsequent `shutdown(Both)` is what kicks the reader loose.
+        if let Some(mut guard) = s.inner.try_lock() {
+            let _ = guard.flush();
+        }
+        // Shut down the underlying fd so any task blocked inside
+        // `TcpStream::read` (possibly holding `inner`) wakes up with EOF
+        // and releases its handle promptly, rather than keeping the fd
+        // pinned until the last `Arc<TcpStreamHandle>` drops. For TLS
+        // streams this skips rustls `close_notify`; we accept a rough
+        // shutdown over a deadlocked or indefinitely-open fd. Errors
+        // (EBADF, ENOTCONN, peer already closed, etc.) are ignored —
+        // close() ergonomically can't surface a partial failure and the
+        // `closed` flag is already set so subsequent ops will error.
+        if let Some(sock) = s.shutdown_sock.as_ref() {
+            let _ = sock.shutdown(Shutdown::Both);
+        }
     }
     Ok(Value::Unit)
 }
@@ -430,10 +563,12 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             .io_pool
             .submit(move || match listener.listener.accept() {
                 Ok((stream, _addr)) => {
+                    let shutdown_sock = stream.try_clone().ok();
                     let handle = Arc::new(TcpStreamHandle {
                         id: next_id,
                         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                         closed: AtomicBool::new(false),
+                        shutdown_sock,
                     });
                     Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                 }
@@ -469,10 +604,12 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 .io_pool
                 .submit(move || match TcpStream::connect(&addr_for_closure) {
                     Ok(stream) => {
+                        let shutdown_sock = stream.try_clone().ok();
                         let handle = Arc::new(TcpStreamHandle {
                             id: next_id,
                             inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                             closed: AtomicBool::new(false),
+                            shutdown_sock,
                         });
                         Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                     }
@@ -501,11 +638,16 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(err(format!("max must be non-negative, got {max}")));
     }
     let max = max as usize;
-    if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.read: stream is closed"));
-    }
+    // Drain any already-pending completion first so a close() that
+    // races with an in-flight read surfaces the read's actual result
+    // (typically Ok(empty) = EOF after shutdown) rather than the
+    // synthetic "stream is closed" error below. Only reject fresh
+    // calls on a stream closed before we submitted anything.
     if let Some(r) = vm.io_entry_guard(args)? {
         return Ok(r);
+    }
+    if stream.closed.load(Ordering::SeqCst) {
+        return Ok(err("tcp.read: stream is closed"));
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();
@@ -548,11 +690,13 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(err(format!("n must be non-negative, got {n}")));
     }
     let n = n as usize;
-    if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.read_exact: stream is closed"));
-    }
+    // See `read`: io_entry_guard before closed-check so a pending
+    // completion wins over a racing close().
     if let Some(r) = vm.io_entry_guard(args)? {
         return Ok(r);
+    }
+    if stream.closed.load(Ordering::SeqCst) {
+        return Ok(err("tcp.read_exact: stream is closed"));
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();
@@ -588,11 +732,13 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         Value::Bytes(b) => b.clone(),
         _ => return Err(VmError::new("tcp.write requires Bytes".into())),
     };
-    if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.write: stream is closed"));
-    }
+    // See `read`: io_entry_guard before closed-check so a pending
+    // completion wins over a racing close().
     if let Some(r) = vm.io_entry_guard(args)? {
         return Ok(r);
+    }
+    if stream.closed.load(Ordering::SeqCst) {
+        return Ok(err("tcp.write: stream is closed"));
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();

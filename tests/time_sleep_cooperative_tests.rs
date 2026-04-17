@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn silt_bin() -> PathBuf {
-    if let Some(p) = std::env::var("CARGO_BIN_EXE_silt").ok() {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
         return PathBuf::from(p);
     }
     let mut p = std::env::current_exe().unwrap();

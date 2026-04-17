@@ -1624,9 +1624,9 @@ fn test_json_error_message_field_has_no_embedded_newlines() {
 
     // Find an error whose message mentions the module parse failure.
     let module_err = arr.iter().find(|e| {
-        e["message"].as_str().map_or(false, |m| {
-            m.contains("module") || m.contains("expected parameter name")
-        })
+        e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("module") || m.contains("expected parameter name"))
     });
     assert!(
         module_err.is_some(),

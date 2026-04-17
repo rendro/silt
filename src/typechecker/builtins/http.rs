@@ -130,8 +130,24 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
 
     // http.serve: (Int, Fn(Request) -> Response) -> Unit
+    // Binds 127.0.0.1:<port> (loopback only). Use `http.serve_all` to
+    // expose on all interfaces (0.0.0.0).
     env.define(
         intern("http.serve"),
+        Scheme::mono(Type::Fun(
+            vec![
+                Type::Int,
+                Type::Fun(vec![request_ty.clone()], Box::new(response_ty.clone())),
+            ],
+            Box::new(Type::Unit),
+        )),
+    );
+
+    // http.serve_all: (Int, Fn(Request) -> Response) -> Unit
+    // Binds 0.0.0.0:<port> (all interfaces). Explicit opt-in counterpart
+    // to `http.serve`.
+    env.define(
+        intern("http.serve_all"),
         Scheme::mono(Type::Fun(
             vec![
                 Type::Int,

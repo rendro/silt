@@ -1,3 +1,5 @@
+#![allow(clippy::mutable_key_type)] // intentional: locks Value-as-key ordering
+
 //! Regression tests for round-23 audit fix: `Value::Ord` returning
 //! `Equal` for distinct `Handle` / `VmClosure` / `BuiltinFn` /
 //! `VariantConstructor` values caused `BTreeSet` / `BTreeMap` (used by

@@ -1,3 +1,5 @@
+#![allow(clippy::doc_overindented_list_items)]
+
 //! Round-26 audit regressions for the `silt` CLI, fix agent CLI.
 //!
 //! Each test here pins one of the gaps called out in round 26:

@@ -133,3 +133,61 @@ fn auto_derived_impls_helper_is_called_by_time_builtins() {
         "time builtin should call the shared register_auto_derived_impls_for helper"
     );
 }
+
+// ── Closure / upvalue invariant locks ──────────────────────────────
+//
+// Silt is fully immutable, so upvalues are captured by value at
+// `Op::MakeClosure` time. There is no "open" vs "closed" upvalue
+// distinction — no Op::CloseUpvalue, no Op::SetUpvalue — because
+// there's no mutation to track. The `Local.captured` flag was a
+// vestigial field from a Lua/clox-style design that was never
+// implemented. Below tests lock the invariants that make the flag
+// unneeded.
+
+#[test]
+fn local_captured_field_stays_deleted() {
+    // Struct was `struct Local { name, depth, slot, captured: bool }`.
+    // Captured was a write-only flag — no reader anywhere in the
+    // codebase. Deleted because silt's immutability makes it
+    // impossible to need.
+    let local_struct_start = COMPILER_MOD_RS
+        .find("struct Local {")
+        .expect("struct Local exists");
+    let local_struct_end = COMPILER_MOD_RS[local_struct_start..]
+        .find("}\n")
+        .map(|i| local_struct_start + i)
+        .expect("struct Local is closed");
+    let struct_body = &COMPILER_MOD_RS[local_struct_start..local_struct_end];
+    assert!(
+        !struct_body.contains("captured"),
+        "Local.captured was deleted — don't resurrect it (silt is immutable; \
+         upvalues are captured by value, not by reference)"
+    );
+}
+
+#[test]
+fn no_op_close_upvalue_opcode_exists() {
+    // If someone ever introduces a CloseUpvalue opcode, they're
+    // either reintroducing Lua-style open upvalues (requires
+    // rewiring the entire closure path and adding mutation) or
+    // they've confused themselves. Either way, the audit needs
+    // to see it before it lands.
+    let bytecode_rs = include_str!("../src/bytecode.rs");
+    assert!(
+        !bytecode_rs.contains("CloseUpvalue"),
+        "Silt has no Op::CloseUpvalue because upvalues are captured by value. \
+         If you added one, revisit why — the closure path is by-value on purpose."
+    );
+}
+
+#[test]
+fn no_op_set_upvalue_opcode_exists() {
+    // Same reasoning: SetUpvalue would imply mutation of a captured
+    // value, which silt's immutability forbids at the surface.
+    let bytecode_rs = include_str!("../src/bytecode.rs");
+    assert!(
+        !bytecode_rs.contains("SetUpvalue"),
+        "Silt has no Op::SetUpvalue because captured values are immutable. \
+         If you added one, the language gained mutation — revisit invariants."
+    );
+}

@@ -214,7 +214,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "is_leap_year",
             "sleep",
         ],
-        "http" => vec!["get", "request", "serve", "segments"],
+        "http" => vec!["get", "request", "serve", "serve_all", "segments"],
         "postgres" => vec!["connect", "query", "execute", "transact", "close"],
         "fs" => vec![
             "exists", "is_file", "is_dir", "list_dir", "mkdir", "remove", "rename", "copy",

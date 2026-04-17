@@ -29,7 +29,8 @@ unifies them against whatever your `pg.silt` library defines.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `connect` | `(String) -> Result(PgPool, PgError)` | Open a connection pool from a `postgresql://` URL |
+| `connect` | `(String) -> Result(PgPool, PgError)` | Open a connection pool from a `postgresql://` URL (uses r2d2 defaults) |
+| `connect_with` | `(String, Map(String, Int)) -> Result(PgPool, PgError)` | Like `connect` with a tunable options bag (see [Connect options](#connect-options)) |
 | `query` | `(PgPool \| PgTx, String, List(Value)) -> Result(QueryResult, PgError)` | Run a SELECT-style statement and materialize rows |
 | `execute` | `(PgPool \| PgTx, String, List(Value)) -> Result(ExecResult, PgError)` | Run an INSERT/UPDATE/DELETE and return affected-row count |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PgError)) -> Result(a, PgError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
@@ -126,3 +127,80 @@ fn main() {
 - `postgres-tls` pulls in `native-tls` / `postgres-native-tls` and
   therefore depends on the system TLS stack (OpenSSL / Schannel /
   SecureTransport depending on platform).
+
+## TLS: secure-by-default
+
+The `sslmode=` parameter in the connection URL controls certificate
+verification. Silt explicitly **breaks with libpq defaults** here to
+fail closed against surprise MITM paths:
+
+| `sslmode=` | Encryption | Cert validity | Hostname check |
+| --- | --- | --- | --- |
+| *(omitted)* | **yes** | **yes** | **yes** (equivalent to `verify-full`) |
+| `disable` | no | — | — |
+| `prefer` / `allow` | opportunistic | no | no |
+| `require` | yes | no | no (libpq-compatible encryption-only) |
+| `verify-ca` | yes | yes | no |
+| `verify-full` | yes | yes | yes |
+
+**New default (silt 0.11+)**: a connection URL that omits `sslmode=`
+entirely resolves to `verify-full`. This is a deliberate deviation
+from libpq's historical `prefer`, which silently downgraded to
+plaintext on handshake failure. A silt program whose URL is just
+`postgres://user@host/db` now requires a valid, hostname-matching TLS
+cert — or an explicit opt-out via `?sslmode=disable`.
+
+If silt was built **without** the `postgres-tls` feature, a URL that
+defaults to `verify-full` (or any `require` / `verify-*`) returns a
+clear `ConnectionError` at connect time rather than silently using
+plaintext.
+
+**`sslmode=require` remains encryption-only**: when you explicitly
+write `sslmode=require` in the URL, silt keeps libpq semantics
+(encryption on, cert/hostname validation off). It is an explicit
+opt-in to the weaker mode. Prefer `verify-full` unless you have a
+concrete reason otherwise.
+
+**Recommended**:
+- `postgres://user:pw@host/db` (nothing after the path) — safe default.
+- `postgres://user:pw@host/db?sslmode=verify-full` — explicit, same behaviour.
+- `postgres://user:pw@host/db?sslmode=disable` — local dev / Unix socket.
+- Use `verify-ca` only when DNS / hostname configuration makes
+  `verify-full` impractical.
+
+## Connect options
+
+`postgres.connect_with(url, opts)` accepts a `Map(String, Int)` options
+bag for tunables that don't belong in the URL. Unknown keys are
+silently ignored so new knobs can be added without a breaking change.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_pool_size` | `Int` (> 0) | r2d2 default (`10`) | Upper bound on the number of pooled connections. Raise for highly concurrent silt programs that otherwise block waiting for a free connection. |
+
+```text
+-- explicit 32-connection pool
+let pool = postgres.connect_with(
+  "postgres://app@db/app",
+  #{"max_pool_size": 32}
+)?
+
+-- Same as postgres.connect(url):
+let pool = postgres.connect_with("postgres://app@db/app", #{})?
+```
+
+## Error detail redaction
+
+PostgreSQL error responses routinely embed user row values in their
+`DETAIL:`, `WHERE:`, and `HINT:` follow-on fields — for example, a
+UNIQUE violation reports `DETAIL: Key (email)=(alice@example.com)
+already exists.`. A silt web handler that echoes the `Err(_)` value
+into a 5xx response body would otherwise leak that email to
+unauthenticated callers.
+
+Silt strips those follow-on fields before the error crosses the VM
+boundary into silt. The primary short message and SQLSTATE code
+remain intact so callers can still pattern-match on `UniqueViolation`,
+`ForeignKeyViolation`, etc. If you need the full un-redacted text for
+diagnostics, log it on the Rust side (e.g. via a custom embedder) —
+the silt-side `PgError` value is intentionally scrubbed.

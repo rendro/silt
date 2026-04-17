@@ -36,7 +36,8 @@ type Response {
 |------|-----------|-------------|
 | `get` | `(String) -> Result(Response, String)` | HTTP GET request |
 | `request` | `(Method, String, String, Map(String, String)) -> Result(Response, String)` | HTTP request with method, URL, body, headers |
-| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server |
+| `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `127.0.0.1` (loopback only) |
+| `serve_all` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces) |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 
 
@@ -109,12 +110,18 @@ let resp = http.request(GET, "https://api.example.com/data", "", #{"Accept": "te
 http.serve(port: Int, handler: Fn(Request) -> Response) -> ()
 ```
 
-Starts an HTTP server on the given port. Each incoming request is handled on
-its own thread with a fresh VM, so multiple requests are processed
-concurrently. The accept loop runs on a dedicated OS thread and does not block
-the scheduler. If a handler function errors, the server returns a 500 response
-without crashing. The handler receives a `Request` and must return a
-`Response`. The server runs forever (stop with Ctrl-C).
+Starts an HTTP server on the given port, **bound to `127.0.0.1` (loopback
+only)**. This is the safe default: the listener is only reachable from the
+same host, so a development server is not accidentally exposed to the
+network. To accept connections from other machines, use
+[`http.serve_all`](#httpserve_all).
+
+Each incoming request is handled on its own thread with a fresh VM, so
+multiple requests are processed concurrently. The accept loop runs on a
+dedicated OS thread and does not block the scheduler. If a handler function
+errors, the server returns a 500 response without crashing. The handler
+receives a `Request` and must return a `Response`. The server runs forever
+(stop with Ctrl-C).
 
 Use pattern matching on `(req.method, segments)` for routing:
 
@@ -153,6 +160,39 @@ fn main() {
 ```
 
 Unsupported HTTP methods (e.g. TRACE) receive an automatic 405 response.
+
+
+## `http.serve_all`
+
+```
+http.serve_all(port: Int, handler: Fn(Request) -> Response) -> ()
+```
+
+Identical to [`http.serve`](#httpserve) except the listener is bound to
+`0.0.0.0`, so the server accepts connections from *any* network interface
+(localhost, LAN, and public IPs if the host is routed).
+
+**Security rationale.** The default `http.serve` binds to `127.0.0.1` so a
+development server cannot be accidentally exposed to the network — a
+common source of data leaks when a laptop joins an untrusted Wi-Fi, or a
+container is run without explicit port firewalling. `http.serve_all` is
+the explicit opt-in for the minority of cases where binding all interfaces
+is actually what you want (deployment behind a reverse proxy, LAN-only
+services, containers where loopback is bridged). The two variants
+otherwise behave identically — same concurrency caps, same body-size
+limits, same error handling.
+
+```silt
+import http
+
+fn main() {
+  -- Accept connections from anywhere. Make sure this is really what
+  -- you want before shipping.
+  http.serve_all(8080) { _req ->
+    Response { status: 200, body: "Hello, world!", headers: #{} }
+  }
+}
+```
 
 
 ## `http.segments`
