@@ -180,14 +180,16 @@ fn main() {{
     let path = temp_silt_file("nested_list_map_io", &src);
     let run = run_silt(&path);
     assert_eq!(
-        run.code, 0,
+        run.code,
+        0,
         "expected clean exit. stdout_len={} stderr={:?}",
         run.stdout.len(),
         run.stderr
     );
     let pair_count = run.stdout.matches("pair").count();
     assert_eq!(
-        pair_count, 6,
+        pair_count,
+        6,
         "expected exactly 6 'pair' prints (2 outer x 3 inner), got {pair_count}. \
          This failure indicates the inner callback was re-run from scratch across \
          yield/resume — the B5 nested-suspended-state bug. \
@@ -196,7 +198,8 @@ fn main() {{
     );
     let done_count = run.stdout.matches("done").count();
     assert_eq!(
-        done_count, 1,
+        done_count,
+        1,
         "expected exactly one 'done' (outer list.map returns once), got {done_count}. \
          stdout (first 2k chars):\n{}",
         run.stdout.chars().take(2000).collect::<String>()

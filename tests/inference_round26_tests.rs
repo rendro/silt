@@ -61,11 +61,7 @@ fn main() {
     let hit = errs
         .iter()
         .find(|m| m.contains("or-pattern alternatives must bind"))
-        .unwrap_or_else(|| {
-            panic!(
-                "expected an or-pattern variable-mismatch error, got: {errs:?}"
-            )
-        });
+        .unwrap_or_else(|| panic!("expected an or-pattern variable-mismatch error, got: {errs:?}"));
     // The resolved name must appear. We accept either bare `x` or the
     // quoted `'x'` form; the critical invariant is that the interner's
     // Debug form does NOT leak.
@@ -168,10 +164,7 @@ fn main() {
     let hit = errs
         .iter()
         .any(|m| m.contains("constructor 'Some'") && m.contains("expects"));
-    assert!(
-        hit,
-        "expected arity error to name 'Some', got: {errs:?}"
-    );
+    assert!(hit, "expected arity error to name 'Some', got: {errs:?}");
 }
 
 // ── L3: "undefined constructor" caret falls on pattern span ──────────
@@ -199,8 +192,12 @@ fn main() {
     let hit = errs
         .iter()
         .find(|e| e.message.contains("undefined constructor 'Unknown'"))
-        .unwrap_or_else(|| panic!("expected undefined-constructor error, got: {:?}",
-            errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected undefined-constructor error, got: {:?}",
+                errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>()
+            )
+        });
     // The pattern `Unknown(x)` is on line 5 of the source (1-indexed).
     assert_eq!(
         hit.span.line, 5,
@@ -223,9 +220,9 @@ fn main() {
     let errs = type_errors(src);
     let hit = errs.iter().find(|e| {
         e.message.contains("undefined constructor 'Unknown'")
-            // The record-aware hint replaces this message when the name
-            // matches a record; `Unknown` isn't a record, so the
-            // plain "undefined constructor" path must fire here.
+        // The record-aware hint replaces this message when the name
+        // matches a record; `Unknown` isn't a record, so the
+        // plain "undefined constructor" path must fire here.
     });
     let hit = hit.unwrap_or_else(|| {
         panic!(
@@ -242,7 +239,8 @@ fn main() {
     assert!(
         hit.span.col >= 7,
         "expected caret on the pattern (col >= 7), got col {}: {}",
-        hit.span.col, hit.message
+        hit.span.col,
+        hit.message
     );
 }
 
@@ -298,11 +296,7 @@ fn main() {
     let hit = errs
         .iter()
         .find(|m| m.contains("no field or method 'nam'"))
-        .unwrap_or_else(|| {
-            panic!(
-                "expected 'no field or method nam' error, got: {errs:?}"
-            )
-        });
+        .unwrap_or_else(|| panic!("expected 'no field or method nam' error, got: {errs:?}"));
     assert!(
         hit.contains("did you mean `name`?"),
         "expected did-you-mean hint for `u.nam`, got: {hit:?}"
@@ -325,9 +319,7 @@ fn main() {
     let hit = errs
         .iter()
         .find(|m| m.contains("unknown field 'nam'"))
-        .unwrap_or_else(|| {
-            panic!("expected 'unknown field nam' error, got: {errs:?}")
-        });
+        .unwrap_or_else(|| panic!("expected 'unknown field nam' error, got: {errs:?}"));
     assert!(
         hit.contains("did you mean `name`?"),
         "expected did-you-mean hint for record-literal typo, got: {hit:?}"
@@ -353,9 +345,7 @@ fn main() {
         .iter()
         .find(|m| m.contains("has no field 'nam'"))
         .unwrap_or_else(|| {
-            panic!(
-                "expected 'has no field nam' error on record pattern, got: {errs:?}"
-            )
+            panic!("expected 'has no field nam' error on record pattern, got: {errs:?}")
         });
     assert!(
         hit.contains("did you mean `name`?"),
@@ -380,9 +370,7 @@ fn main() {
     let hit = errs
         .iter()
         .find(|m| m.contains("no field or method 'completelydifferent'"))
-        .unwrap_or_else(|| {
-            panic!("expected field-access error, got: {errs:?}")
-        });
+        .unwrap_or_else(|| panic!("expected field-access error, got: {errs:?}"));
     assert!(
         !hit.contains("did you mean"),
         "unrelated typo must not produce a suggestion, got: {hit:?}"

@@ -113,7 +113,15 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "io" => vec!["read_file", "write_file", "read_line", "args", "inspect"],
         "int" => vec!["parse", "abs", "min", "max", "to_float", "to_string"],
         "float" => vec![
-            "parse", "round", "ceil", "floor", "abs", "to_string", "to_int", "min", "max",
+            "parse",
+            "round",
+            "ceil",
+            "floor",
+            "abs",
+            "to_string",
+            "to_int",
+            "min",
+            "max",
         ],
         "result" => vec![
             "unwrap_or",

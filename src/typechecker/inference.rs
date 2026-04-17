@@ -1010,8 +1010,7 @@ impl TypeChecker {
                             // GAP (round 26 L5): append a did-you-mean
                             // hint when a near edit-distance field
                             // exists on this record.
-                            let base =
-                                format!("record '{rec_name}' has no field '{field_name}'");
+                            let base = format!("record '{rec_name}' has no field '{field_name}'");
                             self.error(
                                 format_record_field_suggestion(base, *field_name, field_types),
                                 span,
@@ -1036,8 +1035,7 @@ impl TypeChecker {
                         } else {
                             // GAP (round 26 L5): same hint on the generic
                             // resolution path.
-                            let base =
-                                format!("record '{rec_name}' has no field '{field_name}'");
+                            let base = format!("record '{rec_name}' has no field '{field_name}'");
                             self.error(
                                 format_record_field_suggestion(base, *field_name, &field_types),
                                 span,
@@ -1496,10 +1494,7 @@ impl TypeChecker {
                             // exists on this record.
                             let base =
                                 format!("record {rec_name} has no field or method '{field}'");
-                            self.error(
-                                format_record_field_suggestion(base, field, fields),
-                                span,
-                            );
+                            self.error(format_record_field_suggestion(base, field, fields), span);
                             Type::Error
                         }
                     }
@@ -2487,11 +2482,7 @@ impl TypeChecker {
                             // `User { nam: ... }` → `did you mean \`name\`?`.
                             let base = format!("unknown field '{}' in {}", field_name, name);
                             self.error(
-                                format_record_field_suggestion(
-                                    base,
-                                    *field_name,
-                                    &rec_info.fields,
-                                ),
+                                format_record_field_suggestion(base, *field_name, &rec_info.fields),
                                 span,
                             );
                         }
@@ -2532,8 +2523,7 @@ impl TypeChecker {
                             self.unify(&ft, declared_ty, span);
                         } else {
                             // GAP (round 26 L5): did-you-mean on record-update.
-                            let base =
-                                format!("unknown field '{field_name}' in {rec_name}");
+                            let base = format!("unknown field '{field_name}' in {rec_name}");
                             self.error(
                                 format_record_field_suggestion(base, *field_name, rec_fields),
                                 span,
@@ -2579,8 +2569,7 @@ impl TypeChecker {
                         } else {
                             // GAP (round 26 L5): did-you-mean on the
                             // generic-record update path.
-                            let base =
-                                format!("unknown field '{field_name}' in {type_name}");
+                            let base = format!("unknown field '{field_name}' in {type_name}");
                             self.error(
                                 format_record_field_suggestion(
                                     base,

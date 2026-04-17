@@ -558,9 +558,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                             cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                             let mut handles = cancel_inner.blocked_handles.lock();
-                            if let Some(pos) =
-                                handles.iter().position(|h| h.id == cancel_task_id)
-                            {
+                            if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
                                 handles.swap_remove(pos);
                             }
                         }));
@@ -606,9 +604,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                             cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                             let mut handles = cancel_inner.blocked_handles.lock();
-                            if let Some(pos) =
-                                handles.iter().position(|h| h.id == cancel_task_id)
-                            {
+                            if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
                                 handles.swap_remove(pos);
                             }
                         }));

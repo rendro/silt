@@ -2102,14 +2102,9 @@ impl TypeChecker {
         // "missing method" errors when validate_trait_impls runs the
         // preregistered impls against the user's new body.
         let trait_name_str = resolve(t.name);
-        if BUILTIN_TRAIT_NAMES
-            .iter()
-            .any(|b| *b == trait_name_str.as_str())
-        {
+        if BUILTIN_TRAIT_NAMES.contains(&trait_name_str.as_str()) {
             self.error(
-                format!(
-                    "trait '{trait_name_str}' is a builtin trait and cannot be redefined"
-                ),
+                format!("trait '{trait_name_str}' is a builtin trait and cannot be redefined"),
                 t.span,
             );
             return;

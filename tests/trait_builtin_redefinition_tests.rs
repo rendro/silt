@@ -64,9 +64,7 @@ fn run(input: &str) -> Value {
 /// trait by name + the "builtin trait" phrase, and no "missing method"
 /// cascade leaks through.
 fn assert_builtin_redef_rejected(name: &str) {
-    let src = format!(
-        "trait {name} {{ fn foo(self) -> Bool }}\nfn main() {{ println(1) }}\n"
-    );
+    let src = format!("trait {name} {{ fn foo(self) -> Bool }}\nfn main() {{ println(1) }}\n");
     let errs = type_errors(&src);
     assert_eq!(
         errs.len(),

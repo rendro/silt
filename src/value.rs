@@ -520,10 +520,7 @@ impl Channel {
     /// guard is required — bare `register_recv_waker` + manual
     /// `remove_recv_waker` has leaked repeatedly through the cancel
     /// path (round-27 B1–B4).
-    pub fn register_recv_waker_guard(
-        self: &Arc<Self>,
-        waker: Waker,
-    ) -> WakerRegistration {
+    pub fn register_recv_waker_guard(self: &Arc<Self>, waker: Waker) -> WakerRegistration {
         let id = self.register_recv_waker(waker);
         WakerRegistration {
             channel: self.clone(),
@@ -534,10 +531,7 @@ impl Channel {
 
     /// Register a send waker and return a `WakerRegistration` RAII
     /// guard. See [`register_recv_waker_guard`](Self::register_recv_waker_guard).
-    pub fn register_send_waker_guard(
-        self: &Arc<Self>,
-        waker: Waker,
-    ) -> WakerRegistration {
+    pub fn register_send_waker_guard(self: &Arc<Self>, waker: Waker) -> WakerRegistration {
         let id = self.register_send_waker(waker);
         WakerRegistration {
             channel: self.clone(),

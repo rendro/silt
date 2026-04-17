@@ -393,42 +393,47 @@ mod genp {
 
     /// Top-level program strategy.
     pub fn arb_program() -> impl Strategy<Value = Program> {
-        (1usize..=4, 1usize..=8, 1usize..=12).prop_flat_map(
-            |(num_channels, num_workers, ops_per_task)| {
+        (1usize..=4, 1usize..=8, 1usize..=12)
+            .prop_flat_map(|(num_channels, num_workers, ops_per_task)| {
                 // Per-channel capacity + closeable flag.
                 let caps = prop::collection::vec(0u32..=2, num_channels);
                 let closeables = prop::collection::vec(prop::bool::weighted(0.5), num_channels);
-                (caps, closeables, Just(num_channels), Just(num_workers), Just(ops_per_task))
-            },
-        )
-        .prop_flat_map(|(capacities, closeable, num_channels, num_workers, ops_per_task)| {
-            // Each worker has 1..=ops_per_task ops.
-            let closeable_c = closeable.clone();
-            let workers_strat = prop::collection::vec(
-                prop::collection::vec(
-                    arb_worker_op(num_channels, closeable_c.clone()),
-                    1..=ops_per_task,
-                ),
-                num_workers,
-            );
-            // Supervisor has 1..=ops_per_task ops.
-            let supervisor_strat = prop::collection::vec(
-                arb_supervisor_op(num_workers),
-                1..=ops_per_task,
-            );
-            (
-                Just(capacities),
-                Just(closeable),
-                workers_strat,
-                supervisor_strat,
+                (
+                    caps,
+                    closeables,
+                    Just(num_channels),
+                    Just(num_workers),
+                    Just(ops_per_task),
+                )
+            })
+            .prop_flat_map(
+                |(capacities, closeable, num_channels, num_workers, ops_per_task)| {
+                    // Each worker has 1..=ops_per_task ops.
+                    let closeable_c = closeable.clone();
+                    let workers_strat = prop::collection::vec(
+                        prop::collection::vec(
+                            arb_worker_op(num_channels, closeable_c.clone()),
+                            1..=ops_per_task,
+                        ),
+                        num_workers,
+                    );
+                    // Supervisor has 1..=ops_per_task ops.
+                    let supervisor_strat =
+                        prop::collection::vec(arb_supervisor_op(num_workers), 1..=ops_per_task);
+                    (
+                        Just(capacities),
+                        Just(closeable),
+                        workers_strat,
+                        supervisor_strat,
+                    )
+                },
             )
-        })
-        .prop_map(|(capacities, closeable, workers, supervisor)| Program {
-            capacities,
-            closeable,
-            workers,
-            supervisor,
-        })
+            .prop_map(|(capacities, closeable, workers, supervisor)| Program {
+                capacities,
+                closeable,
+                workers,
+                supervisor,
+            })
     }
 }
 
@@ -464,9 +469,7 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
         }
         genp::Op::TryReceive { ch } => {
             let mut s = String::new();
-            s.push_str(&format!(
-                "{indent}match channel.try_receive(ch{ch}) {{\n"
-            ));
+            s.push_str(&format!("{indent}match channel.try_receive(ch{ch}) {{\n"));
             s.push_str(&emit_match_channel_result(indent, ""));
             s.push_str(&format!("{indent}}}\n"));
             s
@@ -478,9 +481,7 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut s = String::new();
-            s.push_str(&format!(
-                "{indent}match channel.select([{list}]) {{\n"
-            ));
+            s.push_str(&format!("{indent}match channel.select([{list}]) {{\n"));
             s.push_str(&format!("{indent}    (_, Message(_v)) -> ()\n"));
             s.push_str(&format!("{indent}    (_, Empty) -> ()\n"));
             s.push_str(&format!("{indent}    (_, Closed) -> ()\n"));
@@ -543,22 +544,16 @@ fn emit_program(p: &genp::Program) -> String {
             src.push_str(&emit_op(op, "    ", Some(wi)));
         }
         // Trailing done-send. Use try_send so we never block.
-        src.push_str(&format!(
-            "    let _tsdone = channel.try_send(done, {wi})\n"
-        ));
+        src.push_str(&format!("    let _tsdone = channel.try_send(done, {wi})\n"));
         src.push_str("  })\n");
     }
 
     // Supervisor task.
-    src.push_str(&format!(
-        "  let hsup = task.spawn(fn() {{\n"
-    ));
+    src.push_str(&format!("  let hsup = task.spawn(fn() {{\n"));
     for op in &p.supervisor {
         src.push_str(&emit_op(op, "    ", None));
     }
-    src.push_str(
-        "    let _tsdone = channel.try_send(done, 999)\n",
-    );
+    src.push_str("    let _tsdone = channel.try_send(done, 999)\n");
     src.push_str("  })\n");
 
     // Main waits for up to 800ms for as many dones as possible. This
@@ -684,12 +679,17 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_32_rdv", src);
-        assert!(!out.timed_out, "32-task rendezvous timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "32-task rendezvous timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(
             out.stdout.contains("sum=528"),
             "expected sum=528 (1..32 inclusive); got stdout={:?} stderr={:?}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
     }
 
@@ -734,12 +734,17 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_select_cancel", src);
-        assert!(!out.timed_out, "select+cancel timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "select+cancel timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(
             out.stdout.contains("sum=7"),
             "expected 1+2+4=7 (c cancelled); got stdout={:?} stderr={:?}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
     }
 
@@ -765,7 +770,11 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_100_sleeps", src);
-        assert!(!out.timed_out, "100 sleeps timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "100 sleeps timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(out.stdout.contains("finished"));
         // Cooperative parking: 100 tasks @ 10ms each should finish in
@@ -813,12 +822,17 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_cancel_chain", src);
-        assert!(!out.timed_out, "join-chain cancel hung; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "join-chain cancel hung; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(
             out.stdout.contains("c_ran=3"),
             "expected C to have run; got stdout={:?} stderr={:?}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
     }
 
@@ -860,12 +874,17 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_close_pending", src);
-        assert!(!out.timed_out, "close-with-pending timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "close-with-pending timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(
             out.stdout.contains("drained="),
             "expected drained=N line; got stdout={:?} stderr={:?}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
     }
 
@@ -894,7 +913,11 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_spawn_cancel_500", src);
-        assert!(!out.timed_out, "spawn/cancel 500 timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "spawn/cancel 500 timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(out.stdout.contains("cancelled=500"));
         assert!(
@@ -960,17 +983,13 @@ fn main() {
                  stderr={}",
                 out.stderr
             );
-            assert_eq!(
-                out.exit,
-                Some(0),
-                "trial {trial}: stderr={}",
-                out.stderr
-            );
+            assert_eq!(out.exit, Some(0), "trial {trial}: stderr={}", out.stderr);
             // 1+2+...+16 = 136
             assert!(
                 out.stdout.contains("sum=136"),
                 "trial {trial}: expected sum=136; got stdout={:?} stderr={:?}",
-                out.stdout, out.stderr
+                out.stdout,
+                out.stderr
             );
         }
     }
@@ -999,13 +1018,17 @@ fn main() {
 }
 "#;
         let out = run("handcrafted_select_timeout_wins", src);
-        assert!(!out.timed_out, "select-timeout timed out; stderr={}", out.stderr);
+        assert!(
+            !out.timed_out,
+            "select-timeout timed out; stderr={}",
+            out.stderr
+        );
         assert_eq!(out.exit, Some(0), "stderr={}", out.stderr);
         assert!(
             out.stdout.contains("timed_out"),
             "expected 'timed_out'; got stdout={:?} stderr={:?}",
-            out.stdout, out.stderr
+            out.stdout,
+            out.stderr
         );
     }
 }
-

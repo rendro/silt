@@ -1,0 +1,294 @@
+//! Shared compilation pipeline used by the `silt run`, `silt check`,
+//! `silt fmt`, `silt disasm`, and `silt test` CLI paths.
+//!
+//! Centralized here so each subcommand renders identical diagnostics
+//! for the same input — see `reportable_type_errors` for the dance
+//! we do to reconcile the type-checker's "unknown module" warning
+//! with the compiler's later resolution of those same imports.
+
+use std::fs;
+use std::process;
+
+use silt::bytecode::Function;
+use silt::compiler::Compiler;
+use silt::errors::SourceError;
+use silt::lexer::Lexer;
+use silt::parser::Parser;
+use silt::typechecker;
+
+use crate::cli::package::package_setup_for_file;
+
+/// Result of running the full compilation pipeline (lex → parse → typecheck → compile).
+pub(crate) struct CompilePipelineResult {
+    /// The original source text.
+    pub(crate) source: String,
+    /// Parse errors (may be non-empty even when compilation proceeds).
+    pub(crate) parse_errors: Vec<SourceError>,
+    /// Type errors and warnings.
+    pub(crate) type_errors: Vec<SourceError>,
+    /// Whether any hard error (parse or type) was encountered. Callers
+    /// typically recompute the "real" hard-error flag after filtering
+    /// suppressible warnings (see `reportable_type_errors`), so this is
+    /// kept for completeness / future callers but not currently read.
+    #[allow(dead_code)]
+    pub(crate) has_hard_errors: bool,
+    /// Compiled functions — `None` if hard errors prevented compilation.
+    pub(crate) functions: Option<Vec<Function>>,
+    /// Compile errors (if compilation was attempted but failed).
+    pub(crate) compile_errors: Vec<SourceError>,
+    /// Compiler warnings (empty if compilation was not attempted).
+    pub(crate) compile_warnings: Vec<SourceError>,
+}
+
+/// Run the full compilation pipeline for `path`: read file → lex → parse (recovering)
+/// → typecheck → compile. Returns all diagnostics and compiled output without printing
+/// anything or exiting, so callers can decide how to present results.
+///
+/// - `skip_compile`: skip the compilation step (used by `check_file` which only needs diagnostics).
+/// - `typecheck_on_parse_errors`: run the type checker even when there are parse errors
+///   (used by `check_file` to report as many diagnostics as possible).
+/// - `auto_update_lock`: when true and the file lives inside a silt
+///   package, regenerate `silt.lock` if it's missing or stale before
+///   compilation. Set to `false` for read-only commands like `silt
+///   disasm` and `silt fmt` so they don't mutate user files.
+pub(crate) fn run_compile_pipeline(
+    path: &str,
+    skip_compile: bool,
+    typecheck_on_parse_errors: bool,
+    auto_update_lock: bool,
+) -> CompilePipelineResult {
+    let source = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error reading {path}: {e}");
+            process::exit(1);
+        }
+    };
+
+    let tokens = match Lexer::new(&source).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            // Lex errors are fatal for all callers. Return a result with the error
+            // so that `check_file` can format it as JSON when needed.
+            let source_err = SourceError::from_lex_error(&e, &source, path);
+            return CompilePipelineResult {
+                source,
+                parse_errors: vec![source_err],
+                type_errors: Vec::new(),
+                has_hard_errors: true,
+                functions: None,
+                compile_errors: Vec::new(),
+                compile_warnings: Vec::new(),
+            };
+        }
+    };
+
+    let (mut program, raw_parse_errors) = Parser::new(tokens).parse_program_recovering();
+
+    let parse_errors: Vec<SourceError> = raw_parse_errors
+        .iter()
+        .map(|e| SourceError::from_parse_error(e, &source, path))
+        .collect();
+    let has_parse_errors = !parse_errors.is_empty();
+
+    // Skip the type checker when there are parse errors, unless the caller opted in
+    // (e.g. `check_file` reports as many diagnostics as possible on partial programs).
+    let (type_errors, has_type_hard_errors) = if !has_parse_errors || typecheck_on_parse_errors {
+        let raw_type_errors = typechecker::check(&mut program);
+        let hard = raw_type_errors
+            .iter()
+            .any(|e| e.severity == typechecker::Severity::Error);
+        let errs: Vec<SourceError> = raw_type_errors
+            .iter()
+            .map(|e| SourceError::from_type_error(e, &source, path))
+            .collect();
+        (errs, hard)
+    } else {
+        (Vec::new(), false)
+    };
+
+    let has_hard_errors = has_parse_errors || has_type_hard_errors;
+
+    // If there are parse errors or compilation is not requested, skip compile.
+    // Type errors do NOT block compilation — the compiler resolves modules
+    // during compilation, which fixes most "undefined" errors from the type
+    // checker.  The test suite already relies on this behavior.
+    if has_parse_errors || skip_compile {
+        return CompilePipelineResult {
+            source,
+            parse_errors,
+            type_errors,
+            has_hard_errors,
+            functions: None,
+            compile_errors: Vec::new(),
+            compile_warnings: Vec::new(),
+        };
+    }
+
+    // Derive the package_roots map: when `path` is inside a silt
+    // package, this loads `silt.toml` and (for dep-resolving commands)
+    // auto-regenerates `silt.lock` if stale before resolving the dep
+    // tree. For ad-hoc scripts outside any package, falls back to a
+    // synthetic local-only setup keyed off the file's parent directory.
+    //
+    // The `auto_update_lock` flag distinguishes mutation-allowed
+    // callers (`silt run`, `silt check`, `silt test`) from read-only
+    // callers (`silt disasm`, `silt fmt`). Read-only callers still
+    // need a dep map; they just resolve in-memory rather than writing
+    // a refreshed lockfile to disk.
+    let (local_pkg, package_roots) = package_setup_for_file(path, auto_update_lock);
+
+    // Compile.
+    let mut compiler = Compiler::with_package_roots(local_pkg, package_roots);
+    match compiler.compile_program(&program) {
+        Ok(functions) => {
+            let compile_warnings: Vec<SourceError> = compiler
+                .warnings()
+                .iter()
+                .map(|w| SourceError::compile_warning(&w.message, w.span, &source, path))
+                .collect();
+            CompilePipelineResult {
+                source,
+                parse_errors,
+                type_errors,
+                has_hard_errors,
+                functions: Some(functions),
+                compile_errors: Vec::new(),
+                compile_warnings,
+            }
+        }
+        Err(e) => {
+            let source_err = SourceError::from_compile_error(&e, &source, path);
+            CompilePipelineResult {
+                source,
+                parse_errors,
+                type_errors,
+                has_hard_errors: true,
+                functions: None,
+                compile_errors: vec![source_err],
+                compile_warnings: Vec::new(),
+            }
+        }
+    }
+}
+
+/// Return the type-checker diagnostics that should still be reported for `result`
+/// after dropping noise that the compiler will resolve.
+///
+/// Why: the type checker runs before module resolution (which happens during
+/// compilation). When a program imports from an unknown module, the checker
+/// emits an "unknown module" *warning* for that import. We want to drop that
+/// warning (and ONLY that warning) from the `compile_file` path so the user
+/// isn't told about an import they actually wrote correctly. All other
+/// diagnostics — real type errors, other warnings — must flow through
+/// untouched so they continue to abort the run.
+///
+/// Previously this helper did substring matching on every entry and
+/// suppressed ALL type diagnostics whenever any of them mentioned "unknown
+/// module", which silently masked real type errors in any file that also
+/// happened to import a user module. Filtering per-entry fixes that while
+/// keeping the clean UX for importers.
+pub(crate) fn reportable_type_errors(result: &CompilePipelineResult) -> Vec<&SourceError> {
+    let has_user_import_warning = result.type_errors.iter().any(is_unknown_module_warning);
+    result
+        .type_errors
+        .iter()
+        .filter(|e| !is_unknown_module_warning(e))
+        // When the program imports a user module the type checker can't
+        // see, every name it exports surfaces as "undefined". The
+        // compiler does resolve those at link time, so we demote them
+        // here and let the compile-or-runtime stage be the source of
+        // truth for name resolution.
+        .filter(|e| !(has_user_import_warning && is_user_import_resolvable_error(e)))
+        .collect()
+}
+
+/// Returns true iff `err` is the "unknown module" warning that the type
+/// checker emits for imports the compiler will later resolve. We gate on
+/// both the warning severity and the message prefix so a future real type
+/// error that happens to mention those words isn't swallowed.
+pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
+    err.is_warning
+        && err.kind == silt::errors::ErrorKind::Type
+        && err.message.contains("unknown module")
+}
+
+/// Returns true iff `err` is an "undefined variable" or "undefined
+/// constructor" diagnostic that the compiler is likely to resolve at
+/// link time (because the name comes from a user-module selective
+/// import that the type checker can't see into).
+///
+/// The type checker only registers selective imports for builtin
+/// modules; for user modules it emits an "unknown module" warning and
+/// every imported name then surfaces as "undefined variable" /
+/// "undefined constructor". We demote those to warnings so the run
+/// proceeds; if the name truly is undefined the compiler will emit a
+/// hard runtime/link error.
+pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
+    err.kind == silt::errors::ErrorKind::Type
+        && !err.is_warning
+        && (err.message.starts_with("undefined variable")
+            || err.message.starts_with("undefined constructor")
+            || err.message.starts_with("undefined type")
+            || err.message.starts_with("unknown field")
+            || err.message.starts_with("type ")
+            || err.message.contains("does not implement"))
+}
+
+/// Print all diagnostics to stderr and exit(1) if there are hard errors.
+/// Returns the compiled functions and source on success.
+pub(crate) fn compile_file(path: &str) -> (Vec<Function>, String) {
+    compile_file_with_options(path, true)
+}
+
+/// Like [`compile_file`] but lets the caller opt out of lockfile
+/// auto-regeneration. `silt disasm` is the only read-only caller that
+/// uses `false` here — it inspects bytecode without the side effect of
+/// writing `silt.lock`.
+pub(crate) fn compile_file_with_options(
+    path: &str,
+    auto_update_lock: bool,
+) -> (Vec<Function>, String) {
+    let result = run_compile_pipeline(path, false, false, auto_update_lock);
+
+    // Filter per-entry: drop the "unknown module" warnings the compiler will
+    // resolve, but keep every other type diagnostic so real errors still
+    // surface. See `reportable_type_errors` for the rationale.
+    let reportable = reportable_type_errors(&result);
+    // A hard error is real only if it's a parse/compile error or a
+    // non-suppressed type error with severity Error.
+    let has_real_type_error = reportable.iter().any(|e| !e.is_warning);
+    let has_parse_errors = !result.parse_errors.is_empty();
+    let has_real_hard_errors = has_parse_errors || has_real_type_error;
+
+    // F14 (audit round 17): print diagnostics with a blank line between
+    // consecutive errors so multi-error output doesn't form a solid wall
+    // of text. Matches rustc/gcc convention.
+    // Lock: tests/cli_test_rendering_tests.rs
+    // `test_multiple_errors_render_with_blank_separator`.
+    let all_errs: Vec<&SourceError> = result
+        .parse_errors
+        .iter()
+        .chain(reportable.iter().copied())
+        .chain(result.compile_errors.iter())
+        .chain(result.compile_warnings.iter())
+        .collect();
+    silt::errors::eprintln_errors_with_separator(&all_errs);
+
+    // Exit gate: abort iff a real (non-suppressed) hard error exists.
+    if has_real_hard_errors {
+        process::exit(1);
+    }
+
+    let functions = match result.functions {
+        Some(f) => f,
+        None => process::exit(1),
+    };
+
+    if functions.is_empty() {
+        eprintln!("{path}: internal error: no functions compiled");
+        process::exit(1);
+    }
+
+    (functions, result.source)
+}

@@ -81,12 +81,9 @@ jobs:
       - name: cargo test
         run: cargo test --all-features
 
-  fuzz-smoke:
-    name: Fuzz Smoke (libfuzzer, 30s per target)
+  fuzz:
+    name: Fuzz (libfuzzer, 60s per target)
     runs-on: ubuntu-latest
-    # Non-blocking: fuzz crashes should not fail unrelated PRs until the
-    # corpus stabilises. Remove continue-on-error once the corpus is seeded.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
@@ -103,18 +100,31 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
 
-      - name: Fuzz lexer (30s)
-        run: cargo +nightly fuzz run fuzz_lexer -- -max_total_time=30
-        working-directory: .
+      - name: Seed corpus
+        run: ./fuzz/seed.sh
 
-      - name: Fuzz parser (30s)
-        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=30
-        working-directory: .
+      - name: Fuzz lexer (60s)
+        run: cargo +nightly fuzz run fuzz_lexer -- -max_total_time=60
 
-      - name: Fuzz formatter (30s)
-        run: cargo +nightly fuzz run fuzz_formatter -- -max_total_time=30
-        working-directory: .
+      - name: Fuzz parser (60s)
+        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=60
 
-      - name: Fuzz roundtrip (30s)
-        run: cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time=30
-        working-directory: .
+      - name: Fuzz formatter (60s)
+        run: cargo +nightly fuzz run fuzz_formatter -- -max_total_time=60
+
+      - name: Fuzz roundtrip (60s)
+        run: cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time=60
+
+      - name: Upload reproducers on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-reproducers
+          path: |
+            fuzz/artifacts/**
+            fuzz/crash-*
+            fuzz/leak-*
+            fuzz/timeout-*
+            fuzz/oom-*
+          retention-days: 14
+          if-no-files-found: ignore

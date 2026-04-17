@@ -786,12 +786,10 @@ impl TypeChecker {
     fn is_fully_covering_pattern(pat: &Pattern) -> bool {
         match &pat.kind {
             PatternKind::Wildcard | PatternKind::Ident(_) => true,
-            PatternKind::Record { fields, .. } => fields
-                .iter()
-                .all(|(_, sub)| match sub {
-                    Some(p) => Self::is_fully_covering_pattern(p),
-                    None => true,
-                }),
+            PatternKind::Record { fields, .. } => fields.iter().all(|(_, sub)| match sub {
+                Some(p) => Self::is_fully_covering_pattern(p),
+                None => true,
+            }),
             PatternKind::Tuple(ps) => ps.iter().all(Self::is_fully_covering_pattern),
             PatternKind::Or(alts) => alts.iter().any(Self::is_fully_covering_pattern),
             _ => false,

@@ -102,7 +102,10 @@ fn readme_tooling_block_matches_main_help() {
             Some(r) => r,
             None => continue,
         };
-        let sub: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect();
+        let sub: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '-')
+            .collect();
         if sub.is_empty() || sub == "help" {
             continue;
         }

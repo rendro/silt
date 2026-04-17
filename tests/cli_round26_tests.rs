@@ -374,8 +374,7 @@ fn test_silt_help_all_rows_desc_column_aligned() {
     let cols: Vec<(usize, &str)> = rows
         .iter()
         .map(|r| {
-            let c = desc_column(r)
-                .unwrap_or_else(|| panic!("no description column for row: {r}"));
+            let c = desc_column(r).unwrap_or_else(|| panic!("no description column for row: {r}"));
             (c, *r)
         })
         .collect();
