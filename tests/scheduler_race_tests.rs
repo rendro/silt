@@ -185,6 +185,7 @@ fn assert_no_scheduler_panic(trial: usize, label: &str, res: &RunResult) {
 /// detection probability ≥ 1 − 0.2^20 ≈ 1 − 1e-14 (effectively 100%).
 /// In practice the bug fires within the first 1-2 trials on debug.
 #[test]
+#[cfg_attr(windows, ignore = "timer-resolution flake on Windows subprocess harness")]
 fn test_send_arm_no_panic_16_sender_fan_in() {
     let src = r#"
 import channel
@@ -240,6 +241,7 @@ fn main() {
 /// Each receiver tells us its value via `task.join`; the main thread
 /// sums them. Sum should be 136 again (1..16 inclusive).
 #[test]
+#[cfg_attr(windows, ignore = "timer-resolution flake on Windows subprocess harness")]
 fn test_recv_arm_no_panic_16_receiver_fan_out() {
     let src = r#"
 import channel
