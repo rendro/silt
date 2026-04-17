@@ -189,8 +189,9 @@ fn postgres_doc_exists_with_frontmatter_and_documents_every_builtin() {
     let body = read(&path);
 
     // Frontmatter must be present and match neighboring stdlib pages.
+    // Accept either LF or CRLF (Git autocrlf on Windows may rewrite).
     assert!(
-        body.starts_with("---\n"),
+        body.starts_with("---\n") || body.starts_with("---\r\n"),
         "postgres.md must begin with YAML frontmatter (starting with '---')"
     );
     assert!(
