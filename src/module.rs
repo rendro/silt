@@ -4,6 +4,7 @@
 pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
     "regex", "json", "set", "math", "time", "http", "fs", "env", "postgres", "bytes", "tcp",
+    "stream",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -237,6 +238,40 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "concat_all",
             "get",
             "eq",
+        ],
+        "stream" => vec![
+            "from_list",
+            "from_range",
+            "repeat",
+            "unfold",
+            "file_chunks",
+            "file_lines",
+            "tcp_chunks",
+            "tcp_lines",
+            "map",
+            "map_ok",
+            "filter",
+            "filter_ok",
+            "flat_map",
+            "take",
+            "drop",
+            "take_while",
+            "drop_while",
+            "chunks",
+            "scan",
+            "dedup",
+            "buffered",
+            "merge",
+            "zip",
+            "concat",
+            "collect",
+            "fold",
+            "each",
+            "count",
+            "first",
+            "last",
+            "write_to_tcp",
+            "write_to_file",
         ],
         "tcp" => {
             #[allow(unused_mut)]
