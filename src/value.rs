@@ -159,10 +159,50 @@ pub enum Value {
 }
 
 /// A combined Read + Write trait object used as the inner stream type for
-/// `TcpStreamHandle`. Plain TCP impls it via the blanket below; v0.9 PR 3
-/// adds rustls-wrapped streams as additional implementors.
-pub trait ReadWrite: std::io::Read + std::io::Write + Send {}
-impl<T: std::io::Read + std::io::Write + Send> ReadWrite for T {}
+/// `TcpStreamHandle`. Plain TCP impls it directly; the rustls wrappers in
+/// `src/builtins/tcp.rs::tls` impl it manually so they can expose the
+/// underlying `TcpStream`'s raw socket via `raw_socket`.
+///
+/// `raw_socket` exists so `tcp.close` on Windows can call `CancelIoEx`
+/// on the SOCKET handle the parked `recv` is using. Winsock's
+/// `shutdown(SD_BOTH)` does NOT cancel an in-progress blocking `recv`
+/// on a duplicate handle (created via `WSADuplicateSocket` aka
+/// `TcpStream::try_clone`), so we have to reach the actual SOCKET held
+/// by the inner stream and explicitly cancel pending I/O on it.
+///
+/// On Unix, `raw_socket` is unused (Linux/macOS `shutdown(Both)` on the
+/// cloned fd already delivers EOF to the parked reader). The default
+/// returns `None` so non-socket implementors (e.g. test fakes) need not
+/// override.
+pub trait ReadWrite: std::io::Read + std::io::Write + Send {
+    /// Underlying OS socket handle for the inner stream, if known.
+    /// On Windows this is the `SOCKET` cast to `usize` (matching
+    /// `std::os::windows::io::AsRawSocket::as_raw_socket() as usize`).
+    /// On Unix this is the `RawFd` cast to `usize`. Used by `tcp.close`
+    /// on Windows to call `CancelIoEx` on the parked reader's handle.
+    fn raw_socket(&self) -> Option<usize> {
+        None
+    }
+}
+
+impl ReadWrite for std::net::TcpStream {
+    fn raw_socket(&self) -> Option<usize> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            Some(self.as_raw_socket() as usize)
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            Some(self.as_raw_fd() as usize)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            None
+        }
+    }
+}
 
 pub struct TcpListenerHandle {
     pub id: usize,
@@ -190,6 +230,18 @@ pub struct TcpStreamHandle {
     /// at construction (best-effort — callers fall back to Drop
     /// semantics) or after `close()` has consumed it on Windows.
     pub shutdown_sock: Mutex<Option<std::net::TcpStream>>,
+    /// Raw OS socket handle for the **inner** stream (the one a parked
+    /// `tcp.read` is using). Cached at construction time so `tcp.close`
+    /// can issue `CancelIoEx` on Windows WITHOUT acquiring `inner`'s
+    /// mutex — which is held by the parked reader and would deadlock.
+    ///
+    /// On Windows: `SOCKET as usize` (matches
+    /// `AsRawSocket::as_raw_socket() as usize`).
+    /// On Unix: `RawFd as usize`. Currently unused on Unix because
+    /// `shutdown(Both)` on the cloned fd already wakes the reader.
+    /// `None` only if the underlying stream type does not expose a
+    /// raw socket (e.g. test fakes).
+    pub reader_socket: Option<usize>,
 }
 
 /// A thread-safe channel with support for both buffered and rendezvous semantics.

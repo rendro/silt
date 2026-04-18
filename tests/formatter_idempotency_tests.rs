@@ -122,3 +122,53 @@ import a\n\
 -- trailing file comment\n";
     assert_idempotent(source);
 }
+
+#[test]
+fn test_single_element_tuple_pattern_preserves_trailing_comma() {
+    // Round-30 fuzz repro: `(_0, )` is a single-element tuple pattern.
+    // Pass 1 of the formatter previously stripped the trailing comma,
+    // emitting `(_0)`. The parser folds `(x)` away as just `x`, so
+    // pass 2 lost the parens entirely — `_0`. Idempotency violation.
+    //
+    // The fix: single-element tuple patterns must always emit `(x,)`.
+    let source = "\
+fn fizzbuzz(n) {
+  match (n % 3, n % 5) {
+    (0, 0) -> \"FizzBuzz\"
+    (_0, ) -> \"Fizz\"
+    (_, 0) -> \"Buzz\"
+    _ -> \"{n}\"
+  }
+}
+";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("(_0,)"),
+        "single-element tuple pattern must keep trailing comma; got:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_single_element_tuple_pattern_variants_idempotent() {
+    // Property-style: every common shape of single-element tuple pattern
+    // must round-trip with its trailing comma intact through two passes.
+    for inner in ["x", "_y", "_0", "longerName", "_", "0", "\"s\""] {
+        let source =
+            format!("fn f(v) {{\n  match v {{\n    ({inner},) -> 1\n    _ -> 0\n  }}\n}}\n");
+        let first = silt::formatter::format(&source)
+            .unwrap_or_else(|e| panic!("first format failed for inner={inner}: {e:?}"));
+        let second = silt::formatter::format(&first).unwrap_or_else(|e| {
+            panic!("second format failed for inner={inner}: {e:?}\nfirst:\n{first}")
+        });
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for single-element tuple pattern ({inner},)\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+        assert!(
+            first.contains(&format!("({inner},)")),
+            "trailing comma lost for inner={inner}; output:\n{first}"
+        );
+    }
+}

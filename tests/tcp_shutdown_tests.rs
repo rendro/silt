@@ -62,13 +62,6 @@ fn pick_port() -> String {
 // ─────────────────────────────────────────────────────────────────────
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: try_clone creates separate SOCKET handles (via \
-              WSADuplicateSocket). Closesocket on one does NOT cancel \
-              pending recv on the other. Real fix needs CancelIoEx via \
-              winapi. Linux + macOS lock the invariant."
-)]
 fn test_close_unblocks_concurrent_reader_on_same_stream() {
     let addr = pick_port();
     // Layout:

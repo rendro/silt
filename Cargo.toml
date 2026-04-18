@@ -58,6 +58,21 @@ rustls = { version = "0.23", optional = true, default-features = false, features
 rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 
+# Windows-only: needed by `tcp.close` to call `CancelIoEx` on the inner
+# socket handle. Winsock's `shutdown(SD_BOTH)` does not cancel an
+# in-progress blocking `recv` on a sibling SOCKET handle (created via
+# `WSADuplicateSocket` aka `TcpStream::try_clone`), so we explicitly
+# cancel pending I/O on the handle the parked reader is using. We pull
+# in the smallest feature set that exposes `CancelIoEx`, the `HANDLE`
+# typedef, and the `SOCKET` typedef. Prefer `windows-sys` over
+# `winapi`: it is smaller and Microsoft-maintained.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_System_IO",
+] }
+
 [dev-dependencies]
 proptest = "1.4"
 rcgen = "0.13"

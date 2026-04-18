@@ -145,8 +145,10 @@ fn run_silt(stem: &str, src: &str, max_wall: Duration) -> RunResult {
 /// Historical note: the 16-sender fan-in on a rendezvous channel used
 /// to occasionally trigger silt's deadlock detector as a false positive
 /// (main-thread receive checked `live > blocked` before any worker had
-/// picked up the freshly-spawned senders). That race is closed by the
-/// `pending_spawn` counter on `SchedulerInner` — see
+/// picked up the freshly-spawned senders). That race was narrowed in
+/// round 30 with the `pending_spawn` counter and fully closed in round
+/// 31 by renaming it to `unsettled_tasks` and holding the counter
+/// non-zero across the dequeue → register-waker window — see
 /// `tests/scheduler_deadlock_detector_tests.rs`. Every trial here must
 /// now reach `sum=136` with exit 0; there is no flake carve-out.
 fn assert_no_scheduler_panic(trial: usize, label: &str, res: &RunResult) {
@@ -214,7 +216,6 @@ fn main() {
 }
 "#;
     const ITERATIONS: usize = 20;
-    let mut successes = 0;
     for trial in 0..ITERATIONS {
         let res = run_silt(
             &format!("send_arm_fan_in_{trial}"),
@@ -222,19 +223,29 @@ fn main() {
             Duration::from_secs(15),
         );
         assert_no_scheduler_panic(trial, "send-arm fan-in", &res);
-        if res.stdout.contains("sum=136") {
-            successes += 1;
-        }
+        // Round 31: strict per-trial. Every iteration must exit 0
+        // with sum=136 and no false-positive deadlock diagnostic.
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "send-arm fan-in trial {trial}: expected exit 0; \
+             stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            res.stdout.contains("sum=136"),
+            "send-arm fan-in trial {trial}: expected sum=136; \
+             stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            !res.stderr.contains("deadlock"),
+            "send-arm fan-in trial {trial}: unexpected deadlock; stderr={}",
+            res.stderr,
+        );
     }
-    assert!(
-        successes > 0,
-        "send-arm fan-in: 0/{ITERATIONS} trials reached sum=136. The\n\
-         primary lock on the round-27 scheduler panic is still intact\n\
-         (assert_no_scheduler_panic fails loudly above if it regresses).\n\
-         The stricter 'every trial succeeds' shape is covered by\n\
-         tests/scheduler_deadlock_detector_tests.rs on a slightly\n\
-         simpler silt source."
-    );
 }
 
 /// **Receive-arm race**: symmetric shape. 16 receivers park on a
@@ -281,7 +292,6 @@ fn main() {
 }
 "#;
     const ITERATIONS: usize = 20;
-    let mut successes = 0;
     for trial in 0..ITERATIONS {
         let res = run_silt(
             &format!("recv_arm_fan_out_{trial}"),
@@ -289,13 +299,27 @@ fn main() {
             Duration::from_secs(15),
         );
         assert_no_scheduler_panic(trial, "recv-arm fan-out", &res);
-        if res.stdout.contains("sum=136") {
-            successes += 1;
-        }
+        // Round 31: strict per-trial. Every iteration must exit 0
+        // with sum=136 and no false-positive deadlock diagnostic.
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "recv-arm fan-out trial {trial}: expected exit 0; \
+             stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            res.stdout.contains("sum=136"),
+            "recv-arm fan-out trial {trial}: expected sum=136; \
+             stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            !res.stderr.contains("deadlock"),
+            "recv-arm fan-out trial {trial}: unexpected deadlock; stderr={}",
+            res.stderr,
+        );
     }
-    assert!(
-        successes > 0,
-        "recv-arm fan-out: 0/{ITERATIONS} trials reached sum=136. Same\n\
-         loosening as the send-arm twin above."
-    );
 }

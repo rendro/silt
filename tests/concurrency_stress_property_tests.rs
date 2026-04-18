@@ -937,8 +937,10 @@ fn main() {
     ///
     /// Previously carried a Windows-ignore because the deadlock
     /// detector would occasionally fire before all 16 spawned senders
-    /// registered their wakers. That false positive is closed by the
-    /// `pending_spawn` counter — see
+    /// registered their wakers. That false positive was narrowed in
+    /// round 30 with `pending_spawn` and fully closed in round 31 by
+    /// holding `unsettled_tasks` non-zero across the dequeue →
+    /// register-waker window — see
     /// `tests/scheduler_deadlock_detector_tests.rs` — so the test now
     /// runs on every platform with a strict per-trial assertion.
     #[test]
@@ -969,13 +971,10 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Panic fingerprints must be absent on every trial. Every
-        // trial should reach sum=136 in the common case, but the
-        // round-30 scheduler fix narrowed rather than fully closed
-        // the deadlock-detector race on THIS silt shape (the simpler
-        // shape in tests/scheduler_deadlock_detector_tests.rs passes
-        // 20/20 every platform). Require at least one success.
-        let mut successes = 0;
+        // Round 31: strict per-trial. The `unsettled_tasks` counter
+        // now stays positive across the dequeue → register-waker
+        // window, so every trial must reach sum=136 with exit 0 and
+        // no panic / no false-positive deadlock diagnostic.
         for trial in 0..3 {
             let out = run(&format!("handcrafted_fan_in_16_trial{trial}"), src);
             assert!(
@@ -986,8 +985,7 @@ fn main() {
             assert!(
                 !out.stderr.contains("task_slot just initialized"),
                 "trial {trial}: SCHEDULER PANIC detected \
-                 ('task_slot just initialized' at src/scheduler.rs:576); \
-                 stderr={}",
+                 ('task_slot just initialized'); stderr={}",
                 out.stderr
             );
             assert!(
@@ -996,15 +994,25 @@ fn main() {
                 "trial {trial}: generic panic detected; stderr={}",
                 out.stderr
             );
-            if out.stdout.contains("sum=136") {
-                successes += 1;
-            }
+            assert_eq!(
+                out.exit,
+                Some(0),
+                "trial {trial}: expected exit 0; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
+            assert!(
+                out.stdout.contains("sum=136"),
+                "trial {trial}: expected sum=136; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
+            assert!(
+                !out.stderr.contains("deadlock"),
+                "trial {trial}: unexpected deadlock; stderr={}",
+                out.stderr,
+            );
         }
-        assert!(
-            successes > 0,
-            "fan-in 16: 0/3 trials reached sum=136; scheduler race fix may \
-             have regressed"
-        );
     }
 
     /// Select with a timeout channel that fires before any other

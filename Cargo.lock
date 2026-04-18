@@ -1603,6 +1603,7 @@ dependencies = [
  "ureq",
  "uuid",
  "webpki-roots 0.26.11",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

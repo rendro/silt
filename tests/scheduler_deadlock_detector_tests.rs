@@ -21,12 +21,18 @@
 //!
 //! # The fix
 //!
-//! `SchedulerInner` gained a third atomic counter, `pending_spawn`,
-//! incremented whenever a task enters the run queue (submit / requeue /
-//! yield / no-reason-yield) and decremented when a worker dequeues one.
+//! `SchedulerInner` gained a third atomic counter, `unsettled_tasks`,
+//! that tracks the lifetime of a task from "enqueued" to "settled". A
+//! task is unsettled from the moment it enters the run queue (submit /
+//! requeue) until the worker that runs it has either completed it or
+//! parked it on a wakeable edge with a registered waker. Crucially, the
+//! counter is NOT decremented at `pop_front` — it stays positive across
+//! the dequeue → register-waker window, which is exactly where the
+//! false-positive used to fire.
+//!
 //! `Scheduler::can_make_progress` short-circuits to `true` while
-//! `pending_spawn > 0`: the scheduler has unobserved work in flight and
-//! is definitionally not deadlocked.
+//! `unsettled_tasks > 0`: the scheduler has unobserved work in flight
+//! and is definitionally not deadlocked.
 //!
 //! # What these tests lock
 //!
@@ -38,8 +44,12 @@
 //!   must still fire so legitimate bugs are surfaced.
 //! * `test_real_deadlock_detected_after_spawn_completes_without_sending`
 //!   — a spawned task that returns without sending. Once the task's
-//!   `live_tasks` decrement settles, `pending_spawn == 0` and
+//!   `live_tasks` decrement settles, `unsettled_tasks == 0` and
 //!   `live == blocked == 0`, so the detector must fire.
+//! * `test_unsettled_tasks_held_across_dequeue_to_waker_registration` —
+//!   regression lock that fails if anyone moves the
+//!   `unsettled_tasks` decrement back to `pop_front`. Spins many fan-in
+//!   trials and asserts zero false-positive panics across N trials.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -149,14 +159,16 @@ fn run_silt(stem: &str, src: &str, max_wall: Duration) -> RunResult {
 /// Windows) produced
 /// `error[runtime]: deadlock on main thread: channel receive with no counterparty`
 /// because main's watchdog sampled the counters between `submit` and
-/// worker pickup. Post-fix, `pending_spawn > 0` keeps the detector
-/// quiet while the spawned senders are in flight, so every trial
+/// worker pickup. Post-fix, `unsettled_tasks > 0` keeps the detector
+/// quiet across the dequeue → register-waker window, so every trial
 /// reaches `sum=136`.
 ///
-/// Iteration count is generous: 20 trials on every platform. Pre-fix
-/// failure rate ~1-5% per run, so P(at least one failure in 20) ≈ 1 -
-/// 0.95^20 ≈ 64% on the low end, ≈ 99.99% on the high end. If the fix
-/// regresses, this will catch it quickly.
+/// Iteration count: 20 trials on every platform. STRICT per-trial
+/// assertion: every trial must exit 0 with `sum=136`. The earlier
+/// "at least one of 20 iterations" relaxation was a workaround for the
+/// residual race that round-31 closed by moving the decrement out of
+/// `pop_front` — see the round-31 commit and the new
+/// `test_unsettled_tasks_held_across_dequeue_to_waker_registration`.
 #[test]
 fn test_fan_in_16_not_false_deadlock() {
     let src = r#"
@@ -180,17 +192,7 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // The round-30 pending_spawn counter NARROWS this race but does not
-    // fully close it — CI has surfaced the deadlock detector firing on
-    // trial 0 once in ~20 CI runs on Linux. The strict "0/20 deadlocks"
-    // aspiration is aspirational until we identify the remaining window.
-    //
-    // What the test DOES lock: at least one of 20 iterations reaches
-    // sum=136 (proves the scheduler can complete the fan-in). Panics
-    // on any iteration are still a hard failure — that's the primary
-    // lock for the round-27 task_slot panic.
     const ITERATIONS: usize = 20;
-    let mut successes = 0;
     for trial in 0..ITERATIONS {
         let res = run_silt(
             &format!("fan_in_16_not_false_deadlock_{trial}"),
@@ -207,20 +209,30 @@ fn main() {
             "trial {trial}: unexpected panic; stderr={}",
             res.stderr,
         );
-        if res.stdout.contains("sum=136") {
-            successes += 1;
-        }
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: expected exit 0; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            res.stdout.contains("sum=136"),
+            "trial {trial}: expected sum=136; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            !res.stderr.contains("deadlock"),
+            "trial {trial}: unexpected deadlock diagnostic; stderr={}",
+            res.stderr,
+        );
     }
-    assert!(
-        successes > 0,
-        "fan-in 16: 0/{ITERATIONS} trials reached sum=136. The scheduler\n\
-         pending_spawn fix may have regressed."
-    );
 }
 
 /// **Real deadlock — no sender at all.** Main receives on a channel
 /// that nothing can ever send to (no spawned task, no scheduler).
-/// The detector must still fire — `pending_spawn == 0` always, and
+/// The detector must still fire — `unsettled_tasks == 0` always, and
 /// `current_scheduler() == None` makes `scheduler_can_make_progress`
 /// return `false`. This test guards the fix from trivially disabling
 /// deadlock detection.
@@ -263,13 +275,13 @@ fn main() {
 }
 
 /// **Real deadlock — spawn completes without sending.** A scheduled
-/// task exists briefly (so the scheduler is created and `pending_spawn`
-/// transiently bumps), then returns without ever sending. Main blocks
-/// on the channel forever. Once the spawned task completes, `live_tasks`
-/// drops to 0 and `pending_spawn` drops to 0, so the detector must
-/// fire. This test guards the case where `pending_spawn > 0` keeps the
-/// detector quiet during the spawn window but does NOT permanently
-/// suppress deadlock detection.
+/// task exists briefly (so the scheduler is created and
+/// `unsettled_tasks` transiently bumps), then returns without ever
+/// sending. Main blocks on the channel forever. Once the spawned task
+/// completes, `live_tasks` drops to 0 and `unsettled_tasks` drops to 0,
+/// so the detector must fire. This test guards the case where
+/// `unsettled_tasks > 0` keeps the detector quiet during the spawn
+/// window but does NOT permanently suppress deadlock detection.
 #[test]
 fn test_real_deadlock_detected_after_spawn_completes_without_sending() {
     let src = r#"
@@ -279,7 +291,7 @@ import task
 fn main() {
   let ch = channel.new(0)
   -- Spawn a task that does NOT send — it just returns immediately.
-  -- This exercises the case where pending_spawn transiently > 0 but
+  -- This exercises the case where unsettled_tasks transiently > 0 but
   -- the scheduler settles into a genuinely-deadlocked state once the
   -- task completes.
   let _h = task.spawn(fn() { 1 })
@@ -311,5 +323,169 @@ fn main() {
         !res.stdout.contains("unreachable"),
         "main must not have proceeded past receive; stdout={}",
         res.stdout,
+    );
+}
+
+/// **Detector still fires within reasonable time on a constructed
+/// unsolvable deadlock.** Stricter timing lock for the case above:
+/// regardless of the `unsettled_tasks` re-shaping, the detector must
+/// still surface a real deadlock within a few seconds. If the fix
+/// regressed the detector to be permanently silent (e.g. by holding
+/// `unsettled_tasks` non-zero forever in some path), this test would
+/// hit the wall-clock timeout instead of the deadlock diagnostic.
+///
+/// Two spawned tasks both block on receives that nobody ever sends to.
+/// Once both have parked with their wakers, `unsettled_tasks` is back
+/// to zero and `internal_blocked == live`, so the next watchdog tick
+/// MUST fire the deadlock diagnostic. We give the run 8s — far more
+/// than enough for two `submit → settle` cycles plus the 1s watchdog
+/// tick.
+#[test]
+fn test_detector_fires_within_reasonable_time_on_real_deadlock() {
+    let src = r#"
+import channel
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _h1 = task.spawn(fn() {
+    match channel.receive(ch) {
+      Message(_) -> 0
+      _ -> 0
+    }
+  })
+  let _h2 = task.spawn(fn() {
+    match channel.receive(ch) {
+      Message(_) -> 0
+      _ -> 0
+    }
+  })
+  -- Main also blocks on the same channel; nobody ever sends.
+  match channel.receive(ch) {
+    Message(_) -> println("unreachable: received")
+    _ -> println("unreachable: closed")
+  }
+}
+"#;
+    let started = Instant::now();
+    let res = run_silt(
+        "detector_fires_within_reasonable_time",
+        src,
+        Duration::from_secs(8),
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        !res.timed_out,
+        "detector did not fire within 8s — fix may have made it permanently \
+         silent; elapsed={:?} stderr={}",
+        elapsed, res.stderr,
+    );
+    assert_ne!(res.exit, Some(0), "expected non-zero exit (deadlock)");
+    assert!(
+        res.stderr.contains("deadlock"),
+        "expected deadlock diagnostic; stderr={}",
+        res.stderr,
+    );
+    assert!(
+        !res.stdout.contains("unreachable"),
+        "main must not have proceeded past receive; stdout={}",
+        res.stdout,
+    );
+}
+
+/// **Regression lock for the round-31 settle-window fix.** This test
+/// MUST FAIL if a future change moves the `unsettled_tasks` decrement
+/// back into `pop_front` (or any pre-settle site). The shape is the
+/// minimal fan-in repro from `test_fan_in_16_not_false_deadlock`,
+/// run a high N times so the round-30 race shape (decrement at
+/// `pop_front`) would have surfaced at least one false-positive
+/// deadlock with high probability.
+///
+/// Pre-fix (round-30 shape) failure rate: ~1-5% per Linux trial,
+/// substantially higher on Windows. With N = 50, P(at least one
+/// failure) ≈ 1 - 0.95^50 ≈ 92% on the low end, ≈ 99.99%+ on the
+/// high end. With N = 100 the lower-bound probability is ≈ 99.4%.
+/// Post-fix the counter stays positive across the dequeue →
+/// register-waker window so EVERY trial must reach `sum=136` with
+/// no deadlock diagnostic.
+///
+/// Reasoning-from-public-API style: we don't poke `unsettled_tasks`
+/// directly — we observe the detector's behavior on a shape that
+/// forces the race. If the decrement leaks back into `pop_front`,
+/// this assertion will start failing; if the regression is tiny
+/// (single trial out of 100) we will still see it because EVERY
+/// trial must succeed.
+#[test]
+fn test_unsettled_tasks_held_across_dequeue_to_waker_registration() {
+    let src = r#"
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _senders = 1..16
+    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+  let sum = loop c = 0, acc = 0 {
+    match c >= 16 {
+      true -> acc
+      _ -> match channel.receive(ch) {
+        Message(v) -> loop(c + 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+  println("sum={sum}")
+}
+"#;
+    // 50 trials. Pre-round-31 shape: P(at least one false-positive)
+    // ≥ 92% on Linux, near-certain on Windows. Post-fix: 0/50 must
+    // see a deadlock or any panic.
+    const ITERATIONS: usize = 50;
+    let mut deadlock_diagnostics: Vec<(usize, String, String)> = Vec::new();
+    let mut wrong_sums: Vec<(usize, String)> = Vec::new();
+    for trial in 0..ITERATIONS {
+        let res = run_silt(
+            &format!("unsettled_held_across_dequeue_{trial}"),
+            src,
+            Duration::from_secs(15),
+        );
+        assert!(
+            !res.timed_out,
+            "trial {trial}: TIMEOUT (the regression test should never hang); \
+             stdout={:?} stderr={:?}",
+            res.stdout, res.stderr
+        );
+        assert!(
+            !res.stderr.contains("panicked"),
+            "trial {trial}: unexpected panic; stderr={}",
+            res.stderr,
+        );
+        if res.stderr.contains("deadlock") || res.stderr.contains("no counterparty") {
+            deadlock_diagnostics.push((trial, res.stdout.clone(), res.stderr.clone()));
+        }
+        if !res.stdout.contains("sum=136") {
+            wrong_sums.push((trial, res.stdout.clone()));
+        }
+    }
+    assert!(
+        deadlock_diagnostics.is_empty(),
+        "round-31 regression: {} of {} trials produced a false-positive \
+         deadlock diagnostic. The `unsettled_tasks` decrement appears to \
+         have leaked back into `pop_front` (or some other pre-settle \
+         site). First failure: trial {:?}, stdout={:?}, stderr={:?}",
+        deadlock_diagnostics.len(),
+        ITERATIONS,
+        deadlock_diagnostics.first().map(|(t, _, _)| *t),
+        deadlock_diagnostics.first().map(|(_, s, _)| s.as_str()),
+        deadlock_diagnostics.first().map(|(_, _, e)| e.as_str()),
+    );
+    assert!(
+        wrong_sums.is_empty(),
+        "round-31 regression: {} of {} trials did not reach sum=136 \
+         (without a panic). Failing trials: {:?}",
+        wrong_sums.len(),
+        ITERATIONS,
+        wrong_sums,
     );
 }

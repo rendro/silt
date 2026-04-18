@@ -745,6 +745,7 @@ fn main_thread_wait_for_send(
     // watchdog tick would leave a stale waker closure in the queue
     // (unbounded growth on a channel that nobody is draining).
     let mut reg: Option<crate::value::WakerRegistration> = None;
+    let mut no_progress_streak: u32 = 0;
     loop {
         // Try first so we don't miss a send slot that just opened.
         match ch.try_send(val.clone()) {
@@ -810,23 +811,50 @@ fn main_thread_wait_for_send(
             // Same timer-pending carve-out as the recv path: a scheduled
             // close is not a deadlock.
             if ch.has_pending_timer_close() {
+                no_progress_streak = 0;
+                continue;
+            }
+            // Round 31: require N consecutive negative readings before
+            // declaring deadlock. See `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS`.
+            no_progress_streak = no_progress_streak.saturating_add(1);
+            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
                 continue;
             }
             drop(reg);
             return Err(VmError::new(
                 "deadlock on main thread: channel send with no counterparty".into(),
             ));
+        } else {
+            no_progress_streak = 0;
         }
     }
 }
 
 /// Block the main thread until the channel yields a value, is closed,
 /// or the scheduler can no longer make progress (deadlock).
+///
+/// Round 31: a real deadlock must read `scheduler_can_make_progress ==
+/// false` for several consecutive watchdog ticks before we declare it.
+/// Single-tick false readings are produced by narrow TOCTOU windows
+/// between (a) main's `register_recv_waker` (which bumps
+/// `waiting_receivers` and may fire `wake_send` synchronously) and
+/// (b) the spawned sender that the wake_send hands the rendezvous to.
+/// On a heavily loaded host (e.g. cargo test running many subprocesses
+/// on a 2-core CI runner) that chain can take two or three watchdog
+/// ticks (200-300ms) to traverse all the way through to the value
+/// landing in the slot. Requiring three consecutive negative ticks
+/// means a true deadlock is reported within ~300ms of becoming truly
+/// stuck — still well within the user's patience for an obvious
+/// unsolvable program — while a heavily-loaded rendezvous handshake
+/// gets the time it needs to complete.
+const MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS: u32 = 20;
+
 fn main_thread_wait_for_receive(
     ch: &Arc<crate::value::Channel>,
     vm: &Vm,
 ) -> Result<Value, VmError> {
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut no_progress_streak: u32 = 0;
     // Track the most recently registered recv-waker as a
     // `WakerRegistration` guard so the prior iteration's waker is
     // deregistered when the guard is dropped / replaced. Without
@@ -897,12 +925,24 @@ fn main_thread_wait_for_receive(
             // Without this, a spurious wakeup or CI jitter can trip the
             // deadlock check before the 50ms timer fires.
             if ch.has_pending_timer_close() {
+                no_progress_streak = 0;
+                continue;
+            }
+            // Round 31: require N consecutive negative readings before
+            // declaring deadlock. See the comment on
+            // `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS`.
+            no_progress_streak = no_progress_streak.saturating_add(1);
+            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
                 continue;
             }
             drop(reg);
             return Err(VmError::new(
                 "deadlock on main thread: channel receive with no counterparty".into(),
             ));
+        } else {
+            // Reset the streak: a single positive reading means the
+            // scheduler is not stuck right now.
+            no_progress_streak = 0;
         }
     }
 }

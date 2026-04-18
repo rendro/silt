@@ -226,6 +226,7 @@ mod tls {
         // the trait object. Both handles reference the same OS fd, so a
         // `shutdown(Both)` on the clone is observed by the rustls stream.
         let shutdown_sock = sock.try_clone().ok();
+        let reader_socket = super::raw_socket_of(&sock);
         let stream = rustls::StreamOwned::new(conn, sock);
         // StreamOwned owns the connection + socket; once placed in the
         // trait object the caller can't reach into rustls internals,
@@ -240,6 +241,7 @@ mod tls {
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
             shutdown_sock: Mutex::new(shutdown_sock),
+            reader_socket,
         }))
     }
 
@@ -262,6 +264,7 @@ mod tls {
         // so `tcp.close` can `shutdown(Both)` the underlying socket even
         // while a concurrent read is parked inside `StreamOwned::read`.
         let shutdown_sock = sock.try_clone().ok();
+        let reader_socket = super::raw_socket_of(&sock);
         let stream = rustls::StreamOwned::new(conn, sock);
         let mut wrapper = ServerStreamWrapper { inner: stream };
         wrapper.complete_io_handshake()?;
@@ -270,6 +273,7 @@ mod tls {
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
             shutdown_sock: Mutex::new(shutdown_sock),
+            reader_socket,
         }))
     }
 
@@ -308,6 +312,7 @@ mod tls {
         let conn = ServerConnection::new(Arc::new(config))
             .map_err(|e| format!("server connection setup: {e}"))?;
         let shutdown_sock = sock.try_clone().ok();
+        let reader_socket = super::raw_socket_of(&sock);
         let stream = rustls::StreamOwned::new(conn, sock);
         let mut wrapper = ServerStreamWrapper { inner: stream };
         wrapper.complete_io_handshake()?;
@@ -316,6 +321,7 @@ mod tls {
             inner: Mutex::new(Box::new(wrapper) as Box<dyn ReadWrite>),
             closed: AtomicBool::new(false),
             shutdown_sock: Mutex::new(shutdown_sock),
+            reader_socket,
         }))
     }
 
@@ -371,6 +377,14 @@ mod tls {
             self.inner.flush()
         }
     }
+    // Manual `ReadWrite` impl so `tcp.close` on Windows can reach the
+    // underlying `TcpStream`'s SOCKET handle for `CancelIoEx`. The
+    // blanket impl was removed when `ReadWrite::raw_socket` was added.
+    impl ReadWrite for ClientStreamWrapper {
+        fn raw_socket(&self) -> Option<usize> {
+            self.inner.sock.raw_socket()
+        }
+    }
 
     struct ServerStreamWrapper {
         inner: rustls::StreamOwned<ServerConnection, TcpStream>,
@@ -397,6 +411,11 @@ mod tls {
         }
         fn flush(&mut self) -> std::io::Result<()> {
             self.inner.flush()
+        }
+    }
+    impl ReadWrite for ServerStreamWrapper {
+        fn raw_socket(&self) -> Option<usize> {
+            self.inner.sock.raw_socket()
         }
     }
 }
@@ -463,12 +482,35 @@ fn make_stream(stream: TcpStream, vm: &mut Vm) -> Value {
     // fail on resource exhaustion; if it does, we drop back to Drop-based
     // close semantics (the closed flag still prevents further ops).
     let shutdown_sock = stream.try_clone().ok();
+    let reader_socket = raw_socket_of(&stream);
     Value::TcpStream(Arc::new(TcpStreamHandle {
         id,
         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
         closed: AtomicBool::new(false),
         shutdown_sock: Mutex::new(shutdown_sock),
+        reader_socket,
     }))
+}
+
+/// Cache the OS socket for the inner stream so `tcp.close` on Windows
+/// can issue `CancelIoEx` on it without needing to acquire `inner`'s
+/// mutex (which a parked reader may be holding). On Unix this is also
+/// computed but currently unused.
+fn raw_socket_of(stream: &TcpStream) -> Option<usize> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        Some(stream.as_raw_socket() as usize)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        Some(stream.as_raw_fd() as usize)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        None
+    }
 }
 
 // ── Non-blocking ops ───────────────────────────────────────────────────
@@ -539,14 +581,46 @@ fn close(args: &[Value]) -> Result<Value, VmError> {
         if let Some(sock) = slot.as_ref() {
             let _ = sock.shutdown(Shutdown::Both);
         }
-        // On Windows, drop the cloned TcpStream (via `take()`) to
-        // invoke `closesocket` on the duplicate handle. This cancels
-        // pending I/O on the underlying socket — which is what
-        // unblocks a sibling-handle `recv` parked in another task,
-        // since Winsock's `shutdown(SD_BOTH)` alone doesn't do that.
-        // No new deps, no manual `AsRawSocket` extern needed.
+        // On Windows, the shutdown above is not enough: Winsock's
+        // `shutdown(SD_BOTH)` does NOT cancel an in-progress blocking
+        // `recv` on a duplicate SOCKET handle (created via
+        // `WSADuplicateSocket` aka `TcpStream::try_clone`). The parked
+        // reader is using the SOCKET held by `inner`, NOT this
+        // duplicate, so the duplicate's shutdown has no effect on it.
+        //
+        // The fix is to call `CancelIoEx(inner_socket, NULL)`, which
+        // tells the kernel to cancel pending I/O on the parked
+        // reader's SOCKET. The parked `recv` returns with
+        // `WSAENOTSOCK` / `WSAEINTR` and the task wakes.
+        //
+        // We can't acquire `inner`'s mutex to read its raw socket
+        // because the parked reader is holding it (that's the whole
+        // point: it's parked inside `recv`). Instead we read the
+        // socket value cached on the handle at construction time
+        // (`s.reader_socket`), which never changes for the lifetime
+        // of the handle.
+        //
+        // We then also drop the cloned `TcpStream` (the duplicate
+        // SOCKET) to keep the `closesocket` semantics from round 30
+        // and avoid leaking the duplicate handle.
         #[cfg(windows)]
         {
+            if let Some(sock) = s.reader_socket {
+                // SAFETY: `CancelIoEx` is safe to call on any HANDLE,
+                // including a SOCKET. It returns 0/error if the
+                // handle is invalid or no I/O is pending — both of
+                // which are fine ignored outcomes for `close`. We
+                // cast `usize -> HANDLE` (a pointer-sized integer in
+                // both 32- and 64-bit Windows). NULL `lpOverlapped`
+                // means "cancel ALL pending I/O on this handle from
+                // any thread", which is exactly what we want.
+                use std::ptr;
+                use windows_sys::Win32::Foundation::HANDLE;
+                use windows_sys::Win32::System::IO::CancelIoEx;
+                unsafe {
+                    let _ = CancelIoEx(sock as HANDLE, ptr::null_mut());
+                }
+            }
             let _ = slot.take();
         }
         drop(slot);
@@ -598,11 +672,13 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             .submit(move || match listener.listener.accept() {
                 Ok((stream, _addr)) => {
                     let shutdown_sock = stream.try_clone().ok();
+                    let reader_socket = raw_socket_of(&stream);
                     let handle = Arc::new(TcpStreamHandle {
                         id: next_id,
                         inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                         closed: AtomicBool::new(false),
                         shutdown_sock: Mutex::new(shutdown_sock),
+                        reader_socket,
                     });
                     Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                 }
@@ -639,11 +715,13 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 .submit(move || match TcpStream::connect(&addr_for_closure) {
                     Ok(stream) => {
                         let shutdown_sock = stream.try_clone().ok();
+                        let reader_socket = raw_socket_of(&stream);
                         let handle = Arc::new(TcpStreamHandle {
                             id: next_id,
                             inner: Mutex::new(Box::new(stream) as Box<dyn ReadWrite>),
                             closed: AtomicBool::new(false),
                             shutdown_sock: Mutex::new(shutdown_sock),
+                            reader_socket,
                         });
                         Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                     }

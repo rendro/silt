@@ -3043,7 +3043,15 @@ fn format_pattern(pattern: &Pattern) -> String {
         }
         PatternKind::Tuple(pats) => {
             let items: Vec<String> = pats.iter().map(format_pattern).collect();
-            format!("({})", items.join(", "))
+            // Single-element tuple patterns require a trailing comma to
+            // distinguish them from a parenthesized identifier pattern;
+            // the parser folds `(x)` away as just `x`, so emitting `(x,)`
+            // is load-bearing for idempotency.
+            if pats.len() == 1 {
+                format!("({},)", items[0])
+            } else {
+                format!("({})", items.join(", "))
+            }
         }
         PatternKind::Constructor(name, pats) => {
             if pats.is_empty() {
