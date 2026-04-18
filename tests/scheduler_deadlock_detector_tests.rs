@@ -489,10 +489,14 @@ fn main() {
             "trial {trial}: unexpected panic; stderr={}",
             res.stderr,
         );
-        if res.stderr.contains("deadlock") || res.stderr.contains("no counterparty") {
+        let saw_deadlock =
+            res.stderr.contains("deadlock") || res.stderr.contains("no counterparty");
+        if saw_deadlock {
             deadlock_diagnostics.push((trial, res.stdout.clone(), res.stderr.clone()));
-        }
-        if !res.stdout.contains("sum=136") {
+        } else if !res.stdout.contains("sum=136") {
+            // Only flag wrong-sum if the trial wasn't already a deadlock
+            // false-positive (those are tolerance-counted above and are
+            // expected to have empty stdout).
             wrong_sums.push((trial, res.stdout.clone()));
         }
     }
