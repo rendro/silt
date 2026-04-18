@@ -26,6 +26,12 @@ postgres = ["dep:postgres", "dep:r2d2", "dep:r2d2_postgres", "dep:fallible-itera
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
 tcp-tls = ["tcp", "dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
+# Exposes the scheduler test-hook callbacks (`scheduler::test_hooks`) and
+# the in-process scheduler harness (`scheduler::test_support`) so
+# integration tests outside the crate can drive deterministic
+# event-injection. Always enabled under `cfg(test)`; this feature flag
+# is only needed when an external test binary needs to install hooks.
+test-hooks = []
 
 [[bench]]
 name = "vm_bench"

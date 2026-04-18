@@ -15,6 +15,28 @@ use std::time::{Duration, Instant};
 use crate::value::{IoCompletion, TaskHandle, Value, WakerRegistration};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod test_hooks;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod test_support;
+
+/// Fire a scheduler instrumentation hook. Compiles to a no-op outside
+/// `cfg(test)` / `feature = "test-hooks"`. Each call site names a
+/// stable transition point so a Phase-3 test can install a hook that
+/// blocks (e.g. on a barrier) at exactly the racy moment.
+macro_rules! fire_hook {
+    ($which:ident, $tag:expr) => {
+        #[cfg(any(test, feature = "test-hooks"))]
+        {
+            $crate::scheduler::test_hooks::$which($tag);
+        }
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        {
+            let _ = $tag;
+        }
+    };
+}
+
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
 const MAX_TASKS: usize = 100_000;
 
@@ -453,6 +475,7 @@ impl Scheduler {
         // and `can_make_progress` short-circuits.
         self.inner.unsettled_tasks.fetch_add(1, Ordering::SeqCst);
         self.inner.live_tasks.fetch_add(1, Ordering::SeqCst);
+        fire_hook!(on_submit, "submit_after_counters");
         let mut queue = self.inner.run_queue.lock();
         queue.push_back(task);
         self.inner.condvar.notify_one();
@@ -520,6 +543,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     // can prove the task is still going to make progress.
                     // The two decrement sites are below in the
                     // Completed / Failed / Blocked-with-waker arms.
+                    fire_hook!(on_dequeue, "pop_front");
                     break task;
                 }
                 // Wake periodically to re-check the queue. The actual
@@ -628,6 +652,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 
                 match reason {
                     Some(BlockReason::Receive(ch)) => {
+                        fire_hook!(on_park, "blocked_arm_entry_recv");
                         // Capture the handle BEFORE registering the waker.
                         // `register_recv_waker_guard` may synchronously invoke
                         // the waker closure if a peer is already parked at the
@@ -688,6 +713,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Send(ch)) => {
+                        fire_hook!(on_park, "blocked_arm_entry_send");
                         // Capture the handle BEFORE registering the waker.
                         // `register_send_waker_guard` may synchronously invoke
                         // the waker closure if a peer is already parked at
@@ -734,6 +760,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Select(ops)) => {
+                        fire_hook!(on_park, "blocked_arm_entry_select");
                         // Register waker on ALL channels. First waker to fire
                         // wakes the task AND deregisters the other siblings'
                         // wakers — this prevents a leaked `waiting_receivers`
@@ -832,6 +859,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }
                     }
                     Some(BlockReason::Join(target_handle)) => {
+                        fire_hook!(on_park, "blocked_arm_entry_join");
                         let slot = task_slot.clone();
                         let inner2 = inner.clone();
                         target_handle.register_join_waker(Box::new(move || {
@@ -841,6 +869,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         }));
                     }
                     Some(BlockReason::Io(completion)) => {
+                        fire_hook!(on_park, "blocked_arm_entry_io");
                         // Register with the watchdog if anything imposes
                         // a deadline: either SILT_IO_TIMEOUT (global) or
                         // a scoped task.deadline (per-task). The earlier
@@ -927,6 +956,7 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
 /// needs its entry cleared) or on an internal graph edge
 /// (channel/select/join). The waker site knows which arm it's in.
 fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
+    fire_hook!(on_wake, "requeue_entry");
     // Bump unsettled_tasks FIRST so the deadlock detector cannot observe
     // a transient "blocked count briefly equals live" between the
     // `blocked--` below and the actual queue push. The worker that next

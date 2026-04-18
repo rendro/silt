@@ -35,144 +35,41 @@
 //! ~80% of debug runs, so N iterations gives detection probability
 //! 1 − 0.2^N. N = 20 → ≥ 99.99%. We also mirror with 16 receivers /
 //! 16 senders to stress the Receive arm's identical race.
+//!
+//! # Phase 2: in-process harness
+//!
+//! Round-30+ versions shelled out to the silt CLI per trial. Phase 2
+//! moves them onto the `silt::scheduler::test_support::InProcessRunner`
+//! harness — same Silt source, same assertions, no subprocess
+//! overhead. The scheduler-race panic shape (`thread '<unnamed>'
+//! panicked at ... task_slot just initialized`) surfaces as
+//! `outcome.saw_panic() == true` because the harness uses
+//! `catch_unwind` around `vm.run` and turns any unwind into an
+//! `error_message: "panic in vm thread: ..."`.
 
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-fn silt_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_silt") {
-        return PathBuf::from(p);
-    }
-    let mut p = std::env::current_exe().unwrap();
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    p.push("silt");
-    p
-}
+use silt::scheduler::test_support::{InProcessRunner, TrialOutcome, TrialStats};
 
-static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn tmp_silt_file(stem: &str, src: &str) -> PathBuf {
-    let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let tmp = std::env::temp_dir().join(format!(
-        "silt_sched_race_{}_{}_{}_{}.silt",
-        stem,
-        std::process::id(),
-        ts,
-        n
-    ));
-    std::fs::write(&tmp, src).unwrap();
-    tmp
-}
-
-struct RunResult {
-    stdout: String,
-    stderr: String,
-    #[allow(dead_code)] // collected for diagnostics; assertions key on stdout/stderr
-    exit: Option<i32>,
-    timed_out: bool,
-}
-
-fn run_silt(stem: &str, src: &str, max_wall: Duration) -> RunResult {
-    let tmp = tmp_silt_file(stem, src);
-    let start = Instant::now();
-    let mut child = Command::new(silt_bin())
-        .arg("run")
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn silt binary");
-
-    let mut exit_code: Option<i32> = None;
-    let mut timed_out = false;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                exit_code = status.code();
-                break;
-            }
-            Ok(None) => {
-                if start.elapsed() > max_wall {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    timed_out = true;
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                timed_out = true;
-                break;
-            }
-        }
-    }
-
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    if let Some(mut s) = child.stdout.take() {
-        use std::io::Read;
-        let _ = s.read_to_string(&mut stdout);
-    }
-    if let Some(mut s) = child.stderr.take() {
-        use std::io::Read;
-        let _ = s.read_to_string(&mut stderr);
-    }
-
-    let _ = std::fs::remove_file(&tmp);
-
-    RunResult {
-        stdout,
-        stderr,
-        exit: exit_code,
-        timed_out,
-    }
-}
-
-/// Assert the run produced neither the scheduler panic fingerprint
-/// nor any generic panic marker in stderr, and didn't time out.
-///
-/// Historical note: the 16-sender fan-in on a rendezvous channel used
-/// to occasionally trigger silt's deadlock detector as a false positive
-/// (main-thread receive checked `live > blocked` before any worker had
-/// picked up the freshly-spawned senders). That race was narrowed in
-/// round 30 with the `pending_spawn` counter and fully closed in round
-/// 31 by renaming it to `unsettled_tasks` and holding the counter
-/// non-zero across the dequeue → register-waker window — see
-/// `tests/scheduler_deadlock_detector_tests.rs`. Every trial here must
-/// now reach `sum=136` with exit 0; there is no flake carve-out.
-fn assert_no_scheduler_panic(trial: usize, label: &str, res: &RunResult) {
+/// Assert that the trial produced neither the scheduler race panic nor
+/// any generic panic, and didn't time out. Mirrors the subprocess
+/// `assert_no_scheduler_panic` shape.
+fn assert_no_scheduler_panic(trial: usize, label: &str, outcome: &TrialOutcome) {
     assert!(
-        !res.timed_out,
-        "{label} trial {trial}: TIMEOUT; stdout={:?} stderr={:?}",
-        res.stdout, res.stderr
+        !outcome.timed_out,
+        "{label} trial {trial}: TIMEOUT; outcome={outcome:?}",
     );
+    let msg = outcome.error_message.as_deref().unwrap_or("");
     assert!(
-        !res.stderr.contains("task_slot just initialized"),
+        !msg.contains("task_slot just initialized"),
         "{label} trial {trial}: SCHEDULER RACE PANIC detected \
-         ('task_slot just initialized'); stderr={}",
-        res.stderr
+         ('task_slot just initialized'); outcome={outcome:?}",
     );
+    // saw_panic() catches the catch_unwind-wrapped panic that the
+    // harness surfaces from the worker thread.
     assert!(
-        !res.stderr.contains("thread '<unnamed>' panicked"),
-        "{label} trial {trial}: unnamed-thread panic (scheduler worker) detected; stderr={}",
-        res.stderr
-    );
-    assert!(
-        !res.stderr.contains("thread 'main' panicked"),
-        "{label} trial {trial}: main-thread panic detected; stderr={}",
-        res.stderr
+        !outcome.saw_panic(),
+        "{label} trial {trial}: panic detected; outcome={outcome:?}",
     );
 }
 
@@ -183,13 +80,19 @@ fn assert_no_scheduler_panic(trial: usize, label: &str, res: &RunResult) {
 /// the handle was captured AFTER the register call, and the waker
 /// closure (fired inline) had already cleared `task_slot`.
 ///
-/// `1..16` is inclusive (16 values). Sum = 1+2+…+16 = 136.
+/// Sum = 1+2+…+16 = 136.
 ///
 /// Iterations: 20. Pre-fix failure rate is ~80% per run ⇒ per-20-run
 /// detection probability ≥ 1 − 0.2^20 ≈ 1 − 1e-14 (effectively 100%).
 /// In practice the bug fires within the first 1-2 trials on debug.
 #[test]
 fn test_send_arm_no_panic_16_sender_fan_in() {
+    // The subprocess version printed `sum=136`. The in-process
+    // version returns 136 from main and asserts on the returned
+    // value — same invariant, no stdout plumbing required. The
+    // `senders |> list.each { h -> task.join(h) }` call is preserved
+    // because joining the handles after the receive loop is part of
+    // the shape the original race manifested under.
     let src = r#"
 import channel
 import list
@@ -213,49 +116,33 @@ fn main() {
     }
   }
   senders |> list.each { h -> task.join(h) }
-  println("sum={sum}")
+  sum
 }
 "#;
-    // Tolerance applies on all platforms: CI run 24611054697 hit 2/20
-    // on Linux too on a similar test, so per-platform split was reverted.
     const ITERATIONS: usize = 20;
+    // Tolerance preserved verbatim from the subprocess test.
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    let mut deadlock_count = 0usize;
-    let mut wrong_sum_count = 0usize;
-    let mut first_failure: Option<(usize, String, String)> = None;
-    for trial in 0..ITERATIONS {
-        let res = run_silt(
-            &format!("send_arm_fan_in_{trial}"),
-            src,
-            Duration::from_secs(15),
-        );
-        assert_no_scheduler_panic(trial, "send-arm fan-in", &res);
-        let saw_deadlock = res.stderr.contains("deadlock");
-        let saw_sum = res.stdout.contains("sum=136");
-        if saw_deadlock {
-            deadlock_count += 1;
-            if first_failure.is_none() {
-                first_failure = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        } else if !saw_sum {
-            wrong_sum_count += 1;
-            if first_failure.is_none() {
-                first_failure = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        }
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(15));
+    let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
+    for (i, o) in outcomes.iter().enumerate() {
+        assert_no_scheduler_panic(i, "send-arm fan-in", o);
     }
+    let stats = TrialStats::compute(&outcomes, Some(136));
     assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
-        "send-arm fan-in: {deadlock_count}/{ITERATIONS} false-positive \
-         deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         First failure: {:?}",
-        first_failure,
+        stats.deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        "send-arm fan-in: {}/{} false-positive deadlock diagnostics \
+         (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). First failure: \
+         idx={:?} msg={:?}",
+        stats.deadlock_count,
+        ITERATIONS,
+        stats.first_failure_index,
+        stats.first_failure_message,
     );
     assert_eq!(
-        wrong_sum_count, 0,
-        "send-arm fan-in: {wrong_sum_count}/{ITERATIONS} trials did not \
-         reach sum=136 without deadlock. First failure: {:?}",
-        first_failure,
+        stats.wrong_value_count, 0,
+        "send-arm fan-in: {}/{} trials did not reach 136 without \
+         deadlock. First failure: idx={:?} msg={:?}",
+        stats.wrong_value_count, ITERATIONS, stats.first_failure_index, stats.first_failure_message,
     );
 }
 
@@ -266,8 +153,8 @@ fn main() {
 /// already parked on the handshake (depending on interleaving), and
 /// the pre-fix code cloned the handle after the register call.
 ///
-/// Each receiver tells us its value via `task.join`; the main thread
-/// sums them. Sum should be 136 again (1..16 inclusive).
+/// Each receiver tells us its value via `task.join`; main sums them.
+/// Sum should be 136 (1..=16 inclusive).
 #[test]
 fn test_recv_arm_no_panic_16_receiver_fan_out() {
     let src = r#"
@@ -277,11 +164,6 @@ import task
 
 fn main() {
   let ch = channel.new(0)
-  -- Park 16 receivers first so each sender's register_send may fire
-  -- inline (matched sender path). Also stresses the receive-arm's
-  -- register_recv_waker_guard: if a sender arrives first and parks
-  -- at the rendezvous, a late receiver's register_recv can fire
-  -- inline too.
   let receivers = 1..16
     |> list.map { _ -> task.spawn(fn() {
       match channel.receive(ch) {
@@ -293,54 +175,36 @@ fn main() {
     }) }
   let senders = 1..16
     |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
-  -- Sum what the receivers saw. Trailing-lambda form:
-  --   list.fold(init) { acc, elem -> ... }
   let sum = receivers
     |> list.map { h -> task.join(h) }
     |> list.fold(0) { acc, v -> acc + v }
   senders |> list.each { h -> task.join(h) }
-  println("sum={sum}")
+  sum
 }
 "#;
-    // Per-platform: see test_send_arm_no_panic_16_sender_fan_in for the
-    // rationale — Windows-only residual race.
     const ITERATIONS: usize = 20;
+    // Tolerance preserved verbatim from the subprocess test.
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    let mut deadlock_count = 0usize;
-    let mut wrong_sum_count = 0usize;
-    let mut first_failure: Option<(usize, String, String)> = None;
-    for trial in 0..ITERATIONS {
-        let res = run_silt(
-            &format!("recv_arm_fan_out_{trial}"),
-            src,
-            Duration::from_secs(15),
-        );
-        assert_no_scheduler_panic(trial, "recv-arm fan-out", &res);
-        let saw_deadlock = res.stderr.contains("deadlock");
-        let saw_sum = res.stdout.contains("sum=136");
-        if saw_deadlock {
-            deadlock_count += 1;
-            if first_failure.is_none() {
-                first_failure = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        } else if !saw_sum {
-            wrong_sum_count += 1;
-            if first_failure.is_none() {
-                first_failure = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        }
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(15));
+    let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
+    for (i, o) in outcomes.iter().enumerate() {
+        assert_no_scheduler_panic(i, "recv-arm fan-out", o);
     }
+    let stats = TrialStats::compute(&outcomes, Some(136));
     assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
-        "recv-arm fan-out: {deadlock_count}/{ITERATIONS} false-positive \
-         deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         First failure: {:?}",
-        first_failure,
+        stats.deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        "recv-arm fan-out: {}/{} false-positive deadlock diagnostics \
+         (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). First failure: \
+         idx={:?} msg={:?}",
+        stats.deadlock_count,
+        ITERATIONS,
+        stats.first_failure_index,
+        stats.first_failure_message,
     );
     assert_eq!(
-        wrong_sum_count, 0,
-        "recv-arm fan-out: {wrong_sum_count}/{ITERATIONS} trials did not \
-         reach sum=136 without deadlock. First failure: {:?}",
-        first_failure,
+        stats.wrong_value_count, 0,
+        "recv-arm fan-out: {}/{} trials did not reach 136 without \
+         deadlock. First failure: idx={:?} msg={:?}",
+        stats.wrong_value_count, ITERATIONS, stats.first_failure_index, stats.first_failure_message,
     );
 }
