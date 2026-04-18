@@ -976,7 +976,6 @@ fn main() {
     /// `tests/scheduler_deadlock_detector_tests.rs` — so the test now
     /// runs on every platform with a strict per-trial assertion.
     #[test]
-    #[allow(clippy::absurd_extreme_comparisons)] // MAX is 0 on Linux/macOS
     fn hand_fan_in_rendezvous_16() {
         let src = r#"
 import channel
@@ -1044,12 +1043,10 @@ fn main() {
                 }
             }
         }
-        // Per-platform: Windows-only residual race. CI run 24610965405
-        // hit 2/8 on Windows so the tolerance ceiling is 2.
-        #[cfg(windows)]
+        // Tolerance applies on all platforms (per-platform split was
+        // tried in commit 496dea8 and reverted after Linux hit 2/20 on
+        // a sibling test under cargo-test parallelism).
         const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-        #[cfg(not(windows))]
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
         assert!(
             deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
             "fan-in 16: {deadlock_count}/{ITERATIONS} false-positive \

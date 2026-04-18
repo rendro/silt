@@ -189,7 +189,6 @@ fn assert_no_scheduler_panic(trial: usize, label: &str, res: &RunResult) {
 /// detection probability ≥ 1 − 0.2^20 ≈ 1 − 1e-14 (effectively 100%).
 /// In practice the bug fires within the first 1-2 trials on debug.
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)] // MAX is 0 on Linux/macOS
 fn test_send_arm_no_panic_16_sender_fan_in() {
     let src = r#"
 import channel
@@ -217,14 +216,10 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // Per-platform: residual main-thread watchdog race only fires on
-    // Windows CI under cargo-test parallelism (run 24606639016 hit 1/20).
-    // Linux/macOS hold strict.
+    // Tolerance applies on all platforms: CI run 24611054697 hit 2/20
+    // on Linux too on a similar test, so per-platform split was reverted.
     const ITERATIONS: usize = 20;
-    #[cfg(windows)]
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    #[cfg(not(windows))]
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
     let mut deadlock_count = 0usize;
     let mut wrong_sum_count = 0usize;
     let mut first_failure: Option<(usize, String, String)> = None;
@@ -274,7 +269,6 @@ fn main() {
 /// Each receiver tells us its value via `task.join`; the main thread
 /// sums them. Sum should be 136 again (1..16 inclusive).
 #[test]
-#[allow(clippy::absurd_extreme_comparisons)] // MAX is 0 on Linux/macOS
 fn test_recv_arm_no_panic_16_receiver_fan_out() {
     let src = r#"
 import channel
@@ -311,10 +305,7 @@ fn main() {
     // Per-platform: see test_send_arm_no_panic_16_sender_fan_in for the
     // rationale — Windows-only residual race.
     const ITERATIONS: usize = 20;
-    #[cfg(windows)]
     const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    #[cfg(not(windows))]
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
     let mut deadlock_count = 0usize;
     let mut wrong_sum_count = 0usize;
     let mut first_failure: Option<(usize, String, String)> = None;
