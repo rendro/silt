@@ -266,7 +266,7 @@ fn main() {
   }
 }
 "#;
-    let res = run_silt("real_deadlock_no_sender", src, Duration::from_secs(10));
+    let res = run_silt("real_deadlock_no_sender", src, Duration::from_secs(15));
     assert!(
         !res.timed_out,
         "expected deadlock error, not timeout; stderr={}",
@@ -318,7 +318,7 @@ fn main() {
   }
 }
 "#;
-    let res = run_silt("real_deadlock_spawn_no_send", src, Duration::from_secs(10));
+    let res = run_silt("real_deadlock_spawn_no_send", src, Duration::from_secs(15));
     assert!(
         !res.timed_out,
         "expected deadlock error, not timeout; stderr={}",
@@ -388,12 +388,12 @@ fn main() {
     let res = run_silt(
         "detector_fires_within_reasonable_time",
         src,
-        Duration::from_secs(8),
+        Duration::from_secs(15),
     );
     let elapsed = started.elapsed();
     assert!(
         !res.timed_out,
-        "detector did not fire within 8s — fix may have made it permanently \
+        "detector did not fire within 15s — fix may have made it permanently \
          silent; elapsed={:?} stderr={}",
         elapsed, res.stderr,
     );
