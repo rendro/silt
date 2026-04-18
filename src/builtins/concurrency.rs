@@ -459,8 +459,14 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Err(VmError::yield_signal());
             }
 
-            // Main thread: block with condvar (safe since we're not a worker).
-            match handle.join() {
+            // Main thread: block with condvar, but wake periodically to
+            // consult the scheduler's deadlock heuristic. If the joined
+            // task can never finish (every scheduled task is parked on
+            // an internal graph edge with no runnable counterparty), we
+            // surface a `deadlock on main thread` diagnostic instead of
+            // hanging forever. This is the join analogue of
+            // `main_thread_wait_for_receive`.
+            match main_thread_wait_for_join(&handle, vm) {
                 Ok(val) => Ok(val),
                 Err(mut inner) => {
                     inner.message = format!("joined task failed: {}", inner.message);
@@ -942,6 +948,63 @@ fn main_thread_wait_for_receive(
         } else {
             // Reset the streak: a single positive reading means the
             // scheduler is not stuck right now.
+            no_progress_streak = 0;
+        }
+    }
+}
+
+/// Block the main thread until `handle` produces a result or the
+/// scheduler can no longer make progress (deadlock).
+///
+/// `task.join` on the main thread used to rely on the worker-side
+/// deadlock detector (since removed) to break a join on a permanently
+/// stuck task. The worker-side detector was unsafe — it could not
+/// distinguish "main is descheduled" from "main is stuck" — so detection
+/// is consolidated on the main thread, where the scheduler's
+/// `can_make_progress` heuristic is observed across
+/// `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS` consecutive ticks before
+/// firing, matching the recv/send watchdog.
+fn main_thread_wait_for_join(
+    handle: &Arc<crate::value::TaskHandle>,
+    vm: &Vm,
+) -> Result<Value, VmError> {
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut no_progress_streak: u32 = 0;
+    // Register a one-shot waker that flips the local condvar when the
+    // task completes. `register_join_waker` fires the closure inline if
+    // the task has already completed, which short-circuits the loop.
+    let pair2 = pair.clone();
+    handle.register_join_waker(Box::new(move || {
+        let (lock, cvar) = &*pair2;
+        *lock.lock() = true;
+        cvar.notify_one();
+    }));
+    loop {
+        if let Some(result) = handle.try_get() {
+            return result;
+        }
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            if !*notified {
+                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
+            }
+            *notified = false;
+        }
+        if !scheduler_can_make_progress(vm) {
+            // One last try in case the task completed between the wait
+            // and the check.
+            if let Some(result) = handle.try_get() {
+                return result;
+            }
+            no_progress_streak = no_progress_streak.saturating_add(1);
+            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
+                continue;
+            }
+            return Err(VmError::new(
+                "deadlock on main thread: task.join with no progress possible".into(),
+            ));
+        } else {
             no_progress_streak = 0;
         }
     }

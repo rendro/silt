@@ -229,7 +229,14 @@ struct SchedulerInner {
     /// chance to either complete or register an external wake source, so
     /// declaring deadlock would be premature.
     unsettled_tasks: AtomicUsize,
-    /// Set to true once a deadlock has been detected and reported.
+    /// Reserved for cross-process deadlock state. The worker-side
+    /// detector that used to flip this flag was removed because it could
+    /// not distinguish "main thread is descheduled" from "main thread is
+    /// stuck"; deadlock detection now happens exclusively on the main
+    /// thread (see `main_thread_wait_for_*` in
+    /// `src/builtins/concurrency.rs`). This flag is currently never
+    /// flipped, but is retained so existing accessors / tests do not
+    /// have to change shape.
     deadlock_detected: AtomicBool,
     /// Handles of tasks that are currently blocked. When deadlock is detected,
     /// all of these are completed with a deadlock error so joiners unblock.
@@ -496,61 +503,14 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     // Completed / Failed / Blocked-with-waker arms.
                     break task;
                 }
-                // Use a timeout so we can periodically check for deadlock.
-                let wait_result = inner.condvar.wait_for(&mut queue, Duration::from_secs(1));
-                if wait_result.timed_out() {
-                    // Deadlock fires only when all live tasks are blocked on
-                    // INTERNAL graph edges (channels, joins). I/O-blocked
-                    // tasks have external wakers and are not deadlocked in
-                    // any sense the scheduler can prove — matches Go's
-                    // netpoll exemption.
-                    let live = inner.live_tasks.load(Ordering::SeqCst);
-                    let blocked = inner.blocked_tasks.load(Ordering::SeqCst);
-                    let io_blocked = inner.io_blocked_tasks.load(Ordering::SeqCst);
-                    let unsettled = inner.unsettled_tasks.load(Ordering::SeqCst);
-                    let internal_blocked = blocked.saturating_sub(io_blocked);
-                    if unsettled == 0 && live > 0 && internal_blocked >= live && queue.is_empty() {
-                        // Double-check: release lock, yield, re-acquire, check again
-                        // to avoid TOCTOU false positives.
-                        drop(queue);
-                        std::thread::yield_now();
-                        queue = inner.run_queue.lock();
-                        let live2 = inner.live_tasks.load(Ordering::SeqCst);
-                        let blocked2 = inner.blocked_tasks.load(Ordering::SeqCst);
-                        let io_blocked2 = inner.io_blocked_tasks.load(Ordering::SeqCst);
-                        let unsettled2 = inner.unsettled_tasks.load(Ordering::SeqCst);
-                        let internal_blocked2 = blocked2.saturating_sub(io_blocked2);
-                        if unsettled2 == 0
-                            && live2 > 0
-                            && internal_blocked2 >= live2
-                            && queue.is_empty()
-                        {
-                            // Confirmed deadlock — all live tasks are blocked
-                            // with no runnable work.
-                            if !inner.deadlock_detected.swap(true, Ordering::SeqCst) {
-                                eprintln!(
-                                    "deadlock: all {live2} live tasks are blocked with nothing runnable"
-                                );
-                                // Complete all blocked task handles with a deadlock error
-                                // so that joiners (including the main thread) unblock.
-                                let handles: Vec<Arc<TaskHandle>> = {
-                                    let mut guard = inner.blocked_handles.lock();
-                                    std::mem::take(&mut *guard)
-                                };
-                                for handle in handles {
-                                    handle.complete(Err(VmError::new(
-                                        "deadlock: all tasks are blocked with no progress possible"
-                                            .to_string(),
-                                    )));
-                                }
-                            }
-                            // Signal shutdown so all workers exit cleanly.
-                            inner.shutdown.store(true, Ordering::SeqCst);
-                            inner.condvar.notify_all();
-                            return;
-                        }
-                    }
-                }
+                // Wake periodically to re-check the queue. The actual
+                // deadlock decision is made by the main-thread watchdog in
+                // `src/builtins/concurrency.rs::main_thread_wait_for_*`,
+                // which can distinguish a real deadlock from "main is just
+                // descheduled / busy in VM bytecode" — something a worker
+                // thread cannot prove. A worker that times out here simply
+                // resumes waiting for the condvar.
+                let _ = inner.condvar.wait_for(&mut queue, Duration::from_secs(1));
             }
         };
 
@@ -1304,30 +1264,14 @@ fn main() {{
         assert_eq!(entries[0].task_id, 2);
     }
 
-    #[test]
-    fn test_deadlock_detected_flag() {
-        // Two tasks that each receive from a channel nobody sends to.
-        // The scheduler should detect this as a deadlock.
-        let scheduler = Scheduler::new();
-        let src = r#"
-import channel
-fn main() {
-  let ch = channel.new(0)
-  channel.receive(ch)
-}
-        "#;
-        let (task1, handle1) = make_task(1, src);
-        let (task2, handle2) = make_task(2, src);
-        scheduler.submit(task1).unwrap();
-        scheduler.submit(task2).unwrap();
-        // Both should complete (with deadlock error).
-        let r1 = handle1.join();
-        let r2 = handle2.join();
-        assert!(r1.is_err(), "task1 should fail with deadlock");
-        assert!(r2.is_err(), "task2 should fail with deadlock");
-        assert!(
-            scheduler.deadlock_detected(),
-            "deadlock_detected flag should be set"
-        );
-    }
+    // Note: the previous `test_deadlock_detected_flag` was removed when
+    // the worker-side deadlock detector was deleted. Deadlock detection
+    // now lives entirely on the main thread (see
+    // `main_thread_wait_for_send` / `_receive` / `_join` in
+    // `src/builtins/concurrency.rs`), so the scheduler-only API
+    // exercised by that test no longer has a way to declare a deadlock —
+    // it requires a main-thread VM that is parked on a primitive. The
+    // analogous program-level coverage lives in
+    // `tests/scheduler_deadlock_detector_tests.rs::test_real_deadlock_*`
+    // and the integration tests in `tests/integration.rs`.
 }

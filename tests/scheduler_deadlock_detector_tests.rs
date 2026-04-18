@@ -192,22 +192,12 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // Round 31: round-30's pending_spawn → unsettled_tasks rework
-    // narrowed the false-positive race substantially but did not fully
-    // close it on every CI runner — Linux/macOS occasionally still hit
-    // it (~1% per trial). Test design: panics are strict (real bugs;
-    // the round-27 task_slot panic must never reappear); deadlock
-    // false-positives are counted with a tolerance. Pre-fix the rate
-    // was 5-20% per trial → at-least-5/20 failures was near-certain.
-    // Post-fix: 0-2 failures per 20-trial CI run is the steady state;
-    // tolerate up to 4 deadlock false-positives (≥80% pass) so
-    // ordinary CI noise does not block, but a regression that
-    // re-widens the race still trips.
+    // STRICT per-trial assertion: every trial must exit 0 with sum=136
+    // and no `deadlock` string in stderr. After the worker-side detector
+    // was removed, the only remaining detector is the main-thread
+    // watchdog, and main is busy receiving (not idle), so a false
+    // positive cannot fire from this shape.
     const ITERATIONS: usize = 20;
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 4;
-    let mut deadlock_count = 0usize;
-    let mut wrong_sum_count = 0usize;
-    let mut first_failure_evidence: Option<(usize, String, String)> = None;
     for trial in 0..ITERATIONS {
         let res = run_silt(
             &format!("fan_in_16_not_false_deadlock_{trial}"),
@@ -224,33 +214,28 @@ fn main() {
             "trial {trial}: unexpected panic; stderr={}",
             res.stderr,
         );
-        let saw_deadlock = res.stderr.contains("deadlock");
-        let saw_sum = res.stdout.contains("sum=136");
-        if saw_deadlock {
-            deadlock_count += 1;
-            if first_failure_evidence.is_none() {
-                first_failure_evidence = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        } else if !saw_sum {
-            wrong_sum_count += 1;
-            if first_failure_evidence.is_none() {
-                first_failure_evidence = Some((trial, res.stdout.clone(), res.stderr.clone()));
-            }
-        }
+        assert!(
+            !res.stderr.contains("deadlock"),
+            "trial {trial}: false-positive deadlock diagnostic; \
+             stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert!(
+            res.stdout.contains("sum=136"),
+            "trial {trial}: did not reach sum=136; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: non-zero exit {:?}; stdout={:?} stderr={:?}",
+            res.exit,
+            res.stdout,
+            res.stderr,
+        );
     }
-    assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
-        "fan-in 16 saw {deadlock_count}/{ITERATIONS} false-positive \
-         deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         The unsettled_tasks fix may have regressed. First failure: {:?}",
-        first_failure_evidence,
-    );
-    assert_eq!(
-        wrong_sum_count, 0,
-        "fan-in 16 saw {wrong_sum_count}/{ITERATIONS} trials that did \
-         not reach sum=136 (without deadlock). First failure: {:?}",
-        first_failure_evidence,
-    );
 }
 
 /// **Real deadlock — no sender at all.** Main receives on a channel
@@ -438,17 +423,11 @@ fn main() {
 /// this assertion will start failing; if the regression is tiny
 /// (single trial out of 100) we will still see it because EVERY
 /// trial must succeed.
-// Cfg-gated off Windows: the 50-trial stress amplifies a residual
-// detector race that the round-31 unsettled_tasks fix narrowed but did
-// not fully close on Windows (CI run 24593801054 saw 3/50 failures
-// post-fix vs. ~46/50 pre-fix). Suspected cause is a different race —
-// main-thread channel.receive entering the wake critical section while
-// all sender tasks are genuinely settled with wakers but not yet woken.
-// The four tightened single-trial tests
-// (test_fan_in_16_not_false_deadlock, test_send_arm_no_panic_*,
-// test_recv_arm_no_panic_*, hand_fan_in_rendezvous_16) cover the
-// counter-window invariant on Windows.
-#[cfg(not(windows))]
+// Now passes on every platform (including Windows): the worker-side
+// detector that produced the residual race was removed, so the
+// `unsettled_tasks` invariant is no longer the only thing standing
+// between the workers and a false-positive deadlock fire — there is no
+// worker-side fire path at all.
 #[test]
 fn test_unsettled_tasks_held_across_dequeue_to_waker_registration() {
     let src = r#"
@@ -521,5 +500,102 @@ fn main() {
         wrong_sums.len(),
         ITERATIONS,
         wrong_sums,
+    );
+}
+
+/// **Regression lock for the round-32 worker-side-detector removal.**
+/// Pre-fix shape: a worker thread's `condvar.wait_for(.., 1s)` could
+/// time out, observe `unsettled==0`, `live==1`, `internal_blocked==1`,
+/// `queue.empty()`, and falsely declare deadlock — even when main was
+/// not actually stuck, just busy crunching VM bytecode between recv
+/// iterations. On a Windows CI runner under high parallel cargo-test
+/// load, main could be descheduled for >1s, making this false positive
+/// near-certain on the minimal fan-in shape.
+///
+/// This test stresses exactly that scenario: 16 sender tasks all park
+/// with wakers (so the four worker-visible counters look like deadlock),
+/// then main does ~thousands of VM ops between each `channel.receive`
+/// call. Pre-fix, every trial that won the descheduling lottery would
+/// see `error[runtime]` from the worker thread declaring deadlock.
+/// Post-fix (worker-side detector removed), only the main-thread
+/// watchdog can fire, and main is busy receiving (not parked on a
+/// primitive long enough for the consecutive-tick threshold to elapse),
+/// so 0/20 trials may produce a deadlock diagnostic.
+#[test]
+fn test_no_false_deadlock_when_main_is_busy() {
+    let src = r#"
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _senders = 1..16
+    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+  let sum = loop c = 0, acc = 0 {
+    -- Tight CPU loop on main between receives — simulates main being
+    -- descheduled by the OS. Pre-fix, this gave a worker enough
+    -- wall-clock time to time out on its 1s wait_for and falsely
+    -- declare deadlock against the four counters that briefly looked
+    -- "stuck" while main was crunching this loop.
+    let _busy = loop k = 0 {
+      match k >= 2000 {
+        true -> 0
+        _ -> loop(k + 1)
+      }
+    }
+    match c >= 16 {
+      true -> acc
+      _ -> match channel.receive(ch) {
+        Message(v) -> loop(c + 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+  println("sum={sum}")
+}
+"#;
+    const ITERATIONS: usize = 20;
+    let mut deadlock_diagnostics: Vec<(usize, String, String)> = Vec::new();
+    let mut wrong_sums: Vec<(usize, String, String)> = Vec::new();
+    for trial in 0..ITERATIONS {
+        let res = run_silt(
+            &format!("no_false_deadlock_when_main_is_busy_{trial}"),
+            src,
+            Duration::from_secs(20),
+        );
+        assert!(
+            !res.timed_out,
+            "trial {trial}: TIMEOUT; stdout={:?} stderr={:?}",
+            res.stdout, res.stderr
+        );
+        assert!(
+            !res.stderr.contains("panicked"),
+            "trial {trial}: unexpected panic; stderr={}",
+            res.stderr,
+        );
+        if res.stderr.contains("deadlock") {
+            deadlock_diagnostics.push((trial, res.stdout.clone(), res.stderr.clone()));
+        }
+        if !res.stdout.contains("sum=136") {
+            wrong_sums.push((trial, res.stdout.clone(), res.stderr.clone()));
+        }
+    }
+    assert!(
+        deadlock_diagnostics.is_empty(),
+        "round-32 regression: {}/{} trials produced a false-positive \
+         deadlock diagnostic. The worker-side deadlock detector must \
+         not have been re-introduced. First failure: {:?}",
+        deadlock_diagnostics.len(),
+        ITERATIONS,
+        deadlock_diagnostics.first(),
+    );
+    assert!(
+        wrong_sums.is_empty(),
+        "round-32 regression: {}/{} trials did not reach sum=136. \
+         First failure: {:?}",
+        wrong_sums.len(),
+        ITERATIONS,
+        wrong_sums.first(),
     );
 }

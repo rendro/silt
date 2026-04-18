@@ -7,7 +7,9 @@
 //!
 //! 1. No Rust panic (exit != 101, no "thread 'main' panicked").
 //! 2. No unexpected runtime error: either exit 0 or exit 1 with a
-//!    well-formed deadlock diagnostic (`deadlock:` prefix).
+//!    well-formed deadlock diagnostic (the main-thread watchdog's
+//!    `deadlock on main thread:` form, or the legacy `deadlock:`
+//!    worker-side prefix if it ever returns).
 //! 3. Bounded wall-clock runtime: process MUST exit within 5s.
 //! 4. No sanitizer output (ASAN/TSAN, etc.).
 //!
@@ -200,21 +202,17 @@ fn check_invariants(src: &str, out: &RunOutcome) -> Result<(), String> {
     // a well-formed deadlock diagnostic is acceptable — the scheduler
     // can legitimately detect a deadlock on some generator shapes and
     // the test's job is to make sure the detector fires cleanly rather
-    // than hang.
+    // than hang. After the worker-side detector was removed, all
+    // legitimate deadlock diagnostics come from the main-thread
+    // watchdog and are formatted as `deadlock on main thread: ...`.
+    // The older `deadlock: all N tasks ...` form is preserved here for
+    // forward-compatibility — if a future change re-introduces a
+    // worker-side fire path, this check still recognises it.
     match out.exit {
         Some(0) => Ok(()),
         Some(1) => {
-            if out.stderr.contains("deadlock:") {
-                // Further sanity: must mention task count ("tasks").
-                if out.stderr.contains("tasks") || out.stderr.contains("task") {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "MALFORMED deadlock diagnostic (missing task count); \
-                         src was:\n---\n{src}\n---\nstderr={:?}",
-                        out.stderr
-                    ))
-                }
+            if out.stderr.contains("deadlock on main thread") || out.stderr.contains("deadlock:") {
+                Ok(())
             } else {
                 Err(format!(
                     "EXIT 1 with no deadlock diagnostic; src was:\n---\n{src}\n---\n\
@@ -678,15 +676,11 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Round 31: 32-task fan-in is the same residual deadlock-detector
-        // race as hand_fan_in_rendezvous_16, just bigger; tolerate up to
-        // 1/5 false-positive trials. See test_fan_in_16_not_false_deadlock
-        // in tests/scheduler_deadlock_detector_tests.rs for the rationale.
+        // Round 32: STRICT per-trial assertion. The worker-side detector
+        // was removed; the only remaining deadlock detector is the
+        // main-thread watchdog, and main is busy receiving (not parked
+        // on a primitive) so no false positive can fire.
         const ITERATIONS: usize = 5;
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 1;
-        let mut deadlock_count = 0usize;
-        let mut wrong_sum_count = 0usize;
-        let mut first_failure: Option<(usize, String, String)> = None;
         for trial in 0..ITERATIONS {
             let out = run(&format!("handcrafted_32_rdv_trial{trial}"), src);
             assert!(
@@ -694,33 +688,20 @@ fn main() {
                 "trial {trial}: 32-task rendezvous timed out; stderr={}",
                 out.stderr
             );
-            let saw_deadlock = out.stderr.contains("deadlock");
-            let saw_sum = out.stdout.contains("sum=528");
-            if saw_deadlock {
-                deadlock_count += 1;
-                if first_failure.is_none() {
-                    first_failure = Some((trial, out.stdout.clone(), out.stderr.clone()));
-                }
-            } else if !saw_sum {
-                wrong_sum_count += 1;
-                if first_failure.is_none() {
-                    first_failure = Some((trial, out.stdout.clone(), out.stderr.clone()));
-                }
-            }
+            assert!(
+                !out.stderr.contains("deadlock"),
+                "trial {trial}: false-positive deadlock; \
+                 stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
+            assert!(
+                out.stdout.contains("sum=528"),
+                "trial {trial}: did not reach sum=528; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
         }
-        assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
-            "32-task rendezvous: {deadlock_count}/{ITERATIONS} false-positive \
-             deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-             First failure: {:?}",
-            first_failure,
-        );
-        assert_eq!(
-            wrong_sum_count, 0,
-            "32-task rendezvous: {wrong_sum_count}/{ITERATIONS} trials did not \
-             reach sum=528 without deadlock. First failure: {:?}",
-            first_failure,
-        );
     }
 
     /// Select with 4 branches, cancel one sender mid-flight, assert the
@@ -1001,15 +982,9 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Round 31: panics still strict (the round-27 task_slot
-        // bug must never reappear). Deadlock false-positives tolerated
-        // up to 1/8 trials — see test_fan_in_16_not_false_deadlock for
-        // the full rationale on the residual race window.
+        // Round 32: STRICT per-trial assertion. Worker-side detector was
+        // removed, so a false positive cannot fire from this shape.
         const ITERATIONS: usize = 8;
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 1;
-        let mut deadlock_count = 0usize;
-        let mut wrong_sum_count = 0usize;
-        let mut first_failure: Option<(usize, String, String)> = None;
         for trial in 0..ITERATIONS {
             let out = run(&format!("handcrafted_fan_in_16_trial{trial}"), src);
             assert!(
@@ -1029,33 +1004,20 @@ fn main() {
                 "trial {trial}: generic panic detected; stderr={}",
                 out.stderr
             );
-            let saw_deadlock = out.stderr.contains("deadlock");
-            let saw_sum = out.stdout.contains("sum=136");
-            if saw_deadlock {
-                deadlock_count += 1;
-                if first_failure.is_none() {
-                    first_failure = Some((trial, out.stdout.clone(), out.stderr.clone()));
-                }
-            } else if !saw_sum {
-                wrong_sum_count += 1;
-                if first_failure.is_none() {
-                    first_failure = Some((trial, out.stdout.clone(), out.stderr.clone()));
-                }
-            }
+            assert!(
+                !out.stderr.contains("deadlock"),
+                "trial {trial}: false-positive deadlock; \
+                 stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
+            assert!(
+                out.stdout.contains("sum=136"),
+                "trial {trial}: did not reach sum=136; stdout={:?} stderr={:?}",
+                out.stdout,
+                out.stderr,
+            );
         }
-        assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
-            "fan-in 16: {deadlock_count}/{ITERATIONS} false-positive \
-             deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-             First failure: {:?}",
-            first_failure,
-        );
-        assert_eq!(
-            wrong_sum_count, 0,
-            "fan-in 16: {wrong_sum_count}/{ITERATIONS} trials did not reach \
-             sum=136 without deadlock. First failure: {:?}",
-            first_failure,
-        );
     }
 
     /// Select with a timeout channel that fires before any other
