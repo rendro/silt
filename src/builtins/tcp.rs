@@ -771,7 +771,17 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     buf.truncate(n);
                     Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))])
                 }
-                Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                Err(e) => {
+                    // If the stream was closed (locally) while/before this
+                    // read, surface as EOF rather than the platform-specific
+                    // cancellation error (Windows: WSACancelBlockingCall /
+                    // WSA_OPERATION_ABORTED from CancelIoEx in close()).
+                    if stream_clone.closed.load(Ordering::SeqCst) {
+                        Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(Vec::new()))])
+                    } else {
+                        Value::Variant("Err".into(), vec![Value::String(e.to_string())])
+                    }
+                }
             }
         });
         vm.pending_io = Some(completion.clone());
@@ -788,7 +798,13 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             buf.truncate(n);
             Ok(ok(Value::Bytes(Arc::new(buf))))
         }
-        Err(e) => Ok(err(e.to_string())),
+        Err(e) => {
+            if stream.closed.load(Ordering::SeqCst) {
+                Ok(ok(Value::Bytes(Arc::new(Vec::new()))))
+            } else {
+                Ok(err(e.to_string()))
+            }
+        }
     }
 }
 
