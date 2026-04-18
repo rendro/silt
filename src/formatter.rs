@@ -2878,6 +2878,18 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Lambda { params, body } => {
+            // The `fn(...) { ... }` syntax requires plain identifier
+            // parameters — the parser's `parse_fn_params` rejects any
+            // pattern other than `Ident` with `expected parameter name,
+            // found <tok>`. The closure form `{ params -> body }` (parsed
+            // by `parse_closure_params`) accepts richer patterns like
+            // tuples (`(a, b)`). When a Lambda originated from a closure
+            // and carries a non-Ident parameter pattern, we MUST emit
+            // closure syntax so the formatted output round-trips.
+            // Otherwise `fn((a, b)) { ... }` re-parses to a parse error.
+            if params.iter().any(|p| !is_ident_pattern(&p.pattern)) {
+                return format_closure_lambda(params, body, depth);
+            }
             let param_strs: Vec<String> = params.iter().map(format_param).collect();
             let params_str = param_strs.join(", ");
             format!("fn({params_str}) {}", format_body(body, depth))
@@ -2979,25 +2991,33 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
 
 fn format_trailing_closure(expr: &Expr, depth: usize) -> String {
     if let ExprKind::Lambda { params, body } = &expr.kind {
-        let param_strs: Vec<String> = params.iter().map(format_param).collect();
-        let params_str = param_strs.join(", ");
-        if let ExprKind::Block(stmts) = &body.kind {
-            if stmts.len() == 1
-                && let Stmt::Expr(inner) = &stmts[0]
-            {
-                return format!("{{ {params_str} -> {} }}", format_expr(inner, depth));
-            }
-            // Multi-statement trailing closure. Use the state-aware
-            // statement formatter so any comments inside the closure's
-            // body block are emitted at the correct nested position.
-            let close_line = compute_block_end_line(body.span);
-            let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
-            return format!("{{ {params_str} ->\n{}\n{}}}", inner, indent(depth));
-        }
-        format!("{{ {params_str} -> {} }}", format_expr(body, depth))
+        format_closure_lambda(params, body, depth)
     } else {
         format_expr(expr, depth)
     }
+}
+
+/// Emit a `Lambda` using the closure form `{ params -> body }`. Used both
+/// for trailing-closure call positions and for any non-trailing Lambda
+/// whose parameters can't be expressed in the `fn(...)` syntax (e.g. a
+/// tuple-destructuring parameter `{ (a, b) -> ... }`).
+fn format_closure_lambda(params: &[Param], body: &Expr, depth: usize) -> String {
+    let param_strs: Vec<String> = params.iter().map(format_param).collect();
+    let params_str = param_strs.join(", ");
+    if let ExprKind::Block(stmts) = &body.kind {
+        if stmts.len() == 1
+            && let Stmt::Expr(inner) = &stmts[0]
+        {
+            return format!("{{ {params_str} -> {} }}", format_expr(inner, depth));
+        }
+        // Multi-statement closure. Use the state-aware statement
+        // formatter so any comments inside the closure's body block are
+        // emitted at the correct nested position.
+        let close_line = compute_block_end_line(body.span);
+        let inner = format_stmts_with_comments(stmts, depth + 1, close_line);
+        return format!("{{ {params_str} ->\n{}\n{}}}", inner, indent(depth));
+    }
+    format!("{{ {params_str} -> {} }}", format_expr(body, depth))
 }
 
 fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
@@ -3022,6 +3042,14 @@ fn format_match_arm(arm: &MatchArm, depth: usize, guardless: bool) -> String {
         };
         format!("{prefix}{pat}{guard} -> {}", format_expr(&arm.body, depth))
     }
+}
+
+/// Is this pattern a plain identifier (or wildcard) — i.e. legal as a
+/// parameter in the `fn(...)` syntax accepted by `parse_fn_params`?
+/// Anything else (tuple, list, constructor, record, literal, …) requires
+/// closure syntax `{ params -> body }` when emitted as a Lambda.
+fn is_ident_pattern(pattern: &Pattern) -> bool {
+    matches!(pattern.kind, PatternKind::Ident(_) | PatternKind::Wildcard)
 }
 
 fn format_pattern(pattern: &Pattern) -> String {

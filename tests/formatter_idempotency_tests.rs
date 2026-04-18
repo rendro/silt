@@ -15,6 +15,21 @@
 //! the same output.
 
 use silt::formatter::format;
+use silt::lexer::Lexer;
+use silt::parser::Parser;
+
+fn assert_formatted_parses(source: &str) {
+    let formatted =
+        format(source).unwrap_or_else(|e| panic!("format failed: {e:?}\nsource:\n{source}"));
+    let tokens = Lexer::new(&formatted).tokenize().unwrap_or_else(|e| {
+        panic!("formatted output failed to lex: {e:?}\nformatted:\n{formatted}")
+    });
+    Parser::new(tokens).parse_program().unwrap_or_else(|e| {
+        panic!(
+            "formatted output failed to parse: {e:?}\nsource:\n{source}\nformatted:\n{formatted}"
+        )
+    });
+}
 
 fn assert_idempotent(source: &str) {
     let first = format(source).unwrap_or_else(|e| {
@@ -147,6 +162,78 @@ fn fizzbuzz(n) {
         formatted.contains("(_0,)"),
         "single-element tuple pattern must keep trailing comma; got:\n{formatted}"
     );
+}
+
+#[test]
+fn test_closure_with_tuple_param_pattern_roundtrips_cleanly() {
+    // Round-33 fuzz repro shape (`fuzz_roundtrip` saw `expected
+    // parameter name, found (` after one format pass on a non-trailing
+    // closure with a tuple-destructuring parameter).
+    //
+    // The parser accepts richer parameter patterns inside closure form
+    // `{ (a, b) -> ... }` (see `parse_closure_params`) but the `fn(...)`
+    // form only accepts plain identifiers (see `parse_simple_param_pattern`,
+    // which fails with `expected parameter name, found <tok>`).
+    //
+    // Before the fix, the formatter emitted any non-trailing Lambda as
+    // `fn(<pattern>) { ... }` regardless of the parameter shape, so a
+    // tuple-pattern closure used as a value (or as a Call's callee, not
+    // its trailing arg) round-tripped to invalid syntax.
+    let source = "let f = ({ (a, b) -> a + b })(1, 2)\n";
+    assert_formatted_parses(source);
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("{ (a, b) -> a + b }"),
+        "tuple-pattern closure must keep closure form; got:\n{formatted}"
+    );
+    assert!(
+        !formatted.contains("fn((a, b))"),
+        "must not emit `fn((a, b))` (parser rejects); got:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_closure_with_constructor_param_pattern_roundtrips_cleanly() {
+    // Same root cause, different non-Ident pattern: a constructor
+    // pattern as a closure parameter.
+    let source = "let f = ({ Some(x) -> x })(Some(1))\n";
+    assert_formatted_parses(source);
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        !formatted.contains("fn(Some("),
+        "constructor-pattern closure must not be emitted as `fn(...)`; got:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_closure_lambda_param_variants_roundtrip_cleanly() {
+    // Property-style: every closure-only parameter pattern shape that
+    // the parser accepts (per `parse_closure_params` → `parse_pattern`)
+    // must format to something that re-parses. Single-element tuple
+    // pattern is the most likely re-trigger of round-30's other fix.
+    for pat in [
+        "(a, b)",
+        "(x, y, z)",
+        "(_, b)",
+        "(a, _)",
+        "Some(x)",
+        "(only,)",
+    ] {
+        let source = format!("let f = ({{ {pat} -> 1 }})(0)\n");
+        assert_formatted_parses(&source);
+        let first = silt::formatter::format(&source)
+            .unwrap_or_else(|e| panic!("first format failed for pat={pat}: {e:?}"));
+        let second = silt::formatter::format(&first).unwrap_or_else(|e| {
+            panic!("second format failed for pat={pat}: {e:?}\nfirst:\n{first}")
+        });
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for closure pattern {pat}\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+    }
 }
 
 #[test]

@@ -60,14 +60,6 @@ jobs:
   fuzz:
     name: Fuzz (libfuzzer, 60s per target)
     runs-on: ubuntu-latest
-    # Non-blocking again: round-33 CI (run 24606502742) surfaced a new
-    # formatter idempotency crash via fuzz_roundtrip — formatted code
-    # fails to parse with `expected parameter name, found (`, repro
-    # saved at fuzz/artifacts/fuzz_roundtrip/crash-9979cd603b1451e3aa44446b8899e7b3b32dbf86
-    # on the CI runner. Make fuzz non-blocking until the formatter is
-    # fixed and the corpus is updated; flip back to blocking in the
-    # next round.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
