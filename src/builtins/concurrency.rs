@@ -862,7 +862,22 @@ fn main_thread_wait_for_send(
 /// stuck — still well within the user's patience for an obvious
 /// unsolvable program — while a heavily-loaded rendezvous handshake
 /// gets the time it needs to complete.
-const MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS: u32 = 20;
+// Round 34: bumped from 20 → 50 (5s instead of 2s) after CI run
+// 24609938879 surfaced a join false-positive on the well-known
+// test_rendezvous_ping_pong test under cargo-test parallelism on the
+// 2-core ubuntu-latest runner. The ping/pong handshake chain (4
+// rendezvous transfers between two tasks plus main joining both) can
+// briefly land all participants in blocked-with-waker state on a
+// contended runner long enough that watchdog_might_unblock_recv +
+// is_handle_blocked + was_notified all return the wrong answer for
+// 20 consecutive 100ms samples. 5s threshold gives that handshake
+// chain plenty of slack while still bounding real deadlocks to a
+// human-tolerable wait. All real-deadlock locks
+// (test_real_deadlock_still_detected,
+// test_real_deadlock_detected_after_spawn_completes_without_sending,
+// test_detector_fires_within_reasonable_time_on_real_deadlock) have
+// 8s+ test budgets so they keep firing within timeout.
+const MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS: u32 = 50;
 
 fn main_thread_wait_for_receive(
     ch: &Arc<crate::value::Channel>,
