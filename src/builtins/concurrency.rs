@@ -791,16 +791,25 @@ fn main_thread_wait_for_send(
             TrySendResult::Full => {}
         }
         // Wait for a notify or the watchdog tick.
-        {
+        let was_notified = {
             let (lock, cvar) = &*pair;
             let mut notified = lock.lock();
             if !*notified {
                 cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
             }
+            let n = *notified;
             *notified = false;
-        }
-        // If the scheduler cannot make progress, declare deadlock.
-        if !scheduler_can_make_progress(vm) {
+            n
+        };
+        // If the scheduler cannot make progress, declare deadlock —
+        // unless the channel itself can carry us forward (a parked
+        // receiver is going to wake when its slice runs, a buffer slot
+        // is free, or it is closed). Round 33: this peek closes the
+        // residual false-positive where a worker is mid-handoff but the
+        // three scheduler counters spell "stuck". ALSO: if the send-waker
+        // fired during the wait, that itself is progress — reset the
+        // streak unconditionally.
+        if !was_notified && !scheduler_can_make_progress(vm) && !ch.watchdog_might_unblock_send() {
             // Give one last try in case a task completed between
             // the wait and the check.
             match ch.try_send(val.clone()) {
@@ -905,15 +914,28 @@ fn main_thread_wait_for_receive(
             }
             TryReceiveResult::Empty => {}
         }
-        {
+        let was_notified = {
             let (lock, cvar) = &*pair;
             let mut notified = lock.lock();
             if !*notified {
                 cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
             }
+            let n = *notified;
             *notified = false;
-        }
-        if !scheduler_can_make_progress(vm) {
+            n
+        };
+        // Round 33: peek the channel before counting a tick toward the
+        // deadlock threshold. The scheduler counters can read "stuck"
+        // (live==blocked, unsettled==0) when in fact a parked sender's
+        // upcoming slice will hand off to our recv-waker. The channel
+        // peek catches that case — and the buffered/closed cases too —
+        // without recursing back into the scheduler. ALSO: if our recv-
+        // waker was notified during the wait, that itself is evidence
+        // a sender just handed us a value (or closed the channel) — the
+        // value may not be in handoff yet by the time the channel peek
+        // runs, but the next try_receive should pick it up; reset the
+        // streak unconditionally on a real notification.
+        if !was_notified && !scheduler_can_make_progress(vm) && !ch.watchdog_might_unblock_recv() {
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     drop(reg);
@@ -983,15 +1005,45 @@ fn main_thread_wait_for_join(
         if let Some(result) = handle.try_get() {
             return result;
         }
-        {
+        let was_notified = {
             let (lock, cvar) = &*pair;
             let mut notified = lock.lock();
             if !*notified {
                 cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
             }
+            let n = *notified;
             *notified = false;
-        }
-        if !scheduler_can_make_progress(vm) {
+            n
+        };
+        // Round 33: before counting a tick toward the deadlock threshold,
+        // peek at the joinee's blocked state. If the joinee is queued or
+        // currently running on a worker (i.e. NOT in the scheduler's
+        // `blocked_handles` list), it is moments away from making
+        // progress — reset the streak. We deliberately do NOT recurse
+        // into the joinee's primitive (channel / select / I/O); this
+        // conservative check is enough to close the residual race where
+        // main parks on join while the joinee is mid-slice and the
+        // three scheduler counters spell "stuck". When there is no
+        // scheduler at all, fall back to the original behavior
+        // (`scheduler_can_make_progress` returns false → counter
+        // increments → deadlock fires) — `task.join` cannot be called
+        // without a scheduler in well-typed programs, but the fallback
+        // preserves a deterministic deadlock diagnostic if it ever is.
+        // ALSO: if the join-waker fired during the wait, the joinee just
+        // completed — the next try_get must succeed; reset the streak
+        // unconditionally on a real notification.
+        if !was_notified && !scheduler_can_make_progress(vm) {
+            let joinee_is_blocked = match vm.current_scheduler() {
+                Some(sched) => sched.is_handle_blocked(handle.id),
+                None => true, // No scheduler → joinee can't progress.
+            };
+            if !joinee_is_blocked {
+                // Joinee is queued / running. Reset the streak; the next
+                // tick will either find the join settled or the joinee
+                // blocked too.
+                no_progress_streak = 0;
+                continue;
+            }
             // One last try in case the task completed between the wait
             // and the check.
             if let Some(result) = handle.try_get() {

@@ -216,14 +216,11 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // Panics still strict (the round-27 task_slot panic must never
-    // reappear). Deadlock false-positive count tolerated up to 4/20 —
-    // the round-32 worker-side detector removal closed the worker race
-    // but the main-thread watchdog can still false-fire on contended CI
-    // (main parks briefly between iterations; 2s consecutive-tick
-    // threshold can be reached on slow runners).
+    // Round 33: STRICT 0/20 every trial. The watchdog channel-peek
+    // (Channel::watchdog_might_unblock_recv) closes the residual main-
+    // thread false-positive that this test previously tolerated up to
+    // 4/20 of.
     const ITERATIONS: usize = 20;
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 4;
     let mut deadlock_count = 0usize;
     let mut wrong_sum_count = 0usize;
     let mut first_failure: Option<(usize, String, String)> = None;
@@ -234,6 +231,13 @@ fn main() {
             Duration::from_secs(15),
         );
         assert_no_scheduler_panic(trial, "send-arm fan-in", &res);
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: non-zero exit; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
         let saw_deadlock = res.stderr.contains("deadlock");
         let saw_sum = res.stdout.contains("sum=136");
         if saw_deadlock {
@@ -248,11 +252,10 @@ fn main() {
             }
         }
     }
-    assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+    assert_eq!(
+        deadlock_count, 0,
         "send-arm fan-in: {deadlock_count}/{ITERATIONS} false-positive \
-         deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         First failure: {:?}",
+         deadlock diagnostics (round-33 strict: 0). First failure: {:?}",
         first_failure,
     );
     assert_eq!(
@@ -306,9 +309,8 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // See test_send_arm_no_panic_16_sender_fan_in for tolerance rationale.
+    // Round 33: STRICT 0/20 every trial.
     const ITERATIONS: usize = 20;
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 4;
     let mut deadlock_count = 0usize;
     let mut wrong_sum_count = 0usize;
     let mut first_failure: Option<(usize, String, String)> = None;
@@ -319,6 +321,13 @@ fn main() {
             Duration::from_secs(15),
         );
         assert_no_scheduler_panic(trial, "recv-arm fan-out", &res);
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: non-zero exit; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
         let saw_deadlock = res.stderr.contains("deadlock");
         let saw_sum = res.stdout.contains("sum=136");
         if saw_deadlock {
@@ -333,11 +342,10 @@ fn main() {
             }
         }
     }
-    assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+    assert_eq!(
+        deadlock_count, 0,
         "recv-arm fan-out: {deadlock_count}/{ITERATIONS} false-positive \
-         deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         First failure: {:?}",
+         deadlock diagnostics (round-33 strict: 0). First failure: {:?}",
         first_failure,
     );
     assert_eq!(

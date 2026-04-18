@@ -103,15 +103,39 @@ fn try_run_pkg_test(packages: &[Pkg], main_pkg: &str) -> Result<Value, String> {
 }
 
 fn tempdir() -> PathBuf {
+    // Each test gets a unique tmp dir. We can't rely on a (pid, nanos)
+    // pair alone because some platforms (notably macOS) clamp
+    // `SystemTime::now()` to microsecond resolution — two parallel test
+    // threads that call this within the same microsecond would land on
+    // the same path, then `create_dir_all` (which is idempotent) would
+    // happily reuse it and the two tests would race on each other's
+    // source files. That race produced the historical macOS-CI flake
+    // where `test_dep_without_lib_silt_is_error` saw the wrong
+    // `import pkg_a` text from `test_cross_package_cycle_detected`'s
+    // main.silt and reported "cannot load module 'pkg_a'" instead of
+    // the expected "library entry point" error.
+    //
+    // Add a process-wide atomic counter and the OS thread ID to the
+    // path so collisions are impossible even at sub-microsecond
+    // overlap.
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::SystemTime;
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tid = format!("{:?}", std::thread::current().id());
+    // Strip non-alphanumerics from the thread-id debug repr so the
+    // path stays well-formed across platforms.
+    let tid_clean: String = tid.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let dir = std::env::temp_dir().join(format!(
-        "silt_pkg_test_{}_{}",
+        "silt_pkg_test_{}_{}_{}_{}",
         std::process::id(),
-        nanos as u64
+        nanos as u64,
+        tid_clean,
+        n,
     ));
     fs::create_dir_all(&dir).expect("failed to create temp dir");
     dir
@@ -334,21 +358,10 @@ fn main() = calc.h()
         .compile_program(&program)
         .expect_err("expected err");
 
-    // Accept either the canonical wording OR a `cannot load module`
-    // error: when this test runs in parallel with
-    // test_cross_package_cycle_detected on a slow runner (observed on
-    // macOS CI), shared intern-table state can leak the cycle test's
-    // `pkg_a` name into this compile context, which manifests as a
-    // load-time error instead of the lib-entry-point check. The
-    // user-visible behavior is still "the dep is unreachable", so
-    // either error shape is acceptable here.
-    let m = &err.message;
-    let says_lib_entry = m.contains("library entry point") && m.contains("calc");
-    let says_load_failure = m.contains("cannot load");
     assert!(
-        says_lib_entry || says_load_failure,
-        "expected `library entry point` wording (with `calc`) OR a \
-         `cannot load` error, got: {m}"
+        err.message.contains("library entry point") && err.message.contains("calc"),
+        "expected `library entry point` wording mentioning `calc`, got: {}",
+        err.message
     );
 }
 

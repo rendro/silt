@@ -641,13 +641,9 @@ mod hand_crafted {
     ///
     /// Note: silt's `1..32` is inclusive on both ends → 32 values
     /// [1, 32], sum = 32*33/2 = 528.
-    // Cfg-gated off Windows: 32-sender fan-in stresses the main-thread
-    // watchdog hard enough that Windows CI runners hit 2/5 deadlock
-    // false-positives (CI run 24595967911), exceeding any tolerance the
-    // 5-trial budget can carry. The 16-task variant
-    // (hand_fan_in_rendezvous_16) covers the same code paths with a
-    // looser load and remains in the Windows matrix.
-    #[cfg(not(windows))]
+    // Round 33: cfg(not(windows)) lifted. The watchdog channel-peek
+    // closes the residual main-thread false-positive that previously
+    // tripped this test on Windows CI (~2/5).
     #[test]
     fn hand_32_tasks_rendezvous_sent_equals_received() {
         let src = r#"
@@ -683,17 +679,12 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Round 32: STRICT per-trial assertion. The worker-side detector
-        // was removed; the only remaining deadlock detector is the
-        // main-thread watchdog. With 32 senders the watchdog can still
-        // false-fire on a heavily-loaded CI runner: main parks briefly
-        // on receive between iterations, the channel queue is empty
-        // for a moment (sender N+1 hasn't been picked up by a worker
-        // yet), and if main stays parked for >2s the watchdog declares
-        // deadlock. Locally this completes in <1s; on contended CI
-        // Linux it can hit ~2s. Tolerate up to 1/5 false positives.
+        // Round 33: STRICT 0/5 every trial on every platform. The
+        // round-33 channel-peek (Channel::watchdog_might_unblock_recv)
+        // catches the parked-sender state that the 3-counter scheduler
+        // snapshot would otherwise read as "stuck" and reset the
+        // deadlock streak.
         const ITERATIONS: usize = 5;
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 1;
         let mut deadlock_count = 0usize;
         let mut wrong_sum_count = 0usize;
         let mut first_failure: Option<(usize, String, String)> = None;
@@ -718,11 +709,10 @@ fn main() {
                 }
             }
         }
-        assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        assert_eq!(
+            deadlock_count, 0,
             "32-task rendezvous: {deadlock_count}/{ITERATIONS} false-positive \
-             deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-             First failure: {:?}",
+             deadlock diagnostics (round-33 strict: 0). First failure: {:?}",
             first_failure,
         );
         assert_eq!(
@@ -1011,11 +1001,10 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Panics + timeouts strict; deadlock false-positives tolerated
-        // up to 1/8 (main-thread watchdog can still fire on contended
-        // CI — see test_fan_in_16_not_false_deadlock for full rationale).
+        // Round 33: STRICT 0/8 every trial. The watchdog channel-peek
+        // closes the residual main-thread false-positive that this test
+        // previously tolerated up to 1/8 of.
         const ITERATIONS: usize = 8;
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 1;
         let mut deadlock_count = 0usize;
         let mut wrong_sum_count = 0usize;
         let mut first_failure: Option<(usize, String, String)> = None;
@@ -1052,11 +1041,10 @@ fn main() {
                 }
             }
         }
-        assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        assert_eq!(
+            deadlock_count, 0,
             "fan-in 16: {deadlock_count}/{ITERATIONS} false-positive \
-             deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-             First failure: {:?}",
+             deadlock diagnostics (round-33 strict: 0). First failure: {:?}",
             first_failure,
         );
         assert_eq!(

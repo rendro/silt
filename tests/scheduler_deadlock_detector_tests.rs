@@ -192,18 +192,12 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // After round 32 removed the worker-side detector, the only
-    // remaining deadlock detector is the main-thread watchdog. Main
-    // briefly parks on receive between iterations; on contended CI
-    // runners (especially Windows) the 2s consecutive-tick threshold
-    // can be reached if the OS deschedules main long enough between
-    // consuming a value and re-entering receive. Locally this is
-    // never seen; CI runs 24595678340 hit it on Windows. Tolerate up
-    // to 4/20 deadlock false positives — pre-fix the rate was 5-20%
-    // per trial, so a regression that re-widens the race still trips.
-    // Panics + sum-mismatch + timeouts stay strict.
+    // Round 33: STRICT per-trial — the round-33 watchdog channel-peek
+    // closes the residual main-thread false-positive. When main parks
+    // on `channel.receive` and any sender is queued/blocked on the
+    // channel, `Channel::watchdog_might_unblock_recv` returns true and
+    // the deadlock streak resets. Every trial must exit 0 with sum=136.
     const ITERATIONS: usize = 20;
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 4;
     let mut deadlock_count = 0usize;
     let mut wrong_sum_count = 0usize;
     let mut first_failure: Option<(usize, String, String)> = None;
@@ -223,6 +217,13 @@ fn main() {
             "trial {trial}: unexpected panic; stderr={}",
             res.stderr,
         );
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: non-zero exit; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
         let saw_deadlock = res.stderr.contains("deadlock");
         let saw_sum = res.stdout.contains("sum=136");
         if saw_deadlock {
@@ -237,11 +238,10 @@ fn main() {
             }
         }
     }
-    assert!(
-        deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+    assert_eq!(
+        deadlock_count, 0,
         "fan-in 16: {deadlock_count}/{ITERATIONS} false-positive deadlock \
-         diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
-         First failure: {:?}",
+         diagnostics (round-33 strict: 0). First failure: {:?}",
         first_failure,
     );
     assert_eq!(
@@ -437,20 +437,9 @@ fn main() {
 /// this assertion will start failing; if the regression is tiny
 /// (single trial out of 100) we will still see it because EVERY
 /// trial must succeed.
-// Cfg-gated off Windows: this 50-trial 0-tolerance stress targets the
-// round-31 unsettled_tasks regression specifically. On Windows CI
-// runners the residual main-thread watchdog can still false-fire (~2
-// trials per 50 — see CI run 24595678340) because main parks briefly
-// between iterations and the 2s consecutive-tick threshold can be
-// reached under cargo-test parallelism. The test still locks the
-// round-31 fix on Linux/macOS (deterministic 0/50), and Windows
-// coverage of the underlying `unsettled_tasks` invariant comes from
-// the four tightened race tests
-// (test_fan_in_16_not_false_deadlock + the two
-// test_(send|recv)_arm_no_panic_*) which all run with tolerance and
-// would still trip if the fix regressed (pre-fix rate was 5-20% per
-// trial, post-fix is 0-2/20).
-#[cfg(not(windows))]
+// Round 33: cfg(not(windows)) lifted. The watchdog channel-peek closes
+// the residual main-thread false-positive that previously tripped this
+// test on Windows CI (~2/50). Now strict 0/50 on every platform.
 #[test]
 fn test_unsettled_tasks_held_across_dequeue_to_waker_registration() {
     let src = r#"
@@ -474,14 +463,11 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    // 50 trials. Pre-round-31 shape: P(at least one false-positive)
-    // ≥ 92% on Linux, near-certain on Windows. Post round-31 +
-    // round-32: typically 0/50 locally, but on contended CI Linux the
-    // residual main-thread watchdog window can hit 1-2 false positives
-    // (CI run 24595856720). Tolerate up to 4/50 — pre-round-31 the rate
-    // was ≥92% so >4/50 false positives still surfaces a regression.
+    // Round 33: STRICT 0/50 on every platform. The watchdog channel-peek
+    // (Channel::watchdog_might_unblock_recv) plus the round-31 unsettled
+    // counter together close all known main-thread false-positive paths
+    // on this fan-in shape. Any `deadlock` diagnostic is a real regression.
     const ITERATIONS: usize = 50;
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 4;
     let mut deadlock_diagnostics: Vec<(usize, String, String)> = Vec::new();
     let mut wrong_sums: Vec<(usize, String)> = Vec::new();
     for trial in 0..ITERATIONS {
@@ -509,12 +495,13 @@ fn main() {
         }
     }
     assert!(
-        deadlock_diagnostics.len() <= MAX_DEADLOCK_FALSE_POSITIVES,
-        "round-31 regression: {} of {} trials produced a false-positive \
-         deadlock diagnostic (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
+        deadlock_diagnostics.is_empty(),
+        "round-31/33 regression: {} of {} trials produced a false-positive \
+         deadlock diagnostic (round-33 strict: 0). \
          The `unsettled_tasks` decrement appears to have leaked back into \
-         `pop_front` (or some other pre-settle site). First failure: \
-         trial {:?}, stdout={:?}, stderr={:?}",
+         `pop_front`, OR the round-33 `watchdog_might_unblock_recv` peek \
+         is no longer wired into `main_thread_wait_for_receive`. \
+         First failure: trial {:?}, stdout={:?}, stderr={:?}",
         deadlock_diagnostics.len(),
         ITERATIONS,
         deadlock_diagnostics.first().map(|(t, _, _)| *t),
@@ -583,7 +570,11 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-    const ITERATIONS: usize = 20;
+    // Round 33: bumped 20 → 100 trials, no platform gating. With the
+    // round-33 channel-peek wired into the main-thread watchdog, every
+    // trial must complete without a deadlock diagnostic regardless of
+    // how busy main is between receives.
+    const ITERATIONS: usize = 100;
     let mut deadlock_diagnostics: Vec<(usize, String, String)> = Vec::new();
     let mut wrong_sums: Vec<(usize, String, String)> = Vec::new();
     for trial in 0..ITERATIONS {
@@ -611,9 +602,11 @@ fn main() {
     }
     assert!(
         deadlock_diagnostics.is_empty(),
-        "round-32 regression: {}/{} trials produced a false-positive \
-         deadlock diagnostic. The worker-side deadlock detector must \
-         not have been re-introduced. First failure: {:?}",
+        "round-32/33 regression: {}/{} trials produced a false-positive \
+         deadlock diagnostic. Either the worker-side detector was \
+         re-introduced, or the round-33 channel-peek \
+         (watchdog_might_unblock_recv) is no longer wired into \
+         main_thread_wait_for_receive. First failure: {:?}",
         deadlock_diagnostics.len(),
         ITERATIONS,
         deadlock_diagnostics.first(),
@@ -621,6 +614,120 @@ fn main() {
     assert!(
         wrong_sums.is_empty(),
         "round-32 regression: {}/{} trials did not reach sum=136. \
+         First failure: {:?}",
+        wrong_sums.len(),
+        ITERATIONS,
+        wrong_sums.first(),
+    );
+}
+
+/// **Round-33 regression lock — main watchdog resets when the channel
+/// it is parked on has a counterparty.**
+///
+/// Pre-fix shape: main parks on `channel.receive`, all 16 senders are
+/// blocked-with-waker on `channel.send` (rendezvous, sender N+1 has its
+/// recv-waker registered but its slice hasn't reached the handoff yet).
+/// Scheduler counters: `live = 16, blocked = 16, unsettled = 0`. Without
+/// the channel peek, `can_make_progress` returns false → after 20
+/// consecutive failing watchdog ticks (2s) main fires
+/// `error[runtime]: deadlock on main thread: channel receive with no counterparty`.
+/// In fact, when a worker dispatches one of those parked senders, that
+/// send WILL find main's recv-waker and complete the handshake — so the
+/// program is making progress; the watchdog is wrong.
+///
+/// Post-fix: `Channel::watchdog_might_unblock_recv` returns true while
+/// any send-waker is queued on the channel, so the deadlock streak
+/// resets every tick. Every trial finishes with `sum=136` and exit 0.
+///
+/// Shape: 16 senders fan in to a rendezvous channel; main has a tight
+/// busy loop between receives so it's frequently parked while the
+/// senders are queued. This is the same shape as
+/// `test_no_false_deadlock_when_main_is_busy` but locked specifically
+/// to the channel-peek mechanism (the assertion message names the new
+/// API). 100 trials, 0 tolerance, every platform.
+#[test]
+fn test_main_watchdog_resets_when_channel_has_counterparty() {
+    let src = r#"
+import channel
+import list
+import task
+
+fn main() {
+  let ch = channel.new(0)
+  let _senders = 1..16
+    |> list.map { i -> task.spawn(fn() { channel.send(ch, i) }) }
+  let sum = loop c = 0, acc = 0 {
+    -- Tight CPU loop on main between receives — keeps main descheduled
+    -- long enough for the scheduler counters to spell "stuck"
+    -- (live==blocked, unsettled==0) on every tick. The
+    -- `watchdog_might_unblock_recv` peek must catch the parked senders
+    -- and reset the streak; without it, the 20-tick threshold (2s)
+    -- fires and the run aborts with a false-positive deadlock error.
+    let _busy = loop k = 0 {
+      match k >= 5000 {
+        true -> 0
+        _ -> loop(k + 1)
+      }
+    }
+    match c >= 16 {
+      true -> acc
+      _ -> match channel.receive(ch) {
+        Message(v) -> loop(c + 1, acc + v)
+        _ -> acc
+      }
+    }
+  }
+  println("sum={sum}")
+}
+"#;
+    const ITERATIONS: usize = 100;
+    let mut deadlock_diagnostics: Vec<(usize, String, String)> = Vec::new();
+    let mut wrong_sums: Vec<(usize, String, String)> = Vec::new();
+    for trial in 0..ITERATIONS {
+        let res = run_silt(
+            &format!("watchdog_resets_when_channel_has_counterparty_{trial}"),
+            src,
+            Duration::from_secs(20),
+        );
+        assert!(
+            !res.timed_out,
+            "trial {trial}: TIMEOUT; stdout={:?} stderr={:?}",
+            res.stdout, res.stderr
+        );
+        assert!(
+            !res.stderr.contains("panicked"),
+            "trial {trial}: unexpected panic; stderr={}",
+            res.stderr,
+        );
+        assert_eq!(
+            res.exit,
+            Some(0),
+            "trial {trial}: non-zero exit; stdout={:?} stderr={:?}",
+            res.stdout,
+            res.stderr,
+        );
+        if res.stderr.contains("deadlock") {
+            deadlock_diagnostics.push((trial, res.stdout.clone(), res.stderr.clone()));
+        }
+        if !res.stdout.contains("sum=136") {
+            wrong_sums.push((trial, res.stdout.clone(), res.stderr.clone()));
+        }
+    }
+    assert!(
+        deadlock_diagnostics.is_empty(),
+        "round-33 regression: {}/{} trials produced a false-positive \
+         deadlock diagnostic. The `Channel::watchdog_might_unblock_recv` \
+         peek (in src/value.rs) is no longer being consulted by \
+         `main_thread_wait_for_receive` (in src/builtins/concurrency.rs) \
+         before incrementing the consecutive-fail counter. \
+         First failure: {:?}",
+        deadlock_diagnostics.len(),
+        ITERATIONS,
+        deadlock_diagnostics.first(),
+    );
+    assert!(
+        wrong_sums.is_empty(),
+        "round-33 regression: {}/{} trials did not reach sum=136. \
          First failure: {:?}",
         wrong_sums.len(),
         ITERATIONS,

@@ -333,6 +333,25 @@ impl Scheduler {
         self.inner.deadlock_detected.load(Ordering::SeqCst)
     }
 
+    /// True if a task with `task_id` is currently registered in
+    /// `blocked_handles` — i.e. parked on an internal channel/select/join
+    /// edge with a waker. Returns `false` if the task is queued, running
+    /// on a worker, parked on external I/O, or has already completed.
+    ///
+    /// Used by `main_thread_wait_for_join` to distinguish "joinee is
+    /// progressing" (queued / running) from "joinee is parked itself"
+    /// (recursing into the joinee's primitive would be richer information,
+    /// but for the watchdog reset heuristic this binary is enough): if
+    /// the joinee is NOT blocked, main's join may be moments away from
+    /// completing, so reset the deadlock streak.
+    pub fn is_handle_blocked(&self, task_id: usize) -> bool {
+        self.inner
+            .blocked_handles
+            .lock()
+            .iter()
+            .any(|h| h.id == task_id)
+    }
+
     /// Snapshot `(live_tasks, internal_blocked)` used by the main-thread
     /// channel watchdog to decide whether any scheduled task could still
     /// make progress. `internal_blocked` excludes I/O-blocked tasks — an

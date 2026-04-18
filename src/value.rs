@@ -363,6 +363,71 @@ impl Channel {
         self.capacity == 0
     }
 
+    /// Read-only peek used by the main-thread deadlock watchdog: returns
+    /// `true` if a `receive` on this channel could plausibly unblock as
+    /// soon as a worker thread runs another slice. That is one of:
+    ///   * the channel has a buffered value (buffered) or a value parked
+    ///     in the handoff slot (rendezvous) — `try_receive` would return
+    ///     `Value` immediately;
+    ///   * the channel has a parked sender (`send_wakers` non-empty) —
+    ///     when that sender's slice runs, its `try_send` will hand off
+    ///     to main's already-registered recv-waker;
+    ///   * the channel is closed — `try_receive` would return `Closed`,
+    ///     a clean exit from the receive loop, NOT a deadlock.
+    ///
+    /// A `true` return means the watchdog must reset its consecutive-fail
+    /// streak: no matter what `Scheduler::can_make_progress` reports right
+    /// now, the channel itself can carry main forward. Cheap: one atomic
+    /// load + one mutex acquisition for each of `send_wakers` and (for
+    /// rendezvous) `handoff` / (for buffered) `buffer`.
+    pub fn watchdog_might_unblock_recv(&self) -> bool {
+        if self.closed.load(AtomicOrdering::Acquire) {
+            return true;
+        }
+        if !self.send_wakers.lock().is_empty() {
+            return true;
+        }
+        if self.is_rendezvous() {
+            self.handoff.lock().is_some()
+        } else {
+            !self.buffer.lock().is_empty()
+        }
+    }
+
+    /// Read-only peek used by the main-thread deadlock watchdog: returns
+    /// `true` if a `send` on this channel could plausibly unblock as soon
+    /// as a worker thread runs another slice. That is one of:
+    ///   * a receiver is parked (`waiting_receivers > 0` for rendezvous,
+    ///     or `recv_wakers` non-empty more generally) — when that receiver
+    ///     runs, the rendezvous handshake completes / the buffered
+    ///     receiver pulls one value and frees a slot;
+    ///   * the buffer has free space — `try_send` would succeed
+    ///     immediately;
+    ///   * the channel is closed — `try_send` returns `Closed`, which
+    ///     surfaces as a runtime error (NOT a "deadlock on main thread"
+    ///     diagnostic), still better than a false deadlock fire.
+    ///
+    /// See [`watchdog_might_unblock_recv`](Self::watchdog_might_unblock_recv)
+    /// for cost analysis.
+    pub fn watchdog_might_unblock_send(&self) -> bool {
+        if self.closed.load(AtomicOrdering::Acquire) {
+            return true;
+        }
+        if self.waiting_receivers.load(AtomicOrdering::Acquire) > 0 {
+            return true;
+        }
+        if !self.recv_wakers.lock().is_empty() {
+            return true;
+        }
+        if !self.is_rendezvous() {
+            let buf = self.buffer.lock();
+            if buf.len() < self.capacity {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn try_send(&self, val: Value) -> TrySendResult {
         if self.closed.load(AtomicOrdering::Acquire) {
             return TrySendResult::Closed;
