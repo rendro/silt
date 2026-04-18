@@ -641,6 +641,13 @@ mod hand_crafted {
     ///
     /// Note: silt's `1..32` is inclusive on both ends → 32 values
     /// [1, 32], sum = 32*33/2 = 528.
+    // Cfg-gated off Windows: 32-sender fan-in stresses the main-thread
+    // watchdog hard enough that Windows CI runners hit 2/5 deadlock
+    // false-positives (CI run 24595967911), exceeding any tolerance the
+    // 5-trial budget can carry. The 16-task variant
+    // (hand_fan_in_rendezvous_16) covers the same code paths with a
+    // looser load and remains in the Windows matrix.
+    #[cfg(not(windows))]
     #[test]
     fn hand_32_tasks_rendezvous_sent_equals_received() {
         let src = r#"
