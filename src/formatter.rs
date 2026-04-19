@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{LexError, Lexer, Span};
+use crate::lexer::{LexError, Lexer, Span, Token};
 use crate::parser::{ParseError, Parser};
 
 const INDENT: &str = "  ";
@@ -579,7 +579,8 @@ struct TrailingComment {
     text: String, // the comment text including `--` prefix
 }
 
-/// Classification of each source line with respect to triple-quoted strings.
+/// Classification of each source line with respect to triple-quoted strings
+/// AND regular `"..."` strings that span lines via raw newlines.
 ///
 /// `Code` — the whole line is code (or comment, or blank).
 /// `InsideTriple` — the line is entirely inside a `"""..."""` block (raw
@@ -589,6 +590,17 @@ struct TrailingComment {
 ///     portion of the line after the closing `"""` starts at byte index
 ///     `after_close` and may carry a trailing comment; that comment logically
 ///     belongs to the statement that started on `opened_line`.
+/// `InsideRegular` — the line is entirely inside a regular `"..."` string
+///     literal whose opening `"` was on a previous line and whose closing `"`
+///     is on a later line. Such a line is raw string content and must not be
+///     classified as a comment, even if it begins with `--`. The lexer
+///     tolerates raw newlines inside regular string literals, so this state
+///     can occur in real (or fuzzer-produced) source.
+/// `RegularEnds` — the line contains the closing `"` of a regular string
+///     that opened on a previous line. We deliberately do NOT extract a
+///     trailing comment from any text after the closing `"` (see the
+///     comment in `extract_comments` for the idempotency rationale), so
+///     the close position and opening line do not need to be preserved.
 #[derive(Debug, Clone, Copy)]
 enum LineKind {
     Code,
@@ -597,29 +609,171 @@ enum LineKind {
         opened_line: usize,
         after_close: usize,
     },
+    InsideRegular,
+    RegularEnds,
 }
 
-/// Walk the source once and classify each line by triple-string state.
+/// Walk the source once and classify each line by string state.
 ///
-/// The scan follows the lexer's rules: a `"""` always opens or closes a
-/// triple-quoted string (outside of any other context), and the content
-/// between opening and closing `"""` is raw (no escapes, no interpolation,
-/// no nested strings). Regular double-quoted strings are single-line in
-/// Silt, so they cannot straddle lines.
+/// Triple-quoted strings (`"""..."""`) are always raw content — no
+/// escapes, no interpolation, no nested strings — so cross-line state for
+/// them is straightforward.
+///
+/// Regular `"..."` strings are normally single-line in idiomatic Silt,
+/// but the lexer tolerates raw `\n` characters inside them. When that
+/// happens, continuation lines are raw string content and a leading `--`
+/// on such a line MUST NOT be parsed as a comment (would produce a phantom
+/// trailing/standalone comment that breaks formatter idempotency).
+///
+/// We use the LEXER's authoritative parse to identify which source lines
+/// fall inside a regular string token (StringLit or StringStart/Middle/
+/// End — the interp-aware variants). For each such token, the line range
+/// it covers is `[span.line, span.line + newline_count_in_content]`. Lines
+/// strictly inside that range are marked `InsideRegular`. Lines at the
+/// END of the range (where the closing `"` lives) are marked
+/// `RegularEnds`. The opener line stays `Code` because the line up to the
+/// opening `"` is normal code.
+///
+/// Using tokens avoids the complexity of a hand-written cross-line
+/// scanner that would need to track interpolation state, escapes, nested
+/// strings inside interp expressions, etc. — the lexer already does that
+/// work and gives us a definitive answer per token.
 fn classify_lines(source: &str) -> Vec<LineKind> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = vec![LineKind::Code; lines.len()];
-    // 1-based line number where the currently-open triple-string started,
-    // or None when not inside one.
-    let mut open_at: Option<usize> = None;
 
+    // First pass: mark lines that are inside triple-quoted strings using
+    // the original character-level scan (triple-strings have a simple
+    // grammar — no escapes, no interpolation, no nesting).
+    classify_triple_string_lines(&lines, &mut result);
+
+    // Second pass: ask the LEXER which lines fall inside a regular
+    // `"..."` string token. The lexer authoritatively handles escapes,
+    // interpolation, and nested strings inside interp expressions, so
+    // its output is the ground truth.
+    //
+    // For each string token we need to know how many SOURCE-LINE breaks
+    // (raw `\n` bytes) fall between the opening delimiter and the
+    // closing delimiter, INCLUSIVE of the closing delimiter itself.
+    // The token's content string is post-escape-processing (so a
+    // single-line `"foo\nbar"` would appear to contain a literal
+    // newline), so we MUST count newlines from the SOURCE BYTES, not
+    // from the content. We walk the source forward from the token's
+    // start offset using the same closing-delimiter rules the lexer
+    // uses (`\` escapes the next byte; `"` closes a regular/end
+    // segment; `{` closes a start/middle segment).
+    if let Ok(tokens) = Lexer::new(source).tokenize() {
+        let src_bytes = source.as_bytes();
+        for (tok, span) in tokens.iter() {
+            // Two pieces of info per string-token kind:
+            //   * `closes_with_quote`: true if the segment ends at `"`,
+            //     false if it ends at `{` (interp open).
+            //   * `skip_open_byte`: true if `span.offset` points AT the
+            //     opening delimiter (we must skip 1 byte to start the
+            //     content scan), false if `span.offset` already points
+            //     PAST the opener. The lexer puts StringLit/StringStart
+            //     spans at the opening `"` (so we skip 1), but for
+            //     StringMiddle/StringEnd the span lives JUST AFTER the
+            //     `}` interp-closer (see `scan_string` in src/lexer.rs:
+            //     `let cont_start = self.span()` is captured AFTER `}`
+            //     was consumed), so we DON'T skip.
+            let (closes_with_quote, skip_open_byte) = match tok {
+                Token::StringLit(_, false) => (true, true),
+                Token::StringStart(_) => (false, true),
+                Token::StringMiddle(_) => (false, false),
+                Token::StringEnd(_) => (true, false),
+                _ => continue,
+            };
+            let start_off = span.offset;
+            if start_off >= src_bytes.len() {
+                continue;
+            }
+            let mut pos = if skip_open_byte {
+                start_off + 1
+            } else {
+                start_off
+            };
+            let mut newlines: usize = 0;
+            while pos < src_bytes.len() {
+                let b = src_bytes[pos];
+                if b == b'\\' && pos + 1 < src_bytes.len() {
+                    // Escape sequence — skip the backslash AND the
+                    // escaped byte (so an escaped `"` doesn't close the
+                    // string). If the escaped byte is `\n` (raw newline
+                    // following a backslash continuation in source),
+                    // count it.
+                    if src_bytes[pos + 1] == b'\n' {
+                        newlines += 1;
+                    }
+                    pos += 2;
+                    continue;
+                }
+                if b == b'\n' {
+                    newlines += 1;
+                    pos += 1;
+                    continue;
+                }
+                if closes_with_quote && b == b'"' {
+                    break;
+                }
+                if b == b'{' {
+                    // Interp opens — string segment ends here for
+                    // StringStart/StringMiddle. For StringLit/StringEnd
+                    // (closes_with_quote == true) a `{` would have
+                    // produced a different token segmentation, so we
+                    // shouldn't see one here at top level — but be
+                    // defensive and stop scanning to avoid runaway.
+                    break;
+                }
+                pos += 1;
+            }
+            if newlines == 0 {
+                continue;
+            }
+            // The token starts on `span.line` (1-based). The opener `"`
+            // (or `}` for StringMiddle/End) is on that line, so the
+            // OPENER LINE stays Code (it has real code before the `"`).
+            // Lines `span.line + 1 ..= span.line + newlines - 1` are
+            // entirely raw string content. Line `span.line + newlines`
+            // is the close line: it has the closing `"` (or `{` for
+            // StringStart/Middle continuing into interp) on it. We mark
+            // strictly-inside lines as `InsideRegular` and the close
+            // line as `RegularEnds`. We DO NOT touch lines already
+            // marked as triple-string state.
+            let start_line = span.line; // 1-based
+            for offset in 1..newlines {
+                let idx = start_line + offset - 1; // 0-based
+                if idx < result.len() && matches!(result[idx], LineKind::Code) {
+                    result[idx] = LineKind::InsideRegular;
+                }
+            }
+            let close_idx = start_line + newlines - 1; // 0-based
+            if close_idx < result.len() && matches!(result[close_idx], LineKind::Code) {
+                result[close_idx] = LineKind::RegularEnds;
+            }
+        }
+    }
+
+    result
+}
+
+/// Helper that performs the first pass of `classify_lines`: walk the
+/// source character by character and mark lines inside triple-quoted
+/// strings. Triple-quoted strings do not have escapes or interpolation,
+/// so the only thing we have to recognise is the `"""` boundary.
+///
+/// We also need to skip over `--` line comments and `{- ... -}` block
+/// comments and regular `"..."` strings, so we don't misread a `"""`
+/// inside any of those as a triple-string boundary. The regular-string
+/// scan here is approximate (single-line, no interp tracking) but that's
+/// fine: the only thing it gates is our recognition of `"""` boundaries.
+fn classify_triple_string_lines(lines: &[&str], result: &mut [LineKind]) {
+    let mut triple_open_at: Option<usize> = None;
     for (idx, line) in lines.iter().enumerate() {
         let chars: Vec<char> = line.chars().collect();
         let mut j = 0;
 
-        if let Some(start_line) = open_at {
-            // We began this line inside a triple-string. Scan for the
-            // closing `"""`; everything before it is raw content.
+        if let Some(start_line) = triple_open_at {
             let mut closed_at: Option<usize> = None;
             while j + 3 <= chars.len() {
                 if chars[j] == '"' && chars[j + 1] == '"' && chars[j + 2] == '"' {
@@ -634,7 +788,7 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                         opened_line: start_line,
                         after_close: end,
                     };
-                    open_at = None;
+                    triple_open_at = None;
                     j = end;
                 }
                 None => {
@@ -644,14 +798,6 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
             }
         }
 
-        // Scan the remainder of this line (outside any triple-string) for
-        // the next `"""` that would open a new one. Regular `"..."` and
-        // `{- ... -}` contexts must be respected so we don't mistake a `"""`
-        // inside a line comment or regular string for the start of a raw
-        // string. Since `--` and `{-` start contexts that end at end-of-line
-        // (for `--`) or close later, we can be conservative: once we hit
-        // `--`, stop. For `"`, skip characters until the matching `"`. For
-        // `{-`, skip until matching `-}` on the same line (or end).
         let mut in_string = false;
         let mut block_depth: usize = 0;
         while j < chars.len() {
@@ -681,22 +827,17 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                 j += 1;
                 continue;
             }
-            // Line comment — stop scanning this line.
             if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '-' {
                 break;
             }
-            // Block comment start
             if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
                 block_depth += 1;
                 j += 2;
                 continue;
             }
-            // Triple-quoted string: `"""`
             if ch == '"' && j + 3 <= chars.len() && chars[j + 1] == '"' && chars[j + 2] == '"' {
-                // Opens a triple string on this line (idx+1 is 1-based).
-                open_at = Some(idx + 1);
+                triple_open_at = Some(idx + 1);
                 j += 3;
-                // Check if it also closes on the same line.
                 let mut k = j;
                 let mut same_line_close: Option<usize> = None;
                 while k + 3 <= chars.len() {
@@ -707,20 +848,13 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                     k += 1;
                 }
                 if let Some(end) = same_line_close {
-                    open_at = None;
+                    triple_open_at = None;
                     j = end;
                     continue;
                 } else {
-                    // Stays open into next line. Remainder of this line is
-                    // raw content, not code. We leave this line as-is in
-                    // `result[idx]` (Code), because the opening portion up
-                    // to `"""` is still code that may have e.g. a `let x =`
-                    // prefix. The classifier only matters for detecting
-                    // that subsequent lines are `InsideTriple`.
                     break;
                 }
             }
-            // Regular double-quoted string
             if ch == '"' {
                 in_string = true;
                 j += 1;
@@ -729,8 +863,6 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
             j += 1;
         }
     }
-
-    result
 }
 
 /// Extract standalone comments and trailing comments from source text.
@@ -759,9 +891,18 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
         let line = lines[i];
         let trimmed = line.trim();
 
-        // Lines that are entirely inside a triple-quoted string are raw
-        // content and never classify as comments.
-        if matches!(line_kinds[i], LineKind::InsideTriple) {
+        // Lines that are entirely inside a triple-quoted string OR a
+        // regular `"..."` string that straddles line boundaries are raw
+        // content and never classify as comments. The lexer tolerates
+        // raw newlines inside regular `"..."` strings, so a `--` at the
+        // start of such a continuation line is string content, not a
+        // line comment. Without this guard the per-line scanner would
+        // mis-classify it and produce a phantom standalone or trailing
+        // comment that breaks formatter idempotency.
+        if matches!(
+            line_kinds[i],
+            LineKind::InsideTriple | LineKind::InsideRegular
+        ) {
             i += 1;
             continue;
         }
@@ -784,6 +925,22 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                     text: comment_text,
                 });
             }
+            i += 1;
+            continue;
+        }
+
+        // For a line that contains the closing `"` of a multi-line regular
+        // string, we deliberately do NOT extract a trailing comment from
+        // anything after the closing `"`. Regular strings with embedded
+        // raw newlines are an unusual (often accidental — e.g. fuzzer)
+        // pattern, and the formatter collapses them to a single line via
+        // `\n` escapes. Attributing a post-close `-- ...` to the opening
+        // line then yields layout instability when the formatter re-wraps
+        // that long single line on the second pass: the wrapped form
+        // doesn't carry the trailing comment, but the unwrapped form
+        // does, breaking idempotency. Skip the entire continuation line;
+        // comment scanning resumes on the next line.
+        if matches!(line_kinds[i], LineKind::RegularEnds) {
             i += 1;
             continue;
         }

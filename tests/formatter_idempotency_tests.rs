@@ -445,3 +445,74 @@ fn test_string_interp_dashes_variants_idempotent() {
         );
     }
 }
+
+#[test]
+fn test_multiline_string_dashes_no_phantom_comment() {
+    // Regression for the round-multiline-string-comment fuzz find: the
+    // formatter's per-line comment scanner did not track string state
+    // across lines, so a `-- ...` at the start of a line that is actually
+    // inside a multi-line regular `"..."` string was mis-classified as a
+    // standalone or trailing comment. Pass 1 emitted phantom comments,
+    // and the result was non-idempotent.
+    //
+    // Each input below contains a regular string literal with raw
+    // newlines and `-- ...` on a continuation line. After formatting,
+    // the string's newlines collapse into `\n` escapes, the phantom
+    // comment must NOT appear, and a second pass must produce the same
+    // output.
+    for src in [
+        // `--` at start of a mid-string line.
+        "fn main() {\n  println(\"first line\n-- mid string\nlast line\")\n}\n",
+        // `--` at start of the LAST string line (right before closing `\"`).
+        "fn main() {\n  println(\"first line\n-- last\")\n}\n",
+        // Multi-line string + a real trailing comment after the closing `\"`.
+        "fn main() {\n  println(\"a\n-- inside\nb\") -- real trailing\n}\n",
+        // Multi-line string at a let-binding position with no trailing
+        // comment, just to exercise the `RegularEnds` no-comment path.
+        "fn main() {\n  let s = \"a\n-- inside\nb\"\n  s\n}\n",
+        // Multi-line string adjacent to a real standalone comment on the
+        // following line (the standalone comment must still be attached).
+        "fn main() {\n  let s = \"a\n-- inside\nb\"\n  -- real standalone\n  s\n}\n",
+    ] {
+        let first = silt::formatter::format(src)
+            .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
+        // Sanity: the phantom comment text "-- inside" / "-- mid string" /
+        // "-- last" must NOT appear OUTSIDE of an escaped `\n-- ...`
+        // sequence in the formatted output. The simplest invariant: the
+        // formatted output must not contain a literal newline followed by
+        // `--` introduced by a phantom-comment extraction. Multi-line
+        // string contents are collapsed to single-line via `\n` escapes,
+        // so any real trailing `--` comment lives on its own physical
+        // line — which is fine — but a phantom one would appear directly
+        // after the call's closing `)`.
+        for needle in ["-- mid string", "-- inside", "-- last"] {
+            // The needle must only appear as part of `\n` escape inside
+            // the string literal: i.e. preceded by a literal `\n` (the
+            // 2-char escape) inside `"..."`. Anywhere it appears as an
+            // actual line-comment (preceded by start-of-line whitespace)
+            // would be a phantom — except the test inputs don't contain
+            // any real `--` comments with these texts.
+            let mut search_from = 0;
+            while let Some(pos) = first[search_from..].find(needle) {
+                let abs = search_from + pos;
+                // Must be preceded (after stripping leading whitespace on
+                // its line) by a `"` continuation, i.e. by `\n` in source.
+                let line_start = first[..abs].rfind('\n').map_or(0, |i| i + 1);
+                let prefix = &first[line_start..abs];
+                if prefix.trim().is_empty() {
+                    panic!(
+                        "phantom comment `{needle}` appeared at start of a line in formatted output for {src:?}\n---formatted---\n{first}"
+                    );
+                }
+                search_from = abs + needle.len();
+            }
+        }
+        let second = silt::formatter::format(&first)
+            .unwrap_or_else(|e| panic!("second format failed for {src:?}: {e:?}\nfirst:\n{first}"));
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for multi-line-string src {src:?}\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+    }
+}
