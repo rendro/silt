@@ -1079,3 +1079,78 @@ fn test_fuzz_repro_round_call_arg_wrap_followup_idempotent() {
     let source = std::str::from_utf8(source_bytes).expect("corpus is utf-8 with embedded NULs");
     assert_idempotent(source);
 }
+
+#[test]
+fn test_trailing_comment_after_triple_string_with_imbalanced_quotes_idempotent() {
+    // Hand-minimized repro of the bug found in
+    // fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt.
+    //
+    // Root cause: `compute_block_end_line` (and its sibling
+    // `compute_bracket_end_line`) walked source LINES toggling an
+    // `in_string` flag at every `"` character. Triple-quoted strings
+    // with an internal odd-quote-count line (e.g. `"""*""%"  """`,
+    // which the lexer parses as a triple `"""..."""` whose content
+    // happens to include three single `"`s) flip the per-line scanner's
+    // `in_string` to `true` and never flip it back. The next `}` —
+    // which closes the enclosing block — is then treated as raw string
+    // content and the brace counter never reaches zero. The fallback
+    // `span.line` is returned as the block close, so the final
+    // `take_comments_between(prev_end_line, block_close_line)` drain
+    // is empty and any standalone comment that lived between the last
+    // statement and the block's `}` is silently dropped.
+    //
+    // The fix teaches both scanners about triple-quoted strings via a
+    // persistent `ScanMode` (Code / InRegular / InTriple) so a `"""`
+    // opens a triple-string mode that ignores everything (including
+    // raw `}`) until the matching closing `"""`.
+    let source = "fn f() {\n  \"\"\"*\"\"%\"       \"\"\"\n  -- trailing\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    assert!(
+        formatted.contains("-- trailing"),
+        "trailing comment must survive when the preceding stmt is a \
+         triple-quoted string with odd internal quote counts:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_multiple_trailing_comments_after_triple_string_idempotent() {
+    // Companion to the test above: multiple trailing standalone
+    // comments after a triple-quoted-string statement. All of them must
+    // survive both passes — the original fuzz repro lost the LAST two
+    // of five trailing comments because the broken scanner returned a
+    // close-line smaller than the last statement's line, so the tail
+    // drain was empty.
+    let source = concat!(
+        "fn f() {\n",
+        "  x\n",
+        "  \"\"\"*\"\"%\"       \"\"\"\n",
+        "  -- a\n",
+        "  -- b\n",
+        "  -- c\n",
+        "}\n",
+    );
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    for c in ["-- a", "-- b", "-- c"] {
+        assert!(
+            formatted.contains(c),
+            "trailing comment `{c}` must survive after a triple-quoted \
+             string with odd internal quote counts:\n{formatted}"
+        );
+    }
+}
+
+#[test]
+fn test_fuzz_repro_round_comment_attach_followup_new_bug_idempotent() {
+    // Verbatim 1553-byte input from
+    // fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt.
+    // Pre-fix, the first formatting pass produced a 1436-byte output
+    // and the second pass produced a 1362-byte output (dropping the
+    // last two trailing comments inside the outer fn body) — a clear
+    // idempotency break. The root cause is documented on
+    // `test_trailing_comment_after_triple_string_with_imbalanced_quotes_idempotent`.
+    let source =
+        include_str!("../fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt");
+    assert_idempotent(source);
+}

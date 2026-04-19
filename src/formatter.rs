@@ -234,50 +234,116 @@ fn compute_block_end_line(span: Span) -> usize {
         let start_idx = span.line - 1;
         let mut depth: i32 = 0;
         let mut found_open = false;
-        let mut in_string = false;
+        // String/comment state must persist across lines so that
+        // `"""..."""` triple-quoted strings (whose content spans many
+        // lines and may contain literal `{` / `}` as raw text) do not
+        // confuse the brace counter. Without triple-string awareness,
+        // a triple-quoted string in the body silently absorbs the
+        // matching `}` of the enclosing block, the scan never reaches
+        // depth == 0, and the fallback `span.line` is returned —
+        // collapsing the close-line range so trailing comments inside
+        // the block get dropped on a later format pass.
+        let mut state_mode = ScanMode::Code;
         let mut interp_depths: Vec<i32> = Vec::new();
         for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
-            let mut chars = line.chars().peekable();
-            while let Some(ch) = chars.next() {
-                if in_string {
-                    if ch == '\\' {
-                        chars.next();
-                    } else if ch == '"' {
-                        in_string = false;
-                    } else if ch == '{' {
-                        interp_depths.push(0);
-                        in_string = false;
-                    }
-                } else if ch == '"' {
-                    in_string = true;
-                } else if ch == '-' && chars.peek() == Some(&'-') {
-                    break; // line comment
-                } else if ch == '{' {
-                    if let Some(d) = interp_depths.last_mut() {
-                        *d += 1;
-                    } else {
-                        depth += 1;
-                        found_open = true;
-                    }
-                } else if ch == '}' {
-                    if let Some(d) = interp_depths.last_mut() {
-                        if *d == 0 {
-                            interp_depths.pop();
-                            in_string = true;
-                        } else {
-                            *d -= 1;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let ch = chars[i];
+                let nxt = chars.get(i + 1).copied();
+                let nxt2 = chars.get(i + 2).copied();
+                match state_mode {
+                    ScanMode::InTriple => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            state_mode = ScanMode::Code;
+                            i += 3;
+                            continue;
                         }
-                    } else {
-                        depth -= 1;
+                        i += 1;
+                    }
+                    ScanMode::InRegular => {
+                        if ch == '\\' {
+                            // skip escaped char
+                            i += 2;
+                            continue;
+                        }
+                        if ch == '"' {
+                            state_mode = ScanMode::Code;
+                        } else if ch == '{' {
+                            interp_depths.push(0);
+                            state_mode = ScanMode::Code;
+                        }
+                        i += 1;
+                    }
+                    ScanMode::Code => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            state_mode = ScanMode::InTriple;
+                            i += 3;
+                            continue;
+                        }
+                        if ch == '"' {
+                            state_mode = ScanMode::InRegular;
+                            i += 1;
+                            continue;
+                        }
+                        if ch == '-' && nxt == Some('-') {
+                            break; // line comment
+                        }
+                        if ch == '{' {
+                            if let Some(d) = interp_depths.last_mut() {
+                                *d += 1;
+                            } else {
+                                depth += 1;
+                                found_open = true;
+                            }
+                        } else if ch == '}' {
+                            if let Some(d) = interp_depths.last_mut() {
+                                if *d == 0 {
+                                    interp_depths.pop();
+                                    state_mode = ScanMode::InRegular;
+                                } else {
+                                    *d -= 1;
+                                }
+                            } else {
+                                depth -= 1;
+                                // Early return as soon as the matching
+                                // `}` appears at top level. Without
+                                // this, a trailing `"...` later on the
+                                // same line could flip the scanner
+                                // into InRegular and the end-of-line
+                                // check below would refuse to return,
+                                // causing the scan to bleed forward
+                                // into following lines.
+                                if found_open && depth == 0 {
+                                    return line_idx + 1;
+                                }
+                            }
+                        }
+                        i += 1;
                     }
                 }
             }
-            if found_open && depth == 0 {
+            // End-of-line fallback: only return if we're back to a
+            // non-string mode at depth 0. (See sibling
+            // `compute_bracket_end_line` for the rationale.)
+            if found_open && depth == 0 && interp_depths.is_empty() {
                 return line_idx + 1;
             }
         }
         span.line
     })
+}
+
+/// String/comment scan state used by the per-block / per-bracket
+/// end-line scanners. Tracks whether we're inside a regular `"..."` or
+/// triple-quoted `"""..."""` string so brace counting skips raw
+/// content. Block comments (`{- ... -}`) and line comments (`--`) are
+/// handled inline by the scanner without a dedicated mode.
+#[derive(Clone, Copy)]
+enum ScanMode {
+    Code,
+    InRegular,
+    InTriple,
 }
 
 /// Compute the 1-based line of the closing delimiter `close` for a
@@ -302,73 +368,127 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
         let start_idx = start_line - 1;
         let mut depth: i32 = 0;
         let mut found_open = false;
-        let mut in_string = false;
+        // String/comment state must persist across lines so that
+        // `"""..."""` triple-quoted strings (raw content that may
+        // include literal `(` `)` `[` `]` `{` `}` characters) do not
+        // confuse the bracket counter and prematurely terminate the
+        // scan or absorb a real matching close on a later line. See
+        // `compute_block_end_line` for the symmetric rationale.
+        let mut state_mode = ScanMode::Code;
         // Track nesting depth of interpolation braces only when we're
         // scanning for brace brackets; other bracket kinds don't interact
         // with `{` inside strings.
         let mut interp_depths: Vec<i32> = Vec::new();
         for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
-            let mut chars = line.chars().peekable();
-            while let Some(ch) = chars.next() {
-                if in_string {
-                    if ch == '\\' {
-                        chars.next();
-                    } else if ch == '"' {
-                        in_string = false;
-                    } else if ch == '{' {
-                        interp_depths.push(0);
-                        in_string = false;
-                    }
-                    continue;
-                }
-                if ch == '"' {
-                    in_string = true;
-                    continue;
-                }
-                if ch == '-' && chars.peek() == Some(&'-') {
-                    break; // line comment
-                }
-                if !interp_depths.is_empty() {
-                    // Inside a string interpolation: `{` deepens, `}`
-                    // either decrements or closes the interp section
-                    // and re-enters the string.
-                    if ch == '{'
-                        && let Some(d) = interp_depths.last_mut()
-                    {
-                        *d += 1;
-                        // Fall through so a `{`-scan still counts the
-                        // nesting — `open == '{'` callers track this
-                        // same char; non-`{}` callers (e.g. `(`/`)`)
-                        // don't care about it.
-                    } else if ch == '}'
-                        && let Some(d) = interp_depths.last_mut()
-                    {
-                        if *d == 0 {
-                            interp_depths.pop();
-                            in_string = true;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let ch = chars[i];
+                let nxt = chars.get(i + 1).copied();
+                let nxt2 = chars.get(i + 2).copied();
+                match state_mode {
+                    ScanMode::InTriple => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            state_mode = ScanMode::Code;
+                            i += 3;
                             continue;
-                        } else {
-                            *d -= 1;
                         }
+                        i += 1;
                     }
-                    // For brackets other than `{`/`}`, the expression
-                    // inside an interpolation is real code: `fmt(x)`
-                    // inside `"{fmt(x)}"` has real parens that callers
-                    // scanning for `(`/`)` must see. Previously we
-                    // `continue`d unconditionally here, skipping those
-                    // parens and causing `compute_bracket_end_line` to
-                    // latch onto the next `(` in the file — dragging
-                    // trailing comments from following statements into
-                    // the interpolated call on multi-line re-layout.
-                }
-                if ch == open {
-                    depth += 1;
-                    found_open = true;
-                } else if ch == close {
-                    depth -= 1;
+                    ScanMode::InRegular => {
+                        if ch == '\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if ch == '"' {
+                            state_mode = ScanMode::Code;
+                        } else if ch == '{' {
+                            interp_depths.push(0);
+                            state_mode = ScanMode::Code;
+                        }
+                        i += 1;
+                    }
+                    ScanMode::Code => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            state_mode = ScanMode::InTriple;
+                            i += 3;
+                            continue;
+                        }
+                        if ch == '"' {
+                            state_mode = ScanMode::InRegular;
+                            i += 1;
+                            continue;
+                        }
+                        if ch == '-' && nxt == Some('-') {
+                            break; // line comment
+                        }
+                        if !interp_depths.is_empty() {
+                            // Inside a string interpolation: `{` deepens, `}`
+                            // either decrements or closes the interp section
+                            // and re-enters the string.
+                            if ch == '{'
+                                && let Some(d) = interp_depths.last_mut()
+                            {
+                                *d += 1;
+                                // Fall through so a `{`-scan still counts the
+                                // nesting — `open == '{'` callers track this
+                                // same char; non-`{}` callers (e.g. `(`/`)`)
+                                // don't care about it.
+                            } else if ch == '}'
+                                && let Some(d) = interp_depths.last_mut()
+                            {
+                                if *d == 0 {
+                                    interp_depths.pop();
+                                    state_mode = ScanMode::InRegular;
+                                    i += 1;
+                                    continue;
+                                } else {
+                                    *d -= 1;
+                                }
+                            }
+                            // For brackets other than `{`/`}`, the expression
+                            // inside an interpolation is real code: `fmt(x)`
+                            // inside `"{fmt(x)}"` has real parens that callers
+                            // scanning for `(`/`)` must see. Previously we
+                            // `continue`d unconditionally here, skipping those
+                            // parens and causing `compute_bracket_end_line` to
+                            // latch onto the next `(` in the file — dragging
+                            // trailing comments from following statements into
+                            // the interpolated call on multi-line re-layout.
+                        }
+                        if ch == open {
+                            depth += 1;
+                            found_open = true;
+                        } else if ch == close {
+                            depth -= 1;
+                            // Early return as soon as the matching close
+                            // appears at top level (no enclosing interp).
+                            // Without this, a trailing `"...` later on
+                            // the same line would flip the scanner into
+                            // InRegular mode and the end-of-line check
+                            // below would refuse to return — causing the
+                            // scan to bleed into following lines and
+                            // pull in unrelated trailing comments,
+                            // forcing a spurious multi-line layout for
+                            // a call whose `(`/`)` actually fit on one
+                            // source line.
+                            if interp_depths.is_empty() && found_open && depth == 0 {
+                                return line_idx + 1;
+                            }
+                        }
+                        i += 1;
+                    }
                 }
             }
-            if found_open && depth == 0 {
+            // End-of-line fallback: a `}` that pops back into a regular
+            // string is allowed (we're in InRegular at end of line) as
+            // long as the bracket pair has been closed at the
+            // outermost level. The early-return above handles the
+            // common case; this catches `}` callers (`open == '{'`,
+            // `close == '}'`) where the close-counting happens in the
+            // interp branch and never falls through to the early-
+            // return path.
+            if found_open && depth == 0 && interp_depths.is_empty() {
                 return line_idx + 1;
             }
         }
