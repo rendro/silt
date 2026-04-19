@@ -516,3 +516,98 @@ fn test_multiline_string_dashes_no_phantom_comment() {
         );
     }
 }
+
+#[test]
+fn test_triple_string_with_embedded_dashes_idempotent() {
+    // Regression for the round-triple-string-match-arm fuzz find: the
+    // per-line trailing-comment scanner (`extract_trailing_comment_from_line`)
+    // toggled `in_string` on every `"`, treating every quote as a regular
+    // string boundary. For a same-line triple-quoted string with embedded
+    // `--` and an odd number of leading quotes (e.g. `""""--"""`), the
+    // alternating toggle left the scanner OUTSIDE a string when it
+    // reached the `--`, so it fabricated a phantom trailing comment
+    // (e.g. `--"""}`) that grew on every formatter pass and broke
+    // idempotency.
+    //
+    // The fix recognises `"""` as a triple-quote boundary before the
+    // single-quote rule and tracks `in_triple` separately from
+    // `in_string`. Inside a triple-quoted string everything (including
+    // `"`, `--`, `{-`) is raw content with no escape processing.
+    //
+    // Minimised fuzz repro:
+    let source = "fn i(){\"\"\"\"--\"\"\"}";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        !formatted.contains("--\"\"\"}"),
+        "phantom trailing comment leaked into output:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_triple_string_dashes_variants_idempotent() {
+    // Property-style coverage: every shape of same-line triple-quoted
+    // string that previously tripped the per-line `--` scanner. Each
+    // input must round-trip through two formatter passes unchanged and
+    // must NOT gain a fabricated trailing comment.
+    for src in [
+        // The minimised fuzz repro (4-quote opener + dashes + 3-quote close).
+        "fn i(){\"\"\"\"--\"\"\"}",
+        // Same shape in let-binding.
+        "let s = \"\"\"\"--\"\"\"\n",
+        // Dashes inside a triple-quoted string at top level with content.
+        "fn main() = \"\"\"foo--bar\"\"\"\n",
+        // Two adjacent triple-quoted strings on the same line, one with
+        // dashes inside.
+        "fn main() = \"\"\"--\"\"\" + \"\"\"x\"\"\"\n",
+        // Triple-quoted string in match-arm body with dashes inside.
+        "fn main() {\n  match x {\n    Foo -> \"\"\"a--b\"\"\"\n    Bar -> 0\n  }\n}\n",
+        // 5-quote opener (one literal `\"` inside, then `--`, then close).
+        "fn i() = \"\"\"\"\"--\"\"\"\n",
+        // Triple + real trailing comment after the close.
+        "fn i() = \"\"\"--\"\"\" -- real trailing\n",
+    ] {
+        let first = silt::formatter::format(src)
+            .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
+        let second = silt::formatter::format(&first)
+            .unwrap_or_else(|e| panic!("second format failed for {src:?}: {e:?}\nfirst:\n{first}"));
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for triple-string-with-dashes src {src:?}\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+    }
+}
+
+#[test]
+fn test_multiline_triple_string_in_interp_idempotent() {
+    // Second post-fix regression find from the same fuzz round: a
+    // multi-line triple-quoted string INSIDE a string interpolation
+    // expression, with a `--` after the outer interp's closing `}`.
+    // `classify_lines` correctly tags the close line as `TripleEnds`,
+    // but the post-close tail begins with `}` (the interp closer) and
+    // the per-line trailing-comment scanner has no way to know it
+    // should be in interp-expression state. Without the guard, every
+    // `--` in that tail is misread as a real trailing comment that the
+    // formatter then APPENDS to the opening line — and on the next
+    // pass the same scan re-runs on the new output and finds the SAME
+    // phantom again, growing the file unboundedly across passes.
+    //
+    // The fix: only extract a trailing comment from the `TripleEnds`
+    // tail when the tail's prefix is whitespace-only (the idiomatic
+    // shape `""" -- real trailing`). Any other prefix is treated as
+    // post-close code and skipped.
+    let source = "let s = \"{\"{\"\"\"a\nb\"\"\"}--c\"}\"\n";
+    assert_idempotent(source);
+
+    // Counter-test: a real trailing comment after the close on its own
+    // physical line (idiomatic shape) MUST still be preserved across
+    // passes — the whitespace-only-prefix rule still recognises it.
+    let source = "let s = \"\"\"a\nb\"\"\" -- real trailing\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("-- real trailing"),
+        "real trailing comment after multi-line triple-string close was lost; got:\n{formatted}"
+    );
+}

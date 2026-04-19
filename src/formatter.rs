@@ -919,7 +919,38 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
         } = line_kinds[i]
         {
             let tail: String = line.chars().skip(after_close).collect();
-            if let Some(comment_text) = extract_trailing_comment_from_line(&tail) {
+            // Only treat the tail as a trailing comment when the tail is
+            // exactly `<whitespace>* (-- ... | {- ... -})` — i.e. the
+            // comment is THE first non-whitespace content after the
+            // closing `"""`. If real code follows the close (e.g. `}`
+            // closing an interp expression that contained this triple-
+            // string, or `+ "other"`, or `.len()`), `extract_trailing_-
+            // comment_from_line` would still find a later `--` and
+            // attribute it as a trailing comment for `opened_line` —
+            // but that comment text would include the post-close code,
+            // which the formatter then APPENDS to the opening line on
+            // emit. The next pass re-runs the same scan on the new
+            // output and finds the SAME phantom comment again, so the
+            // appended text grows unboundedly across passes.
+            //
+            // In particular, when the triple-string lives inside a
+            // string interpolation (`"{ """..."""}-- foo "`), the tail
+            // begins with the interp closer `}`. The per-line scanner
+            // has no way to know it should be in interp-expression
+            // state, so the `--` after it gets misread as a trailing
+            // line comment of the surrounding statement.
+            //
+            // The whitespace-only-prefix rule covers the idiomatic
+            // shape `let s = """..."""\n  ...\n  """ -- real trailing`
+            // while ruling out every phantom-growth shape we've seen
+            // from the fuzzer.
+            let trimmed_tail = tail.trim_start();
+            let tail_is_pure_comment = trimmed_tail.is_empty()
+                || trimmed_tail.starts_with("--")
+                || trimmed_tail.starts_with("{-");
+            if tail_is_pure_comment
+                && let Some(comment_text) = extract_trailing_comment_from_line(&tail)
+            {
                 trailing.push(TrailingComment {
                     line: opened_line,
                     text: comment_text,
@@ -1133,6 +1164,14 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
 ///
 /// `--` sequences that appear inside string literals or block comments are
 /// ignored, as are `{-` / `-}` pairs that appear inside string literals.
+///
+/// Triple-quoted strings (`"""..."""`) on the same line are also recognised:
+/// inside a triple-quoted string everything (including `"`, `--`, `{-`) is
+/// raw content with no escape processing or interpolation. Without this, a
+/// line like `let s = """"--"""` would have its three opening `"`s
+/// alternate-toggle the `in_string` flag and the `--` inside the string
+/// would be misread as a trailing comment, fabricating a phantom comment
+/// (`--"""}`) that grows on every formatter pass and breaks idempotency.
 fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     let chars: Vec<char> = line.chars().collect();
     // First pass: find the byte index of the first `--` line comment that
@@ -1150,6 +1189,7 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     // interpolation as a line comment, fabricating a phantom trailing
     // comment that grows on every formatter pass and breaks idempotency.
     let mut in_string = false;
+    let mut in_triple = false;
     let mut interp_depths: Vec<usize> = Vec::new();
     let mut block_depth: usize = 0;
     let mut block_start: Option<usize> = None;
@@ -1157,6 +1197,18 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i];
+        if in_triple {
+            // Inside a triple-quoted string: only `"""` closes it. Every
+            // other character (including `"`, `--`, `{-`) is raw content
+            // and must NOT alter scanner state.
+            if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+                in_triple = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
         if in_string {
             if ch == '\\' && i + 1 < chars.len() {
                 // Escape sequence (\n, \t, \\, \", \{, \}). Skip the
@@ -1198,6 +1250,14 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             continue;
         }
         // Outside any string or block comment.
+        // Recognize a triple-quote `"""` BEFORE the regular `"` rule, so
+        // we don't mistakenly enter regular-string mode on the first of
+        // three consecutive quotes.
+        if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+            in_triple = true;
+            i += 3;
+            continue;
+        }
         if ch == '"' {
             in_string = true;
             i += 1;
