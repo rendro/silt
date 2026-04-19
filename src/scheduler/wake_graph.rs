@@ -298,7 +298,10 @@ impl WakeGraph {
         // pending-counterparty node is reached.
         match target {
             MainTarget::Recv(ch) => {
-                if ch.has_pending_timer_close() {
+                // A closed channel returns Closed to a parked recv —
+                // fuel. See bfs_join_starved::Recv arm for the same
+                // case (CI run 24634464196 / fanout test).
+                if ch.is_closed() || ch.has_pending_timer_close() {
                     return false;
                 }
                 if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -307,7 +310,7 @@ impl WakeGraph {
                 true
             }
             MainTarget::Send(ch) => {
-                if ch.has_pending_timer_close() {
+                if ch.is_closed() || ch.has_pending_timer_close() {
                     return false;
                 }
                 if has_listeners(&g.ch_recv_listeners, ch.id) {
@@ -321,7 +324,7 @@ impl WakeGraph {
                         SelectEdge::Recv(ch) => (ch, &g.ch_send_listeners),
                         SelectEdge::Send(ch) => (ch, &g.ch_recv_listeners),
                     };
-                    if ch.has_pending_timer_close() {
+                    if ch.is_closed() || ch.has_pending_timer_close() {
                         return false;
                     }
                     if has_listeners(listeners, ch.id) {
@@ -370,7 +373,14 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
             }
             Some(ParkEdge::Io) => return false,
             Some(ParkEdge::Recv(ch)) => {
-                if ch.has_pending_timer_close() {
+                // A closed channel is fuel for a parked recv: it
+                // returns Closed and the parked task wakes. The
+                // channel may close at any time (sender's close()
+                // call, timer-driven close, or already-closed at
+                // park time but the wake hasn't propagated yet —
+                // CI run 24634464196 hit the last case on Windows
+                // test_fanout_round_robin_channel_each).
+                if ch.is_closed() || ch.has_pending_timer_close() {
                     return false;
                 }
                 if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -378,7 +388,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                 }
             }
             Some(ParkEdge::Send(ch)) => {
-                if ch.has_pending_timer_close() {
+                if ch.is_closed() || ch.has_pending_timer_close() {
                     return false;
                 }
                 if has_listeners(&g.ch_recv_listeners, ch.id) {
@@ -389,7 +399,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                 for e in edges {
                     match e {
                         SelectEdge::Recv(ch) => {
-                            if ch.has_pending_timer_close() {
+                            if ch.is_closed() || ch.has_pending_timer_close() {
                                 return false;
                             }
                             if has_listeners(&g.ch_send_listeners, ch.id) {
@@ -397,7 +407,7 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
                             }
                         }
                         SelectEdge::Send(ch) => {
-                            if ch.has_pending_timer_close() {
+                            if ch.is_closed() || ch.has_pending_timer_close() {
                                 return false;
                             }
                             if has_listeners(&g.ch_recv_listeners, ch.id) {

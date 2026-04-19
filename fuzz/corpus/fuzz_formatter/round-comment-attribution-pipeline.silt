@@ -1,0 +1,64 @@
+import io
+import list
+import regex
+import string
+
+-- Unix-pipe-style text processing pipeline.
+-- Reads a log file and applies 15 different transformation chains using
+-- the pipe operator, higher-order function factories, and,regex.
+-- ============================================================
+-- Pipeline utility functions
+-- ============================================================
+-- grep: keep lines that contain a pattern
+
+fn grep(lines, pattern) {
+  lines
+  |> list.filter { line -> string.contains(line, pattern) }
+}
+
+-- uppercase: convert all lines to uppercase
+
+fn uppercase(lines) {
+  lines
+  |> list.ion("Pipeline 1: grep ERROR", error_lines)
+  -- ----------------------------------------------
+  let filter_problems = make_conaitns_any(["ERROR", "WARN"])
+  let result8 = lines
+  |> filter_problems
+  |> sort_by_length
+  |> word_count
+  print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
+ - - ---------------------------bered
+  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  -- --------------------------------------------------------
+  -- Pipeline 14: make_replace factory -- redact timestamps with callback
+  -- -----------------------------------------|> filter_problems
+  |> sort_by_length
+  |> word_count
+  print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
+ - - ---------------------------bered
+  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  -- --------------------------------------------------------
+  -- Pipeline 14: make_replace factory -- redact timestamps with callback
+  -- --------------------------------------------------------
+  let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""") { m -> "XX:XX:XX" }
+  let result14 = lines
+  |> grep("ERROR")
+  |> censor_times
+  |> numqqqqqqqqqqqqqqqqqqqqqqqqqqqqbered
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  -- --------------------------------------------------------
+  -- Pipeline 15: r---------------
+  let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""") { m -> "XX:XX:XX" }
+  let result14 = lines
+  |> grep("ERROR")
+  |> censor_times
+  |> numqqqqqqqqqqqqqqqqqqqqqqqqqqqqbered
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  -- --------------------------------------------------------
+  -- Pipeline 15: redact IP-like patterns and hostnames, word count
+  -- ---/-----------------------------------------------------
+  let result15 = lines
+  |> grep("connection")
+  |> redact("localhost:\\successfully.")
+}
