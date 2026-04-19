@@ -643,3 +643,71 @@ fn test_triple_string_inside_interp_with_raw_newline_idempotent() {
     let source = "let s = \"p{\"\"\"a\n--b\"\"\"}q\"\n";
     assert_idempotent(source);
 }
+
+// ---------------------------------------------------------------------
+// Round (post-c109e96) — comment between pipe (`|>`) stages migrates
+// past the chain on re-format.
+//
+// Root cause: `format_pipe_chain_expr` only emitted *trailing* comments
+// for each stage. Standalone `-- ...` lines whose source position fell
+// strictly between two consecutive stages were not drained inside the
+// chain. The enclosing block's `take_comments_between(last_stmt_line,
+// block_close_line)` later picked them up and appended them after the
+// chain. That made the very first formatting pass non-idempotent: pass
+// 1 wrote the comment after the chain; on pass 2 the parser re-merged
+// the chain across the comment line, so the chain's tail stages now
+// preceded the comment — different output.
+//
+// Fix: drain standalone comments between consecutive stages inside
+// `format_pipe_chain_expr` and emit them on their own indented lines
+// before the next `|>` continuation.
+// ---------------------------------------------------------------------
+
+#[test]
+fn test_pipe_chain_interior_comment_idempotent() {
+    // Minimal hand-built repro: a single standalone comment between
+    // two `|>` stages must stay inside the chain on every re-format.
+    let source = "fn main() {\n  print_section(\"Pipeline 8\", result8)\n  --comment_in_pipe\n  |> sort_by_length\n  |> word_count\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_pipe_chain_multiple_interior_comments_idempotent() {
+    // Multiple standalone comments scattered between every adjacent
+    // pair of stages — each must land between the same two stages
+    // after both passes.
+    let source = "fn main() {\n  x\n  -- before f\n  |> f\n  -- between f and g\n  -- another between\n  |> g\n  -- after g but inside chain\n  |> h\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_pipe_chain_interior_comment_with_pipe_text_idempotent() {
+    // Variant where the comment text itself contains `|>` substrings.
+    // The pipe walker must not be fooled by comment content.
+    let source = "fn main() {\n  x\n  -- decoration ----------|> filter_problems\n  |> sort_by_length\n  |> word_count\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_fuzz_repro_round_post_c109e96_pipe_comment_idempotent() {
+    // Reduced excerpt from `round-comment-attribution-pipeline.silt`:
+    // two `print_section` calls separated by a `--` comment and
+    // followed by `|>` continuations that the parser threads through
+    // the comment, so the comment ends up syntactically between the
+    // first call and the chain's tail stages.
+    let source = concat!(
+        "fn uppercase(lines) {\n",
+        "  let result8 = lines\n",
+        "  |> filter_problems\n",
+        "  |> sort_by_length\n",
+        "  |> word_count\n",
+        "  print_section(\"Pipeline 8\", result8)\n",
+        "  --print_section(\"Pipeline 13\", result13) ----bered\n",
+        "  -- ----------------\n",
+        "  |> sort_by_length\n",
+        "  |> word_count\n",
+        "}\n",
+    );
+    assert_idempotent(source);
+    assert_formatted_parses(source);
+}

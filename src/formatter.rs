@@ -2984,7 +2984,19 @@ fn should_layout_multiline(open_line: usize, close_line: usize, elem_lines: &[us
 }
 
 /// Format a pipe chain expression, preserving any trailing comments
-/// attached to individual pipe stages.
+/// attached to individual pipe stages and any standalone comments that
+/// sit between stages in the source.
+///
+/// Idempotency note: standalone comments whose source line lies strictly
+/// between two consecutive stages must be drained here and re-emitted
+/// inside the pipe chain. If we left them for the enclosing block to
+/// drain via `take_comments_between(last_stmt_line, block_close_line)`,
+/// they would be appended *after* the chain's last stage, not where they
+/// originally appeared. That mismatch makes pass 1's output non-
+/// idempotent: pass 1 writes the comment after the chain, but on pass 2
+/// the parser sees the pipe chain ending after the comment, so the
+/// chain's stages now appear before AND after the comment line —
+/// producing different output.
 fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
     let mut stages: Vec<&Expr> = Vec::new();
     collect_pipe_stages_expr(expr, &mut stages);
@@ -2998,15 +3010,29 @@ fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
         result.push(' ');
         result.push_str(&tc);
     }
+    let mut prev_line = stages[0].span.line;
     for stage in &stages[1..] {
+        let stage_line = stage.span.line;
+        // Drain any standalone comments that live strictly between the
+        // previous stage's line and this stage's line, emitting them on
+        // their own indented lines just before the `|>` continuation.
+        // This keeps the comment positionally inside the chain on every
+        // re-format pass.
+        let interior = take_comments_between(prev_line, stage_line);
+        for c in &interior {
+            result.push('\n');
+            result.push_str(&indent(depth));
+            result.push_str(c.text.trim());
+        }
         result.push('\n');
         result.push_str(&indent(depth));
         result.push_str("|> ");
         result.push_str(&format_expr(stage, depth));
-        if let Some(tc) = take_trailing_for_line(stage.span.line) {
+        if let Some(tc) = take_trailing_for_line(stage_line) {
             result.push(' ');
             result.push_str(&tc);
         }
+        prev_line = stage_line;
     }
     result
 }
