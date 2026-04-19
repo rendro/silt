@@ -4040,7 +4040,17 @@ fn format_type_expr(ty: &TypeExpr) -> String {
 /// where `<indent>` is `(depth + 1)` levels of indentation so the lexer's
 /// indentation-stripping algorithm recovers the original content.
 fn format_triple_string(s: &str, depth: usize) -> String {
-    if !s.contains('\n') {
+    // The single-line form `"""{s}"""` is only safe when the content
+    // can't fuse with the closing `"""` to form a longer run of `"`
+    // that the lexer would re-bucket. Specifically: if `s` ends with
+    // `"`, then the emitted text contains 4+ consecutive `"` at the
+    // close boundary, and re-lexing greedily takes the first `"""` as
+    // the close — losing the trailing quote(s) of the content. Force
+    // the multi-line form in that case so the close `"""` lives on its
+    // own line, separated from the content by a newline. (Triple-string
+    // content can never contain `"""` because the lexer would have
+    // closed there, so we don't need to guard against that.)
+    if !s.contains('\n') && !s.ends_with('"') {
         // Single-line triple-quoted string
         return format!("\"\"\"{}\"\"\"", s);
     }

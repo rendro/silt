@@ -1154,3 +1154,60 @@ fn test_fuzz_repro_round_comment_attach_followup_new_bug_idempotent() {
         include_str!("../fuzz/corpus/fuzz_formatter/round-comment-attach-followup-NEW-BUG.silt");
     assert_idempotent(source);
 }
+
+#[test]
+fn test_triple_string_content_ending_in_quote_idempotent() {
+    // Hand-minimized repro for the post-2c979d4 fuzz finding
+    // `round-triple-fold-tail.silt`. Source has a triple-quoted string
+    // whose content ends in `"` (the lexer's indent stripping yields
+    // `""` as the AST string after consuming a multi-line triple). The
+    // formatter previously emitted the single-line form `"""""""""`
+    // (3 + content + 3 = 8 quotes), which the lexer re-tokenises as
+    // `triple-empty + regular-empty` — losing the trailing content
+    // quote(s) and breaking idempotency. The fix forces multi-line
+    // emission whenever the content ends with `"` so the close `"""`
+    // sits on its own line and can't fuse with the content.
+    let source = "fn main() {\n  \"\"\"\"\"\n  \"\"\"\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    // The formatted output must contain a multi-line triple form, not
+    // the dangerous run-together `"""""""""`.
+    assert!(
+        !formatted.contains("\"\"\"\"\"\"\"\"\""),
+        "must not emit 9 consecutive `\"` (single-line form fuses content with close):\n{formatted}"
+    );
+}
+
+#[test]
+fn test_triple_string_content_single_quote_idempotent() {
+    // Smaller variant: content of just `"` (one quote). The single-line
+    // form would be `"""""""` (3 + 1 + 3 = 7 quotes), which re-lexes as
+    // empty triple (6 quotes) + an unterminated regular string. Force
+    // multi-line.
+    //
+    // We reach this state via a multi-line source that the lexer's
+    // strip_triple_string_indentation reduces to a single-quote AST
+    // value: `"""\n"\n"""` -> raw `\n"\n`, indent=0, lines=["", "\"", ""],
+    // first/last blank dropped -> `"`.
+    let source = "fn main() {\n  \"\"\"\n\"\n\"\"\"\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    assert!(
+        !formatted.contains("\"\"\"\"\"\"\""),
+        "must not emit 7 consecutive `\"` (single-line form would lex as triple+leftover):\n{formatted}"
+    );
+}
+
+#[test]
+fn test_fuzz_repro_round_triple_fold_tail_idempotent() {
+    // Verbatim 221-byte input from
+    // fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt.
+    // Pre-fix, pass 1 emitted a triple-string content-ending-in-quote
+    // as a single-line `"""""""""` run that pass 2 re-lexed into two
+    // separate string tokens (`""""""` triple-empty + `""` regular),
+    // changing both content and statement count. See
+    // `test_triple_string_content_ending_in_quote_idempotent` for the
+    // root cause.
+    let source = include_str!("../fuzz/corpus/fuzz_formatter/round-triple-fold-tail.silt");
+    assert_idempotent(source);
+}
