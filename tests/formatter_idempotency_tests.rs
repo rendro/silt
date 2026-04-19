@@ -259,3 +259,103 @@ fn test_single_element_tuple_pattern_variants_idempotent() {
         );
     }
 }
+
+#[test]
+fn test_fuzz_repro_round_phase4_single_element_tuple_expr_in_call_arg() {
+    // Round phase-4 fuzz repro: a call argument that is a SINGLE-ELEMENT
+    // TUPLE expression like `(0,)`. Pass 1 of the formatter previously
+    // emitted the tuple WITHOUT its trailing comma (`(0)`), which the
+    // parser folds to a parenthesized expression `0`. So the symptom on
+    // the second pass was `f((0))` → `f(0)` — the parens disappear.
+    //
+    // CI minimized symptom: `list.unfold((0), d, s)` becoming
+    // `list.unfold(0, d, s)` on the second pass.
+    //
+    // The fix mirrors the existing single-element tuple PATTERN rule in
+    // `format_pattern`: when emitting an `ExprKind::Tuple` of length 1,
+    // always include the trailing comma — `(x,)` — so the parser
+    // re-recognises it as a tuple rather than a parenthesised expr.
+    let source = "fn main() {\n  list.unfold((0,), d, s)\n}\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("(0,)"),
+        "single-element tuple expression in call-arg position must keep trailing comma; got:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_minimal_single_element_tuple_expr_in_call_arg_idempotent() {
+    // Smaller hand-constructed shape of the same bug.
+    let source = "fn main() {\n  f((0,))\n}\n";
+    let first = silt::formatter::format(source).expect("first format failed");
+    let second = silt::formatter::format(&first).expect("second format failed");
+    assert_eq!(
+        first, second,
+        "single-elem tuple in call arg must be idempotent\n---first---\n{first}\n---second---\n{second}"
+    );
+    assert!(
+        first.contains("(0,)"),
+        "trailing comma must survive; got:\n{first}"
+    );
+}
+
+#[test]
+fn test_single_element_tuple_expr_variants_idempotent() {
+    // Property-style coverage of paren-stripping in call-arg position
+    // with various single-element tuple shapes. Each must round-trip
+    // through two formatter passes with the trailing comma intact.
+    for inner in ["0", "x", "\"s\"", "[1, 2]", "Some(1)"] {
+        let source = format!("fn main() {{\n  f(({inner},))\n}}\n");
+        let first = silt::formatter::format(&source)
+            .unwrap_or_else(|e| panic!("first format failed for inner={inner}: {e:?}"));
+        let second = silt::formatter::format(&first).unwrap_or_else(|e| {
+            panic!("second format failed for inner={inner}: {e:?}\nfirst:\n{first}")
+        });
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for single-elem tuple expr ({inner},) in call arg\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+        assert!(
+            first.contains(&format!("({inner},)")),
+            "trailing comma lost for inner={inner}; output:\n{first}"
+        );
+    }
+}
+
+#[test]
+fn test_parenthesised_binary_in_call_arg_keeps_precedence() {
+    // Counter-test: a parenthesised binary expression like `(a + b)` is
+    // an ExprKind::Binary, NOT an ExprKind::Tuple — the parser folds the
+    // parens away entirely when there is no comma. In call-arg position
+    // the parens ARE redundant (no precedence ambiguity), so the
+    // formatter strips them on the first pass and pass 2 is a no-op.
+    // This test pins that behaviour: the formatter normalises away
+    // redundant parens around non-tuple parenthesised exprs in call args
+    // without violating idempotency.
+    let source = "fn main() {\n  f((a + b))\n}\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("f(a + b)"),
+        "redundant parens around binary in call-arg position should be stripped; got:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_multi_element_tuple_expr_in_call_arg_no_extra_comma() {
+    // Ensure the single-elem fix didn't accidentally add a trailing
+    // comma to multi-element tuples.
+    let source = "fn main() {\n  f((1, 2))\n  f((1, 2, 3))\n}\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("f((1, 2))"),
+        "two-element tuple must not gain trailing comma; got:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("f((1, 2, 3))"),
+        "three-element tuple must not gain trailing comma; got:\n{formatted}"
+    );
+}

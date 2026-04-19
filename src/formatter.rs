@@ -2791,7 +2791,16 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
 
         ExprKind::Tuple(elems) => {
             let items: Vec<String> = elems.iter().map(|e| format_expr(e, depth)).collect();
-            format!("({})", items.join(", "))
+            // Single-element tuple expressions require a trailing comma to
+            // distinguish them from a parenthesized expression; the parser
+            // folds `(x)` away as just `x`, so emitting `(x,)` is
+            // load-bearing for idempotency. Mirrors the same rule for
+            // single-element tuple PATTERNS in `format_pattern`.
+            if elems.len() == 1 {
+                format!("({},)", items[0])
+            } else {
+                format!("({})", items.join(", "))
+            }
         }
 
         ExprKind::Binary(left, op, right) => {

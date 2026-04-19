@@ -1,0 +1,3 @@
+fn main() {
+  list.unfold((0,), d, s)
+}
