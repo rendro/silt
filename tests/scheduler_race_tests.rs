@@ -120,16 +120,19 @@ fn main() {
 }
 "#;
     const ITERATIONS: usize = 20;
-    // Tolerance preserved verbatim from the subprocess test.
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(15));
+    // Phase 3: STRICT 0/20 every trial. The new event-driven
+    // watchdog (src/scheduler/wake_graph.rs) signals on every
+    // park/wake/spawn/complete so the dequeue-to-register-waker
+    // window is no longer race-able by a polling sample.
+    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert_no_scheduler_panic(i, "send-arm fan-in", o);
     }
     let stats = TrialStats::compute(&outcomes, Some(136));
     assert!(
-        stats.deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        stats.deadlock_count == MAX_DEADLOCK_FALSE_POSITIVES,
         "send-arm fan-in: {}/{} false-positive deadlock diagnostics \
          (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). First failure: \
          idx={:?} msg={:?}",
@@ -183,16 +186,19 @@ fn main() {
 }
 "#;
     const ITERATIONS: usize = 20;
-    // Tolerance preserved verbatim from the subprocess test.
-    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(15));
+    // Phase 3: STRICT 0/20 every trial. The new event-driven
+    // watchdog (src/scheduler/wake_graph.rs) signals on every
+    // park/wake/spawn/complete so the dequeue-to-register-waker
+    // window is no longer race-able by a polling sample.
+    const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
     let outcomes: Vec<_> = (0..ITERATIONS).map(|_| runner.run_trial()).collect();
     for (i, o) in outcomes.iter().enumerate() {
         assert_no_scheduler_panic(i, "recv-arm fan-out", o);
     }
     let stats = TrialStats::compute(&outcomes, Some(136));
     assert!(
-        stats.deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+        stats.deadlock_count == MAX_DEADLOCK_FALSE_POSITIVES,
         "recv-arm fan-out: {}/{} false-positive deadlock diagnostics \
          (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). First failure: \
          idx={:?} msg={:?}",

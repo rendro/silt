@@ -709,9 +709,13 @@ fn main() {
                 }
             }
         }
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 1;
+        // Phase 3: STRICT 0/5 every trial on every platform. The
+        // event-driven watchdog (src/scheduler/wake_graph.rs) signals
+        // on every state change, eliminating the residual race that
+        // round-33 still saw 1/5 of on Windows.
+        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
         assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+            deadlock_count == MAX_DEADLOCK_FALSE_POSITIVES,
             "32-task rendezvous: {deadlock_count}/{ITERATIONS} false-positive \
              deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
              First failure: {:?}",
@@ -1043,12 +1047,13 @@ fn main() {
                 }
             }
         }
-        // Tolerance applies on all platforms (per-platform split was
-        // tried in commit 496dea8 and reverted after Linux hit 2/20 on
-        // a sibling test under cargo-test parallelism).
-        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 2;
+        // Phase 3: STRICT 0/8 — the event-driven watchdog
+        // (src/scheduler/wake_graph.rs) eliminates the residual
+        // dequeue-to-register-waker race that this test tolerated
+        // up to 2/8 of pre-Phase-3.
+        const MAX_DEADLOCK_FALSE_POSITIVES: usize = 0;
         assert!(
-            deadlock_count <= MAX_DEADLOCK_FALSE_POSITIVES,
+            deadlock_count == MAX_DEADLOCK_FALSE_POSITIVES,
             "fan-in 16: {deadlock_count}/{ITERATIONS} false-positive \
              deadlock diagnostics (tolerance: {MAX_DEADLOCK_FALSE_POSITIVES}). \
              First failure: {:?}",
