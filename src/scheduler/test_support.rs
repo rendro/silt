@@ -22,9 +22,9 @@
 //! further.
 //!
 //! In-process the trial cost collapses to "compile the source +
-//! `vm.run(script)`": ~1-5ms for the success case and ~5s for the
-//! real-deadlock case (the latter is the watchdog's intrinsic
-//! consecutive-tick threshold, not harness overhead).
+//! `vm.run(script)`": ~1-5ms for the success case and <50ms for the
+//! real-deadlock case (Phase 4 wake graph fires atomically with the
+//! mutating event — no consecutive-tick threshold to clear).
 //!
 //! ## Why the harness routes through `Vm::run`, not raw `Scheduler::submit`
 //!
@@ -34,19 +34,19 @@
 //! false-positive `error[runtime]: deadlock on main thread`? That
 //! watchdog interacts with:
 //!
-//!   1. `Scheduler::can_make_progress` — three-atomic snapshot, plus
-//!      the `unsettled_tasks` short-circuit;
-//!   2. `Channel::watchdog_might_unblock_recv` / `_send` — the
-//!      round-33 channel-peek;
-//!   3. `Scheduler::is_handle_blocked` — the join-side carve-out;
-//!   4. `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS` — the streak
-//!      threshold;
-//!   5. The waker chain that fires from
+//!   1. `Scheduler::is_main_starved` — the wake-graph BFS that
+//!      proves no scheduled task can drive `target` forward;
+//!   2. `Scheduler::install_main_waiter` — the signal callback that
+//!      pokes main's local condvar on every park / wake / spawn /
+//!      complete;
+//!   3. `Channel::has_pending_timer_close` — the external-waker
+//!      escape hatch consulted by the BFS for channel targets;
+//!   4. The waker chain that fires from
 //!      `Channel::register_recv_waker_guard`'s double-check / `wake_*` /
 //!      worker-side `requeue` and back into the main thread's local
 //!      condvar.
 //!
-//! All five interact through state that only exists once a real `Vm`
+//! All four interact through state that only exists once a real `Vm`
 //! is executing real bytecode that calls `channel.spawn` / `channel.
 //! receive` etc. A harness that handcrafts `Task` values and feeds
 //! them to `Scheduler::submit` would bypass `current_scheduler()`

@@ -30,9 +30,15 @@
 //! the dequeue → register-waker window, which is exactly where the
 //! false-positive used to fire.
 //!
-//! `Scheduler::can_make_progress` short-circuits to `true` while
-//! `unsettled_tasks > 0`: the scheduler has unobserved work in flight
-//! and is definitionally not deadlocked.
+//! Phase-4 update: the polling layer is gone. Deadlock detection is
+//! exclusively driven by the wake graph in
+//! `src/scheduler/wake_graph.rs`; main-thread waiters block on
+//! indefinite `condvar.wait` woken by `Scheduler::install_main_waiter`
+//! callbacks. `unsettled_tasks` is still tracked to pulse those
+//! callbacks across the submit / requeue → waker-registration window,
+//! but the scheduler-side `can_make_progress` / `is_handle_blocked` /
+//! `Channel::watchdog_might_unblock_*` helpers were deleted along
+//! with the 100ms tick + consecutive-streak escalator.
 //!
 //! # Phase 2: in-process harness
 //!
@@ -49,10 +55,9 @@
 //! trial through `Vm::run` directly — no subprocess. The same
 //! `main_thread_wait_for_*` codepath is exercised (it's part of the
 //! library, not the CLI), so the same invariants hold. Fan-in trials
-//! drop from ~150ms to ~5ms; real-deadlock trials still cost ~5s
-//! because that's the watchdog's intrinsic
-//! `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS * MAIN_THREAD_WATCHDOG_TICK`
-//! threshold.
+//! drop from ~150ms to ~5ms; real-deadlock trials cost <50ms post-
+//! Phase-4 (the wake graph proves starvation atomically with the
+//! mutating event, no streak threshold to clear).
 //!
 //! # What these tests lock
 //!
@@ -64,8 +69,8 @@
 //!   must still fire so legitimate bugs are surfaced.
 //! * `test_real_deadlock_detected_after_spawn_completes_without_sending`
 //!   — a spawned task that returns without sending. Once the task's
-//!   `live_tasks` decrement settles, `unsettled_tasks == 0` and
-//!   `live == blocked == 0`, so the detector must fire.
+//!   `on_complete` empties the wake graph's `live_tasks`, the BFS
+//!   pre-check trips and the detector fires.
 //! * `test_unsettled_tasks_held_across_dequeue_to_waker_registration` —
 //!   regression lock that fails if anyone moves the
 //!   `unsettled_tasks` decrement back to `pop_front`. Spins many fan-in
@@ -75,9 +80,9 @@
 //!   false positive even when the worker-side counters briefly read
 //!   "stuck".
 //! * `test_main_watchdog_resets_when_channel_has_counterparty` — the
-//!   round-33 channel-peek lock: when senders are queued on the channel
-//!   main is parked on, `Channel::watchdog_might_unblock_recv` must
-//!   reset the deadlock streak.
+//!   round-33 channel-peek lock; Phase 4 subsumes this into the wake
+//!   graph's per-channel listener check (parked counterparty = fuel),
+//!   so the `Channel::watchdog_might_unblock_recv` peek is gone.
 
 use std::time::Duration;
 
@@ -183,12 +188,11 @@ fn main() {
   }
 }
 "#;
-    // 2s budget: Phase 3 watchdog fires within
-    // MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS * 50ms = 250ms (down
-    // from 5s pre-Phase-3). 2s is generous slack for slow CI; if
-    // the harness ever hangs, the budget triggers `timed_out: true`
-    // and the assertion below surfaces that.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    // 500ms budget: the wake-graph fast-path (no scheduler attached →
+    // immediate deadlock fire) returns within microseconds. Phase 4
+    // tightens the budget from the Phase-3 2s slack — the new path
+    // has no polling latency to absorb.
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -235,7 +239,10 @@ fn main() {
   }
 }
 "#;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    // 500ms budget: Phase 4 wake-graph fires the moment the spawned
+    // task's `on_complete` empties the graph (no `live_tasks` left,
+    // no parked counterparty) — sub-millisecond in practice.
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
@@ -297,11 +304,15 @@ fn main() {
   }
 }
 "#;
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(2));
+    // 500ms budget: Phase 4 fires when both spawned recvs park (the
+    // graph is empty of fuel) — main parks last, the pre-wait
+    // `is_main_starved` check trips immediately. Pre-Phase-4 needed
+    // the 250ms streak to elapse; Phase 4 is sub-millisecond.
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(500));
     let outcome = runner.run_trial();
     assert!(
         !outcome.timed_out,
-        "detector did not fire within 2s — fix may have made it permanently \
+        "detector did not fire within 500ms — fix may have made it permanently \
          silent; outcome={outcome:?}",
     );
     assert!(
@@ -474,23 +485,25 @@ fn main() {
     );
 }
 
-/// **Round-33 regression lock — main watchdog resets when the channel
-/// it is parked on has a counterparty.**
+/// **Regression lock — main watchdog does not fire when the channel
+/// it is parked on has a parked counterparty.**
 ///
-/// Pre-fix shape: main parks on `channel.receive`, all 16 senders are
-/// blocked-with-waker on `channel.send` (rendezvous, sender N+1 has its
-/// recv-waker registered but its slice hasn't reached the handoff yet).
-/// Scheduler counters: `live = 16, blocked = 16, unsettled = 0`. Without
-/// the channel peek, `can_make_progress` returns false → after
-/// MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS consecutive failing watchdog
-/// ticks main fires `error[runtime]: deadlock on main thread: ...`.
-/// In fact, when a worker dispatches one of those parked senders, that
-/// send WILL find main's recv-waker and complete the handshake — so the
-/// program is making progress; the watchdog is wrong.
+/// Pre-fix shape (round-30 era): main parks on `channel.receive`, all
+/// 16 senders are blocked-with-waker on `channel.send` (rendezvous,
+/// sender N+1 has its recv-waker registered but its slice hasn't
+/// reached the handoff yet). Scheduler counters: `live = 16, blocked
+/// = 16, unsettled = 0`. The polling `can_make_progress` returned
+/// false → main fired a false-positive deadlock. In fact, when a
+/// worker dispatches one of those parked senders, that send WILL
+/// find main's recv-waker and complete the handshake — the program
+/// is making progress.
 ///
-/// Post-fix: `Channel::watchdog_might_unblock_recv` returns true while
-/// any send-waker is queued on the channel, so the deadlock streak
-/// resets every tick. Every trial finishes with 136.
+/// Phase 4 fix: the wake graph treats a parked sender on main's recv
+/// channel as fuel directly (rule 3 in `wake_graph.rs`'s
+/// `is_main_starved` — `ch_send_listeners[ch]` non-empty → return
+/// false). The round-33 `Channel::watchdog_might_unblock_recv` peek
+/// is now subsumed and deleted; this regression test still locks
+/// the behaviour through the wake-graph path.
 #[test]
 fn test_main_watchdog_resets_when_channel_has_counterparty() {
     let src = r#"
@@ -527,15 +540,16 @@ fn main() {
         assert!(!o.saw_panic(), "trial {i}: unexpected panic; outcome={o:?}",);
     }
     let stats = TrialStats::compute(&outcomes, Some(136));
-    // Strict 0/100: the round-33 channel-peek + Phase-3 wake-graph
-    // signal close this race fully.
+    // Strict 0/100: the wake-graph counterparty-listener check
+    // (`ch_send_listeners[ch]` non-empty → fuel) closes this race
+    // fully — no polling streak required.
     assert_eq!(
         stats.deadlock_count, 0,
-        "round-33 regression: {}/{} trials produced a false-positive \
-         deadlock diagnostic. The `Channel::watchdog_might_unblock_recv` \
-         peek (in src/value.rs) is no longer being consulted by \
-         `main_thread_wait_for_receive` (in src/builtins/concurrency.rs) \
-         before incrementing the consecutive-fail counter. \
+        "regression: {}/{} trials produced a false-positive \
+         deadlock diagnostic. The wake-graph BFS \
+         (`Scheduler::is_main_starved`) is incorrectly reporting \
+         starvation when `ch_send_listeners[ch]` is non-empty for \
+         main's recv target. \
          First failure: idx={:?} msg={:?}",
         stats.deadlock_count, ITERATIONS, stats.first_failure_index, stats.first_failure_message,
     );
@@ -618,19 +632,18 @@ fn main() {
   }
 }
 "#;
-    // Budget: 1s. Pre-Phase-3 the watchdog took 5s (50 ticks ×
-    // 100ms polling threshold). Phase 3's 10-tick × 50ms streak
-    // fires within ~500ms, so 1s is generous slack for CI jitter.
-    let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(1));
+    // Budget: 250ms. Phase 4 fires immediately via the no-scheduler
+    // fast path (this program never spawns a task) — the wake graph
+    // BFS isn't even involved. 250ms is generous slack for CI jitter.
+    let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(250));
     let outcome = runner.run_trial();
     silt::scheduler::test_hooks::clear_all();
     drop(park_seen); // unused on the test thread; kept for the hook reference
 
     assert!(
         !outcome.timed_out,
-        "Phase-3 watchdog did not fire within 1s — wake-graph signal \
-         (Scheduler::install_main_waiter) is not wired into \
-         main_thread_wait_for_receive. outcome={outcome:?}",
+        "Watchdog did not fire within 1s — the no-scheduler fast path \
+         (in main_thread_wait_for_receive) is unwired. outcome={outcome:?}",
     );
     assert!(
         outcome.saw_deadlock(),

@@ -679,11 +679,10 @@ fn main() {
   println("sum={sum}")
 }
 "#;
-        // Round 33: STRICT 0/5 every trial on every platform. The
-        // round-33 channel-peek (Channel::watchdog_might_unblock_recv)
-        // catches the parked-sender state that the 3-counter scheduler
-        // snapshot would otherwise read as "stuck" and reset the
-        // deadlock streak.
+        // STRICT 0/5 every trial on every platform. Phase 4: the
+        // wake graph treats a parked counterparty on main's channel
+        // target as fuel directly (rule 3 in `wake_graph.rs`) — the
+        // round-33 channel-peek that used to rescue this case is gone.
         const ITERATIONS: usize = 5;
         let mut deadlock_count = 0usize;
         let mut wrong_sum_count = 0usize;

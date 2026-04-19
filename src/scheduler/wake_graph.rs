@@ -1,45 +1,56 @@
 //! Event-driven wake graph for the M:N scheduler.
 //!
-//! Phase 3 of the watchdog rewrite. Replaces the polling, streak-based
-//! deadlock detector that lived in `src/builtins/concurrency.rs` with an
-//! edge-driven graph that mutates on every park / wake / spawn / complete
-//! and signals interested waiters the moment a state change could
-//! plausibly unblock them.
+//! Phase 4 of the watchdog rewrite: the polling layer is gone — this
+//! graph is now the SOLE deadlock detector. The graph mutates on every
+//! park / wake / spawn / complete and signals interested waiters
+//! (`Scheduler::install_main_waiter`) the moment a state change could
+//! plausibly unblock them. Main-thread waits are now indefinite
+//! `condvar.wait` calls woken only by real wake events; the previous
+//! 100ms polling tick + consecutive-streak escalator is deleted.
 //!
 //! ## Design
 //!
 //! The graph is a per-task map from `TaskId` (or the singleton
 //! `NodeId::MAIN`) to a `ParkEdge` describing what that task is parked
-//! on. Reverse indices keep per-channel listener sets so a BFS for "is
-//! there a still-runnable task whose unblock chain reaches `target`?"
-//! is `O(reachable nodes)` rather than `O(all tasks)`.
+//! on. Reverse indices keep per-channel listener sets so a deadlock
+//! check is `O(reachable nodes via Join chains)` plus a constant-time
+//! counterparty lookup per channel edge.
 //!
-//! ### Why "fuel" instead of "reachability"
+//! ### What "starved" means
 //!
-//! For deadlock detection we don't need to prove that `target` will
-//! definitely unblock — we need to prove that NO scheduled task could
-//! ever unblock `target`. The cheapest sound test is: starting from
-//! `target`'s edge, walk the reverse-listener indices and see whether
-//! we reach a node that is NOT parked on a graph edge — i.e. one that
-//! is queued, running, or parked on external I/O. Any such node is
-//! "fuel": when its slice runs, it WILL eventually wake either `target`
-//! directly or some intermediate parked task that wakes `target`.
+//! `is_main_starved(target)` returns `true` iff the wake graph proves
+//! that no scheduled task can drive `target` forward. Soundness rules:
 //!
-//! If the walk finds zero fuel nodes, the graph is closed: every
-//! reachable task is parked on another graph edge that ALSO has no
-//! fuel reachable from it. That is the deadlock signal — fire
-//! immediately, no consecutive-tick streak required.
+//!   1. If any live task is queued / running (i.e. has no parked edge),
+//!      it is "fuel" for ANY target — we can't predict what an
+//!      unparked task will do, so we must not declare deadlock.
+//!   2. If `target` is a channel and the channel has a pending timer
+//!      close (`Channel::has_pending_timer_close`), an external timer
+//!      thread will fire `ch.close()` → drains wakers → wakes main.
+//!      Not starved.
+//!   3. If `target` is `Recv(ch)` and `ch_send_listeners[ch]` is
+//!      non-empty, a parked sender exists; the rendezvous-handshake
+//!      protocol guarantees at least one of them will be requeued
+//!      (either main's recv-waker registration fires `wake_send`, or
+//!      the registration already did and the requeue is in flight).
+//!      Symmetric rule for `Send(ch)`.
+//!   4. If `target` is `Join(handle_id)`, recursively walk the joinee's
+//!      Join edges to find a runnable task. Channel edges encountered
+//!      mid-walk apply rule 3. `ParkEdge::Io` is fuel (external waker).
 //!
-//! ### Consistency with `Scheduler::can_make_progress`
+//! Otherwise — every reachable path is parked on a graph edge with no
+//! counterparty and no fuel — return `true` (starved). The watchdog
+//! fires `deadlock` immediately, no consecutive-tick streak required.
 //!
-//! `can_make_progress` answers a coarser question: "is there ANY
-//! task that could potentially unblock the main thread?" The graph
-//! answers a finer one: "is there a task that could unblock THIS
-//! specific edge (channel ID / handle ID)?" The two must agree on the
-//! `false` case — if the graph says "no fuel", `can_make_progress` had
-//! better also say "no fuel"; otherwise the watchdog would fire on a
-//! channel that some unrelated runnable task is going to drive.
-//! Debug builds assert this consistency.
+//! ### Why a runnable task counts as universal fuel
+//!
+//! Pre-Phase-4, the polling fallback's `Scheduler::can_make_progress`
+//! treated `live > internal_blocked` as "fuel exists". The wake-graph
+//! BFS was narrower: it only counted fuel reachable through a chain
+//! of edges from `target`. With polling deleted, the BFS must subsume
+//! the polling semantic too — otherwise the legitimate fan-in shape
+//! `spawn N senders → main parks recv` would false-positive on the
+//! window where the senders are queued but haven't yet parked.
 //!
 //! ### Select ordering hazard
 //!
@@ -47,19 +58,10 @@
 //! invoke the waker mid-registration if a counterparty is already
 //! parked on the channel. For the Select arm — which registers wakers
 //! on N channels in a row — that means an inline-fire on iteration K
-//! drops the task before iterations K+1..N register. The graph cannot
-//! be the source-of-truth for those interim states without a staging
-//! discipline.
-//!
-//! The chosen mitigation is a thread-local pending-set: each
-//! `BlockReason` arm calls `WakeGraph::stage_*` instead of
-//! `WakeGraph::commit_*` while it builds out the per-arm edges, then
-//! a single `WakeGraph::commit_pending(task_id)` flips the staged
-//! edges atomically under one graph-lock acquisition. If an inline
-//! fire happens during register (the select case), the staged set is
-//! discarded by `WakeGraph::cancel_pending(task_id)` and the wake
-//! path uses the empty graph state — which correctly says "task is
-//! already runnable" because the inline-fire's `requeue` ran first.
+//! drops the task before iterations K+1..N register. The graph's
+//! `on_park` for the task happens once (BEFORE the registration loop)
+//! and `on_wake` clears the edge atomically once the inline-fire's
+//! `requeue` runs.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -85,15 +87,20 @@ impl NodeId {
 }
 
 /// One edge of the wake graph: what a parked node is waiting on.
-#[derive(Clone, Debug)]
+/// Channel variants carry an `Arc<Channel>` so the BFS can consult
+/// `Channel::has_pending_timer_close` directly when classifying a
+/// parked node — a channel scheduled to close by an external timer
+/// (e.g. `channel.timeout(50)`) is fuel even when nobody else is
+/// listening.
+#[derive(Clone)]
 pub enum ParkEdge {
-    /// Parked on `channel.receive(ch_id)` — wakes when a value lands
-    /// in the channel (a parked / future sender, a buffered value, or
+    /// Parked on `channel.receive(ch)` — wakes when a value lands in
+    /// the channel (a parked / future sender, a buffered value, or
     /// the channel closing).
-    Recv(usize),
-    /// Parked on `channel.send(ch_id)` — wakes when buffer space opens
+    Recv(Arc<Channel>),
+    /// Parked on `channel.send(ch)` — wakes when buffer space opens
     /// or a receiver appears.
-    Send(usize),
+    Send(Arc<Channel>),
     /// Parked on `channel.select(...)` — wakes when ANY of the listed
     /// edges fires.
     Select(Vec<SelectEdge>),
@@ -106,18 +113,40 @@ pub enum ParkEdge {
     Io,
 }
 
+// Manual Debug for ParkEdge — `Channel` doesn't impl Debug. Render
+// channel variants as `Recv(<id>)` / `Send(<id>)`.
+impl std::fmt::Debug for ParkEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParkEdge::Recv(ch) => write!(f, "Recv({})", ch.id),
+            ParkEdge::Send(ch) => write!(f, "Send({})", ch.id),
+            ParkEdge::Select(edges) => write!(f, "Select({edges:?})"),
+            ParkEdge::Join(h) => write!(f, "Join({h})"),
+            ParkEdge::Io => write!(f, "Io"),
+        }
+    }
+}
+
 /// One alternative inside a `ParkEdge::Select`. Same shape as
 /// `ParkEdge::{Recv, Send}` but flat to keep the graph small.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum SelectEdge {
-    Recv(usize),
-    Send(usize),
+    Recv(Arc<Channel>),
+    Send(Arc<Channel>),
+}
+
+impl std::fmt::Debug for SelectEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SelectEdge::Recv(ch) => write!(f, "Recv({})", ch.id),
+            SelectEdge::Send(ch) => write!(f, "Send({})", ch.id),
+        }
+    }
 }
 
 /// The wake graph itself. Held inside `SchedulerInner` behind a
 /// `Mutex` so every park / wake / spawn / complete site can mutate it
-/// under a single lock acquisition (matches the existing
-/// `blocked_handles` lock cost — one extra `Mutex<HashMap>` worth).
+/// under a single lock acquisition.
 ///
 /// All mutator entry points are designed to be called from the
 /// existing scheduler call sites (`Scheduler::submit`, `worker_loop`'s
@@ -139,15 +168,16 @@ struct GraphInner {
     /// either queued, running on a worker, or has already completed.
     /// Completed tasks are removed; runnable ones are simply absent.
     edges: BTreeMap<NodeId, ParkEdge>,
-    /// Reverse index: for each channel id, the set of task ids that
-    /// are currently waiting to RECEIVE on it. Includes Select arms
-    /// whose `SelectEdge::Recv(ch)` matches.
+    /// Reverse index: for each channel id, the set of task / main
+    /// nodes that are currently waiting to RECEIVE on it. Includes
+    /// Select arms whose `SelectEdge::Recv(ch)` matches.
     ch_recv_listeners: BTreeMap<usize, BTreeSet<NodeId>>,
-    /// Reverse index: for each channel id, the set of task ids that
-    /// are currently waiting to SEND on it. Includes Select arms.
+    /// Reverse index: for each channel id, the set of task / main
+    /// nodes that are currently waiting to SEND on it. Includes
+    /// Select arms.
     ch_send_listeners: BTreeMap<usize, BTreeSet<NodeId>>,
-    /// Reverse index: for each handle id, the set of task ids that
-    /// are blocked in `task.join` on that handle.
+    /// Reverse index: for each handle id, the set of task / main
+    /// nodes that are blocked in `task.join` on that handle.
     join_listeners: BTreeMap<usize, BTreeSet<NodeId>>,
     /// Live (not yet completed) task ids — used by `is_main_starved`
     /// to find "fuel" nodes (tasks alive but absent from `edges`).
@@ -203,7 +233,8 @@ impl WakeGraph {
 
     /// Register the main thread as a live participant. Safe to call
     /// multiple times — idempotent. Without this, `is_main_starved`
-    /// always returns `false` (no main = no main-side caller).
+    /// always returns `false` (the graph defers to "no proof" rather
+    /// than firing on a program that never set up concurrency).
     pub fn register_main_present(&self) {
         self.inner.lock().main_present = true;
     }
@@ -213,11 +244,6 @@ impl WakeGraph {
     /// one thing at a time, and a stale edge would just be a leak).
     pub fn on_park(&self, node: NodeId, edge: ParkEdge) {
         let mut g = self.inner.lock();
-        // Drop any previous edge for this node (and its reverse-index
-        // entries) before installing the new one. The "previous edge"
-        // case is rare in practice — a node is unparked before being
-        // re-parked — but the cleanup is cheap and keeps the indices
-        // honest if the call ever races.
         if let Some(prev) = g.edges.remove(&node) {
             remove_edge_indices(&mut g, node, &prev);
         }
@@ -234,213 +260,204 @@ impl WakeGraph {
         }
     }
 
-    /// Snapshot the number of currently parked nodes. Used by
-    /// debug-build consistency checks against `Scheduler::progress_snapshot`.
-    pub fn parked_count(&self) -> usize {
-        self.inner.lock().edges.len()
-    }
-
-    /// Snapshot the number of live (not yet completed) tasks. Used
-    /// by debug-build consistency checks.
-    pub fn live_task_count(&self) -> usize {
-        self.inner.lock().live_tasks.len()
-    }
-
-    /// Walk the wake graph from MAIN's edge (or `target` if MAIN is
-    /// not parked) and return `true` iff NO runnable / I/O-parked task
-    /// is reachable. A `true` return means the watchdog can fire
-    /// `deadlock` immediately — there is provably no path from any
-    /// scheduled task to wakening `target`.
+    /// Walk the wake graph from MAIN's target and return `true` iff NO
+    /// runnable / I/O-parked task / pending-counterparty edge is
+    /// reachable. A `true` return is the event-driven deadlock signal —
+    /// the watchdog fires `deadlock` immediately, no consecutive-tick
+    /// streak required.
     ///
-    /// `target` describes what the main thread is currently waiting
-    /// on. The walk starts there and follows reverse-listener edges
-    /// to find which tasks could plausibly drive `target` to a wake.
-    /// If any reachable node is either:
-    ///
-    ///   * not in `edges` (queued / running) AND in `live_tasks`, OR
-    ///   * parked on `ParkEdge::Io` (external waker),
-    ///
-    /// the walk returns `false` (fuel exists). Otherwise the walk
-    /// exhausts the closure — all reachable nodes are parked on
-    /// graph edges with no fuel of their own — and returns `true`
-    /// (true starvation).
+    /// See the module-level docs for the four soundness rules.
     pub fn is_main_starved(&self, target: &MainTarget) -> bool {
         let g = self.inner.lock();
         if !g.main_present {
-            // The graph isn't tracking main — fall through to the
-            // legacy detector. Reporting `false` means "I don't have
-            // proof of starvation"; the caller's existing logic still
-            // gets to decide.
             return false;
         }
-        // Seed the walk with the producer side of `target`. For Recv,
-        // we need a Sender (or buffered value / closed) to wake us;
-        // for Send, we need a Receiver.
-        let mut queue: VecDeque<NodeId> = VecDeque::new();
-        let mut visited: BTreeSet<NodeId> = BTreeSet::new();
 
-        // Inlined seed logic — extracting it into closures fights
-        // with the borrow checker because both `queue` and `visited`
-        // would need to be captured mutably by each closure.
+        // Rule 1: any "non-stuck" live task is universal fuel — we
+        // can't predict what queued / running / I/O-parked tasks will
+        // do. This subsumes the legacy `Scheduler::can_make_progress`
+        // check that the polling watchdog used to call separately.
+        //
+        // "Stuck" here means a task that is parked on an internal
+        // graph edge (Recv / Send / Select / Join). A task absent
+        // from `edges` is queued / running / between-slices; a task
+        // with `ParkEdge::Io` has an external waker that will fire
+        // independently. Either way, it's fuel for ANY target.
+        let internally_parked_task_count = g
+            .edges
+            .iter()
+            .filter(|(node, edge)| matches!(node, NodeId::Task(_)) && !matches!(edge, ParkEdge::Io))
+            .count();
+        if g.live_tasks.len() > internally_parked_task_count {
+            return false;
+        }
+
+        // Rules 2–4: target-specific reasoning. For channel targets,
+        // a pending timer close or a parked counterparty is fuel; for
+        // join targets, walk Join chains until a runnable / I/O /
+        // pending-counterparty node is reached.
         match target {
-            MainTarget::Recv(ch_id) => {
-                if let Some(senders) = g.ch_send_listeners.get(ch_id) {
-                    for s in senders {
-                        if visited.insert(*s) {
-                            queue.push_back(*s);
-                        }
-                    }
+            MainTarget::Recv(ch) => {
+                if ch.has_pending_timer_close() {
+                    return false;
                 }
+                if has_listeners(&g.ch_send_listeners, ch.id) {
+                    return false;
+                }
+                true
             }
-            MainTarget::Send(ch_id) => {
-                if let Some(recvs) = g.ch_recv_listeners.get(ch_id) {
-                    for r in recvs {
-                        if visited.insert(*r) {
-                            queue.push_back(*r);
-                        }
-                    }
+            MainTarget::Send(ch) => {
+                if ch.has_pending_timer_close() {
+                    return false;
                 }
-            }
-            MainTarget::Join(handle_id) => {
-                // For a join, the joinee task itself is the producer.
-                let node = NodeId::Task(*handle_id);
-                if visited.insert(node) {
-                    queue.push_back(node);
+                if has_listeners(&g.ch_recv_listeners, ch.id) {
+                    return false;
                 }
+                true
             }
             MainTarget::Select(edges) => {
                 for e in edges {
-                    match e {
-                        SelectEdge::Recv(ch_id) => {
-                            if let Some(senders) = g.ch_send_listeners.get(ch_id) {
-                                for s in senders {
-                                    if visited.insert(*s) {
-                                        queue.push_back(*s);
-                                    }
-                                }
-                            }
-                        }
-                        SelectEdge::Send(ch_id) => {
-                            if let Some(recvs) = g.ch_recv_listeners.get(ch_id) {
-                                for r in recvs {
-                                    if visited.insert(*r) {
-                                        queue.push_back(*r);
-                                    }
-                                }
-                            }
-                        }
+                    let (ch, listeners) = match e {
+                        SelectEdge::Recv(ch) => (ch, &g.ch_send_listeners),
+                        SelectEdge::Send(ch) => (ch, &g.ch_recv_listeners),
+                    };
+                    if ch.has_pending_timer_close() {
+                        return false;
                     }
-                }
-            }
-        }
-
-        // BFS over the wake graph. Each reachable node is examined:
-        //   * if it has no edge but is in live_tasks → fuel; return false.
-        //   * if it is parked on Io → fuel; return false.
-        //   * otherwise enqueue its dependencies (the producers for
-        //     whatever IT is parked on) and continue.
-        while let Some(node) = queue.pop_front() {
-            // A node we don't track in `edges` can be either runnable
-            // (if it's still live) or already completed.
-            match g.edges.get(&node) {
-                None => {
-                    if let NodeId::Task(id) = node {
-                        if g.live_tasks.contains(&id) {
-                            // Fuel: this task is queued or running and
-                            // will eventually drive `target` forward
-                            // (or at least could).
-                            return false;
-                        }
-                    } else {
-                        // MAIN never appears as a "fuel" node from
-                        // anyone else's perspective — but it should not
-                        // appear in the walk either; defensive fall-through.
+                    if has_listeners(listeners, ch.id) {
                         return false;
                     }
                 }
-                Some(ParkEdge::Io) => {
-                    // External I/O is opaque — its completion will
-                    // eventually fire and wake this task.
-                    return false;
-                }
-                Some(ParkEdge::Recv(ch)) => {
-                    if let Some(senders) = g.ch_send_listeners.get(ch) {
-                        for s in senders {
-                            if visited.insert(*s) {
-                                queue.push_back(*s);
-                            }
-                        }
-                    }
-                }
-                Some(ParkEdge::Send(ch)) => {
-                    if let Some(recvs) = g.ch_recv_listeners.get(ch) {
-                        for r in recvs {
-                            if visited.insert(*r) {
-                                queue.push_back(*r);
-                            }
-                        }
-                    }
-                }
-                Some(ParkEdge::Select(edges)) => {
-                    for e in edges {
-                        match e {
-                            SelectEdge::Recv(ch) => {
-                                if let Some(senders) = g.ch_send_listeners.get(ch) {
-                                    for s in senders {
-                                        if visited.insert(*s) {
-                                            queue.push_back(*s);
-                                        }
-                                    }
-                                }
-                            }
-                            SelectEdge::Send(ch) => {
-                                if let Some(recvs) = g.ch_recv_listeners.get(ch) {
-                                    for r in recvs {
-                                        if visited.insert(*r) {
-                                            queue.push_back(*r);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(ParkEdge::Join(handle_id)) => {
-                    let node = NodeId::Task(*handle_id);
-                    if visited.insert(node) {
-                        queue.push_back(node);
-                    }
-                }
+                true
             }
+            MainTarget::Join(handle_id) => bfs_join_starved(&g, *handle_id),
         }
-
-        // Every reachable node is parked on a graph edge with no
-        // fuel reachable from it. True starvation — the scheduler
-        // cannot drive `target` forward. The watchdog should fire
-        // `deadlock` immediately.
-        true
     }
 }
 
-/// What the main thread is currently parked on. Mirrors the
-/// `BlockReason` shape but uses raw IDs (the channel `Arc` and the
-/// `TaskHandle` `Arc` aren't needed for the walk; the IDs are).
-#[derive(Clone, Debug)]
+/// Walk Join chains starting from `seed_handle_id`. Returns `true`
+/// iff every reachable joinee is parked on an edge with no fuel
+/// (no counterparty, no I/O, no pending external close, no
+/// live-runnable producer through the chain).
+///
+/// Channel edges encountered mid-walk apply the rendezvous-handshake
+/// rule (a parked Recv with a parked Send counterparty — or vice
+/// versa — is fuel, the handshake will resolve) AND the timer-close
+/// rule (a parked Recv/Send on a channel scheduled to close is
+/// fuel, the timer thread will fire `wake_*` when it runs).
+fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
+    let mut queue: VecDeque<NodeId> = VecDeque::new();
+    let mut visited: BTreeSet<NodeId> = BTreeSet::new();
+    let seed = NodeId::Task(seed_handle_id);
+    visited.insert(seed);
+    queue.push_back(seed);
+
+    while let Some(node) = queue.pop_front() {
+        match g.edges.get(&node) {
+            None => {
+                if let NodeId::Task(id) = node
+                    && g.live_tasks.contains(&id)
+                {
+                    // Joinee (or transitive joinee) is queued / running.
+                    return false;
+                }
+                // Else: completed task. Through a Join edge, this
+                // means the joinee is gone — main's `try_get` on the
+                // next wake will see the result and return cleanly.
+                // Not fuel through this path; continue BFS (other
+                // queued nodes may still be fuel via Rule 1, which
+                // is_main_starved already checked).
+            }
+            Some(ParkEdge::Io) => return false,
+            Some(ParkEdge::Recv(ch)) => {
+                if ch.has_pending_timer_close() {
+                    return false;
+                }
+                if has_listeners(&g.ch_send_listeners, ch.id) {
+                    return false;
+                }
+            }
+            Some(ParkEdge::Send(ch)) => {
+                if ch.has_pending_timer_close() {
+                    return false;
+                }
+                if has_listeners(&g.ch_recv_listeners, ch.id) {
+                    return false;
+                }
+            }
+            Some(ParkEdge::Select(edges)) => {
+                for e in edges {
+                    match e {
+                        SelectEdge::Recv(ch) => {
+                            if ch.has_pending_timer_close() {
+                                return false;
+                            }
+                            if has_listeners(&g.ch_send_listeners, ch.id) {
+                                return false;
+                            }
+                        }
+                        SelectEdge::Send(ch) => {
+                            if ch.has_pending_timer_close() {
+                                return false;
+                            }
+                            if has_listeners(&g.ch_recv_listeners, ch.id) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            Some(ParkEdge::Join(handle_id)) => {
+                let next = NodeId::Task(*handle_id);
+                if visited.insert(next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `true` iff `map[ch_id]` exists and is non-empty.
+fn has_listeners(map: &BTreeMap<usize, BTreeSet<NodeId>>, ch_id: usize) -> bool {
+    map.get(&ch_id).is_some_and(|s| !s.is_empty())
+}
+
+/// What the main thread is currently parked on. Channel variants
+/// carry an `Arc<Channel>` so the graph can consult the channel's
+/// `has_pending_timer_close` flag without reaching back into the
+/// scheduler — the timer is an external waker that the BFS would
+/// otherwise misclassify as starvation.
+#[derive(Clone)]
 pub enum MainTarget {
-    Recv(usize),
-    Send(usize),
+    Recv(Arc<Channel>),
+    Send(Arc<Channel>),
     Join(usize),
     Select(Vec<SelectEdge>),
+}
+
+// Manual Debug — `Channel` doesn't impl Debug (it owns mutexes /
+// VecDeques of waker closures whose Debug bounds we don't want to
+// require). Render channel variants as their channel id only.
+impl std::fmt::Debug for MainTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MainTarget::Recv(ch) => write!(f, "Recv({})", ch.id),
+            MainTarget::Send(ch) => write!(f, "Send({})", ch.id),
+            MainTarget::Join(h) => write!(f, "Join({h})"),
+            MainTarget::Select(edges) => write!(f, "Select({edges:?})"),
+        }
+    }
 }
 
 impl MainTarget {
     /// Build a `MainTarget::Recv` from a channel reference.
     pub fn from_recv(ch: &Arc<Channel>) -> Self {
-        MainTarget::Recv(ch.id)
+        MainTarget::Recv(ch.clone())
     }
     /// Build a `MainTarget::Send` from a channel reference.
     pub fn from_send(ch: &Arc<Channel>) -> Self {
-        MainTarget::Send(ch.id)
+        MainTarget::Send(ch.clone())
     }
     /// Build a `MainTarget::Join` from a task handle reference.
     pub fn from_join(handle: &Arc<TaskHandle>) -> Self {
@@ -453,10 +470,10 @@ impl MainTarget {
 fn insert_edge_indices(g: &mut GraphInner, node: NodeId, edge: &ParkEdge) {
     match edge {
         ParkEdge::Recv(ch) => {
-            g.ch_recv_listeners.entry(*ch).or_default().insert(node);
+            g.ch_recv_listeners.entry(ch.id).or_default().insert(node);
         }
         ParkEdge::Send(ch) => {
-            g.ch_send_listeners.entry(*ch).or_default().insert(node);
+            g.ch_send_listeners.entry(ch.id).or_default().insert(node);
         }
         ParkEdge::Join(h) => {
             g.join_listeners.entry(*h).or_default().insert(node);
@@ -465,10 +482,10 @@ fn insert_edge_indices(g: &mut GraphInner, node: NodeId, edge: &ParkEdge) {
             for e in edges {
                 match e {
                     SelectEdge::Recv(ch) => {
-                        g.ch_recv_listeners.entry(*ch).or_default().insert(node);
+                        g.ch_recv_listeners.entry(ch.id).or_default().insert(node);
                     }
                     SelectEdge::Send(ch) => {
-                        g.ch_send_listeners.entry(*ch).or_default().insert(node);
+                        g.ch_send_listeners.entry(ch.id).or_default().insert(node);
                     }
                 }
             }
@@ -491,14 +508,14 @@ fn remove_edge_indices(g: &mut GraphInner, node: NodeId, edge: &ParkEdge) {
         }
     };
     match edge {
-        ParkEdge::Recv(ch) => prune_set(&mut g.ch_recv_listeners, *ch),
-        ParkEdge::Send(ch) => prune_set(&mut g.ch_send_listeners, *ch),
+        ParkEdge::Recv(ch) => prune_set(&mut g.ch_recv_listeners, ch.id),
+        ParkEdge::Send(ch) => prune_set(&mut g.ch_send_listeners, ch.id),
         ParkEdge::Join(h) => prune_set(&mut g.join_listeners, *h),
         ParkEdge::Select(edges) => {
             for e in edges {
                 match e {
-                    SelectEdge::Recv(ch) => prune_set(&mut g.ch_recv_listeners, *ch),
-                    SelectEdge::Send(ch) => prune_set(&mut g.ch_send_listeners, *ch),
+                    SelectEdge::Recv(ch) => prune_set(&mut g.ch_recv_listeners, ch.id),
+                    SelectEdge::Send(ch) => prune_set(&mut g.ch_send_listeners, ch.id),
                 }
             }
         }
@@ -510,96 +527,75 @@ fn remove_edge_indices(g: &mut GraphInner, node: NodeId, edge: &ParkEdge) {
 mod tests {
     use super::*;
 
-    /// Trivial smoke: an empty graph with main present and no edges
-    /// reports starved=true for any target (no tasks → no fuel).
+    fn ch(id: usize) -> Arc<Channel> {
+        Arc::new(Channel::new(id, 4))
+    }
+
+    fn rdv(id: usize) -> Arc<Channel> {
+        Arc::new(Channel::new(id, 0))
+    }
+
+    /// Empty graph with main present and no edges: starved for any
+    /// channel target (no fuel); for Join, also starved (joinee absent).
     #[test]
     fn empty_graph_with_main_is_starved() {
         let g = WakeGraph::new();
         g.register_main_present();
-        assert!(g.is_main_starved(&MainTarget::Recv(0)));
-        assert!(g.is_main_starved(&MainTarget::Send(0)));
+        assert!(g.is_main_starved(&MainTarget::Recv(ch(0))));
+        assert!(g.is_main_starved(&MainTarget::Send(ch(0))));
         assert!(g.is_main_starved(&MainTarget::Join(99)));
     }
 
-    /// A spawned-but-not-parked task is fuel: any main target that
-    /// could plausibly be reached from a runnable task reports
-    /// "not starved".
+    /// Rule 1: a spawned-but-not-parked task is universal fuel for
+    /// any target — the polling-era `can_make_progress` semantics.
+    /// This is the fan-in shape: senders submitted but not yet parked.
     #[test]
-    fn live_runnable_task_is_fuel_for_any_target() {
+    fn live_runnable_task_is_universal_fuel() {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(7);
-        // Runnable task seeds NO reverse index (it isn't parked), but
-        // the BFS only visits seeded nodes. With no parked sender, a
-        // recv target is starved EVEN with a runnable task — we have
-        // no proof that the runnable task will send to OUR channel.
-        // This is correct behavior: the legacy can_make_progress check
-        // is what catches "some task is runnable, may eventually
-        // unblock us"; the graph fires only when it is provably stuck.
-        assert!(g.is_main_starved(&MainTarget::Recv(0)));
+        // Task 7 is queued (in live_tasks, no edge) — counts as fuel
+        // for ANY target.
+        assert!(!g.is_main_starved(&MainTarget::Recv(ch(0))));
+        assert!(!g.is_main_starved(&MainTarget::Send(ch(0))));
+        assert!(!g.is_main_starved(&MainTarget::Join(99)));
     }
 
-    /// A parked sender is fuel for our recv: the BFS finds the sender
-    /// in `ch_send_listeners[ch]`, sees it has no parked-recv on
-    /// anything that ALSO has no fuel, and reports "not starved".
-    /// Wait — actually, a parked sender that nobody can wake IS still
-    /// stuck. The test's correct shape: parked sender + main parked on
-    /// recv on the same channel = NOT starved (the sender will wake
-    /// when main's recv lands, classic rendezvous handshake — the
-    /// graph's BFS unfortunately doesn't know that without extra
-    /// modeling. So: a parked sender on channel C is reachable from
-    /// MAIN's recv on C; the sender has no edge to elsewhere → BFS
-    /// returns true).
-    ///
-    /// Actually, let me re-think. For a rendezvous handshake to make
-    /// progress, BOTH sides need a participant. If main parks on
-    /// recv(C) and a task parks on send(C), the channel itself wakes
-    /// both: when main registers its recv waker, the parked sender's
-    /// `wake_send` fires, which requeues the sender, which then
-    /// completes the handshake. So this state IS NOT a deadlock — but
-    /// the graph as defined treats the parked sender as a leaf with no
-    /// fuel beyond it.
-    ///
-    /// Resolution: the parked sender's edge is `ParkEdge::Send(C)`,
-    /// and the BFS for that edge looks at `ch_recv_listeners[C]`. If
-    /// MAIN is registered there (because main called on_park with
-    /// ParkEdge::Recv(C)), the BFS would find MAIN → cycle → no fuel.
-    /// MAIN is in fact NOT a fuel node (it's what we're trying to
-    /// unblock), so the cycle correctly shows no fuel. That LOOKS like
-    /// starvation to the graph!
-    ///
-    /// The fix: the channel-peek already knows this case isn't a
-    /// deadlock (parked sender → channel can carry main forward). The
-    /// caller composes graph + channel-peek; the graph alone is too
-    /// pessimistic for rendezvous shapes. That's the design: graph
-    /// gives a fast NEGATIVE proof for the unambiguous-stuck cases;
-    /// channel peek covers the handshake-pending cases.
+    /// Rule 3: parked sender on the channel main wants to recv is
+    /// fuel — the rendezvous-handshake protocol guarantees a wake.
+    /// Pre-Phase-4 the BFS classified this as starved (no fuel
+    /// reachable through the cycle); the polling layer overrode with
+    /// `Channel::watchdog_might_unblock_recv`. Now the graph itself
+    /// recognises the handshake-pending state.
     #[test]
-    fn parked_sender_alone_is_starved_per_graph() {
+    fn parked_sender_is_fuel_for_main_recv() {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(1);
-        g.on_park(NodeId::Task(1), ParkEdge::Send(42));
-        // From main's perspective on recv(42), the only reachable
-        // producer is task 1 (parked-send-42), which has no fuel of
-        // its own. The graph reports starved — the channel-peek in
-        // the watchdog must override this for rendezvous.
-        assert!(g.is_main_starved(&MainTarget::Recv(42)));
+        let c = rdv(42);
+        g.on_park(NodeId::Task(1), ParkEdge::Send(c.clone()));
+        assert!(!g.is_main_starved(&MainTarget::Recv(c)));
     }
 
-    /// A parked sender whose dependencies include a runnable task
-    /// IS NOT starved. e.g. task 1 parks on join(2); task 2 is
-    /// runnable. Main parks on recv from a channel where task 1 is
-    /// the parked sender (?) — simpler shape: main parks on join(1);
-    /// task 1 is runnable.
+    /// Rule 3 symmetric: parked receiver on main's send target is fuel.
+    #[test]
+    fn parked_receiver_is_fuel_for_main_send() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        let c = rdv(42);
+        g.on_park(NodeId::Task(1), ParkEdge::Recv(c.clone()));
+        assert!(!g.is_main_starved(&MainTarget::Send(c)));
+    }
+
+    /// Rule 4: join on a runnable task is not starved.
     #[test]
     fn join_on_runnable_task_is_not_starved() {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(1);
-        // task 1 has no edge → it's runnable.
-        // main parks on join(1) → BFS seeds NodeId::Task(1), finds
-        // it absent from edges but present in live_tasks → fuel.
+        // Task 1 has no edge → it's runnable. Rule 1 also catches
+        // this, but the Join BFS would too via the seed.
         assert!(!g.is_main_starved(&MainTarget::Join(1)));
     }
 
@@ -611,7 +607,7 @@ mod tests {
         g.register_main_present();
         g.on_spawn(1);
         g.on_complete(1);
-        assert!(g.is_main_starved(&MainTarget::Recv(0)));
+        assert!(g.is_main_starved(&MainTarget::Recv(ch(0))));
         assert!(g.is_main_starved(&MainTarget::Join(1)));
     }
 
@@ -621,11 +617,21 @@ mod tests {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(1);
-        // Task 1 parks on I/O.
         g.on_park(NodeId::Task(1), ParkEdge::Io);
-        // Main parks on join(1) → BFS seeds Task(1), sees ParkEdge::Io
-        // → fuel. Not starved.
+        // Rule 4: Join BFS visits Task(1), sees ParkEdge::Io → fuel.
         assert!(!g.is_main_starved(&MainTarget::Join(1)));
+    }
+
+    /// Pending timer close: main parks on recv, channel is scheduled
+    /// to close (e.g. `channel.receive(ch, timeout(50))`). The timer
+    /// thread will fire `ch.close()` and wake main. Not starved.
+    #[test]
+    fn pending_timer_close_is_fuel() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        let c = ch(0);
+        c.mark_pending_timer_close();
+        assert!(!g.is_main_starved(&MainTarget::Recv(c)));
     }
 
     /// A select that includes a recv on a channel with a parked
@@ -639,7 +645,7 @@ mod tests {
         g.on_spawn(1);
         g.on_park(
             NodeId::Task(1),
-            ParkEdge::Select(vec![SelectEdge::Recv(10), SelectEdge::Send(20)]),
+            ParkEdge::Select(vec![SelectEdge::Recv(ch(10)), SelectEdge::Send(ch(20))]),
         );
         {
             let inner = g.inner.lock();
@@ -660,19 +666,62 @@ mod tests {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(1);
-        g.on_park(NodeId::Task(1), ParkEdge::Send(42));
-        g.on_park(NodeId::Task(1), ParkEdge::Recv(42));
+        let c = rdv(42);
+        g.on_park(NodeId::Task(1), ParkEdge::Send(c.clone()));
+        g.on_park(NodeId::Task(1), ParkEdge::Recv(c));
         let inner = g.inner.lock();
         assert!(inner.ch_send_listeners.is_empty());
         assert_eq!(inner.ch_recv_listeners.len(), 1);
     }
 
     /// Without `register_main_present`, `is_main_starved` returns
-    /// `false` (the graph defers to the legacy detector).
+    /// `false` (the graph defers — no main means nobody to declare
+    /// deadlock for).
     #[test]
     fn no_main_present_means_not_starved_default() {
         let g = WakeGraph::new();
-        // Don't call register_main_present.
-        assert!(!g.is_main_starved(&MainTarget::Recv(0)));
+        assert!(!g.is_main_starved(&MainTarget::Recv(ch(0))));
+    }
+
+    /// Transitive Join chain with a real deadlock: A joins B; B
+    /// parks-Recv(10); nobody sends to 10. Main joins A. Starved.
+    #[test]
+    fn transitive_join_chain_starved_at_recv() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        g.on_spawn(2);
+        g.on_park(NodeId::Task(1), ParkEdge::Join(2));
+        g.on_park(NodeId::Task(2), ParkEdge::Recv(rdv(10)));
+        assert!(g.is_main_starved(&MainTarget::Join(1)));
+    }
+
+    /// Transitive Join chain with a parked counterparty downstream:
+    /// A joins B; B parks-Recv(10); C parks-Send(10). The handshake
+    /// will resolve, B will unblock, A will unblock. Not starved.
+    #[test]
+    fn transitive_join_chain_with_handshake_is_fuel() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        g.on_spawn(2);
+        g.on_spawn(3);
+        let c = rdv(10);
+        g.on_park(NodeId::Task(1), ParkEdge::Join(2));
+        g.on_park(NodeId::Task(2), ParkEdge::Recv(c.clone()));
+        g.on_park(NodeId::Task(3), ParkEdge::Send(c));
+        assert!(!g.is_main_starved(&MainTarget::Join(1)));
+    }
+
+    /// Mutual Join cycle: A joins B; B joins A. Real deadlock.
+    #[test]
+    fn mutual_join_cycle_is_starved() {
+        let g = WakeGraph::new();
+        g.register_main_present();
+        g.on_spawn(1);
+        g.on_spawn(2);
+        g.on_park(NodeId::Task(1), ParkEdge::Join(2));
+        g.on_park(NodeId::Task(2), ParkEdge::Join(1));
+        assert!(g.is_main_starved(&MainTarget::Join(1)));
     }
 }

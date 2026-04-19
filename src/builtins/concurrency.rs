@@ -696,7 +696,7 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
     Ok(None)
 }
 
-// ── Main-thread channel wait with watchdog ───────────────────────
+// ── Main-thread channel wait with event-driven watchdog ──────────
 //
 // When `fn main()` runs on the main thread (`is_scheduled_task = false`)
 // and calls `channel.send` on a full channel or `channel.receive` on an
@@ -705,58 +705,26 @@ fn try_select_sweep(ops: &[SelectOp]) -> Result<Option<Value>, VmError> {
 // forever) and `receive` blocked indefinitely via `receive_blocking`,
 // so a program with no other producers/consumers would hang.
 //
-// These helpers now block on the channel's existing waker machinery via
-// a local condvar, and periodically check the scheduler for progress.
-// If no scheduled task can possibly make progress (there is no scheduler,
-// `live_tasks == 0`, or `blocked_tasks >= live_tasks`), we return a
-// deadlock error instead of hanging forever. The first poll happens
-// immediately so the watchdog is responsive; subsequent polls use
-// `wait_for` so we don't burn CPU.
-
-/// How often the watchdog wakes up to re-check scheduler progress.
-///
-/// Phase 3 (event-driven watchdog): tick is now a fallback safety
-/// net rather than the primary signal. The scheduler's
-/// `install_main_waiter` callback fires our local condvar on every
-/// graph state-change (submit / requeue / complete / on_park /
-/// on_wake), so the typical case is "wait → progress callback →
-/// re-check" with no polling at all. The 50ms tick guards against:
-///
-///   * a graph mutation that races with our `wait_for` entry, and
-///   * any code path that mutates state without going through the
-///     scheduler (none currently exist; tick is paranoia).
-///
-/// Pre-Phase-3 this was 100ms because every check was a poll; now
-/// the smaller value just bounds worst-case latency without burning
-/// CPU because each tick is one BFS + a few atomic loads.
-const MAIN_THREAD_WATCHDOG_TICK: std::time::Duration = std::time::Duration::from_millis(50);
-
-/// Determine whether the scheduler could still make progress on our
-/// behalf. Returns `true` if there is at least one scheduled task that
-/// is not currently blocked (so it could still reach the channel), OR
-/// at least one task has been submitted / requeued but not yet dequeued
-/// by a worker — the latter covers the race between `submit` (bumps
-/// `live_tasks` + queue push) and worker pickup, where a freshly-spawned
-/// sender is in flight but has not registered its send waker yet.
-/// Returns `false` when we are certain no scheduled task could unblock
-/// us — the caller should treat this as a deadlock.
-///
-/// When there is no scheduler at all, we conservatively report no
-/// progress: a main thread blocked on a channel with no scheduler can
-/// never be unblocked by a task (there are no tasks).
-fn scheduler_can_make_progress(vm: &Vm) -> bool {
-    match vm.current_scheduler() {
-        None => false, // No scheduler exists — no task could wake us.
-        Some(sched) => sched.can_make_progress(),
-    }
-}
+// Phase 4: these helpers block on the channel's existing waker
+// machinery via a local condvar with INDEFINITE `condvar.wait` — the
+// 100ms-tick polling layer + consecutive-streak escalator that lived
+// here through Phase 3 are deleted. The wake graph
+// (`src/scheduler/wake_graph.rs`) signals our local condvar via
+// `install_main_waiter` on every park / wake / spawn / complete, so
+// the only state changes that wake us are the ones that could
+// plausibly unblock us. On a real deadlock the wake graph proves
+// starvation atomically with the scheduler-state mutation that caused
+// it (typically the last task's `on_complete`), the signal callback
+// fires once, we wake and `is_main_starved` returns `true` — total
+// fire latency is one signal hop, target <200ms even on heavily
+// loaded CI.
 
 /// Phase 3: register the main thread with the wake graph and install
 /// a callback that pokes `pair`'s condvar on every graph state-change.
-/// Returns the install guard (drop deregisters the callback) and a
-/// boolean indicating whether the scheduler was attached. Callers MUST
-/// keep the guard alive across the wait loop and call
-/// `unregister_main` (via `Scheduler::unpark_main`) on exit.
+/// Returns the install guard (drop deregisters the callback) so a
+/// stale callback never fires into a freed local condvar. Callers
+/// MUST keep the guard alive across the wait loop and call
+/// `unpark_main` (via `Scheduler::unpark_main`) on exit.
 fn install_main_signal(
     vm: &Vm,
     pair: &Arc<(Mutex<bool>, Condvar)>,
@@ -775,6 +743,35 @@ fn install_main_signal(
     Some(sched.install_main_waiter(cb))
 }
 
+/// Returns `true` iff the wake graph proves the main thread cannot
+/// be driven forward on `target`. When there is no scheduler at all,
+/// the only remaining wake source is the channel's own waker
+/// machinery — fired by either an external `ch.close()` (e.g. the
+/// `TimerManager` thread for `channel.timeout`) or, in principle,
+/// some other thread holding an `Arc<Channel>`. We treat a pending
+/// timer close as not-starved (the timer thread will fire); any
+/// other no-scheduler park is a deadlock.
+///
+/// When a scheduler IS attached, defer to `Scheduler::is_main_starved`
+/// — the wake graph is the SOLE deadlock signal.
+fn main_thread_is_starved(vm: &Vm, target: &crate::scheduler::MainTarget) -> bool {
+    if let Some(sched) = vm.current_scheduler() {
+        return sched.is_main_starved(target);
+    }
+    // No scheduler. Only an external timer can wake us.
+    match target {
+        crate::scheduler::MainTarget::Recv(ch) | crate::scheduler::MainTarget::Send(ch) => {
+            !ch.has_pending_timer_close()
+        }
+        // Join with no scheduler: the joinee never ran, so there's
+        // no result coming.
+        crate::scheduler::MainTarget::Join(_) => true,
+        // Select with no scheduler: no channel timers tracked through
+        // SelectEdge ids; deadlock.
+        crate::scheduler::MainTarget::Select(_) => true,
+    }
+}
+
 /// Block the main thread until the channel accepts `val`, the channel
 /// is closed, or the scheduler can no longer make progress (deadlock).
 fn main_thread_wait_for_send(
@@ -782,9 +779,26 @@ fn main_thread_wait_for_send(
     val: Value,
     vm: &Vm,
 ) -> Result<Value, VmError> {
+    // No-scheduler + no-timer fast path: there is no scheduler to
+    // pump events through `signal_progress`, AND no pending timer
+    // close that would fire `wake_all_send` on the channel. Any wait
+    // here would be infinite — fire deadlock immediately.
+    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() {
+        match ch.try_send(val) {
+            TrySendResult::Sent => return Ok(Value::Unit),
+            TrySendResult::Closed => {
+                return Err(VmError::new(format!("send on closed channel {}", ch.id)));
+            }
+            TrySendResult::Full => {
+                return Err(VmError::new(
+                    "deadlock on main thread: channel send with no counterparty".into(),
+                ));
+            }
+        }
+    }
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    // Phase 3: install the wake-graph signal callback + park MAIN.
-    // See `main_thread_wait_for_receive` for rationale.
+    // Install the wake-graph signal callback + park MAIN. See
+    // `main_thread_wait_for_receive` for rationale.
     let target = crate::scheduler::MainTarget::from_send(ch);
     let _signal_guard = install_main_signal(vm, &pair);
     if let Some(sched) = vm.current_scheduler() {
@@ -798,11 +812,11 @@ fn main_thread_wait_for_send(
     // Track the most recently registered send-waker as a
     // `WakerRegistration` guard. Dropping / replacing the guard
     // deregisters the prior iteration's waker. Without this, the
-    // channel only drains wakers on successful receive/close, so every
-    // watchdog tick would leave a stale waker closure in the queue
-    // (unbounded growth on a channel that nobody is draining).
+    // channel only drains wakers on successful receive/close, so the
+    // guard swap on every loop iteration would leave a stale waker
+    // closure in the queue (unbounded growth on a channel that nobody
+    // is draining).
     let mut reg: Option<crate::value::WakerRegistration> = None;
-    let mut no_progress_streak: u32 = 0;
     loop {
         // Try first so we don't miss a send slot that just opened.
         match ch.try_send(val.clone()) {
@@ -845,28 +859,8 @@ fn main_thread_wait_for_send(
             }
             TrySendResult::Full => {}
         }
-        // Wait for a notify or the watchdog tick.
-        let was_notified = {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            if !*notified {
-                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
-            }
-            let n = *notified;
-            *notified = false;
-            n
-        };
-        // If the scheduler cannot make progress, declare deadlock —
-        // unless the channel itself can carry us forward (a parked
-        // receiver is going to wake when its slice runs, a buffer slot
-        // is free, or it is closed). Round 33: this peek closes the
-        // residual false-positive where a worker is mid-handoff but the
-        // three scheduler counters spell "stuck". ALSO: if the send-waker
-        // fired during the wait, that itself is progress — reset the
-        // streak unconditionally.
-        if !was_notified && !scheduler_can_make_progress(vm) && !ch.watchdog_might_unblock_send() {
-            // Give one last try in case a task completed between
-            // the wait and the check.
+        // Pre-wait starvation check: see `main_thread_wait_for_receive`.
+        if main_thread_is_starved(vm, &target) {
             match ch.try_send(val.clone()) {
                 TrySendResult::Sent => {
                     drop(reg);
@@ -880,82 +874,74 @@ fn main_thread_wait_for_send(
                 }
                 TrySendResult::Full => {}
             }
-            // Same timer-pending carve-out as the recv path: a scheduled
-            // close is not a deadlock.
-            if ch.has_pending_timer_close() {
-                no_progress_streak = 0;
-                continue;
-            }
-            // Phase 3: see `main_thread_wait_for_receive` — streak
-            // dropped from 50 to 5 ticks because the wake graph
-            // signal eliminates almost all spurious "stuck" reads.
-            no_progress_streak = no_progress_streak.saturating_add(1);
-            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
-                continue;
-            }
             drop(reg);
             unpark_main(vm);
             return Err(VmError::new(
                 "deadlock on main thread: channel send with no counterparty".into(),
             ));
-        } else {
-            no_progress_streak = 0;
+        }
+        // Indefinite wait: woken by either our send-waker firing
+        // (a real progress event on the channel) or the wake-graph
+        // signal callback (a scheduler state change that could make
+        // the channel reachable). The 100ms-tick polling layer that
+        // lived here through Phase 3 is gone; the wake graph is the
+        // sole deadlock signal.
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            while !*notified {
+                cvar.wait(&mut notified);
+            }
+            *notified = false;
         }
     }
 }
 
 /// Block the main thread until the channel yields a value, is closed,
-/// or the scheduler can no longer make progress (deadlock).
+/// or the wake graph proves no scheduled task can drive the receive
+/// forward (deadlock).
 ///
-/// Round 31: a real deadlock must read `scheduler_can_make_progress ==
-/// false` for several consecutive watchdog ticks before we declare it.
-/// Single-tick false readings are produced by narrow TOCTOU windows
-/// between (a) main's `register_recv_waker` (which bumps
-/// `waiting_receivers` and may fire `wake_send` synchronously) and
-/// (b) the spawned sender that the wake_send hands the rendezvous to.
-/// On a heavily loaded host (e.g. cargo test running many subprocesses
-/// on a 2-core CI runner) that chain can take two or three watchdog
-/// ticks (200-300ms) to traverse all the way through to the value
-/// landing in the slot. Requiring three consecutive negative ticks
-/// means a true deadlock is reported within ~300ms of becoming truly
-/// stuck — still well within the user's patience for an obvious
-/// unsolvable program — while a heavily-loaded rendezvous handshake
-/// gets the time it needs to complete.
-// Phase 3 (event-driven watchdog): the streak is now a tiebreaker
-// for narrow TOCTOU windows where one side just-ran the wake handoff
-// but the other side is still mid-instruction. The graph signal +
-// the channel-peek BOTH have to indicate "stuck" for `STREAK` ticks
-// in a row at 50ms each = ~500ms before the watchdog fires. A
-// real deadlock — confirmed by `Scheduler::is_main_starved` which
-// proves the graph is closed — still goes through the streak so a
-// transient main_waiter callback racing with the BFS doesn't fire
-// on one accidental sample. Pre-Phase-3 this was 50 (with a 100ms
-// tick = 5s threshold) to absorb 100% polling noise; Phase 3 cuts
-// it to 10 (500ms) because the graph signal eliminates almost all
-// spurious "stuck" reads. The 500ms ceiling absorbs CI scheduler
-// jitter (tests under heavy parallel cargo-test load can deschedule
-// main for 200-400ms at a time on a 2-core runner) without sacrificing
-// real-deadlock-fire latency by an order of magnitude.
-//
-// All real-deadlock locks
-// (test_real_deadlock_still_detected,
-// test_real_deadlock_detected_after_spawn_completes_without_sending,
-// test_detector_fires_within_reasonable_time_on_real_deadlock)
-// budget 2s wall-clock, four times the new 500ms threshold.
-const MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS: u32 = 10;
-
+/// Phase 4: the wake graph (`src/scheduler/wake_graph.rs`) is the
+/// SOLE deadlock signal. Main parks itself in the graph (so parked
+/// counterparties' BFS sees MAIN as a wake source) and waits
+/// indefinitely on a local condvar; the graph's `signal_progress`
+/// callback flips the condvar on every park / wake / spawn /
+/// complete. On every wake we re-check the channel (lost wakeup
+/// guard) and consult `is_main_starved`: a `true` return is the
+/// proof of starvation — fire deadlock immediately. A `false` return
+/// means the graph cannot rule out a wake from some still-runnable
+/// task; loop and wait again. No 100ms tick, no consecutive-streak
+/// escalator — those were Phase 3 polling-fallback artifacts.
 fn main_thread_wait_for_receive(
     ch: &Arc<crate::value::Channel>,
     vm: &Vm,
 ) -> Result<Value, VmError> {
+    // No-scheduler + no-timer fast path: there is no scheduler to
+    // pump events through `signal_progress`, AND no pending timer
+    // close that would fire `wake_all_recv` on the channel. Any wait
+    // here would be infinite — fire deadlock immediately. (When a
+    // timer IS pending, the recv-waker we register below is woken by
+    // the timer thread's `ch.close()` → `wake_all_recv()` chain, so
+    // the indefinite `cvar.wait` is finite.)
+    if vm.current_scheduler().is_none() && !ch.has_pending_timer_close() {
+        match ch.try_receive() {
+            TryReceiveResult::Value(val) => {
+                return Ok(Value::Variant("Message".into(), vec![val]));
+            }
+            TryReceiveResult::Closed => return Ok(Value::Variant("Closed".into(), vec![])),
+            TryReceiveResult::Empty => {
+                return Err(VmError::new(
+                    "deadlock on main thread: channel receive with no counterparty".into(),
+                ));
+            }
+        }
+    }
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let mut no_progress_streak: u32 = 0;
-    // Phase 3: install the wake-graph signal callback so any state
-    // change in the scheduler pokes `pair`'s condvar — the wait loop
-    // observes graph events with no extra polling. Park MAIN in the
-    // graph so other tasks' BFS from `target` finds us as the
-    // destination; unpark on exit so the graph stops modeling MAIN
-    // when the receive resolves.
+    // Install the wake-graph signal callback so any state change in
+    // the scheduler pokes `pair`'s condvar. Park MAIN in the graph so
+    // other tasks' BFS from `target` finds us as the destination;
+    // unpark on exit so the graph stops modeling MAIN when the
+    // receive resolves.
     let target = crate::scheduler::MainTarget::from_recv(ch);
     let _signal_guard = install_main_signal(vm, &pair);
     if let Some(sched) = vm.current_scheduler() {
@@ -964,12 +950,12 @@ fn main_thread_wait_for_receive(
     // Track the most recently registered recv-waker as a
     // `WakerRegistration` guard so the prior iteration's waker is
     // deregistered when the guard is dropped / replaced. Without
-    // this, each watchdog tick would re-register a waker whose
-    // `WakerId` is dropped — `waiting_receivers` inflates unboundedly
-    // per iteration, and a later rendezvous `try_send` from another
-    // task sees a phantom receiver, places a value into the handoff
-    // slot, and returns `Sent` with no real receiver. Values are lost.
-    // See round-26 B6.
+    // this, each iteration would re-register a waker whose `WakerId`
+    // is dropped — `waiting_receivers` inflates unboundedly per
+    // iteration, and a later rendezvous `try_send` from another task
+    // sees a phantom receiver, places a value into the handoff slot,
+    // and returns `Sent` with no real receiver. Values are lost. See
+    // round-26 B6.
     let mut reg: Option<crate::value::WakerRegistration> = None;
     // Helper to consistently unpark MAIN from the wake graph on exit.
     // Called before every early-return in the loop.
@@ -1016,36 +1002,21 @@ fn main_thread_wait_for_receive(
             }
             TryReceiveResult::Empty => {}
         }
-        let was_notified = {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            if !*notified {
-                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
-            }
-            let n = *notified;
-            *notified = false;
-            n
-        };
-        // Round 33: peek the channel before counting a tick toward the
-        // deadlock threshold. The scheduler counters can read "stuck"
-        // (live==blocked, unsettled==0) when in fact a parked sender's
-        // upcoming slice will hand off to our recv-waker. The channel
-        // peek catches that case — and the buffered/closed cases too —
-        // without recursing back into the scheduler. ALSO: if our recv-
-        // waker was notified during the wait, that itself is evidence
-        // a sender just handed us a value (or closed the channel) — the
-        // value may not be in handoff yet by the time the channel peek
-        // runs, but the next try_receive should pick it up; reset the
-        // streak unconditionally on a real notification.
+        // Pre-wait starvation check: if the wake graph already proves
+        // we cannot be unblocked, fire deadlock without waiting. This
+        // covers the steady-state case where main parks LAST (after
+        // every other task is already blocked), so no future
+        // signal_progress event will fire to wake us.
         //
-        // Phase 3: also consult the wake graph. `is_main_starved`
-        // returns true ONLY when the BFS proves the scheduler cannot
-        // drive `target` forward — that's a strict superset of the
-        // `can_make_progress` + channel-peek combination. When it is
-        // true AND the legacy heuristics also say stuck, we have
-        // strong evidence; the streak just guards against narrow
-        // mid-handoff windows.
-        if !was_notified && !scheduler_can_make_progress(vm) && !ch.watchdog_might_unblock_recv() {
+        // Race window: a sender's `try_send` may have just landed a
+        // value AND completed (the last task) between the
+        // `register_recv_waker_guard` re-check above and this BFS.
+        // The graph reads as starved (no live tasks) but the channel
+        // has a value waiting. Do one final `try_receive` after the
+        // graph says starved — the recv-waker also fires, but a
+        // racing wake might be in flight. This mirrors the pre-Phase-4
+        // "give one last try" pattern.
+        if main_thread_is_starved(vm, &target) {
             match ch.try_receive() {
                 TryReceiveResult::Value(val) => {
                     drop(reg);
@@ -1059,58 +1030,57 @@ fn main_thread_wait_for_receive(
                 }
                 TryReceiveResult::Empty => {}
             }
-            // A pending timer-driven close is a legitimate reason to
-            // keep waiting on an otherwise idle scheduler — e.g. a main
-            // thread that does nothing but `channel.receive(timeout(N))`.
-            // Without this, a spurious wakeup or CI jitter can trip the
-            // deadlock check before the 50ms timer fires.
-            if ch.has_pending_timer_close() {
-                no_progress_streak = 0;
-                continue;
-            }
-            // Phase 3 fast path: if the wake graph confirms strict
-            // starvation, the streak is just a tiebreaker against
-            // mid-handoff windows. Pre-Phase-3 the streak was 50 ticks
-            // (5s); Phase 3 cuts it to 5 ticks (250ms) because the
-            // graph signal eliminates almost all spurious "stuck"
-            // reads. A real deadlock fires within ~250ms; a flaky
-            // mid-handoff observation has at least 4 more ticks to
-            // resolve before we fire.
-            no_progress_streak = no_progress_streak.saturating_add(1);
-            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
-                continue;
-            }
             drop(reg);
             unpark_main(vm);
             return Err(VmError::new(
                 "deadlock on main thread: channel receive with no counterparty".into(),
             ));
-        } else {
-            // Reset the streak: a single positive reading means the
-            // scheduler is not stuck right now.
-            no_progress_streak = 0;
         }
+        // Indefinite wait — woken by the recv-waker (channel state
+        // change) or the wake-graph signal callback (any scheduler
+        // state change). The Phase-3 100ms tick is gone.
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            while !*notified {
+                cvar.wait(&mut notified);
+            }
+            *notified = false;
+        }
+        // Re-check the channel; the loop will also re-check
+        // `is_main_starved` on the next iteration before waiting.
     }
 }
 
-/// Block the main thread until `handle` produces a result or the
-/// scheduler can no longer make progress (deadlock).
+/// Block the main thread until `handle` produces a result or the wake
+/// graph proves no scheduled task can drive the joinee forward
+/// (deadlock).
 ///
-/// `task.join` on the main thread used to rely on the worker-side
-/// deadlock detector (since removed) to break a join on a permanently
-/// stuck task. The worker-side detector was unsafe — it could not
-/// distinguish "main is descheduled" from "main is stuck" — so detection
-/// is consolidated on the main thread, where the scheduler's
-/// `can_make_progress` heuristic is observed across
-/// `MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS` consecutive ticks before
-/// firing, matching the recv/send watchdog.
+/// Phase 4: same shape as `main_thread_wait_for_receive` — indefinite
+/// `condvar.wait` woken by the join-waker (joinee completion) or the
+/// wake-graph signal callback. The graph's BFS walks the joinee's
+/// Join chain looking for a runnable / I/O / pending-counterparty
+/// node; if it finds none, fire deadlock immediately. The Phase-3
+/// `is_handle_blocked` carve-out + 100ms-tick streak escalator are
+/// gone — the BFS subsumes them.
 fn main_thread_wait_for_join(
     handle: &Arc<crate::value::TaskHandle>,
     vm: &Vm,
 ) -> Result<Value, VmError> {
+    // Fast path: no scheduler exists. The joinee can only have run
+    // and completed if a scheduler exists, so absent one, either the
+    // handle already has its result or the join is unsatisfiable.
+    if vm.current_scheduler().is_none() {
+        if let Some(result) = handle.try_get() {
+            return result;
+        }
+        return Err(VmError::new(
+            "deadlock on main thread: task.join with no progress possible".into(),
+        ));
+    }
     let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let mut no_progress_streak: u32 = 0;
-    // Phase 3: install the wake-graph signal callback + park MAIN.
+    // Install the wake-graph signal callback + park MAIN on the join
+    // target so the joinee BFS sees us as the destination.
     let target = crate::scheduler::MainTarget::from_join(handle);
     let _signal_guard = install_main_signal(vm, &pair);
     if let Some(sched) = vm.current_scheduler() {
@@ -1135,51 +1105,29 @@ fn main_thread_wait_for_join(
             unpark_main(vm);
             return result;
         }
-        let was_notified = {
-            let (lock, cvar) = &*pair;
-            let mut notified = lock.lock();
-            if !*notified {
-                cvar.wait_for(&mut notified, MAIN_THREAD_WATCHDOG_TICK);
-            }
-            let n = *notified;
-            *notified = false;
-            n
-        };
-        // Round 33: before counting a tick toward the deadlock threshold,
-        // peek at the joinee's blocked state. If the joinee is queued or
-        // currently running on a worker (i.e. NOT in the scheduler's
-        // `blocked_handles` list), it is moments away from making
-        // progress — reset the streak.
-        if !was_notified && !scheduler_can_make_progress(vm) {
-            let joinee_is_blocked = match vm.current_scheduler() {
-                Some(sched) => sched.is_handle_blocked(handle.id),
-                None => true, // No scheduler → joinee can't progress.
-            };
-            if !joinee_is_blocked {
-                // Joinee is queued / running. Reset the streak; the next
-                // tick will either find the join settled or the joinee
-                // blocked too.
-                no_progress_streak = 0;
-                continue;
-            }
-            // One last try in case the task completed between the wait
-            // and the check.
+        // Pre-wait starvation check: see `main_thread_wait_for_receive`.
+        // If the graph says starved, do one final `try_get` — the
+        // join-waker may have fired between the try above and the BFS,
+        // racing the `on_complete` that flipped the graph empty.
+        if main_thread_is_starved(vm, &target) {
             if let Some(result) = handle.try_get() {
                 unpark_main(vm);
                 return result;
-            }
-            // Phase 3: see `main_thread_wait_for_receive` — streak
-            // dropped from 50 to 5 ticks.
-            no_progress_streak = no_progress_streak.saturating_add(1);
-            if no_progress_streak < MAIN_THREAD_DEADLOCK_CONSECUTIVE_TICKS {
-                continue;
             }
             unpark_main(vm);
             return Err(VmError::new(
                 "deadlock on main thread: task.join with no progress possible".into(),
             ));
-        } else {
-            no_progress_streak = 0;
+        }
+        // Indefinite wait — woken by the join-waker (joinee completed)
+        // or the wake-graph signal callback.
+        {
+            let (lock, cvar) = &*pair;
+            let mut notified = lock.lock();
+            while !*notified {
+                cvar.wait(&mut notified);
+            }
+            *notified = false;
         }
     }
 }

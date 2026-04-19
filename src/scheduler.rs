@@ -229,15 +229,10 @@ struct SchedulerInner {
     condvar: Condvar,
     shutdown: AtomicBool,
     /// Number of tasks that haven't yet completed (active + blocked + queued).
+    /// Used by the wake graph as the "fuel" set: any live task NOT
+    /// currently parked on a graph edge is universal fuel — the
+    /// detector cannot fire while one exists. Also enforces `MAX_TASKS`.
     live_tasks: AtomicUsize,
-    /// Number of tasks currently parked (blocked on channel/join/io).
-    blocked_tasks: AtomicUsize,
-    /// Number of tasks currently parked on external I/O (a strict subset of
-    /// `blocked_tasks`). These do not count toward deadlock detection because
-    /// an external waker (I/O pool completion) will unblock them — the
-    /// scheduler can't prove the graph is stuck while work is in flight.
-    /// Matches Go's philosophy: netpoll-blocked goroutines are not deadlocked.
-    io_blocked_tasks: AtomicUsize,
     /// Number of tasks that are "in flight" but not yet settled. A task is
     /// unsettled from the moment it is enqueued (submit / requeue / yield)
     /// until it has either:
@@ -250,30 +245,25 @@ struct SchedulerInner {
     ///     and `unsettled_tasks` will be re-incremented at that point.
     ///
     /// CRITICAL: `pop_front` does NOT decrement this counter. The window
-    /// between worker dequeue and waker registration is exactly where the
-    /// false-positive deadlock fires — the task is no longer in the queue,
-    /// no longer in `live > blocked` arithmetic in any visible way, but
-    /// nobody has had a chance to register a waker that will eventually
-    /// unblock the main thread. Holding `unsettled_tasks > 0` across that
-    /// window is the whole point of this counter.
-    ///
-    /// `can_make_progress` short-circuits on `unsettled_tasks > 0` — any
-    /// non-zero value means the scheduler has work that has not yet had a
-    /// chance to either complete or register an external wake source, so
-    /// declaring deadlock would be premature.
+    /// between worker dequeue and waker registration is exactly the
+    /// region where, pre-Phase-3, the polling watchdog could observe
+    /// "no live runnable task" even though one was about to register.
+    /// Wake-graph BFS now consults `live_tasks` membership directly,
+    /// but `unsettled_tasks` is still tracked: the wake graph's
+    /// `live_tasks` mirror is updated under its own mutex on submit /
+    /// complete, so the in-flight counter pulses `signal_progress` to
+    /// keep main's local condvar woken across the dequeue → register
+    /// window.
     unsettled_tasks: AtomicUsize,
     /// Reserved for cross-process deadlock state. The worker-side
     /// detector that used to flip this flag was removed because it could
     /// not distinguish "main thread is descheduled" from "main thread is
     /// stuck"; deadlock detection now happens exclusively on the main
-    /// thread (see `main_thread_wait_for_*` in
+    /// thread via the wake graph (see `main_thread_wait_for_*` in
     /// `src/builtins/concurrency.rs`). This flag is currently never
     /// flipped, but is retained so existing accessors / tests do not
     /// have to change shape.
     deadlock_detected: AtomicBool,
-    /// Handles of tasks that are currently blocked. When deadlock is detected,
-    /// all of these are completed with a deadlock error so joiners unblock.
-    blocked_handles: Mutex<Vec<Arc<TaskHandle>>>,
     /// Always-on I/O watchdog registry. Entries are added only when an
     /// I/O block has an effective deadline (from SILT_IO_TIMEOUT or
     /// task.deadline). If neither is in effect for a given block, no
@@ -338,11 +328,8 @@ impl Scheduler {
                 condvar: Condvar::new(),
                 shutdown: AtomicBool::new(false),
                 live_tasks: AtomicUsize::new(0),
-                blocked_tasks: AtomicUsize::new(0),
-                io_blocked_tasks: AtomicUsize::new(0),
                 unsettled_tasks: AtomicUsize::new(0),
                 deadlock_detected: AtomicBool::new(false),
-                blocked_handles: Mutex::new(Vec::new()),
                 watchdog,
                 global_io_timeout,
                 wake_graph: WakeGraph::new(),
@@ -389,124 +376,21 @@ impl Scheduler {
         self.inner.deadlock_detected.load(Ordering::SeqCst)
     }
 
-    /// True if a task with `task_id` is currently registered in
-    /// `blocked_handles` — i.e. parked on an internal channel/select/join
-    /// edge with a waker. Returns `false` if the task is queued, running
-    /// on a worker, parked on external I/O, or has already completed.
-    ///
-    /// Used by `main_thread_wait_for_join` to distinguish "joinee is
-    /// progressing" (queued / running) from "joinee is parked itself"
-    /// (recursing into the joinee's primitive would be richer information,
-    /// but for the watchdog reset heuristic this binary is enough): if
-    /// the joinee is NOT blocked, main's join may be moments away from
-    /// completing, so reset the deadlock streak.
-    pub fn is_handle_blocked(&self, task_id: usize) -> bool {
-        self.inner
-            .blocked_handles
-            .lock()
-            .iter()
-            .any(|h| h.id == task_id)
-    }
-
-    /// Snapshot `(live_tasks, internal_blocked)` used by the main-thread
-    /// channel watchdog to decide whether any scheduled task could still
-    /// make progress. `internal_blocked` excludes I/O-blocked tasks — an
-    /// external waker (I/O pool completion) will eventually unblock them
-    /// and they might then reach the channel the main thread is waiting on.
-    /// When `live > internal_blocked`, at least one task is either queued,
-    /// running, or parked on external I/O; when `live <= internal_blocked`,
-    /// no scheduled counterparty can make progress.
-    ///
-    /// NOTE: prefer [`Self::can_make_progress`] for the deadlock check —
-    /// it also consults `unsettled_tasks`, which covers the race between
-    /// `submit` (or `requeue` / yield) and the worker actually parking
-    /// the task on a wakeable edge that this snapshot misses.
-    pub fn progress_snapshot(&self) -> (usize, usize) {
-        let blocked = self.inner.blocked_tasks.load(Ordering::SeqCst);
-        let io_blocked = self.inner.io_blocked_tasks.load(Ordering::SeqCst);
-        (
-            self.inner.live_tasks.load(Ordering::SeqCst),
-            blocked.saturating_sub(io_blocked),
-        )
-    }
-
-    /// True if any scheduled task could still unblock the caller. Returns
-    /// `true` when either:
-    ///   * at least one live task is not parked on an internal graph edge
-    ///     (so it is either running, queued, or parked on external I/O), or
-    ///   * at least one task is unsettled — it has been enqueued but the
-    ///     worker has not yet finished a slice that either completed it
-    ///     OR parked it with a registered waker (`unsettled_tasks > 0`).
-    ///     This second clause closes the dequeue → register-waker window:
-    ///     the main thread's watchdog can otherwise sample the counters
-    ///     after a worker has popped the task off the queue but before it
-    ///     has registered the send / recv / select / join / I/O waker
-    ///     that will eventually unblock the caller. Without this, the
-    ///     detector fires a false positive on every fan-in shape that
-    ///     races spawn → main-thread receive.
-    ///
-    /// A `true` return means a legitimate deadlock must not be reported.
-    /// A `false` return means every live task is parked on an internal
-    /// edge AND no task is mid-settle — the caller should still re-check
-    /// after a small delay (TOCTOU windows exist between the three atomic
-    /// loads) but may safely treat a steady `false` as a deadlock.
-    pub fn can_make_progress(&self) -> bool {
-        if self.snapshot_says_progress() {
-            return true;
-        }
-        // First read says no progress. Mirror the worker-side
-        // double-check: yield+sleep briefly and recheck. The reason this
-        // is needed even with the `unsettled_tasks` rework is that the
-        // three-atomic snapshot is not consistent — a sender that
-        // unparks during the snapshot can briefly read as "no progress"
-        // because the reader saw the post-decrement `unsettled` but
-        // the pre-increment `live`/`blocked`. A real deadlock will
-        // continue to read false on every retry; a racing-progress
-        // reading flips to true within a few iterations. Total
-        // worst-case latency for a real deadlock signal is the budget
-        // below (~10ms), well below the caller's 100ms watchdog tick.
-        const MAX_RECHECKS: usize = 5;
-        const RECHECK_SLEEP: Duration = Duration::from_millis(2);
-        for _ in 0..MAX_RECHECKS {
-            std::thread::yield_now();
-            std::thread::sleep(RECHECK_SLEEP);
-            if self.snapshot_says_progress() {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Single-snapshot progress check. See [`Self::can_make_progress`].
-    fn snapshot_says_progress(&self) -> bool {
-        let unsettled = self.inner.unsettled_tasks.load(Ordering::SeqCst);
-        if unsettled > 0 {
-            return true;
-        }
-        let (live, internal_blocked) = self.progress_snapshot();
-        live > 0 && live > internal_blocked
-    }
-
     /// Register the main thread with the wake graph. Called once by
     /// `main_thread_wait_for_*` the first time the main thread parks
     /// on any primitive, so the graph knows there is a main-side
     /// caller worth proving deadlock for. Without this, the graph's
-    /// BFS short-circuits to `false` (defer to the legacy detector).
+    /// BFS short-circuits to `false` (no main → nobody to declare
+    /// deadlock for).
     pub fn register_main_present(&self) {
         self.inner.wake_graph.register_main_present();
     }
 
     /// True iff the wake graph can prove that no scheduled task could
-    /// ever drive `target` forward. A `true` return is the
-    /// event-driven deadlock signal — the watchdog should fire
-    /// immediately, no consecutive-tick streak required.
-    ///
-    /// A `false` return does NOT mean "no deadlock"; it means "the
-    /// graph cannot prove starvation right now". The caller's
-    /// existing channel-peek + `can_make_progress` heuristics still
-    /// run so rendezvous-handshake-pending shapes (which the graph
-    /// alone cannot distinguish from real starvation) are not falsely
-    /// flagged.
+    /// ever drive `target` forward. The watchdog should fire
+    /// `deadlock` immediately on a `true` return — Phase 4 deleted
+    /// the polling fallback, so this is now the SOLE deadlock signal
+    /// the main-thread waiters consult.
     pub fn is_main_starved(&self, target: &MainTarget) -> bool {
         self.inner.wake_graph.is_main_starved(target)
     }
@@ -517,8 +401,8 @@ impl Scheduler {
     /// loop returns.
     pub fn park_main(&self, target: &MainTarget) {
         let edge = match target {
-            MainTarget::Recv(ch) => ParkEdge::Recv(*ch),
-            MainTarget::Send(ch) => ParkEdge::Send(*ch),
+            MainTarget::Recv(ch) => ParkEdge::Recv(ch.clone()),
+            MainTarget::Send(ch) => ParkEdge::Send(ch.clone()),
             MainTarget::Join(h) => ParkEdge::Join(*h),
             MainTarget::Select(edges) => ParkEdge::Select(edges.clone()),
         };
@@ -566,14 +450,12 @@ impl Scheduler {
                 current
             ));
         }
-        // Order matters: bump unsettled_tasks BEFORE live_tasks so that
-        // any observer sees a "definitely progressing" counter throughout
-        // the submit window. If live_tasks went up first, a detector
-        // racing between the two fetch_adds would briefly see
-        // live == blocked + N with unsettled_tasks still zero. Bumping
-        // unsettled_tasks first means the detector sees
-        // `unsettled_tasks > 0` the moment it sees the increment to live,
-        // and `can_make_progress` short-circuits.
+        // Bump unsettled_tasks BEFORE live_tasks so any observer sees
+        // a "definitely progressing" counter throughout the submit
+        // window. The wake graph's BFS treats any live task absent
+        // from `edges` as universal fuel; the unsettled counter
+        // additionally pulses `signal_progress` so main waiters
+        // re-check immediately when a fresh task enters the queue.
         self.inner.unsettled_tasks.fetch_add(1, Ordering::SeqCst);
         self.inner.live_tasks.fetch_add(1, Ordering::SeqCst);
         // Wake graph: register the task as live (runnable, no edge
@@ -705,9 +587,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 let task_slot: Arc<Mutex<Option<Task>>> =
                     Arc::new(Mutex::new(Some(Task { id, vm, handle })));
 
-                // Track whether this block is on external I/O. I/O blocks
-                // bump `io_blocked_tasks` in addition to `blocked_tasks` so
-                // the deadlock detector can exclude them.
+                // Track whether this block is on external I/O. The wake
+                // graph models I/O parks as `ParkEdge::Io` (always-fuel),
+                // but the I/O *watchdog* (SILT_IO_TIMEOUT) still needs
+                // to know whether the requeue cleared an entry from
+                // `WatchdogRegistry`.
                 let was_io = matches!(reason, Some(BlockReason::Io(_)));
                 // Snapshot whether the block had a reason before the
                 // match below moves out of `reason`. Used for the final
@@ -718,11 +602,6 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 // Track that this task is now blocked (unless no block reason,
                 // which is treated as a yield and re-enqueued immediately).
                 if reason.is_some() {
-                    inner.blocked_tasks.fetch_add(1, Ordering::SeqCst);
-                    if was_io {
-                        inner.io_blocked_tasks.fetch_add(1, Ordering::SeqCst);
-                    }
-                    // Store the handle so we can complete it on deadlock.
                     // SAFETY: task_slot was just created with Some(Task{..}) above.
                     let handle_for_registry = task_slot
                         .lock()
@@ -730,46 +609,37 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         .expect("task_slot just initialized")
                         .handle
                         .clone();
-                    inner
-                        .blocked_handles
-                        .lock()
-                        .push(handle_for_registry.clone());
 
                     // Register cancel cleanup: if the task is cancelled while
-                    // blocked, take it from the slot (making the waker a no-op),
-                    // decrement blocked_tasks, and remove from blocked_handles.
+                    // blocked, take it from the slot (making the waker a no-op)
+                    // and tear down the wake-graph node so the BFS doesn't
+                    // see a phantom parked task.
                     let cancel_slot = task_slot.clone();
                     let cancel_inner = inner.clone();
                     let cancel_task_id = id;
                     handle_for_registry.set_cancel_cleanup(Box::new(move || {
                         // Take the task so the waker closure becomes a no-op.
-                        // If the slot is empty, the waker already fired and the
-                        // task is either running or already accounted for — do
-                        // not double-decrement the counters in that case.
+                        // If the slot is empty, the waker already fired and
+                        // the task is either running or already accounted
+                        // for — do not double-decrement the counters here.
                         if cancel_slot.lock().take().is_none() {
                             return;
                         }
                         // This blocked task is being dropped: decrement
-                        // blocked_tasks AND live_tasks (the Completed/Failed
-                        // path is unreachable once we drop the task, so
-                        // live_tasks would otherwise leak).
-                        cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
+                        // live_tasks (the Completed/Failed path is
+                        // unreachable once we drop the task, so live_tasks
+                        // would otherwise leak).
                         if was_io {
-                            cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                             cancel_inner.watchdog.remove(cancel_task_id);
                         }
                         cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                         // Wake graph: cancelled-while-blocked is the
-                        // moral equivalent of `on_complete` — the
-                        // task is gone forever, drop the edge and the
-                        // live entry so subsequent BFS does not see
-                        // a phantom fuel node.
+                        // moral equivalent of `on_complete` — the task
+                        // is gone forever; drop the edge and the live
+                        // entry so subsequent BFS does not see a phantom
+                        // fuel node, and pulse main waiters to re-check.
                         cancel_inner.wake_graph.on_complete(cancel_task_id);
                         signal_progress(&cancel_inner);
-                        let mut handles = cancel_inner.blocked_handles.lock();
-                        if let Some(pos) = handles.iter().position(|h| h.id == cancel_task_id) {
-                            handles.swap_remove(pos);
-                        }
                     }));
                 }
 
@@ -785,13 +655,13 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 // does not cause a false positive (the second check
                 // is post-requeue and the node is gone).
                 let park_edge_for_graph = match &reason {
-                    Some(BlockReason::Receive(ch)) => Some(ParkEdge::Recv(ch.id)),
-                    Some(BlockReason::Send(ch)) => Some(ParkEdge::Send(ch.id)),
+                    Some(BlockReason::Receive(ch)) => Some(ParkEdge::Recv(ch.clone())),
+                    Some(BlockReason::Send(ch)) => Some(ParkEdge::Send(ch.clone())),
                     Some(BlockReason::Select(ops)) => Some(ParkEdge::Select(
                         ops.iter()
                             .map(|(ch, kind)| match kind {
-                                SelectOpKind::Receive => SelectEdge::Recv(ch.id),
-                                SelectOpKind::Send => SelectEdge::Send(ch.id),
+                                SelectOpKind::Receive => SelectEdge::Recv(ch.clone()),
+                                SelectOpKind::Send => SelectEdge::Send(ch.clone()),
                             })
                             .collect(),
                     )),
@@ -892,20 +762,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                 if cancel_slot.lock().take().is_none() {
                                     return;
                                 }
-                                cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                                 if was_io {
-                                    cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                                     cancel_inner.watchdog.remove(cancel_task_id);
                                 }
                                 cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                                 cancel_inner.wake_graph.on_complete(cancel_task_id);
                                 signal_progress(&cancel_inner);
-                                let mut handles = cancel_inner.blocked_handles.lock();
-                                if let Some(pos) =
-                                    handles.iter().position(|h| h.id == cancel_task_id)
-                                {
-                                    handles.swap_remove(pos);
-                                }
                             }));
                             drop(slot_guard);
                         } else {
@@ -960,20 +822,12 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                                 if cancel_slot.lock().take().is_none() {
                                     return;
                                 }
-                                cancel_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                                 if was_io {
-                                    cancel_inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                                     cancel_inner.watchdog.remove(cancel_task_id);
                                 }
                                 cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                                 cancel_inner.wake_graph.on_complete(cancel_task_id);
                                 signal_progress(&cancel_inner);
-                                let mut handles = cancel_inner.blocked_handles.lock();
-                                if let Some(pos) =
-                                    handles.iter().position(|h| h.id == cancel_task_id)
-                                {
-                                    handles.swap_remove(pos);
-                                }
                             }));
                             drop(slot_guard);
                         } else {
@@ -1003,10 +857,10 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let entries: Arc<Mutex<Vec<WakerRegistration>>> =
                             Arc::new(Mutex::new(Vec::with_capacity(ops.len())));
                         // Replace the generic cancel_cleanup (set above)
-                        // with a select-aware version: same counter
-                        // bookkeeping, plus sibling-waker removal via the
-                        // guard vec. Select is never I/O, so `was_io` is
-                        // false here.
+                        // with a select-aware version: same wake-graph
+                        // teardown plus sibling-waker removal via the
+                        // guard vec. Select is never I/O, so the
+                        // watchdog-registry call is omitted.
                         let select_slot = task_slot.clone();
                         let select_inner = inner.clone();
                         let select_task_id = id;
@@ -1024,15 +878,9 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                             }
                             // Prevent any still-racing waker from acting.
                             cancelled_for_cancel.store(true, Ordering::Release);
-                            select_inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
                             select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
                             select_inner.wake_graph.on_complete(select_task_id);
                             signal_progress(&select_inner);
-                            let mut handles = select_inner.blocked_handles.lock();
-                            if let Some(pos) = handles.iter().position(|h| h.id == select_task_id) {
-                                handles.swap_remove(pos);
-                            }
-                            drop(handles);
                             // Drop every still-pending registration guard;
                             // each Drop calls remove_*_waker.
                             drop(std::mem::take(&mut *entries_for_cancel.lock()));
@@ -1211,36 +1059,25 @@ impl Drop for MainWaiterGuard {
 
 /// Re-enqueue a parked task on the scheduler's run queue.
 ///
-/// `was_io` indicates whether the task was parked on external I/O (so
-/// `io_blocked_tasks` needs decrementing and the watchdog registry
-/// needs its entry cleared) or on an internal graph edge
-/// (channel/select/join). The waker site knows which arm it's in.
+/// `was_io` indicates whether the task was parked on external I/O —
+/// in that case the watchdog registry entry must be cleared. For
+/// internal-graph parks (channel/select/join) the waker site already
+/// knows which arm it's in.
 fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
     fire_hook!(on_wake, "requeue_entry");
-    // Bump unsettled_tasks FIRST so the deadlock detector cannot observe
-    // a transient "blocked count briefly equals live" between the
-    // `blocked--` below and the actual queue push. The worker that next
-    // runs this task will decrement unsettled_tasks again — either when
-    // the slice completes the task, when it parks with a registered
-    // waker, or when the task yields again (in which case requeue runs
-    // a second time and the counter stays balanced via this same
-    // increment-then-future-settle dance).
+    // Bump unsettled_tasks BEFORE pushing the task on the queue so any
+    // observer sees a "definitely progressing" counter throughout the
+    // requeue window. The worker that next runs this task will
+    // decrement unsettled_tasks again — either when the slice
+    // completes the task, when it parks with a registered waker, or
+    // when the task yields again (in which case requeue runs a second
+    // time and the counter stays balanced).
     inner.unsettled_tasks.fetch_add(1, Ordering::SeqCst);
-    inner.blocked_tasks.fetch_sub(1, Ordering::SeqCst);
     if was_io {
-        inner.io_blocked_tasks.fetch_sub(1, Ordering::SeqCst);
         inner.watchdog.remove(task.id);
     }
-    // Remove this task's handle from the blocked registry.
-    {
-        let task_id = task.id;
-        let mut handles = inner.blocked_handles.lock();
-        if let Some(pos) = handles.iter().position(|h| h.id == task_id) {
-            handles.swap_remove(pos);
-        }
-    }
-    // Clear the stale cancel-cleanup so it won't double-decrement
-    // blocked_tasks when the task completes normally.
+    // Clear the stale cancel-cleanup so it won't run when the task
+    // completes normally.
     task.handle.clear_cancel_cleanup();
     // Wake graph: drop the parked edge for this task. If the task was
     // parked on Recv(ch), this clears the corresponding entry in
@@ -1398,39 +1235,12 @@ mod tests {
     // ── Deadlock detection ─────────────────────────────────────────
 
     #[test]
-    fn test_progress_snapshot_excludes_io_blocked_tasks() {
-        // Unit-level invariant: progress_snapshot returns `(live,
-        // internal_blocked)` where internal_blocked = blocked - io_blocked.
-        // I/O-blocked tasks have external wakers and must not count toward
-        // a deadlock-style "no progress possible" signal.
-        let scheduler = Scheduler::new();
-        // Simulate: 3 live tasks, 3 blocked total, 2 of which are on I/O.
-        scheduler.inner.live_tasks.store(3, Ordering::SeqCst);
-        scheduler.inner.blocked_tasks.store(3, Ordering::SeqCst);
-        scheduler.inner.io_blocked_tasks.store(2, Ordering::SeqCst);
-        let (live, internal_blocked) = scheduler.progress_snapshot();
-        assert_eq!(live, 3);
-        assert_eq!(
-            internal_blocked, 1,
-            "internal_blocked should exclude I/O tasks: 3 - 2 = 1"
-        );
-        // Sanity: if io_blocked == blocked, internal_blocked should be 0.
-        scheduler.inner.io_blocked_tasks.store(3, Ordering::SeqCst);
-        let (_, internal_blocked) = scheduler.progress_snapshot();
-        assert_eq!(internal_blocked, 0);
-        // Reset so the Drop path doesn't see non-zero counters.
-        scheduler.inner.live_tasks.store(0, Ordering::SeqCst);
-        scheduler.inner.blocked_tasks.store(0, Ordering::SeqCst);
-        scheduler.inner.io_blocked_tasks.store(0, Ordering::SeqCst);
-    }
-
-    #[test]
     fn test_io_blocked_task_does_not_trigger_deadlock() {
         // Regression lock for the channel-only deadlock split: a task that
         // performs real I/O should complete successfully, and the scheduler
         // must NOT have marked the session as deadlocked during the I/O
-        // park window. Tests the I/O path end-to-end through the counter
-        // bookkeeping changes in requeue/cancel_cleanup.
+        // park window. Tests the I/O path end-to-end through the wake
+        // graph (which models I/O parks as `ParkEdge::Io`, always-fuel).
         let scheduler = Scheduler::new();
         // Write a fixture file (small, completes fast).
         let path = std::env::temp_dir().join("silt_sched_io_block_test.txt");
