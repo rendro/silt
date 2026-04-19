@@ -1519,9 +1519,41 @@ fn decl_has_block_body(decl: &Decl) -> bool {
 /// the source for balanced braces starting from each declaration's start line.
 /// For single-line declarations (simple fn, import, let), the end line equals
 /// the start line.
+///
+/// The scanner is a character-level stateful walker that mirrors the
+/// `classify_lines` frame stack: it understands triple-quoted strings
+/// (`"""..."""`, raw, no escapes/interp), regular `"..."` strings (with
+/// escapes and `{...}` interpolation that may itself contain any kind of
+/// string), `--` line comments, and `{- ... -}` block comments (nested).
+/// Only braces in `Mode::Code` at the OUTER (decl-body) level are counted —
+/// braces inside strings, interp expressions, or comments are skipped, so
+/// a triple-string body like `"""\d{2}..."""` (or `"""abc{def"""` with
+/// unbalanced inner braces) no longer collapses the decl's end_line.
 fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) -> Vec<usize> {
-    let source_lines: Vec<&str> = source.lines().collect();
+    // Pre-compute, for the source, a mapping from byte position to the
+    // 1-based line number that byte falls on. We use the line at each
+    // top-of-loop newline to update `line_idx`.
+    let bytes = source.as_bytes();
     let mut result = Vec::with_capacity(decls.len());
+
+    // Pre-compute line-start byte offsets (0-based line index -> byte offset
+    // of its first character). We need this to seek to a given start line
+    // quickly without re-walking the whole source for every declaration.
+    let mut line_start_bytes: Vec<usize> = Vec::with_capacity(64);
+    line_start_bytes.push(0);
+    for (idx, b) in bytes.iter().enumerate() {
+        if *b == b'\n' {
+            line_start_bytes.push(idx + 1);
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code,
+        InRegular,
+        InTriple,
+        BlockComment,
+    }
 
     for (i, decl) in decls.iter().enumerate() {
         if !decl_has_block_body(decl) {
@@ -1530,54 +1562,158 @@ fn resolve_decl_end_lines(decls: &[Decl], decl_lines: &[usize], source: &str) ->
             continue;
         }
 
-        // Scan from the declaration's start line to find the matching closing brace.
         let start = decl_lines[i]; // 1-based
-        let mut depth: i32 = 0;
-        let mut end_line = start;
-        let mut found_open = false;
+        let start_byte = line_start_bytes
+            .get(start - 1)
+            .copied()
+            .unwrap_or(bytes.len());
+        let mut line_idx = start - 1; // 0-based as we walk
 
-        let mut in_string = false;
-        let mut interp_depths: Vec<i32> = vec![];
-        for (line_idx, line) in source_lines.iter().enumerate().skip(start - 1) {
-            let mut chars = line.chars().peekable();
-            while let Some(ch) = chars.next() {
-                if in_string {
-                    if ch == '\\' {
-                        chars.next(); // skip escaped character
-                    } else if ch == '"' {
-                        in_string = false;
-                    } else if ch == '{' {
-                        // Start of string interpolation
-                        interp_depths.push(0);
-                        in_string = false;
-                    }
-                } else if ch == '"' {
-                    in_string = true;
-                } else if ch == '-' && chars.peek() == Some(&'-') {
-                    break; // line comment, skip rest of line
-                } else if ch == '{' {
-                    if let Some(d) = interp_depths.last_mut() {
-                        *d += 1; // nested brace inside interpolation
-                    } else {
-                        depth += 1;
-                        found_open = true;
-                    }
-                } else if ch == '}' {
-                    if let Some(d) = interp_depths.last_mut() {
-                        if *d == 0 {
-                            interp_depths.pop();
-                            in_string = true; // back to string after interpolation
-                        } else {
-                            *d -= 1;
-                        }
-                    } else {
-                        depth -= 1;
-                    }
-                }
+        let mut stack: Vec<Mode> = vec![Mode::Code];
+        // Brace-depth tracking inside `Mode::Code` frames. The OUTER
+        // frame (the one we entered scanning at) gets `outer_depth`;
+        // inner Code frames (interp expressions) track their own depth
+        // via `interp_resume`, mirroring the lexer's `interp_stack`.
+        let mut outer_depth: i32 = 0;
+        let mut found_open = false;
+        let mut brace_depth: usize = 0; // current Code-frame brace count
+        let mut interp_resume: Vec<usize> = Vec::new();
+        let mut block_depth: usize = 0;
+
+        let mut end_line = start;
+        let mut pos = start_byte;
+        'outer: while pos < bytes.len() {
+            let b = bytes[pos];
+            if b == b'\n' {
+                line_idx += 1;
+                pos += 1;
+                continue;
             }
-            if found_open && depth == 0 {
-                end_line = line_idx + 1; // 1-based
-                break;
+            let top = *stack.last().unwrap();
+            match top {
+                Mode::Code => {
+                    // Line comment `--`
+                    if b == b'-' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                        while pos < bytes.len() && bytes[pos] != b'\n' {
+                            pos += 1;
+                        }
+                        continue;
+                    }
+                    // Block comment `{-` opens.
+                    if b == b'{' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                        stack.push(Mode::BlockComment);
+                        block_depth = 1;
+                        pos += 2;
+                        continue;
+                    }
+                    // Triple-quoted string.
+                    if b == b'"'
+                        && pos + 2 < bytes.len()
+                        && bytes[pos + 1] == b'"'
+                        && bytes[pos + 2] == b'"'
+                    {
+                        stack.push(Mode::InTriple);
+                        pos += 3;
+                        continue;
+                    }
+                    // Regular string.
+                    if b == b'"' {
+                        stack.push(Mode::InRegular);
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'{' {
+                        brace_depth += 1;
+                        // Only count toward outer_depth if we're in the
+                        // OUTERMOST Code frame (no interp wrappers above us).
+                        if interp_resume.is_empty() {
+                            outer_depth += 1;
+                            found_open = true;
+                        }
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'}' {
+                        // If this `}` closes an interp expression, pop back
+                        // to the regular-string frame.
+                        if let Some(&resume_at) = interp_resume.last()
+                            && brace_depth == resume_at + 1
+                        {
+                            interp_resume.pop();
+                            brace_depth -= 1;
+                            stack.pop();
+                            pos += 1;
+                            continue;
+                        }
+                        brace_depth = brace_depth.saturating_sub(1);
+                        if interp_resume.is_empty() {
+                            outer_depth -= 1;
+                            if found_open && outer_depth == 0 {
+                                end_line = line_idx + 1; // 1-based
+                                break 'outer;
+                            }
+                        }
+                        pos += 1;
+                        continue;
+                    }
+                    pos += 1;
+                }
+                Mode::InRegular => {
+                    if b == b'\\' && pos + 1 < bytes.len() {
+                        if bytes[pos + 1] == b'\n' {
+                            // Don't consume the newline; let the top-of-loop
+                            // newline branch advance line_idx.
+                            pos += 1;
+                            continue;
+                        }
+                        pos += 2;
+                        continue;
+                    }
+                    if b == b'"' {
+                        stack.pop();
+                        pos += 1;
+                        continue;
+                    }
+                    if b == b'{' {
+                        // Interp opens — push a Code frame and remember
+                        // the underlying brace depth so the matching `}`
+                        // pops us back to InRegular.
+                        interp_resume.push(brace_depth);
+                        brace_depth += 1;
+                        stack.push(Mode::Code);
+                        pos += 1;
+                        continue;
+                    }
+                    pos += 1;
+                }
+                Mode::InTriple => {
+                    if b == b'"'
+                        && pos + 2 < bytes.len()
+                        && bytes[pos + 1] == b'"'
+                        && bytes[pos + 2] == b'"'
+                    {
+                        stack.pop();
+                        pos += 3;
+                        continue;
+                    }
+                    pos += 1;
+                }
+                Mode::BlockComment => {
+                    if b == b'-' && pos + 1 < bytes.len() && bytes[pos + 1] == b'}' {
+                        block_depth -= 1;
+                        pos += 2;
+                        if block_depth == 0 {
+                            stack.pop();
+                        }
+                        continue;
+                    }
+                    if b == b'{' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                        block_depth += 1;
+                        pos += 2;
+                        continue;
+                    }
+                    pos += 1;
+                }
             }
         }
 

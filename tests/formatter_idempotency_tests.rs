@@ -711,3 +711,128 @@ fn test_fuzz_repro_round_post_c109e96_pipe_comment_idempotent() {
     assert_idempotent(source);
     assert_formatted_parses(source);
 }
+
+#[test]
+fn test_fn_with_triple_string_braces_preserves_interior_comments_idempotent() {
+    // Pre-existing bug surfaced post-c1d1af6 fuzz audit: the brace-
+    // counting line scanner in `resolve_decl_end_lines` did not
+    // recognise triple-quoted strings, so a fn body containing
+    // `"""...{..."""` confused depth tracking. The fn's `decl_end_line`
+    // collapsed to its start line, classifying all interior comments
+    // as "after-last-decl" — pass 1 emitted them as ORPHANS after the
+    // closing `}`, semantically relocating them out of the fn body.
+    //
+    // The fix replaces the per-line ad-hoc state machine with a
+    // character-level frame-stack scanner mirroring `classify_lines`,
+    // so triple-string content (and unbalanced inner `{`/`}`) is
+    // correctly skipped during brace-balance computation.
+    //
+    // Minimal hand-built repro (`\d{2}` style — balanced inner braces
+    // happen to NOT trip the old scanner; truly unbalanced `{` does):
+    let source =
+        "fn main() {\n  -- comment inside fn body\n  let r = \"\"\"abc{def\"\"\"\n  r\n}\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    // The comment must remain INSIDE the fn body (above `let r`),
+    // not orphaned outside the closing `}`.
+    let close_idx = formatted
+        .find("\n}")
+        .expect("formatted output has closing brace");
+    let comment_idx = formatted
+        .find("-- comment inside fn body")
+        .expect("comment must survive formatting");
+    assert!(
+        comment_idx < close_idx,
+        "comment must remain INSIDE the fn body, not orphaned after `}}`:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_fn_with_triple_string_braces_in_let_after_comment_idempotent() {
+    // Variant: a triple-string with an inner `{` lives in a let, and
+    // the comment lives BETWEEN the let and the trailing expression.
+    let source = "fn main() {\n  let r = \"\"\"abc{def\"\"\"\n  -- comment after let\n  r\n}\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    let close_idx = formatted
+        .find("\n}")
+        .expect("formatted output has closing brace");
+    let comment_idx = formatted
+        .find("-- comment after let")
+        .expect("comment must survive formatting");
+    assert!(
+        comment_idx < close_idx,
+        "comment must remain INSIDE the fn body:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_match_arm_with_triple_string_braces_preserves_interior_comments_idempotent() {
+    // Variant: triple-string with `{` lives inside a match arm body.
+    // The match arm itself doesn't have its own decl_end_line, but the
+    // enclosing fn does — so the same brace miscount applied.
+    let source = concat!(
+        "fn main(x) {\n",
+        "  -- top comment\n",
+        "  match x {\n",
+        "    1 -> \"\"\"a{b\"\"\"\n",
+        "    _ -> \"\"\"c{d\"\"\"\n",
+        "  }\n",
+        "}\n",
+    );
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    let close_idx = formatted
+        .rfind("\n}")
+        .expect("formatted output has closing brace");
+    let comment_idx = formatted
+        .find("-- top comment")
+        .expect("comment must survive formatting");
+    assert!(
+        comment_idx < close_idx,
+        "comment must remain INSIDE the fn body:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_two_fns_with_triple_string_braces_preserves_interior_comments_idempotent() {
+    // Variant: two top-level fns, each with a triple-string carrying
+    // an unbalanced inner `{`. Both decls' `end_line` resolutions must
+    // skip the triple-string content; otherwise the second fn's
+    // pre-comment leaks across the boundary.
+    let source = concat!(
+        "fn first() {\n",
+        "  -- first body comment\n",
+        "  let p = \"\"\"x{y\"\"\"\n",
+        "  p\n",
+        "}\n",
+        "\n",
+        "fn second() {\n",
+        "  -- second body comment\n",
+        "  let q = \"\"\"a{b\"\"\"\n",
+        "  q\n",
+        "}\n",
+    );
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    // Both interior comments must remain BEFORE their respective fn's
+    // closing `}`. We assert by ordering: first-comment < first-close
+    // (= the FIRST `}`), second-comment > first-close, second-comment
+    // < second-close (= the LAST `}`).
+    let comment1 = formatted
+        .find("-- first body comment")
+        .expect("first comment must survive");
+    let comment2 = formatted
+        .find("-- second body comment")
+        .expect("second comment must survive");
+    let first_close = formatted.find("\n}\n").expect("first closing brace");
+    let last_close = formatted.rfind("\n}").expect("last closing brace");
+    assert!(
+        comment1 < first_close,
+        "first comment must stay inside first fn body:\n{formatted}"
+    );
+    assert!(
+        comment2 > first_close && comment2 < last_close,
+        "second comment must stay inside second fn body:\n{formatted}"
+    );
+}

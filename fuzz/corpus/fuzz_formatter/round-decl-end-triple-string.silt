@@ -1,0 +1,5 @@
+fn main() {
+  -- comment inside fn body
+  let r = """abc{def"""
+  r
+}
