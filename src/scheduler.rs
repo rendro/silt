@@ -15,9 +15,15 @@ use std::time::{Duration, Instant};
 use crate::value::{IoCompletion, TaskHandle, Value, WakerRegistration};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
-#[cfg(any(test, feature = "test-hooks"))]
+// `test_hooks` and `test_support` are public so integration tests in
+// `tests/` (separate crate, no `cfg(test)`) can `use` them. The
+// fire_hook! macro that calls into `test_hooks` stays feature-gated
+// (`feature = "test-hooks"`) so the hot scheduler path pays zero cost
+// when the feature is off. Marked `#[doc(hidden)]` to discourage
+// downstream crates from depending on the test API.
+#[doc(hidden)]
 pub mod test_hooks;
-#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
 pub mod test_support;
 pub mod wake_graph;
 
