@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ast::*;
 use crate::intern::{Symbol, resolve};
-use crate::lexer::{LexError, Lexer, Span, Token};
+use crate::lexer::{LexError, Lexer, Span};
 use crate::parser::{ParseError, Parser};
 
 const INDENT: &str = "  ";
@@ -639,117 +639,274 @@ enum LineKind {
 /// strings inside interp expressions, etc. — the lexer already does that
 /// work and gives us a definitive answer per token.
 fn classify_lines(source: &str) -> Vec<LineKind> {
+    // Single character-level stateful scan that understands every string
+    // variant the lexer recognises:
+    //   * regular `"..."` (with escapes, raw newlines tolerated)
+    //   * triple-quoted `"""..."""` (raw, no escapes, no interp)
+    //   * `{...}` interpolation expressions inside regular strings (which
+    //     can themselves contain ANY of the above, recursively, plus
+    //     `{- ... -}` block comments and `--` line comments)
+    //   * `{- ... -}` block comments (nested) and `--` line comments
+    //
+    // We track a stack of `Mode` frames. The TOP of the stack tells us
+    // what kind of content we're scanning. When we open a new container
+    // (string, interp, block comment) we push a frame; when we close it
+    // we pop. The bottom of the stack is always `Mode::Code`.
+    //
+    // Per-line classification is derived from the mode at the START of
+    // the line and what closes/opens within the line:
+    //   * If the line STARTS in `InRegular` and we don't close before EOL
+    //     -> `InsideRegular`.
+    //   * If the line STARTS in `InRegular` and we close on this line
+    //     (either `"` or `{` ending the segment) -> `RegularEnds`.
+    //   * If the line STARTS in `InTriple` and doesn't close -> `InsideTriple`.
+    //   * If the line STARTS in `InTriple` and closes on this line ->
+    //     `TripleEnds { opened_line, after_close }`.
+    //   * Otherwise the line stays `Code`.
+    //
+    // Note: lines that OPEN a multiline regular/triple string are still
+    // `Code` (they have real code before the opening delimiter); only
+    // CONTINUATION lines get a non-`Code` classification. This matches
+    // the previous classifier's contract.
     let lines: Vec<&str> = source.lines().collect();
     let mut result = vec![LineKind::Code; lines.len()];
 
-    // First pass: mark lines that are inside triple-quoted strings using
-    // the original character-level scan (triple-strings have a simple
-    // grammar — no escapes, no interpolation, no nesting).
-    classify_triple_string_lines(&lines, &mut result);
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code,
+        InRegular,
+        InTriple { opened_line: usize },
+        BlockComment, // `{- ... -}` (nested via depth counter)
+    }
 
-    // Second pass: ask the LEXER which lines fall inside a regular
-    // `"..."` string token. The lexer authoritatively handles escapes,
-    // interpolation, and nested strings inside interp expressions, so
-    // its output is the ground truth.
-    //
-    // For each string token we need to know how many SOURCE-LINE breaks
-    // (raw `\n` bytes) fall between the opening delimiter and the
-    // closing delimiter, INCLUSIVE of the closing delimiter itself.
-    // The token's content string is post-escape-processing (so a
-    // single-line `"foo\nbar"` would appear to contain a literal
-    // newline), so we MUST count newlines from the SOURCE BYTES, not
-    // from the content. We walk the source forward from the token's
-    // start offset using the same closing-delimiter rules the lexer
-    // uses (`\` escapes the next byte; `"` closes a regular/end
-    // segment; `{` closes a start/middle segment).
-    if let Ok(tokens) = Lexer::new(source).tokenize() {
-        let src_bytes = source.as_bytes();
-        for (tok, span) in tokens.iter() {
-            // Two pieces of info per string-token kind:
-            //   * `closes_with_quote`: true if the segment ends at `"`,
-            //     false if it ends at `{` (interp open).
-            //   * `skip_open_byte`: true if `span.offset` points AT the
-            //     opening delimiter (we must skip 1 byte to start the
-            //     content scan), false if `span.offset` already points
-            //     PAST the opener. The lexer puts StringLit/StringStart
-            //     spans at the opening `"` (so we skip 1), but for
-            //     StringMiddle/StringEnd the span lives JUST AFTER the
-            //     `}` interp-closer (see `scan_string` in src/lexer.rs:
-            //     `let cont_start = self.span()` is captured AFTER `}`
-            //     was consumed), so we DON'T skip.
-            let (closes_with_quote, skip_open_byte) = match tok {
-                Token::StringLit(_, false) => (true, true),
-                Token::StringStart(_) => (false, true),
-                Token::StringMiddle(_) => (false, false),
-                Token::StringEnd(_) => (true, false),
-                _ => continue,
-            };
-            let start_off = span.offset;
-            if start_off >= src_bytes.len() {
-                continue;
+    let bytes = source.as_bytes();
+    let mut stack: Vec<Mode> = vec![Mode::Code];
+    // Brace-depth stack for interp resumption: when we open a `{` interp
+    // inside a regular string, we push the brace-depth AT THAT POINT. A
+    // matching `}` (when current_brace_depth == saved+1 after pre-decrement)
+    // pops back to the regular string. This mirrors the lexer's
+    // `interp_stack` precisely.
+    let mut brace_depth: usize = 0;
+    let mut interp_resume: Vec<usize> = Vec::new();
+    // Block-comment depth (only meaningful when top frame is BlockComment).
+    let mut block_depth: usize = 0;
+
+    // Convert byte offset -> 0-based line index. We compute it lazily by
+    // tracking the current line as we walk the bytes.
+    let mut line_idx: usize = 0;
+    let mut line_start_byte: usize = 0;
+
+    // Helper: classify the START of `line_idx` based on the current top
+    // of `stack`. Called at every newline (and at byte 0).
+    let classify_line_start = |result: &mut [LineKind], idx: usize, top: &Mode| {
+        if idx >= result.len() {
+            return;
+        }
+        match top {
+            Mode::InRegular => {
+                // Default to InsideRegular; if we close on this line we
+                // upgrade to RegularEnds below.
+                if matches!(result[idx], LineKind::Code) {
+                    result[idx] = LineKind::InsideRegular;
+                }
             }
-            let mut pos = if skip_open_byte {
-                start_off + 1
-            } else {
-                start_off
-            };
-            let mut newlines: usize = 0;
-            while pos < src_bytes.len() {
-                let b = src_bytes[pos];
-                if b == b'\\' && pos + 1 < src_bytes.len() {
-                    // Escape sequence — skip the backslash AND the
-                    // escaped byte (so an escaped `"` doesn't close the
-                    // string). If the escaped byte is `\n` (raw newline
-                    // following a backslash continuation in source),
-                    // count it.
-                    if src_bytes[pos + 1] == b'\n' {
-                        newlines += 1;
+            Mode::InTriple { .. } => {
+                if matches!(result[idx], LineKind::Code) {
+                    result[idx] = LineKind::InsideTriple;
+                }
+            }
+            Mode::Code | Mode::BlockComment => {}
+        }
+    };
+
+    classify_line_start(&mut result, 0, stack.last().unwrap());
+
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let b = bytes[pos];
+
+        // Newline handling: advance line counter and classify the new
+        // line's start based on the current mode top.
+        if b == b'\n' {
+            line_idx += 1;
+            line_start_byte = pos + 1;
+            pos += 1;
+            classify_line_start(&mut result, line_idx, stack.last().unwrap());
+            continue;
+        }
+
+        let top = *stack.last().unwrap();
+        match top {
+            Mode::Code => {
+                // Line comment `--` skips to end of line.
+                if b == b'-' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                    while pos < bytes.len() && bytes[pos] != b'\n' {
+                        pos += 1;
+                    }
+                    continue;
+                }
+                // Block comment `{-` opens (nested via depth counter).
+                if b == b'{' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                    stack.push(Mode::BlockComment);
+                    block_depth = 1;
+                    pos += 2;
+                    continue;
+                }
+                // Triple-quoted string `"""...`
+                if b == b'"'
+                    && pos + 2 < bytes.len()
+                    && bytes[pos + 1] == b'"'
+                    && bytes[pos + 2] == b'"'
+                {
+                    let opened_line = line_idx + 1; // 1-based
+                    stack.push(Mode::InTriple { opened_line });
+                    pos += 3;
+                    continue;
+                }
+                // Regular string `"...`
+                if b == b'"' {
+                    stack.push(Mode::InRegular);
+                    pos += 1;
+                    continue;
+                }
+                // Track brace depth for interp resumption.
+                if b == b'{' {
+                    brace_depth += 1;
+                    pos += 1;
+                    continue;
+                }
+                if b == b'}' {
+                    // If this `}` closes an interp expression, pop back
+                    // to the regular string frame and resume scanning
+                    // string content. Mirrors the lexer's brace-depth
+                    // bookkeeping in `scan_string`.
+                    if let Some(&resume_at) = interp_resume.last()
+                        && brace_depth == resume_at + 1
+                    {
+                        interp_resume.pop();
+                        brace_depth -= 1;
+                        // The interp-pushed `Mode::Code` frame on the
+                        // stack must be popped to reveal the InRegular
+                        // frame underneath.
+                        stack.pop();
+                        // The line CONTAINS interp-close that resumes
+                        // a regular string. If the regular string was
+                        // opened on a PREVIOUS line we are now back
+                        // inside a string mid-line; the line classifier
+                        // already records the line's start state, so
+                        // there's nothing more to do for THIS line.
+                        // But if the regular string then extends past
+                        // EOL, the next line will pick up `InsideRegular`
+                        // via classify_line_start at the next newline.
+                        // If the regular string CLOSES on this same
+                        // line via `"` further along, the mid-line
+                        // close logic below handles it.
+                        pos += 1;
+                        continue;
+                    }
+                    brace_depth = brace_depth.saturating_sub(1);
+                    pos += 1;
+                    continue;
+                }
+                pos += 1;
+            }
+            Mode::InRegular => {
+                if b == b'\\' && pos + 1 < bytes.len() {
+                    // Escape sequence in regular string: skip backslash
+                    // + next byte (so an escaped `"` doesn't close).
+                    // If the escaped byte is `\n` we've crossed a line
+                    // boundary — let the top-of-loop newline branch
+                    // handle it on the NEXT iteration.
+                    if bytes[pos + 1] == b'\n' {
+                        // Don't consume the newline here; let the
+                        // newline branch advance line_idx.
+                        pos += 1;
+                        continue;
                     }
                     pos += 2;
                     continue;
                 }
-                if b == b'\n' {
-                    newlines += 1;
+                if b == b'"' {
+                    // Close of regular string. If the open was on a
+                    // prior line (line_idx > opener), the close-line
+                    // becomes RegularEnds. We don't track opener line
+                    // explicitly because RegularEnds doesn't need it —
+                    // we just need to know "this line closes a string
+                    // that opened earlier."
+                    let started_earlier = result[line_idx].is_continuation_of_regular();
+                    stack.pop();
+                    if started_earlier {
+                        // Upgrade InsideRegular -> RegularEnds.
+                        result[line_idx] = LineKind::RegularEnds;
+                    }
                     pos += 1;
                     continue;
                 }
-                if closes_with_quote && b == b'"' {
-                    break;
-                }
                 if b == b'{' {
-                    // Interp opens — string segment ends here for
-                    // StringStart/StringMiddle. For StringLit/StringEnd
-                    // (closes_with_quote == true) a `{` would have
-                    // produced a different token segmentation, so we
-                    // shouldn't see one here at top level — but be
-                    // defensive and stop scanning to avoid runaway.
-                    break;
+                    // Interp opens. Push a Code frame (with a marker
+                    // for the underlying InRegular via interp_resume).
+                    interp_resume.push(brace_depth);
+                    brace_depth += 1;
+                    stack.push(Mode::Code);
+                    // Like a regular-string CLOSE for line-classification:
+                    // the segment ENDS here. If the segment opened on a
+                    // prior line, the current line is the close line.
+                    let started_earlier = result[line_idx].is_continuation_of_regular();
+                    if started_earlier {
+                        result[line_idx] = LineKind::RegularEnds;
+                    }
+                    pos += 1;
+                    continue;
                 }
                 pos += 1;
             }
-            if newlines == 0 {
-                continue;
-            }
-            // The token starts on `span.line` (1-based). The opener `"`
-            // (or `}` for StringMiddle/End) is on that line, so the
-            // OPENER LINE stays Code (it has real code before the `"`).
-            // Lines `span.line + 1 ..= span.line + newlines - 1` are
-            // entirely raw string content. Line `span.line + newlines`
-            // is the close line: it has the closing `"` (or `{` for
-            // StringStart/Middle continuing into interp) on it. We mark
-            // strictly-inside lines as `InsideRegular` and the close
-            // line as `RegularEnds`. We DO NOT touch lines already
-            // marked as triple-string state.
-            let start_line = span.line; // 1-based
-            for offset in 1..newlines {
-                let idx = start_line + offset - 1; // 0-based
-                if idx < result.len() && matches!(result[idx], LineKind::Code) {
-                    result[idx] = LineKind::InsideRegular;
+            Mode::InTriple { opened_line } => {
+                // Triple strings have no escapes and no interpolation.
+                // Only `"""` closes them.
+                if b == b'"'
+                    && pos + 2 < bytes.len()
+                    && bytes[pos + 1] == b'"'
+                    && bytes[pos + 2] == b'"'
+                {
+                    // The close ends at byte `pos + 3`. Compute the
+                    // 0-based char index within the current line where
+                    // the close ends, since `LineKind::TripleEnds`
+                    // stores `after_close` as a CHAR index (the
+                    // existing extract_comments code uses
+                    // `line.chars().skip(after_close)`).
+                    let line_str = lines.get(line_idx).copied().unwrap_or("");
+                    let after_close_byte = (pos + 3) - line_start_byte;
+                    let after_close_char = byte_to_char_index(line_str, after_close_byte);
+                    // Only set TripleEnds if the triple opened on an
+                    // EARLIER line (matching the previous classifier's
+                    // contract that opener-line stays Code).
+                    if opened_line < line_idx + 1 {
+                        result[line_idx] = LineKind::TripleEnds {
+                            opened_line,
+                            after_close: after_close_char,
+                        };
+                    }
+                    stack.pop();
+                    pos += 3;
+                    continue;
                 }
+                pos += 1;
             }
-            let close_idx = start_line + newlines - 1; // 0-based
-            if close_idx < result.len() && matches!(result[close_idx], LineKind::Code) {
-                result[close_idx] = LineKind::RegularEnds;
+            Mode::BlockComment => {
+                if b == b'-' && pos + 1 < bytes.len() && bytes[pos + 1] == b'}' {
+                    block_depth -= 1;
+                    pos += 2;
+                    if block_depth == 0 {
+                        stack.pop();
+                    }
+                    continue;
+                }
+                if b == b'{' && pos + 1 < bytes.len() && bytes[pos + 1] == b'-' {
+                    block_depth += 1;
+                    pos += 2;
+                    continue;
+                }
+                pos += 1;
             }
         }
     }
@@ -757,111 +914,24 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
     result
 }
 
-/// Helper that performs the first pass of `classify_lines`: walk the
-/// source character by character and mark lines inside triple-quoted
-/// strings. Triple-quoted strings do not have escapes or interpolation,
-/// so the only thing we have to recognise is the `"""` boundary.
-///
-/// We also need to skip over `--` line comments and `{- ... -}` block
-/// comments and regular `"..."` strings, so we don't misread a `"""`
-/// inside any of those as a triple-string boundary. The regular-string
-/// scan here is approximate (single-line, no interp tracking) but that's
-/// fine: the only thing it gates is our recognition of `"""` boundaries.
-fn classify_triple_string_lines(lines: &[&str], result: &mut [LineKind]) {
-    let mut triple_open_at: Option<usize> = None;
-    for (idx, line) in lines.iter().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        let mut j = 0;
+/// Convert a byte index within `line` to the corresponding char index.
+/// `byte_idx` may equal `line.len()` (EOL).
+fn byte_to_char_index(line: &str, byte_idx: usize) -> usize {
+    if byte_idx >= line.len() {
+        return line.chars().count();
+    }
+    line[..byte_idx].chars().count()
+}
 
-        if let Some(start_line) = triple_open_at {
-            let mut closed_at: Option<usize> = None;
-            while j + 3 <= chars.len() {
-                if chars[j] == '"' && chars[j + 1] == '"' && chars[j + 2] == '"' {
-                    closed_at = Some(j + 3);
-                    break;
-                }
-                j += 1;
-            }
-            match closed_at {
-                Some(end) => {
-                    result[idx] = LineKind::TripleEnds {
-                        opened_line: start_line,
-                        after_close: end,
-                    };
-                    triple_open_at = None;
-                    j = end;
-                }
-                None => {
-                    result[idx] = LineKind::InsideTriple;
-                    continue;
-                }
-            }
-        }
-
-        let mut in_string = false;
-        let mut block_depth: usize = 0;
-        while j < chars.len() {
-            let ch = chars[j];
-            if in_string {
-                if ch == '\\' && j + 1 < chars.len() {
-                    j += 2;
-                    continue;
-                }
-                if ch == '"' {
-                    in_string = false;
-                }
-                j += 1;
-                continue;
-            }
-            if block_depth > 0 {
-                if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '}' {
-                    block_depth -= 1;
-                    j += 2;
-                    continue;
-                }
-                if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
-                    block_depth += 1;
-                    j += 2;
-                    continue;
-                }
-                j += 1;
-                continue;
-            }
-            if ch == '-' && j + 1 < chars.len() && chars[j + 1] == '-' {
-                break;
-            }
-            if ch == '{' && j + 1 < chars.len() && chars[j + 1] == '-' {
-                block_depth += 1;
-                j += 2;
-                continue;
-            }
-            if ch == '"' && j + 3 <= chars.len() && chars[j + 1] == '"' && chars[j + 2] == '"' {
-                triple_open_at = Some(idx + 1);
-                j += 3;
-                let mut k = j;
-                let mut same_line_close: Option<usize> = None;
-                while k + 3 <= chars.len() {
-                    if chars[k] == '"' && chars[k + 1] == '"' && chars[k + 2] == '"' {
-                        same_line_close = Some(k + 3);
-                        break;
-                    }
-                    k += 1;
-                }
-                if let Some(end) = same_line_close {
-                    triple_open_at = None;
-                    j = end;
-                    continue;
-                } else {
-                    break;
-                }
-            }
-            if ch == '"' {
-                in_string = true;
-                j += 1;
-                continue;
-            }
-            j += 1;
-        }
+impl LineKind {
+    /// True if this line was already classified as `InsideRegular` (i.e.
+    /// the regular string opened on a prior line and we're now mid-line
+    /// at a position that closes it). Used to upgrade `InsideRegular` to
+    /// `RegularEnds` when the close happens on this line. For a `Code`
+    /// line (open and close on the same line), returns false so the line
+    /// stays `Code`.
+    fn is_continuation_of_regular(&self) -> bool {
+        matches!(self, LineKind::InsideRegular | LineKind::RegularEnds)
     }
 }
 

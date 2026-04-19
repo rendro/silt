@@ -611,3 +611,35 @@ fn test_multiline_triple_string_in_interp_idempotent() {
         "real trailing comment after multi-line triple-string close was lost; got:\n{formatted}"
     );
 }
+
+#[test]
+fn test_triple_string_inside_interp_with_raw_newline_idempotent() {
+    // Fuzz-found regression (post-c109e96): a regular `"..."` string
+    // contains a `{...}` interpolation expression whose body opens a
+    // triple-quoted string `"""..."""` with a raw newline inside. The
+    // SECOND physical line of the input is INSIDE that triple-string-
+    // inside-interp, but the line classifier's regular-string token
+    // walker treats the whole `"...{...}..."` as one outer string range
+    // and never recurses into the interp body. The continuation line
+    // (which begins with `--`) gets classified as `Code`, so the per-
+    // line scanner extracts a phantom `-- ...` trailing comment that
+    // the formatter then re-emits on every subsequent pass.
+    //
+    // Minimized 25-byte repro from
+    // `fuzz/corpus/fuzz_formatter/round-triple-in-interp-multiline.silt`.
+    let source = "fn i(){\"){\"\"\".\n--)\"\"\"}\"}\n";
+    assert_idempotent(source);
+
+    // Variant: same shape, but at top-level (not wrapped in a fn) — to
+    // make sure the fix isn't accidentally specific to function bodies.
+    let source = "let s = \"a{\"\"\"x\ny\"\"\"}b\"\n";
+    assert_idempotent(source);
+
+    // Variant: triple-string inside interp with a `--` immediately
+    // following its closing `"""` on the continuation line, then more
+    // string content — the `--` is raw triple-string content here, not
+    // a comment, but the per-line scanner without nesting awareness
+    // can't tell.
+    let source = "let s = \"p{\"\"\"a\n--b\"\"\"}q\"\n";
+    assert_idempotent(source);
+}
