@@ -359,3 +359,89 @@ fn test_multi_element_tuple_expr_in_call_arg_no_extra_comma() {
         "three-element tuple must not gain trailing comma; got:\n{formatted}"
     );
 }
+
+#[test]
+fn test_minimal_dashes_inside_string_interpolation_idempotent() {
+    // Round phase-4 fuzz repro (post-(0,)-fix): the line scanner that
+    // builds the `trailing_map` (`extract_trailing_comment_from_line`)
+    // toggled `in_string` only on `"`, ignoring string interpolations.
+    // For source like `fn n(){"{"--"}"}` the scan walked past the inner
+    // `"--"` (a NESTED string inside an interpolation expression), saw
+    // the string close, then mis-classified the next `--` as a
+    // top-level line comment. The phantom trailing comment text
+    // (`--"}"}`) was attached to the body line; on each formatter pass
+    // the same scan was rerun on the new output and a NEW phantom
+    // comment was emitted, so the output grew unboundedly across passes.
+    //
+    // Fix: the scanner now mirrors the lexer's `interp_stack` — an
+    // unescaped `{` inside a string opens an interpolation expression
+    // (code mode), and only the matching `}` returns to string mode.
+    let source = "fn n(){\"{\"--\"}\"}";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    // The body must NOT contain a fabricated trailing comment.
+    assert!(
+        !formatted.contains("--\"}\"}"),
+        "phantom trailing comment leaked into output:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_string_interp_with_dashes_in_nested_string_idempotent() {
+    // Variant: explicit fn body with a string interpolation whose
+    // expression is a string literal containing `--`. The formatter
+    // must not see the outer `"`-`"` pair as bracketing the whole
+    // string (the inner `"-- ..."` is a nested string inside an interp).
+    let source = "fn main() = \"{\"-- not a comment\"}\"\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        !formatted.contains(" -- not a comment"),
+        "phantom trailing comment leaked:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_string_interp_with_real_trailing_comment_idempotent() {
+    // Counter-test: an actual `--` trailing comment AFTER a string
+    // interpolation must still be detected as trailing.
+    let source = "fn main() = \"{x}\" -- real trailing\n";
+    assert_idempotent(source);
+    let formatted = silt::formatter::format(source).unwrap();
+    assert!(
+        formatted.contains("-- real trailing"),
+        "real trailing comment lost:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_string_interp_dashes_variants_idempotent() {
+    // Property-style: a handful of string-interp shapes that previously
+    // tripped the line scanner's `--` detection. Each must be idempotent
+    // and must not gain a phantom trailing comment between passes.
+    for src in [
+        // Dashes inside a nested string inside an interp.
+        "fn main() = \"{\"--\"}\"\n",
+        // Multiple interps, dashes inside one of them.
+        "fn main() = \"{a}{b}{\"-- inert\"}{c}\"\n",
+        // Block comment inside an interp expression.
+        "fn main() = \"{a {- inline -} + 1}\"\n",
+        // Negation inside an interp expression — `{-x}` must NOT be
+        // misread as a block-comment open.
+        "fn main() = \"{-x}\"\n",
+        // Escaped brace before an interp on the same line.
+        "fn main() = \"\\{not interp \\\"--\\\"}\"\n",
+        // Interp expression that itself contains another interp string.
+        "fn main() = \"{\"{\"-- z\"}\"}\"\n",
+    ] {
+        let first = silt::formatter::format(src)
+            .unwrap_or_else(|e| panic!("first format failed for {src:?}: {e:?}"));
+        let second = silt::formatter::format(&first)
+            .unwrap_or_else(|e| panic!("second format failed for {src:?}: {e:?}\nfirst:\n{first}"));
+        assert_eq!(
+            first, second,
+            "formatter must be idempotent for string-interp src {src:?}\n\
+             ---first---\n{first}\n---second---\n{second}"
+        );
+    }
+}

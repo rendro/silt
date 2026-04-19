@@ -982,7 +982,18 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     // sits outside of any string or block comment, AND the byte index and
     // depth-tracking info for the first `{-` that sits outside of any
     // string (block-in-block is fine — we handle nesting).
+    //
+    // String-interpolation handling: a regular string `"..."` may contain
+    // `{ <expr> }` interpolations (mirroring the lexer's `interp_stack`
+    // logic in `scan_string`). Inside an interpolation expression we are
+    // in code mode — nested strings, braces, and even `{- ... -}` block
+    // comments are all possible. We track interpolation brace depth on a
+    // stack so we know when a `}` returns us to string context. Without
+    // this, the scanner mis-classifies `--` inside a nested string of an
+    // interpolation as a line comment, fabricating a phantom trailing
+    // comment that grows on every formatter pass and breaks idempotency.
     let mut in_string = false;
+    let mut interp_depths: Vec<usize> = Vec::new();
     let mut block_depth: usize = 0;
     let mut block_start: Option<usize> = None;
     let mut line_comment_start: Option<usize> = None;
@@ -991,7 +1002,20 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         let ch = chars[i];
         if in_string {
             if ch == '\\' && i + 1 < chars.len() {
+                // Escape sequence (\n, \t, \\, \", \{, \}). Skip the
+                // escape and the next char so an escaped `{` does not
+                // open a phantom interpolation.
                 i += 2;
+                continue;
+            }
+            if ch == '{' {
+                // Unescaped `{` inside a string opens an interpolation
+                // expression — switch back to code mode and remember to
+                // resume string mode when this interp's matching `}` is
+                // seen (mirrors the lexer's `interp_stack`).
+                interp_depths.push(0);
+                in_string = false;
+                i += 1;
                 continue;
             }
             if ch == '"' {
@@ -1023,16 +1047,52 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             continue;
         }
         if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            line_comment_start = Some(i);
-            break;
+            // A `--` only counts as a line comment when we are NOT inside
+            // a string interpolation expression. (Inside an interpolation
+            // expression in valid Silt source the lexer would treat `--`
+            // as a line comment that breaks the surrounding string, so
+            // such code never reaches the formatter — but if it somehow
+            // does, conservatively treating it as a comment would still
+            // be wrong because a truly-trailing comment lives at the
+            // outermost code level only.)
+            if interp_depths.is_empty() {
+                line_comment_start = Some(i);
+                break;
+            }
+            // Skip both dashes and continue scanning the interp expr.
+            i += 2;
+            continue;
         }
         if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
-            if block_start.is_none() {
+            if block_start.is_none() && interp_depths.is_empty() {
                 block_start = Some(i);
             }
             block_depth += 1;
             i += 2;
             continue;
+        }
+        if !interp_depths.is_empty() {
+            // We are inside an interpolation expression. Track nested
+            // braces and detect the matching `}` that closes the interp.
+            if ch == '{' {
+                if let Some(d) = interp_depths.last_mut() {
+                    *d += 1;
+                }
+                i += 1;
+                continue;
+            }
+            if ch == '}' {
+                if let Some(d) = interp_depths.last_mut() {
+                    if *d == 0 {
+                        interp_depths.pop();
+                        in_string = true;
+                    } else {
+                        *d -= 1;
+                    }
+                }
+                i += 1;
+                continue;
+            }
         }
         i += 1;
     }
