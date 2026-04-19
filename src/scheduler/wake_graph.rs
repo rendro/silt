@@ -355,18 +355,18 @@ fn bfs_join_starved(g: &GraphInner, seed_handle_id: usize) -> bool {
     while let Some(node) = queue.pop_front() {
         match g.edges.get(&node) {
             None => {
-                if let NodeId::Task(id) = node
-                    && g.live_tasks.contains(&id)
-                {
-                    // Joinee (or transitive joinee) is queued / running.
+                if let NodeId::Task(_) = node {
+                    // Either the joinee is queued/running (live but
+                    // not parked on a graph edge) OR it has already
+                    // completed (removed from live_tasks). In BOTH
+                    // cases the join will be satisfied imminently —
+                    // queued/running task may complete; completed task
+                    // means TaskHandle::complete already fired and
+                    // main's join wake is in flight (the watchdog
+                    // raced ahead of main's condvar wake-up). Either
+                    // way, NOT starved.
                     return false;
                 }
-                // Else: completed task. Through a Join edge, this
-                // means the joinee is gone — main's `try_get` on the
-                // next wake will see the result and return cleanly.
-                // Not fuel through this path; continue BFS (other
-                // queued nodes may still be fuel via Rule 1, which
-                // is_main_starved already checked).
             }
             Some(ParkEdge::Io) => return false,
             Some(ParkEdge::Recv(ch)) => {
@@ -538,12 +538,20 @@ mod tests {
     /// Empty graph with main present and no edges: starved for any
     /// channel target (no fuel); for Join, also starved (joinee absent).
     #[test]
-    fn empty_graph_with_main_is_starved() {
+    fn empty_graph_with_main_is_starved_for_channel_targets() {
         let g = WakeGraph::new();
         g.register_main_present();
         assert!(g.is_main_starved(&MainTarget::Recv(ch(0))));
         assert!(g.is_main_starved(&MainTarget::Send(ch(0))));
-        assert!(g.is_main_starved(&MainTarget::Join(99)));
+        // Join target with a non-spawned handle is NOT starved: in
+        // practice TaskHandles can only be obtained from task.spawn,
+        // so Join(99) for an unspawned id can't happen via the silt
+        // surface; treating it as "starved" produced a false-positive
+        // CI deadlock (run 24627493125, test_normal_program_no_deadlock)
+        // when a completed joinee was briefly absent from live_tasks
+        // before main's join wake propagated. Semantics: a Join target
+        // that resolves to "task not currently parked" means the join
+        // will return imminently, never deadlock.
     }
 
     /// Rule 1: a spawned-but-not-parked task is universal fuel for
@@ -600,15 +608,21 @@ mod tests {
     }
 
     /// Spawned task that completed without sending anywhere: live_tasks
-    /// is empty, channel has no listeners. Main parks on recv → starved.
+    /// is empty, channel has no listeners. Main parks on recv → starved
+    /// (no fuel for the channel target). But Join(1) is NOT starved:
+    /// a completed joinee means TaskHandle::complete already fired its
+    /// join_listeners and main's join wake is in flight — the watchdog
+    /// is just briefly racing ahead of main's condvar wake-up. See the
+    /// CI run 24627493125 / test_normal_program_no_deadlock incident.
     #[test]
-    fn completed_task_leaves_graph_starved() {
+    fn completed_task_leaves_graph_starved_for_channel_target() {
         let g = WakeGraph::new();
         g.register_main_present();
         g.on_spawn(1);
         g.on_complete(1);
         assert!(g.is_main_starved(&MainTarget::Recv(ch(0))));
-        assert!(g.is_main_starved(&MainTarget::Join(1)));
+        // Join(1) — task already completed → wake is in flight → NOT starved.
+        assert!(!g.is_main_starved(&MainTarget::Join(1)));
     }
 
     /// I/O-parked task is fuel: external waker will eventually fire.
