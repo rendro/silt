@@ -1197,7 +1197,19 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                     break;
                 }
             }
-            if found_end || depth == 0 {
+            // Only push the block as a standalone comment when the
+            // closing `-}` has nothing but whitespace after it on its
+            // line. If real code follows the closer (`found_end ==
+            // false` with `depth == 0`), the block comment is the
+            // multi-line analogue of a leading-inline annotation: the
+            // following statement has its OWN AST node and is emitted
+            // by the normal code path, so pushing the block here would
+            // duplicate the post-closer code (the AST emits it; the
+            // comment text contains a verbatim copy of the same line).
+            // For that case we rely on `splice_inline_block_comments`
+            // to re-insert the block-comment text in the correct
+            // position when assembling the final output.
+            if found_end {
                 comments.push(Comment {
                     line: start_line,
                     text: block,
@@ -1263,7 +1275,19 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     let mut interp_depths: Vec<usize> = Vec::new();
     let mut block_depth: usize = 0;
     let mut block_start: Option<usize> = None;
+    let mut block_start_bracket_depth: i32 = 0;
     let mut line_comment_start: Option<usize> = None;
+    let mut line_comment_bracket_depth: i32 = 0;
+    // Bracket-pair depth in code (parens/brackets/braces). When > 0 at the
+    // start of a `--` or `{-`, the comment is INSIDE an unclosed bracket
+    // pair — i.e. the line is mid-expression, NOT the end of a statement
+    // — and the comment must NOT be extracted as a "trailing comment of
+    // the statement on this line". Otherwise a multi-line construct
+    // whose first line is `f( -- note` would attach `-- note` to the
+    // call statement as a whole, leading the formatter to emit it after
+    // the closing `)` on pass 1; pass 2 then re-extracts and the comment
+    // either drifts further or is dropped, breaking idempotency.
+    let mut bracket_depth: i32 = 0;
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i];
@@ -1344,6 +1368,7 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
             // outermost code level only.)
             if interp_depths.is_empty() {
                 line_comment_start = Some(i);
+                line_comment_bracket_depth = bracket_depth;
                 break;
             }
             // Skip both dashes and continue scanning the interp expr.
@@ -1353,10 +1378,19 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
             if block_start.is_none() && interp_depths.is_empty() {
                 block_start = Some(i);
+                block_start_bracket_depth = bracket_depth;
             }
             block_depth += 1;
             i += 2;
             continue;
+        }
+        // Track bracket-pair depth in code (outside strings/comments/interp).
+        if interp_depths.is_empty() {
+            if ch == '(' || ch == '[' || ch == '{' {
+                bracket_depth += 1;
+            } else if ch == ')' || ch == ']' || ch == '}' {
+                bracket_depth -= 1;
+            }
         }
         if !interp_depths.is_empty() {
             // We are inside an interpolation expression. Track nested
@@ -1390,6 +1424,14 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     // is comment). The first-pass loop already stops at `--`, so we
     // simply emit from `line_comment_start` to end.
     if let Some(start) = line_comment_start {
+        // If the `--` sits inside an unclosed bracket pair (the line
+        // is mid-expression — e.g. `f( -- note`), the comment is NOT
+        // a statement-trailing comment. Drop it so the splice routine
+        // (or the multi-line emitter for the enclosing construct) can
+        // place it at the correct interior position instead.
+        if line_comment_bracket_depth > 0 {
+            return None;
+        }
         let comment: String = chars[start..].iter().collect();
         return Some(comment.trim_end().to_string());
     }
@@ -1398,6 +1440,16 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
     // qualifies as a trailing block comment — its closer must be
     // followed only by whitespace (or a `--` line comment).
     let start = block_start?;
+    // Same bracket-depth guard as above: if the block comment opens
+    // inside an unclosed bracket pair on this line, it is interior
+    // (handled by `splice_inline_block_comments`), not a statement-
+    // trailing comment. Returning `Some` here would attribute the
+    // comment to the surrounding statement, which then duplicates it
+    // (the splice routine ALSO emits it from the source-token gap),
+    // producing pass-1 output that pass 2 reflows differently.
+    if block_start_bracket_depth > 0 {
+        return None;
+    }
     // Walk from `start` to find the matching close, accounting for
     // nesting. The outer scan above already tracked depth, but by that
     // point it may have discovered additional block comments later on
@@ -2365,7 +2417,17 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             lines.push(format!("{}{p_str},{trailing}", indent(depth + 1)));
             prev_line = p_line;
         }
-        let tail = take_comments_between(prev_line, params_close_line);
+        // Drain any remaining unconsumed standalone comments that live
+        // ANYWHERE between the fn's start line and the close `)`, not
+        // just after `prev_line`. This catches comments that the per-
+        // param loop couldn't attribute to any param — e.g. when
+        // `compute_param_lines` returns `None` for several params and
+        // the synthesized `prev_line + 1` fallback monotonically
+        // advances past the comment lines without ever consuming them.
+        // Without this, those comments are silently dropped on pass 1,
+        // so pass 2's `should_layout_multiline` sees no comments and
+        // reflows the params to a single line — breaking idempotency.
+        let tail = take_comments_between(fn_start_line, params_close_line);
         for c in &tail {
             lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
         }

@@ -836,3 +836,142 @@ fn test_two_fns_with_triple_string_braces_preserves_interior_comments_idempotent
         "second comment must stay inside second fn body:\n{formatted}"
     );
 }
+
+// ── Bug 1: multi-line block comment with code on closing `-}` line ──
+//
+// Source shape:
+//   fn s() {
+//     {-
+//     -} p
+//   }
+//
+// `extract_comments` walks the multi-line `{- ... -}` and on the closer
+// line (`-} p`) saw real code following the closer (`p`). With the old
+// `if found_end || depth == 0` guard, the entire block (which textually
+// included `p`) was pushed as a standalone comment AND `p` was emitted
+// as code by the AST walker — so pass 1 produced both a `{-\n  -} p`
+// comment line AND a separate `  p` statement line. Pass 2 saw the
+// emitted standalone comment as new source, attributed `p` again, and
+// the dup grew with each pass. Fix: only push the comment when the
+// closer is whitespace-terminated; otherwise let
+// `splice_inline_block_comments` re-insert the block comment text in
+// the gap before the next AST token.
+#[test]
+fn test_multiline_block_comment_closer_with_code_idempotent() {
+    let source = "fn s() {\n  {-\n  -} p\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    // The identifier `p` must appear exactly once in the body — not duplicated.
+    let p_count = formatted
+        .lines()
+        .filter(|l| l.trim_start().trim_end_matches(',') == "p" || l.contains("-} p"))
+        .count();
+    assert_eq!(
+        p_count, 1,
+        "identifier p must appear exactly once, formatted:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_multiline_block_comment_closer_with_let_idempotent() {
+    let source = "fn s() {\n  {-\n  -} let a = 1\n  let b = 2\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_multiline_block_comment_closer_inline_idempotent() {
+    let source = "fn s() {\n  {- multi\n  line -} p\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_multiline_block_comment_compact_close_with_code_idempotent() {
+    // The verbatim shape from the prior agent's report.
+    let source = "fn s(){{-\n-}p}";
+    assert_idempotent(source);
+}
+
+// ── Bug 2: comment after open `(` falsely attributed as call-trailing ──
+//
+// Source shape:
+//   fn main() {
+//     f({-c1-}
+//       a, -- c2
+//     )
+//   }
+//
+// `extract_trailing_comment_from_line` saw `f({-c1-}` and decided
+// `{-c1-}` was a trailing block comment of the call STATEMENT (because
+// only whitespace followed the `-}` on the same line). The call was
+// also rendered multi-line because of `-- c2`, so the splice routine
+// independently re-inserted `{-c1-}` between the opening `(` and the
+// first arg as a leading-inline annotation. Result: pass 1 emitted the
+// comment in BOTH positions (`f(\n  {-c1-} a, ...) {-c1-}`), and pass
+// 2 reinterpreted the post-`)` copy at yet another offset, breaking
+// idempotency.
+//
+// Fix: track bracket-pair depth in
+// `extract_trailing_comment_from_line` and refuse to emit a trailing
+// comment whose `--` or `{-` opens inside an unclosed bracket pair —
+// such comments belong to a multi-line interior position, handled by
+// `splice_inline_block_comments` (or the multi-line emitter for the
+// surrounding construct).
+#[test]
+fn test_block_comment_after_open_paren_idempotent() {
+    let source = "fn main() {\n  f({-c1-}\n    a, -- c2\n  )\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    // `{-c1-}` must appear exactly once in the formatted output.
+    let occurrences = formatted.matches("{-c1-}").count();
+    assert_eq!(
+        occurrences, 1,
+        "block comment must not be duplicated, formatted:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_line_comment_after_open_paren_idempotent() {
+    // The `-- c1` after `f(` must NOT be attached to the call as a
+    // trailing comment; it belongs inside the multi-line layout.
+    let source = "fn main() {\n  f( -- c1\n    a, -- c2\n  )\n}\n";
+    assert_idempotent(source);
+}
+
+// ── Bug 2 (fuzzer crash variant): comments inside fn-param region get
+// dropped when `compute_param_lines` cannot resolve per-param lines ──
+//
+// The fuzzer found a malformed input with multi-line params separated
+// by whitespace (no commas), several `--` line comments inside the
+// param region, and degenerate non-printable bytes. The lexer parsed
+// the whitespace-separated idents as 7 params; the param-region
+// comment lines triggered `should_layout_multiline = true`. But
+// `compute_param_lines` could only resolve the FIRST param's source
+// line (the only `,` it saw was inside a `--` comment, which it
+// correctly skipped); the rest fell back to a synthesized `prev_line +
+// 1` sequence that monotonically advanced past every comment line
+// without ever calling `take_comments_between` with a range that
+// contained one. Result: pass 1 emitted multi-line params with the
+// comments silently dropped; pass 2 saw no comments → single-line.
+//
+// Fix: drain ALL unconsumed standalone comments between the fn's start
+// line and the params' close line at the end of the multi-line param
+// emission, instead of only between `prev_line` (the last param's
+// resolved line) and the close. The per-param loop still consumes
+// well-attributed comments at their natural position; this catch-all
+// just ensures stragglers are emitted (at the end of the param list)
+// so subsequent passes still see them.
+#[test]
+fn test_fn_params_unresolved_lines_preserve_comments_idempotent() {
+    // Minimal hand-crafted variant: 3 idents on separate source lines
+    // with no commas, plus a comment line between them. The parser
+    // lenient-parses the idents as 3 params; the comment line forces
+    // multi-line layout; without the fix the comment is dropped on
+    // pass 1.
+    let source = "fn man(a\nb\n-- C\nc\n) {}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    assert!(
+        formatted.contains("-- C"),
+        "comment in unresolved-param region must survive:\n{formatted}"
+    );
+}
