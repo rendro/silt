@@ -1523,6 +1523,143 @@ fn stmt_start_line(stmt: &Stmt) -> usize {
     }
 }
 
+/// Walk an expression and every nested sub-expression, returning the
+/// MAXIMUM 1-based source line that any node touches. Used by
+/// `format_stmts_with_comments` to partition standalone comments
+/// between statements.
+///
+/// The natural approach of attributing every comment whose line is less
+/// than the next statement's start line to that next statement breaks
+/// when the previous statement's expression spans multiple source lines
+/// (e.g. a binary-op RHS that lives several lines below the operator,
+/// because intervening lines were skipped by the lexer as `--` comments
+/// or blanks). In that case a comment that lives BETWEEN the operator
+/// line and the RHS line is INSIDE the previous expression, but a
+/// `start_line < next_stmt_line` check would attribute it to the next
+/// statement — and the same source then re-formats to a different shape
+/// because the parse tree (and thus statement boundaries) shift between
+/// passes. The fix is to compute the previous statement's `expr_max_line`
+/// recursively and only consider comments STRICTLY AFTER that line as
+/// candidates for the next statement.
+fn expr_max_line(expr: &Expr) -> usize {
+    let mut max = expr.span.line;
+    let mut visit = |e: &Expr| {
+        let m = expr_max_line(e);
+        if m > max {
+            max = m;
+        }
+    };
+    match &expr.kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::StringLit(..)
+        | ExprKind::Ident(_)
+        | ExprKind::Unit
+        | ExprKind::Recur(_) => {}
+        ExprKind::StringInterp(parts) => {
+            for p in parts {
+                if let StringPart::Expr(e) = p {
+                    visit(e);
+                }
+            }
+        }
+        ExprKind::List(elems) => {
+            for el in elems {
+                match el {
+                    ListElem::Single(e) | ListElem::Spread(e) => visit(e),
+                }
+            }
+        }
+        ExprKind::Map(pairs) => {
+            for (k, v) in pairs {
+                visit(k);
+                visit(v);
+            }
+        }
+        ExprKind::SetLit(elems) | ExprKind::Tuple(elems) => {
+            for e in elems {
+                visit(e);
+            }
+        }
+        ExprKind::FieldAccess(e, _) => visit(e),
+        ExprKind::Binary(l, _, r) => {
+            visit(l);
+            visit(r);
+        }
+        ExprKind::Unary(_, e) | ExprKind::QuestionMark(e) | ExprKind::Ascription(e, _) => visit(e),
+        ExprKind::Pipe(l, r) | ExprKind::Range(l, r) | ExprKind::FloatElse(l, r) => {
+            visit(l);
+            visit(r);
+        }
+        ExprKind::Call(callee, args) => {
+            visit(callee);
+            for a in args {
+                visit(a);
+            }
+        }
+        ExprKind::Lambda { body, .. } => visit(body),
+        ExprKind::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                visit(v);
+            }
+        }
+        ExprKind::RecordUpdate { expr, fields } => {
+            visit(expr);
+            for (_, v) in fields {
+                visit(v);
+            }
+        }
+        ExprKind::Match { expr, arms } => {
+            if let Some(e) = expr.as_deref() {
+                visit(e);
+            }
+            for a in arms {
+                if let Some(g) = a.guard.as_deref() {
+                    visit(g);
+                }
+                visit(&a.body);
+            }
+        }
+        ExprKind::Return(opt) => {
+            if let Some(e) = opt.as_deref() {
+                visit(e);
+            }
+        }
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                let m = stmt_end_line(s);
+                if m > max {
+                    max = m;
+                }
+            }
+        }
+        ExprKind::Loop { bindings, body } => {
+            for (_, e) in bindings {
+                visit(e);
+            }
+            visit(body);
+        }
+    }
+    max
+}
+
+/// Maximum 1-based source line touched by any sub-expression of a
+/// statement. See `expr_max_line` for the rationale.
+fn stmt_end_line(stmt: &Stmt) -> usize {
+    match stmt {
+        Stmt::Let { value, .. } => expr_max_line(value),
+        Stmt::Expr(expr) => expr_max_line(expr),
+        Stmt::When {
+            expr, else_body, ..
+        } => expr_max_line(expr).max(expr_max_line(else_body)),
+        Stmt::WhenBool {
+            condition,
+            else_body,
+        } => expr_max_line(condition).max(expr_max_line(else_body)),
+    }
+}
+
 /// Find 1-based line numbers of top-level `import` statements in source.
 fn find_import_lines(source: &str) -> Vec<usize> {
     let mut result = Vec::new();
@@ -2568,15 +2705,31 @@ fn format_body(expr: &Expr, depth: usize) -> String {
 fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, block_close_line: usize) -> String {
     let mut result = Vec::new();
 
-    let mut last_stmt_line = 0usize;
+    // `prev_end_line` tracks the MAX source line touched by the previous
+    // statement's expression tree, NOT just its start line. A statement's
+    // expression can extend several lines below its start when the lexer
+    // skips intervening blank/comment lines as token-separators (e.g. a
+    // binary `%` whose RHS lives three lines below the operator). Without
+    // this, a standalone comment that sits BETWEEN the operator line and
+    // the RHS line would be attributed to the *next* statement here and
+    // emitted as a leading separator before it. The next pass re-parses
+    // its own output, the boundaries of "previous expression" shift
+    // because the comment's line is now <= the new previous-stmt's max
+    // line, and the comment moves — breaking idempotency. By comparing
+    // against the previous statement's `expr_max_line`, comments that
+    // fall inside an expression's source span are skipped here and stay
+    // wherever the expression formatter chose to emit them (typically
+    // collapsed onto a single output line).
+    let mut prev_end_line = 0usize;
     for stmt in stmts {
         let stmt_line = stmt_start_line(stmt);
 
-        // Emit any unconsumed standalone comments whose source line is
-        // before this statement. The consumption flags ensure we don't
-        // re-emit comments that were already consumed by a nested block
-        // during a previous iteration.
-        let pre = take_comments_before(stmt_line);
+        // Emit unconsumed standalone comments that sit between the
+        // previous statement's last source line and this statement's
+        // start. For the first statement, `prev_end_line == 0` so this
+        // picks up every comment before this stmt's start line — same as
+        // the original `take_comments_before(stmt_line)` behaviour.
+        let pre = take_comments_between(prev_end_line, stmt_line);
         for c in &pre {
             result.push(format!("{}{}", indent(depth), c.text.trim()));
         }
@@ -2600,12 +2753,28 @@ fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, block_close_line: us
             formatted.push_str(&tc);
         }
         result.push(formatted);
-        last_stmt_line = stmt_line;
+        let end_line = stmt_end_line(stmt).max(stmt_line);
+        // Drain any standalone comments that lived STRICTLY INSIDE this
+        // statement's source span (between its start line and its last
+        // touched line). Such comments appear in source between an
+        // expression's operator and a continuation line — the formatter
+        // collapses the expression onto one output line, so the comment
+        // has nowhere natural to live and we emit it as a standalone
+        // separator immediately after the statement. Without this drain
+        // those comments would be silently dropped, OR would migrate to
+        // the next statement on a later pass when the parser re-frames
+        // the expression boundary (the original bug class).
+        let interior = take_comments_between(stmt_line, end_line + 1);
+        for c in &interior {
+            result.push(format!("{}{}", indent(depth), c.text.trim()));
+        }
+        prev_end_line = end_line;
     }
 
     // Emit any remaining comments that sit between the last statement's
-    // source line and the closing brace of the enclosing block.
-    let tail = take_comments_between(last_stmt_line, block_close_line);
+    // last touched source line and the closing brace of the enclosing
+    // block.
+    let tail = take_comments_between(prev_end_line, block_close_line);
     for c in &tail {
         result.push(format!("{}{}", indent(depth), c.text.trim()));
     }
@@ -3413,6 +3582,13 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 inner
             };
             match op {
+                // Insert a space before a leading `-` so that `--x`
+                // (Unary(Neg, Unary(Neg, x)) or Unary(Neg, Sub(...)) where
+                // the inner formatted text begins with `-`) does not
+                // re-lex as a `--` line comment, which would silently
+                // truncate the rest of the expression. Mirror the same
+                // guard for `!` against an inner `!`.
+                UnaryOp::Neg if wrapped.starts_with('-') => format!("- {wrapped}"),
                 UnaryOp::Neg => format!("-{wrapped}"),
                 UnaryOp::Not => format!("!{wrapped}"),
             }

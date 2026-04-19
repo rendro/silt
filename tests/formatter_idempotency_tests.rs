@@ -975,3 +975,107 @@ fn test_fn_params_unresolved_lines_preserve_comments_idempotent() {
         "comment in unresolved-param region must survive:\n{formatted}"
     );
 }
+
+// ── Round 31: comment-attachment-to-statement reorder ────────────────
+//
+// Fuzz repro at fuzz/corpus/fuzz_formatter/round-call-arg-wrap-followup.silt
+// (166 bytes). Two cooperating bugs:
+//
+// 1. `format_expr_inner`'s `Unary(Neg, _)` arm emitted `-{wrapped}` with
+//    no space, so an AST node like `Unary(Neg, Unary(Neg, x))` formatted
+//    to `--x`. The lexer treats `--` as a line-comment opener, so the
+//    output truncated the rest of the expression on re-parse and the
+//    next-statement-start collapsed onto the operator's RHS, changing
+//    statement boundaries between passes.
+//
+// 2. `format_stmts_with_comments` partitioned standalone comments using
+//    each statement's *start* line. When a binary operator's RHS lived
+//    several lines below the operator (because the lexer skipped
+//    intervening blank/comment lines), a standalone comment between the
+//    operator line and the RHS line was attributed to the *next*
+//    statement here. After the parser-frame shifted on a subsequent
+//    pass, the same comment landed on a different statement, producing
+//    a reorder. The fix tracks the previous statement's *end* line
+//    (max line touched by any sub-expression) and drains interior
+//    comments after the statement they live inside.
+
+#[test]
+fn test_inner_block_comment_between_statements_idempotent() {
+    // Hand-minimized repro: an expression whose RHS is forced onto a
+    // later line by a `--` comment between operator and operand. The
+    // pre-fix formatter emitted `a % - -b` as `a % --b` (lex-changing!)
+    // which then bound `c` as the missing RHS on pass 2.
+    let source = "fn main() {\n  a %\n  -\n  -b\n  -- comment\n  c\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_unary_neg_of_neg_does_not_lex_as_comment_idempotent() {
+    // Direct test of fix #1: `-(-x)` and `- -x` must format to text
+    // that re-lexes as two unary minuses, not as a `--` comment.
+    let sources = [
+        "fn main() {\n  let x = -(-5)\n}\n",
+        "fn main() {\n  let x = - -5\n}\n",
+        "fn main() {\n  let x = -(-(-5))\n}\n",
+        "fn main() {\n  let x = -(0 - 5)\n}\n",
+    ];
+    for s in &sources {
+        assert_idempotent(s);
+        let formatted = format(s).unwrap();
+        // The double-negation must NOT collapse to `--` (a comment opener).
+        assert!(
+            !formatted.contains("--"),
+            "double-negation must not lex as a `--` comment:\n{formatted}"
+        );
+    }
+}
+
+#[test]
+fn test_comment_inside_expression_span_idempotent() {
+    // A `+` whose RHS is on a line below the operator, with a standalone
+    // comment between. Pre-fix the comment was attached to the *next*
+    // statement; the structure stayed stable here only because no `--`
+    // ambiguity was present, but the regression test pins down the
+    // correct attribution: comments inside an expression's source span
+    // are emitted right after that expression's collapsed line.
+    let source = "fn main() {\n  a +\n  -- middle\n  b\n  c\n}\n";
+    assert_idempotent(source);
+    let formatted = format(source).unwrap();
+    // Comment must survive. Its exact placement (between `a + b` and
+    // `c`) is incidental — the load-bearing assertion is idempotency
+    // plus survival.
+    assert!(
+        formatted.contains("-- middle"),
+        "interior comment must survive:\n{formatted}"
+    );
+}
+
+#[test]
+fn test_comment_at_start_of_block_idempotent() {
+    let source = "fn main() {\n  -- header\n  a\n  b\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_comment_at_end_of_block_idempotent() {
+    let source = "fn main() {\n  a\n  b\n  -- footer\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_multiple_comments_between_statements_idempotent() {
+    let source = "fn main() {\n  a\n  -- c1\n  -- c2\n  b\n  -- c3\n  c\n}\n";
+    assert_idempotent(source);
+}
+
+#[test]
+fn test_fuzz_repro_round_call_arg_wrap_followup_idempotent() {
+    // Verbatim 166-byte input from
+    // fuzz/corpus/fuzz_formatter/round-call-arg-wrap-followup.silt.
+    // The original input contains NUL bytes inside `--:` line comments
+    // — the lexer tolerates them as comment content. Use a byte literal
+    // to preserve them exactly.
+    let source_bytes: &[u8] = b"fn anic() {\n--:\x00\x00 wodc listanic() {\n--:\x00\x00 wodc list\n-henath%\n\n-- Trait simorpt litsim() {\n-\n-pcmi- omrpimpowheh-tn-\na\n Traiz s\n-- BFn?-- Hy dent,\n-- coim() {\n--:\x00n\n}\n";
+    let source = std::str::from_utf8(source_bytes).expect("corpus is utf-8 with embedded NULs");
+    assert_idempotent(source);
+}
