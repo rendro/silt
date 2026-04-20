@@ -325,12 +325,8 @@ impl fmt::Display for SourceError {
             } else {
                 0
             };
-            // Build spacing to align caret under the error position
-            let spacing: String = src_line
-                .chars()
-                .take(col)
-                .map(|ch| if ch == '\t' { '\t' } else { ' ' })
-                .collect();
+            // Build spacing to align caret under the error position.
+            let spacing: String = caret_spacing(src_line, col);
 
             // If `self.message` is a multi-line blob (e.g. a
             // module-import error that already embeds a nested
@@ -419,6 +415,34 @@ fn line_num_width(n: usize) -> usize {
         return 1;
     }
     ((n as f64).log10().floor() as usize) + 1
+}
+
+/// Build the padding string used to align a diagnostic caret under the
+/// `col`-th char of `src_line` (0-based). Emits one space per display
+/// cell rather than one space per `char`, so CJK / emoji / other
+/// double-wide characters don't push the caret to the left of its
+/// intended column. Tabs are passed through verbatim so the downstream
+/// terminal expands them using its own tab-stop settings (matching the
+/// rendered source line above the caret). Fall back to width 1 for
+/// chars with no defined Unicode width (e.g. unassigned / control).
+///
+/// Exposed at `pub(crate)` so `compiler::format_module_source_error`
+/// can share the same alignment logic, and so `tests/caret_width_tests.rs`
+/// can exercise it directly. Lock: tests/caret_width_tests.rs.
+pub(crate) fn caret_spacing(src_line: &str, col: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    let mut out = String::new();
+    for ch in src_line.chars().take(col) {
+        if ch == '\t' {
+            out.push('\t');
+        } else {
+            let w = UnicodeWidthChar::width(ch).unwrap_or(1);
+            for _ in 0..w {
+                out.push(' ');
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

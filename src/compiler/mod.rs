@@ -201,11 +201,11 @@ fn format_module_source_error(
             0
         };
         // Preserve tabs so the caret lines up with the actual char.
-        let caret_spacing: String = src_line
-            .chars()
-            .take(col)
-            .map(|ch| if ch == '\t' { '\t' } else { ' ' })
-            .collect();
+        // Use the shared helper from `errors.rs` so CJK / emoji /
+        // other double-wide chars get one space per display cell
+        // (not one per `char`), keeping this site symmetric with
+        // `SourceError::Display`.
+        let caret_spacing: String = crate::errors::caret_spacing(src_line, col);
 
         out.push_str(&format!(
             "\n --> {file_path}:{line}:{col}",

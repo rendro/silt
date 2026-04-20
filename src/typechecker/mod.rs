@@ -3068,55 +3068,69 @@ pub fn __trait_init_fingerprint_repl() -> (
 
 // ── Tests ───────────────────────────────────────────────────────────
 
+/// Shared test helpers used by every submodule test suite in
+/// `typechecker/`. Before the round-N dedupe, four near-identical
+/// copies of `assert_no_errors` / `assert_has_error` / `check_errors`
+/// lived in `mod.rs`, `inference.rs`, `exhaustiveness.rs`,
+/// `resolve.rs`, and `builtins.rs` (~128 lines of duplication).
+///
+/// why: we picked the most-general signatures across those copies.
+///   - `assert_has_error(input, expected)` — shortest param name
+///     used in 3 of 4 copies; mod.rs used `expected_substring` but
+///     the body is byte-identical.
+///   - `check_errors` inlines `parse()` + `check()` (the mod.rs
+///     copy split them into two helpers; the split had no external
+///     callers, so we collapsed it).
+///   - Panic messages are preserved in the dominant form
+///     ("expected no type errors" / "expected error containing").
 #[cfg(test)]
-mod tests {
+pub(super) mod test_helpers {
     use super::*;
-    use crate::lexer::Lexer;
-    use crate::parser::Parser;
 
-    fn parse(input: &str) -> Program {
-        let tokens = Lexer::new(input).tokenize().expect("lexer error");
-        Parser::new(tokens).parse_program().expect("parse error")
-    }
-
-    fn check_errors(input: &str) -> Vec<TypeError> {
-        let mut program = parse(input);
+    pub(super) fn check_errors(input: &str) -> Vec<TypeError> {
+        let tokens = crate::lexer::Lexer::new(input)
+            .tokenize()
+            .expect("lexer error");
+        let mut program = crate::parser::Parser::new(tokens)
+            .parse_program()
+            .expect("parse error");
         check(&mut program)
     }
 
-    fn check_program(input: &str) -> Vec<TypeError> {
+    pub(super) fn check_program(input: &str) -> Vec<TypeError> {
         check_errors(input)
     }
 
-    fn assert_no_errors(input: &str) {
-        let errors = check_program(input);
-        let hard_errors: Vec<_> = errors
+    pub(super) fn assert_no_errors(input: &str) {
+        let errors = check_errors(input);
+        let hard: Vec<_> = errors
             .iter()
             .filter(|e| e.severity == Severity::Error)
             .collect();
-        if !hard_errors.is_empty() {
-            panic!(
-                "expected no type errors, got:\n{}",
-                hard_errors
-                    .iter()
-                    .map(|e| format!("  {e}"))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-        }
+        assert!(
+            hard.is_empty(),
+            "expected no type errors, got:\n{}",
+            hard.iter()
+                .map(|e| format!("  {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
-    fn assert_has_error(input: &str, expected_substring: &str) {
-        let errors = check_program(input);
+    pub(super) fn assert_has_error(input: &str, expected: &str) {
+        let errors = check_errors(input);
         assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains(expected_substring)),
-            "expected an error containing '{}', got: {:?}",
-            expected_substring,
+            errors.iter().any(|e| e.message.contains(expected)),
+            "expected error containing '{expected}', got: {:?}",
             errors.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_helpers::*;
+    use super::*;
 
     // ── Basic type inference ────────────────────────────────────────
 

@@ -540,43 +540,8 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::*;
     use super::super::*;
-
-    fn check_errors(input: &str) -> Vec<TypeError> {
-        let tokens = crate::lexer::Lexer::new(input)
-            .tokenize()
-            .expect("lexer error");
-        let mut program = crate::parser::Parser::new(tokens)
-            .parse_program()
-            .expect("parse error");
-        check(&mut program)
-    }
-
-    fn assert_no_errors(input: &str) {
-        let errors = check_errors(input);
-        let hard: Vec<_> = errors
-            .iter()
-            .filter(|e| e.severity == Severity::Error)
-            .collect();
-        assert!(
-            hard.is_empty(),
-            "expected no type errors, got:\n{}",
-            hard.iter()
-                .map(|e| format!("  {e}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
-
-    #[allow(dead_code)]
-    fn assert_has_error(input: &str, expected: &str) {
-        let errors = check_errors(input);
-        assert!(
-            errors.iter().any(|e| e.message.contains(expected)),
-            "expected error containing '{expected}', got: {:?}",
-            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
-        );
-    }
 
     // ── is_bare_type_var ────────────────────────────────────────────
 

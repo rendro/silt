@@ -218,3 +218,88 @@ fn colors_dim_field_stays_deleted() {
         "Colors.dim ON-initializer was deleted — don't resurrect without a reader"
     );
 }
+
+// ── Typechecker test-helper trio is defined once ──────────────────
+//
+// Before the dedupe, `assert_no_errors` / `assert_has_error` /
+// `check_errors` were copy-pasted into five typechecker submodules
+// (`mod.rs`, `inference.rs`, `exhaustiveness.rs`, `resolve.rs`,
+// `builtins.rs`) — ~128 lines of textual duplication, and the
+// `resolve.rs` copy of `assert_has_error` had zero callers at time
+// of cleanup (0-caller canary, tagged `#[allow(dead_code)]`).
+//
+// The helpers now live in a single `#[cfg(test)] pub(super) mod
+// test_helpers` submodule in `src/typechecker/mod.rs`. Each test
+// suite pulls them in via `use super::super::test_helpers::*;`.
+// These locks make the consolidation stick: if someone adds a
+// second copy of any helper (even "just for one test"), the grep
+// count ticks past 1 and the lock fires.
+
+fn count_fn_defs_in_typechecker(needle: &str) -> usize {
+    // Read every `.rs` file under src/typechecker/ and count how
+    // many declare `fn <needle>(`. We avoid walkdir to keep the
+    // test dep-free; this list is the exact set of files touched
+    // by the dedupe.
+    let files: [&str; 5] = [
+        include_str!("../src/typechecker/mod.rs"),
+        include_str!("../src/typechecker/inference.rs"),
+        include_str!("../src/typechecker/exhaustiveness.rs"),
+        include_str!("../src/typechecker/resolve.rs"),
+        include_str!("../src/typechecker/builtins.rs"),
+    ];
+    files
+        .iter()
+        .map(|src| src.matches(needle).count())
+        .sum()
+}
+
+#[test]
+fn typechecker_assert_no_errors_helper_is_defined_once() {
+    let count = count_fn_defs_in_typechecker("fn assert_no_errors");
+    assert_eq!(
+        count, 1,
+        "expected exactly 1 definition of `fn assert_no_errors` across \
+         src/typechecker/ (the shared test_helpers copy), found {count}. \
+         If you re-added a local copy, delete it and use \
+         `super::super::test_helpers::*` instead."
+    );
+}
+
+#[test]
+fn typechecker_assert_has_error_helper_is_defined_once() {
+    let count = count_fn_defs_in_typechecker("fn assert_has_error");
+    assert_eq!(
+        count, 1,
+        "expected exactly 1 definition of `fn assert_has_error` across \
+         src/typechecker/ (the shared test_helpers copy), found {count}. \
+         If you re-added a local copy, delete it and use \
+         `super::super::test_helpers::*` instead."
+    );
+}
+
+#[test]
+fn typechecker_check_errors_helper_is_defined_once() {
+    let count = count_fn_defs_in_typechecker("fn check_errors");
+    assert_eq!(
+        count, 1,
+        "expected exactly 1 definition of `fn check_errors` across \
+         src/typechecker/ (the shared test_helpers copy), found {count}. \
+         If you re-added a local copy, delete it and use \
+         `super::super::test_helpers::*` instead."
+    );
+}
+
+#[test]
+fn typechecker_test_helpers_submodule_exists() {
+    // Positive lock: the shared module must actually exist in
+    // mod.rs so the `use super::super::test_helpers::*;` lines in
+    // sibling test modules can resolve. If this disappears, the
+    // dedupe has been silently reverted.
+    assert!(
+        TYPECHECKER_MOD_RS.contains("pub(super) mod test_helpers"),
+        "the shared `test_helpers` submodule in src/typechecker/mod.rs \
+         is the single source of truth for the typechecker test-helper \
+         trio — don't delete it without porting the helpers somewhere \
+         else AND updating the three count-locks above"
+    );
+}
