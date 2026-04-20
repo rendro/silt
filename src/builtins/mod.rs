@@ -8,7 +8,9 @@ pub mod bytes;
 pub mod collections;
 pub mod concurrency;
 pub mod core;
+pub mod crypto;
 pub mod data;
+pub mod encoding;
 pub mod io;
 pub mod numeric;
 #[cfg(feature = "postgres")]

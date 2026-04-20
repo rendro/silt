@@ -27,6 +27,8 @@ This document has been split into per-module pages. See the **[Standard Library 
 | time | [time](stdlib/time.md) |
 | http | [http](stdlib/http.md) |
 | bytes | [bytes](stdlib/bytes.md) |
+| crypto | [crypto](stdlib/crypto.md) |
+| encoding | [encoding](stdlib/encoding.md) |
 | tcp | [tcp](stdlib/tcp.md) |
 | stream | [stream](stdlib/stream.md) |
 | postgres | [postgres](stdlib/postgres.md) |

@@ -281,6 +281,14 @@ impl Vm {
                     "bytes",
                     AssertUnwindSafe(|| builtins::bytes::call(self, func, args)),
                 ),
+                "crypto" => catch_builtin_panic(
+                    "crypto",
+                    AssertUnwindSafe(|| builtins::crypto::call(self, func, args)),
+                ),
+                "encoding" => catch_builtin_panic(
+                    "encoding",
+                    AssertUnwindSafe(|| builtins::encoding::call(self, func, args)),
+                ),
                 "stream" => catch_builtin_panic(
                     "stream",
                     AssertUnwindSafe(|| builtins::stream::call(self, func, args)),

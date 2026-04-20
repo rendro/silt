@@ -15,6 +15,8 @@ use super::*;
 
 mod bytes;
 mod channel;
+mod crypto;
+mod encoding;
 mod env;
 mod float;
 mod fs;
@@ -646,6 +648,8 @@ impl TypeChecker {
         self.register_http_builtins(env);
         self.register_postgres_builtins(env);
         self.register_bytes_builtins(env);
+        self.register_crypto_builtins(env);
+        self.register_encoding_builtins(env);
         #[cfg(feature = "tcp")]
         self.register_tcp_builtins(env);
         self.register_stream_builtins(env);
@@ -721,6 +725,14 @@ impl TypeChecker {
 
     fn register_bytes_builtins(&mut self, env: &mut TypeEnv) {
         bytes::register(self, env);
+    }
+
+    fn register_crypto_builtins(&mut self, env: &mut TypeEnv) {
+        crypto::register(self, env);
+    }
+
+    fn register_encoding_builtins(&mut self, env: &mut TypeEnv) {
+        encoding::register(self, env);
     }
 
     #[cfg(feature = "tcp")]
