@@ -22,6 +22,7 @@ This document has been split into per-module pages. See the **[Standard Library 
 | test | [test](stdlib/test.md) |
 | regex | [regex](stdlib/regex.md) |
 | json | [json](stdlib/json.md) |
+| toml | [toml](stdlib/toml.md) |
 | math | [math](stdlib/math.md) |
 | channel / task | [channel-task](stdlib/channel-task.md) |
 | time | [time](stdlib/time.md) |

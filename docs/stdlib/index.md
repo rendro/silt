@@ -23,6 +23,7 @@ Complete API reference for every built-in function in silt.
 | [test](test.md) | Assertions for test scripts |
 | [regex](regex.md) | Match, find, split, replace, and capture with regular expressions |
 | [json](json.md) | Parse JSON into typed records/maps, serialize values to JSON |
+| [toml](toml.md) | Parse TOML into typed records/maps, serialize values to TOML |
 | [math](math.md) | Trigonometry, logarithms, exponentiation, random, and constants |
 | [channel / task](channel-task.md) | Bounded channels for concurrent task communication, spawn and join tasks |
 | [time](time.md) | Dates, times, instants, durations, formatting, parsing, and arithmetic |

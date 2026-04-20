@@ -326,6 +326,10 @@ impl Vm {
                     "json",
                     AssertUnwindSafe(|| builtins::data::call_json(self, func, args)),
                 ),
+                "toml" => catch_builtin_panic(
+                    "toml",
+                    AssertUnwindSafe(|| builtins::toml::call(self, func, args)),
+                ),
                 "channel" => catch_builtin_panic(
                     "channel",
                     AssertUnwindSafe(|| builtins::concurrency::call_channel(self, func, args)),

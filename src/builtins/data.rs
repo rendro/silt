@@ -426,7 +426,7 @@ pub(crate) fn extract_duration(v: &Value) -> Result<i64, VmError> {
 // ── JSON helpers ────────────────────────────────────────────────────
 
 /// Load record field info from the `__record_fields__<type>` global metadata.
-fn load_record_fields(
+pub(crate) fn load_record_fields(
     vm: &mut Vm,
     type_name: &str,
 ) -> Result<Vec<(std::string::String, FieldType)>, VmError> {

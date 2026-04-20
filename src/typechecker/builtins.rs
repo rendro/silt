@@ -36,6 +36,7 @@ mod string;
 mod tcp;
 mod test;
 mod time;
+mod toml;
 mod uuid;
 
 impl TypeChecker {
@@ -655,6 +656,7 @@ impl TypeChecker {
         #[cfg(feature = "tcp")]
         self.register_tcp_builtins(env);
         self.register_stream_builtins(env);
+        self.register_toml_builtins(env);
     }
 
     fn register_list_builtins(&mut self, env: &mut TypeEnv) {
@@ -748,6 +750,10 @@ impl TypeChecker {
 
     fn register_stream_builtins(&mut self, env: &mut TypeEnv) {
         stream::register(self, env);
+    }
+
+    fn register_toml_builtins(&mut self, env: &mut TypeEnv) {
+        toml::register(self, env);
     }
 }
 

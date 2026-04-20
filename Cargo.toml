@@ -51,7 +51,7 @@ sha2 = "0.10"
 hmac = "0.12"
 getrandom = "0.2"
 percent-encoding = "2"
-toml = { version = "0.8", default-features = false, features = ["parse"] }
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 toml_edit = "0.22"
 unicode-width = "0.2"
 ureq = { version = "3", optional = true }
