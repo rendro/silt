@@ -135,6 +135,29 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
     }
 
+    // channel.recv_timeout: (Channel(a), Duration) -> Result(a, String)
+    //
+    // Blocking receive with a timeout bound. On timely send, returns `Ok(val)`;
+    // on the duration elapsing, `Err("timeout")`; on the channel closing with
+    // no more values, `Err("closed")`. A value already in the buffer / a
+    // rendezvous sender already parked wins over an expired timer.
+    {
+        let (a, av) = checker.fresh_tv();
+        let duration_ty =
+            Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+        env.define(
+            intern("channel.recv_timeout"),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::Channel(Box::new(a.clone())), duration_ty],
+                    Box::new(Type::Generic(intern("Result"), vec![a, Type::String])),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
     // channel.timeout: (Int) -> Channel(a)
     //
     // Creates a channel that automatically closes after the given number

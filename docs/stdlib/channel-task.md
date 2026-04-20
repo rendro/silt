@@ -17,6 +17,7 @@ communication between tasks spawned with `task.spawn`.
 | `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
 | `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
+| `recv_timeout` | `(Channel(a), Duration) -> Result(a, String)` | Blocking receive with a timeout |
 | `select` | `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels |
 | `send` | `(Channel, a) -> ()` | Blocking send |
 | `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
@@ -108,6 +109,48 @@ fn main() {
         Message(v) -> println(v)
         Closed -> println("done")
         _ -> ()
+    }
+}
+```
+
+
+## `channel.recv_timeout`
+
+```
+channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, String)
+```
+
+Blocking receive with a scoped timeout. Returns:
+
+- `Ok(value)` if a value is delivered within `dur`.
+- `Err("timeout")` if `dur` elapses with no value and no close.
+- `Err("closed")` if the channel is closed and has no more buffered values.
+
+A value already buffered, or a rendezvous sender already parked, wins over an
+expired timer: the non-blocking path is always tried first so readiness is not
+preempted by the timer. A `Duration` of zero gives try-receive semantics (never
+schedules a timer); negative durations are a construction error. Positive
+sub-millisecond durations are rounded up to one millisecond so the caller
+always gets at least one timer tick of wait.
+
+This uses the shared timer thread that backs `channel.timeout` and `time.sleep`
+-- no per-call OS thread. Cancelling the surrounding `task.spawn` handle
+cleans up both the channel-side waker registration and the timer registration.
+
+```silt
+import channel
+import task
+import time
+
+fn main() {
+    let ch = channel.new(0)
+    task.spawn(fn() {
+        time.sleep(time.ms(50))
+        channel.send(ch, 42)
+    })
+    match channel.recv_timeout(ch, time.ms(500)) {
+        Ok(v) -> println(v)              -- 42
+        Err(reason) -> println(reason)   -- "timeout" or "closed"
     }
 }
 ```

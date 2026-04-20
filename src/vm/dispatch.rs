@@ -289,6 +289,10 @@ impl Vm {
                     "encoding",
                     AssertUnwindSafe(|| builtins::encoding::call(self, func, args)),
                 ),
+                "uuid" => catch_builtin_panic(
+                    "uuid",
+                    AssertUnwindSafe(|| builtins::uuid::call(self, func, args)),
+                ),
                 "stream" => catch_builtin_panic(
                     "stream",
                     AssertUnwindSafe(|| builtins::stream::call(self, func, args)),

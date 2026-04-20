@@ -4,7 +4,7 @@
 pub const BUILTIN_MODULES: &[&str] = &[
     "io", "string", "int", "float", "list", "map", "result", "option", "test", "channel", "task",
     "regex", "json", "set", "math", "time", "http", "fs", "env", "postgres", "bytes", "crypto",
-    "encoding", "tcp", "stream",
+    "encoding", "tcp", "stream", "uuid",
 ];
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
@@ -217,7 +217,19 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "http" => vec!["get", "request", "serve", "serve_all", "segments"],
         "postgres" => vec!["connect", "query", "execute", "transact", "close"],
         "fs" => vec![
-            "exists", "is_file", "is_dir", "list_dir", "mkdir", "remove", "rename", "copy",
+            "exists",
+            "is_file",
+            "is_dir",
+            "is_symlink",
+            "list_dir",
+            "mkdir",
+            "remove",
+            "rename",
+            "copy",
+            "stat",
+            "walk",
+            "glob",
+            "read_link",
         ],
         "env" => vec!["get", "set"],
         "bytes" => vec![
@@ -246,6 +258,7 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
             "constant_time_eq",
         ],
         "encoding" => vec!["url_encode", "url_decode"],
+        "uuid" => vec!["v4", "v7", "parse", "nil", "is_valid"],
         "stream" => vec![
             "from_list",
             "from_range",

@@ -29,6 +29,7 @@ This document has been split into per-module pages. See the **[Standard Library 
 | bytes | [bytes](stdlib/bytes.md) |
 | crypto | [crypto](stdlib/crypto.md) |
 | encoding | [encoding](stdlib/encoding.md) |
+| uuid | [uuid](stdlib/uuid.md) |
 | tcp | [tcp](stdlib/tcp.md) |
 | stream | [stream](stdlib/stream.md) |
 | postgres | [postgres](stdlib/postgres.md) |

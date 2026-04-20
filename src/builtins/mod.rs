@@ -19,3 +19,4 @@ pub mod stream;
 pub mod string;
 #[cfg(feature = "tcp")]
 pub mod tcp;
+pub mod uuid;

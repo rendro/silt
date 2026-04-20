@@ -36,6 +36,7 @@ mod string;
 mod tcp;
 mod test;
 mod time;
+mod uuid;
 
 impl TypeChecker {
     pub(super) fn register_builtins(&mut self, env: &mut TypeEnv) {
@@ -650,6 +651,7 @@ impl TypeChecker {
         self.register_bytes_builtins(env);
         self.register_crypto_builtins(env);
         self.register_encoding_builtins(env);
+        self.register_uuid_builtins(env);
         #[cfg(feature = "tcp")]
         self.register_tcp_builtins(env);
         self.register_stream_builtins(env);
@@ -733,6 +735,10 @@ impl TypeChecker {
 
     fn register_encoding_builtins(&mut self, env: &mut TypeEnv) {
         encoding::register(self, env);
+    }
+
+    fn register_uuid_builtins(&mut self, env: &mut TypeEnv) {
+        uuid::register(self, env);
     }
 
     #[cfg(feature = "tcp")]

@@ -229,6 +229,177 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 *notified = false;
             }
         }
+        "recv_timeout" => {
+            // channel.recv_timeout(ch, dur) -> Result(a, String)
+            //
+            // Blocking receive with a scoped timeout. Semantics:
+            //
+            //   * Ok(value)       — a value was delivered within the timeout.
+            //                       (A value already buffered or a rendezvous
+            //                       sender already parked wins over an expired
+            //                       timer: try_receive is always attempted
+            //                       first, even at duration == 0.)
+            //   * Err("closed")   — the channel is closed and empty.
+            //   * Err("timeout")  — the timeout elapsed with no value and no
+            //                       close. A `ceil-to-ms` rounding is applied
+            //                       so any positive sub-ms duration waits at
+            //                       least one timer tick.
+            //
+            // Negative duration → construction error. Zero duration → try_recv
+            // semantics (no timer is scheduled).
+            //
+            // Cancellation: the inner select's per-arm `WakerRegistration`
+            // guards deregister the channel-side waker on task.cancel. The
+            // timer registration cannot be cancelled mid-flight — the timer
+            // thread fires `ch.close()` later — but the timer channel is
+            // private to this call, dropped on return, and
+            // `IoCompletion::complete` / `Channel::close` are first-writer-
+            // wins, so the stale wake is a harmless no-op.
+            //
+            // Implementation: reuse the channel.select machinery. An internal
+            // timer channel (`channel.timeout`) is built alongside the user's
+            // channel, select races the two, and the winning arm is mapped
+            // back into a `Result` variant. This keeps all the parking,
+            // wake-graph bookkeeping, and cancel-cleanup guarantees from the
+            // existing select path.
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "channel.recv_timeout takes 2 arguments (channel, duration)".into(),
+                ));
+            }
+            let Value::Channel(ch) = &args[0] else {
+                return Err(VmError::new(
+                    "channel.recv_timeout requires a channel as first argument".into(),
+                ));
+            };
+            let ch = ch.clone();
+            let dur_ns = crate::builtins::data::extract_duration(&args[1])?;
+            if dur_ns < 0 {
+                return Err(VmError::new(
+                    "channel.recv_timeout: duration must be non-negative".into(),
+                ));
+            }
+
+            // Always try non-blocking first — delivery beats timeout even at
+            // zero duration (matches the "ready value wins" corner case).
+            match ch.try_receive() {
+                TryReceiveResult::Value(val) => {
+                    return Ok(Value::Variant("Ok".into(), vec![val]));
+                }
+                TryReceiveResult::Closed => {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String("closed".into())],
+                    ));
+                }
+                TryReceiveResult::Empty => {}
+            }
+            // Zero duration on an empty channel = instant timeout.
+            if dur_ns == 0 {
+                return Ok(Value::Variant(
+                    "Err".into(),
+                    vec![Value::String("timeout".into())],
+                ));
+            }
+
+            // Ceil the nanosecond duration up to at least 1ms so any positive
+            // sub-ms request still gets a real tick of wait. The timer wheel
+            // is ms-granular.
+            let ms: u64 = {
+                let ns = dur_ns as u64;
+                ns.div_ceil(1_000_000).max(1)
+            };
+
+            // Build the private timer channel. Reuses the shared TimerManager
+            // thread — no per-call OS thread. `channel.timeout` marks the
+            // channel as pending-timer-close so the main-thread deadlock
+            // detector correctly treats a recv-timeout wait as "external
+            // wake pending".
+            let timer_id = vm.next_channel_id();
+            let timer_ch = Arc::new(Channel::new(timer_id, 1));
+            vm.runtime
+                .timer
+                .schedule(Duration::from_millis(ms), timer_ch.clone());
+
+            // Race ch vs timer_ch via a two-op select. Dropping timer_ch on
+            // return deallocates the private channel; any straggling wake
+            // from the timer thread into it becomes a no-op.
+            let ops = vec![
+                SelectOp::Receive(ch.clone()),
+                SelectOp::Receive(timer_ch.clone()),
+            ];
+            // Try non-blocking first so we don't needlessly park on a race
+            // that already resolved (e.g. the value landed between the
+            // `try_receive` above and here).
+            if let Some(val) = try_select_sweep(&ops)? {
+                return Ok(map_recv_timeout_result(val, &timer_ch));
+            }
+            if vm.is_scheduled_task {
+                let select_ops: Vec<(Arc<Channel>, SelectOpKind)> = ops
+                    .iter()
+                    .map(|op| match op {
+                        SelectOp::Receive(c) => (c.clone(), SelectOpKind::Receive),
+                        SelectOp::Send(c, _) => (c.clone(), SelectOpKind::Send),
+                    })
+                    .collect();
+                vm.block_reason = Some(BlockReason::Select(select_ops));
+                for arg in args {
+                    vm.push(arg.clone());
+                }
+                // Stash the timer channel on the stack too? No — we rebuild
+                // it from the duration on resume by calling the same code
+                // path, so the duration alone is enough. Actually, we DO
+                // re-enter this arm on resume because CallBuiltin replays
+                // its args, and the `try_receive` above will either deliver
+                // a value landed during the park (correct) or fall through
+                // to a FRESH timer + select. A stale timer from this park
+                // would already have closed timer_ch and been dropped here
+                // — it can't keep us alive. So: rely on the `try_receive`
+                // short-circuit above to observe any delivered value
+                // post-wake, and otherwise re-arm a new timer. The
+                // worst-case extra delay on resume is `ms * 1` (one
+                // additional timer tick); for a recv_timeout that just
+                // parked, that is acceptable — a task should not commonly
+                // yield out of this arm mid-wait except via cancel (which
+                // does not resume) or another VM-level yield signal
+                // (which is not expected here because select does not
+                // yield internally).
+                return Err(VmError::yield_signal());
+            }
+            // Main-thread path: drive the same select condvar loop that the
+            // `channel.select` builtin uses. Mirrors the structure there;
+            // we only differ in how we map the final Value back to a Result
+            // variant.
+            let pair = Arc::new((Mutex::new(false), Condvar::new()));
+            let mut registrations: Vec<crate::value::WakerRegistration> =
+                Vec::with_capacity(ops.len());
+            for op in &ops {
+                let pair2 = pair.clone();
+                let waker = Box::new(move || {
+                    let (lock, cvar) = &*pair2;
+                    *lock.lock() = true;
+                    cvar.notify_one();
+                });
+                match op {
+                    SelectOp::Receive(c) if !c.is_closed() => {
+                        registrations.push(c.register_recv_waker_guard(waker));
+                    }
+                    SelectOp::Receive(_) | SelectOp::Send(_, _) => {}
+                }
+            }
+            loop {
+                if let Some(val) = try_select_sweep(&ops)? {
+                    drop(registrations);
+                    return Ok(map_recv_timeout_result(val, &timer_ch));
+                }
+                let (lock, cvar) = &*pair;
+                let mut notified = lock.lock();
+                if !*notified {
+                    cvar.wait_for(&mut notified, std::time::Duration::from_secs(1));
+                }
+                *notified = false;
+            }
+        }
         "timeout" => {
             if args.len() != 1 {
                 return Err(VmError::new(
@@ -581,6 +752,52 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 }
 
 // ── Select helpers ────────────────────────────────────────────────
+
+/// Translate a `try_select_sweep` result (a `(Channel, Variant)` tuple) into
+/// the `Result(a, String)` shape expected by `channel.recv_timeout`:
+///
+///   * (timer_ch, _) → `Err("timeout")` — the timer channel fired, regardless
+///     of whether as `Message` (never sent to) or `Closed` (timer expired).
+///   * (user_ch, Message(v)) → `Ok(v)`.
+///   * (user_ch, Closed) → `Err("closed")`.
+///
+/// `tuple` is expected to be `Value::Tuple(vec![Channel, Variant])` per the
+/// shape returned by `try_select_sweep`; anything else is a programming bug.
+fn map_recv_timeout_result(tuple: Value, timer_ch: &Arc<Channel>) -> Value {
+    let Value::Tuple(parts) = tuple else {
+        debug_assert!(false, "recv_timeout: select result not a tuple");
+        return Value::Variant(
+            "Err".into(),
+            vec![Value::String("recv_timeout: internal shape error".into())],
+        );
+    };
+    let Some(Value::Channel(src)) = parts.first() else {
+        debug_assert!(false, "recv_timeout: select result missing channel");
+        return Value::Variant(
+            "Err".into(),
+            vec![Value::String("recv_timeout: internal channel error".into())],
+        );
+    };
+    if Arc::ptr_eq(src, timer_ch) {
+        return Value::Variant("Err".into(), vec![Value::String("timeout".into())]);
+    }
+    match parts.get(1) {
+        Some(Value::Variant(name, fields)) if name.as_str() == "Message" => {
+            let val = fields.first().cloned().unwrap_or(Value::Unit);
+            Value::Variant("Ok".into(), vec![val])
+        }
+        Some(Value::Variant(name, _)) if name.as_str() == "Closed" => {
+            Value::Variant("Err".into(), vec![Value::String("closed".into())])
+        }
+        _ => {
+            debug_assert!(false, "recv_timeout: unexpected select variant");
+            Value::Variant(
+                "Err".into(),
+                vec![Value::String("recv_timeout: internal variant error".into())],
+            )
+        }
+    }
+}
 
 /// A parsed select operation: receive from a channel or send to a channel.
 enum SelectOp {

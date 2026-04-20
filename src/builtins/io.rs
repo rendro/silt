@@ -1,9 +1,30 @@
 //! IO and filesystem builtin functions (`io.*`, `fs.*`).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use crate::value::Value;
 use crate::vm::{BlockReason, Vm, VmError};
+
+/// Maximum number of entries that may be materialized into a single
+/// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
+/// `MAX_RANGE_MATERIALIZE` in `src/value.rs`: keep recursive traversal
+/// bounded so a sprawling filesystem (or an accidental symlink cycle that
+/// the `glob` crate follows) cannot silently OOM the VM. Hitting the cap
+/// surfaces as `Err("fs.walk: exceeded N entries (cap)")` so users can
+/// paginate or narrow their root instead of getting a crash.
+const MAX_FS_WALK_ENTRIES: usize = 1_000_000;
+
+/// Make an `Err(String)` variant value.
+fn fs_err<S: Into<String>>(msg: S) -> Value {
+    Value::Variant("Err".into(), vec![Value::String(msg.into())])
+}
+
+/// Make an `Ok(inner)` variant value.
+fn fs_ok(inner: Value) -> Value {
+    Value::Variant("Ok".into(), vec![inner])
+}
 
 /// Dispatch `io.<name>(args)`.
 pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
@@ -276,6 +297,146 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     "Err".into(),
                     vec![Value::String(e.to_string())],
                 )),
+            }
+        }
+        "stat" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.stat takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.stat requires a string path".into()));
+            };
+            // Use symlink_metadata so the returned stat describes the path
+            // itself (and `is_symlink` reflects that), rather than the
+            // target's metadata. Users who want the target's metadata can
+            // call `fs.read_link` then `fs.stat` on the result.
+            match std::fs::symlink_metadata(path) {
+                Ok(md) => {
+                    let ft = md.file_type();
+                    let is_symlink = ft.is_symlink();
+                    // When the entry is a symlink, symlink_metadata reports
+                    // is_file=false / is_dir=false. Surface that directly so
+                    // callers can see "this is a symlink, neither file nor
+                    // dir" without a follow step.
+                    let is_file = md.is_file();
+                    let is_dir = md.is_dir();
+                    // modified() can fail on platforms that don't track mtime
+                    // (rare, but the API requires us to handle it). Fall back
+                    // to 0 in that case rather than fail the whole stat call.
+                    let modified = md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let readonly = md.permissions().readonly();
+                    let mut fields: BTreeMap<String, Value> = BTreeMap::new();
+                    fields.insert("size".into(), Value::Int(md.len() as i64));
+                    fields.insert("is_file".into(), Value::Bool(is_file));
+                    fields.insert("is_dir".into(), Value::Bool(is_dir));
+                    fields.insert("is_symlink".into(), Value::Bool(is_symlink));
+                    fields.insert("modified".into(), Value::Int(modified));
+                    fields.insert("readonly".into(), Value::Bool(readonly));
+                    let rec = Value::Record("FileStat".into(), Arc::new(fields));
+                    Ok(fs_ok(rec))
+                }
+                Err(e) => Ok(fs_err(e.to_string())),
+            }
+        }
+        "is_symlink" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.is_symlink takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.is_symlink requires a string path".into()));
+            };
+            // Must use symlink_metadata here: `Path::is_symlink` would do
+            // the same thing, but std has made it stable only recently.
+            // Using symlink_metadata avoids a version-gate and is explicit.
+            let b = std::fs::symlink_metadata(path)
+                .map(|md| md.file_type().is_symlink())
+                .unwrap_or(false);
+            Ok(Value::Bool(b))
+        }
+        "read_link" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.read_link takes 1 argument".into()));
+            }
+            let Value::String(path) = &args[0] else {
+                return Err(VmError::new("fs.read_link requires a string path".into()));
+            };
+            match std::fs::read_link(path) {
+                Ok(target) => Ok(fs_ok(Value::String(
+                    target.to_string_lossy().into_owned(),
+                ))),
+                Err(e) => Ok(fs_err(e.to_string())),
+            }
+        }
+        "walk" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.walk takes 1 argument".into()));
+            }
+            let Value::String(root) = &args[0] else {
+                return Err(VmError::new("fs.walk requires a string path".into()));
+            };
+            // Default: do NOT follow symlinks. This avoids infinite loops
+            // on cyclic trees and matches the principle of least surprise
+            // for build tooling (a symlink loop in node_modules should not
+            // hang a build).
+            let walker = walkdir::WalkDir::new(root).follow_links(false);
+            let mut out: Vec<Value> = Vec::new();
+            for entry in walker {
+                match entry {
+                    Ok(e) => {
+                        if out.len() >= MAX_FS_WALK_ENTRIES {
+                            return Ok(fs_err(format!(
+                                "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
+                            )));
+                        }
+                        // Use absolute path where possible so callers can
+                        // pass the result straight into other fs.* calls
+                        // without worrying about cwd drift. Fall back to
+                        // the raw path if canonicalize fails (e.g. the
+                        // entry was already removed between the walk and
+                        // this call — a classic TOCTOU race — or it lives
+                        // in a directory we don't have read access to).
+                        let p = e.path();
+                        let s = std::fs::canonicalize(p)
+                            .map(|c| c.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+                        out.push(Value::String(s));
+                    }
+                    Err(err) => {
+                        return Ok(fs_err(err.to_string()));
+                    }
+                }
+            }
+            Ok(fs_ok(Value::List(Arc::new(out))))
+        }
+        "glob" => {
+            if args.len() != 1 {
+                return Err(VmError::new("fs.glob takes 1 argument".into()));
+            }
+            let Value::String(pattern) = &args[0] else {
+                return Err(VmError::new("fs.glob requires a string pattern".into()));
+            };
+            match glob::glob(pattern) {
+                Ok(paths) => {
+                    let mut out: Vec<Value> = Vec::new();
+                    for entry in paths {
+                        if out.len() >= MAX_FS_WALK_ENTRIES {
+                            return Ok(fs_err(format!(
+                                "fs.glob: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
+                            )));
+                        }
+                        match entry {
+                            Ok(p) => out.push(Value::String(p.to_string_lossy().into_owned())),
+                            Err(e) => return Ok(fs_err(e.to_string())),
+                        }
+                    }
+                    Ok(fs_ok(Value::List(Arc::new(out))))
+                }
+                Err(e) => Ok(fs_err(e.to_string())),
             }
         }
         _ => Err(VmError::new(format!("unknown fs function: {name}"))),

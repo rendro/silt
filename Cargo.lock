@@ -524,6 +524,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1590,6 +1596,7 @@ dependencies = [
  "chrono",
  "fallible-iterator",
  "getrandom 0.2.17",
+ "glob",
  "hmac 0.12.1",
  "lsp-server",
  "lsp-types",
@@ -1616,6 +1623,7 @@ dependencies = [
  "unicode-width",
  "ureq",
  "uuid",
+ "walkdir",
  "webpki-roots 0.26.11",
  "windows-sys 0.59.0",
 ]

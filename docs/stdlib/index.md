@@ -30,6 +30,7 @@ Complete API reference for every built-in function in silt.
 | [bytes](bytes.md) | Immutable byte sequences for binary I/O, hashing, and encoding/decoding |
 | [crypto](crypto.md) | SHA-256/512, HMAC, OS CSPRNG, and timing-safe comparison |
 | [encoding](encoding.md) | URL / percent encoding per RFC 3986 (base64/hex live in `bytes`) |
+| [uuid](uuid.md) | UUID v4 (random) and v7 (time-ordered) generation, parsing, validation |
 | [tcp](tcp.md) | Raw TCP listeners and streams with cooperative I/O (optional TLS via `tcp-tls`) |
 | [stream](stream.md) | Channel-backed sources, transforms, and sinks with backpressure |
 | [postgres](postgres.md) | PostgreSQL pools, queries, transactions, streams, cursors, and LISTEN/NOTIFY (opt-in) |
