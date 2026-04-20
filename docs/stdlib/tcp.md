@@ -22,10 +22,10 @@ default features in your `Cargo.toml`.
 | `close` | `(TcpStream) -> ()` | Mark the stream as closed; future ops error |
 | `connect` | `(String) -> Result(TcpStream, String)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, String)` | Bind a TCP listener to `host:port` |
-| `peer_addr` | `(TcpStream) -> Result(String, String)` | Remote socket address (PR-2 stub: returns Err) |
+| `peer_addr` | `(TcpStream) -> Result(String, String)` | Remote socket address (not yet implemented for trait-object stream handles; returns Err) |
 | `read` | `(TcpStream, Int) -> Result(Bytes, String)` | Read up to `max` bytes (cooperative) |
 | `read_exact` | `(TcpStream, Int) -> Result(Bytes, String)` | Read exactly `n` bytes (cooperative; loops) |
-| `set_nodelay` | `(TcpStream, Bool) -> Result((), String)` | Disable Nagle (PR-2 stub: returns Err) |
+| `set_nodelay` | `(TcpStream, Bool) -> Result((), String)` | Disable Nagle (not yet implemented for trait-object stream handles; returns Err) |
 | `write` | `(TcpStream, Bytes) -> Result((), String)` | Write the entire buffer and flush (cooperative) |
 
 ## Echo server example

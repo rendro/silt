@@ -828,9 +828,10 @@ impl Vm {
                 }
                 Ok(Value::Variant(name.clone(), args.to_vec()))
             }
-            _ => Err(VmError::new(
-                "cannot call value in invoke_callable".to_string(),
-            )),
+            _ => Err(VmError::new(format!(
+                "cannot call value of type {}",
+                self.type_name(func)
+            ))),
         }
     }
 

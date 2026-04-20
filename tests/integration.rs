@@ -3867,14 +3867,24 @@ fn main() {
         Value::String(s) => s,
         _ => panic!("expected string"),
     };
-    assert!(s.contains("\"name\""));
-    assert!(s.contains("\"Alice\""));
-    assert!(s.contains("\"age\""));
-    assert!(s.contains("30"));
+    // Lock exact serialization shape, not loose substring presence.
+    // Record fields are stored in a `BTreeMap` (src/builtins/data.rs
+    // `value_to_json`), and `serde_json::Map` without the
+    // `preserve_order` feature also sorts keys alphabetically — so the
+    // stable output is `{"age":30,"name":"Alice"}` (age first).
+    // The previous chain of 4 `contains` checks didn't verify that the
+    // name↔value bindings were correct; e.g. `{"name":"30","age":"Alice"}`
+    // would have passed all four.
+    assert_eq!(s, r#"{"age":30,"name":"Alice"}"#);
 }
 
 #[test]
 fn test_json_roundtrip_record() {
+    // Assert BOTH fields are bound correctly on the roundtripped record,
+    // not just `.name`. Previously only `parsed.name == "Carol"` was
+    // checked — a parser bug that mis-assigned `age` (or dropped it)
+    // would have gone undetected. We return a tuple of both fields and
+    // assert their exact values.
     let result = run(r#"
 import json
 type User { name: String, age: Int }
@@ -3882,12 +3892,15 @@ fn main() {
   let u = User { name: "Carol", age: 25 }
   let text = json.stringify(u)
   match json.parse(User, text) {
-    Ok(parsed) -> parsed.name
-    Err(_) -> "fail"
+    Ok(parsed) -> (parsed.name, parsed.age)
+    Err(_) -> ("fail", 0)
   }
 }
     "#);
-    assert_eq!(result, Value::String("Carol".into()));
+    assert_eq!(
+        result,
+        Value::Tuple(vec![Value::String("Carol".into()), Value::Int(25)])
+    );
 }
 
 #[test]
@@ -6452,29 +6465,37 @@ fn test_http_serve_non_blocking_in_task() {
     // Spawn http.serve in a task; verify other tasks can still run.
     // The accept loop runs on a dedicated OS thread and the silt task
     // yields via BlockReason::Join, so scheduler workers stay free.
-    let input = r#"
+    //
+    // Port is OS-assigned (ephemeral) rather than hardcoded, so
+    // parallel test runs / a stuck previous process can't cause
+    // `AddrInUse` flakes. Same pattern as the sibling
+    // `test_http_serve_basic_get_response` (see `find_free_port`).
+    let port = find_free_port();
+    let input = format!(
+        r#"
 import http
 import task
 import channel
 
-fn main() {
+fn main() {{
   let done = channel.new(1)
-  let server = task.spawn(fn() {
-    http.serve(19080, fn(req) {
-      Response { status: 200, body: "ok", headers: #{} }
-    })
-  })
-  let worker = task.spawn(fn() {
+  let server = task.spawn(fn() {{
+    http.serve({port}, fn(req) {{
+      Response {{ status: 200, body: "ok", headers: #{{}} }}
+    }})
+  }})
+  let worker = task.spawn(fn() {{
     channel.send(done, "ready")
-  })
+  }})
   let result = channel.receive(done)
-  match result {
+  match result {{
     Message(v) -> v
     _ -> "failed"
-  }
-}
-"#;
-    let result = run(input);
+  }}
+}}
+"#
+    );
+    let result = run(&input);
     assert_eq!(result, Value::String("ready".into()));
 }
 
@@ -6483,10 +6504,15 @@ fn test_http_serve_concurrent_requests() {
     // Start a server on the main thread (it blocks), send concurrent
     // HTTP requests from Rust threads, and verify all get correct
     // responses — proving per-request concurrency.
+    //
+    // Port is OS-assigned (ephemeral) rather than hardcoded 19081, so
+    // parallel test runs / a stuck previous process can't cause
+    // `AddrInUse` flakes. The brief bind→connect race is handled by
+    // `wait_for_port` — same pattern as the sibling
+    // `test_http_serve_basic_get_response`.
     use std::thread;
-    use std::time::Duration;
 
-    let port = 19081;
+    let port = find_free_port();
 
     // Run the silt server in a background thread (http.serve blocks the main thread).
     thread::spawn(move || {
@@ -6505,7 +6531,10 @@ fn main() {{
     });
 
     // Wait for the server to bind and start accepting
-    thread::sleep(Duration::from_millis(300));
+    assert!(
+        wait_for_port(port, std::time::Duration::from_secs(3)),
+        "server did not start"
+    );
 
     // Send 5 concurrent requests
     let mut request_handles = Vec::new();

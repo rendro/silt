@@ -262,10 +262,12 @@ fn main() {{
 "#
     );
     let v = run(&src);
-    let Value::String(s) = v else {
-        panic!("got {v:?}")
-    };
-    assert!(s.contains("error"), "expected error indicator, got: {s:?}");
+    // Lock the exact Err-branch string. The previous `contains("error")`
+    // was satisfied by the Ok-branch sentinel "wrong: should error" too
+    // (both contained "error"), so the assertion could never fail.
+    // Sibling tests (`test_write_after_close_errors`,
+    // `test_connect_to_unbound_port_errors`) already use this shape.
+    assert_eq!(v, Value::String("errored".into()));
 }
 
 #[test]

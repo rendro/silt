@@ -434,7 +434,14 @@ impl TypeChecker {
                         let ft = field_ty.clone();
                         self.unify(&result_ty, &ft, span);
                     } else {
-                        self.error(format!("unknown field '{field}' on type {resolved}"), span);
+                        // GAP (round 35 F7): thread did-you-mean suggestion
+                        // through the deferred-field-access path so typos
+                        // on Record-shaped receivers get the same hint.
+                        let base = format!("unknown field '{field}' on type {resolved}");
+                        self.error(
+                            format_record_field_suggestion(base, field, rec_fields),
+                            span,
+                        );
                     }
                 }
                 Type::Generic(type_name, type_args) => {
@@ -500,10 +507,15 @@ impl TypeChecker {
                         }
                         continue;
                     }
-                    self.error(
-                        format!("unknown field or method '{field}' on type {type_name}"),
-                        span,
-                    );
+                    // GAP (round 35 F7): thread did-you-mean suggestion
+                    // through the Generic/named-record deferred path.
+                    let base = format!("unknown field or method '{field}' on type {type_name}");
+                    let msg = if let Some(rec_info) = self.records.get(&type_name) {
+                        format_record_field_suggestion(base, field, &rec_info.fields)
+                    } else {
+                        base
+                    };
+                    self.error(msg, span);
                 }
                 _ => {
                     self.error(
@@ -740,10 +752,23 @@ impl TypeChecker {
             PatternKind::Ident(name) => {
                 env.define(*name, Scheme::mono(ty.clone()));
             }
-            PatternKind::Int(_) => {}
-            PatternKind::Float(_) => {}
-            PatternKind::Bool(_) => {}
-            PatternKind::StringLit(..) => {}
+            // BROKEN (round 35 F3): literal patterns in binding position
+            // (e.g. `let 5 = "hello"`) used to fall through as empty arms,
+            // silently ignoring the scrutinee's type. Mirror `check_pattern`
+            // and unify the scrutinee against the literal's concrete type
+            // so `let 5 = "hello"` becomes a compile-time error.
+            PatternKind::Int(_) => {
+                self.unify(ty, &Type::Int, span);
+            }
+            PatternKind::Float(_) => {
+                self.unify(ty, &Type::Float, span);
+            }
+            PatternKind::Bool(_) => {
+                self.unify(ty, &Type::Bool, span);
+            }
+            PatternKind::StringLit(..) => {
+                self.unify(ty, &Type::String, span);
+            }
             PatternKind::Tuple(pats) => {
                 // BROKEN (round 15): bind_pattern Pattern::Tuple used to
                 // silently fall through to fresh vars when the scrutinee
@@ -1554,10 +1579,17 @@ impl TypeChecker {
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
-                        self.error(
-                            format!("unknown field or method '{field}' on type {type_name}"),
-                            span,
-                        );
+                        // GAP (round 35 F7): thread did-you-mean suggestion
+                        // through the Generic/named-record field-access
+                        // path so `u.nam` on `type User { name, age }`
+                        // prints `did you mean 'name'?`.
+                        let base = format!("unknown field or method '{field}' on type {type_name}");
+                        let msg = if let Some(rec_info) = self.records.get(type_name) {
+                            format_record_field_suggestion(base, field, &rec_info.fields)
+                        } else {
+                            base
+                        };
+                        self.error(msg, span);
                         Type::Error
                     }
                     // Primitive types — check method table for trait methods
@@ -2411,6 +2443,27 @@ impl TypeChecker {
 
             ExprKind::RecordCreate { name, fields } => {
                 let name = *name;
+                // GAP (round 35 F4): duplicate fields in a record literal
+                // (e.g. `User { name: "a", name: "b" }`) used to slip past
+                // the typechecker because downstream processing went through
+                // a HashSet that silently deduped them. Mirror the record
+                // type declaration's duplicate-field check: walk once and
+                // emit a diagnostic per duplicate.
+                {
+                    let mut seen: std::collections::HashSet<Symbol> =
+                        std::collections::HashSet::new();
+                    for (field_name, _) in fields.iter() {
+                        if !seen.insert(*field_name) {
+                            self.error(
+                                format!(
+                                    "duplicate field '{}' in record literal for '{}'",
+                                    field_name, name
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
                 if let Some(rec_info) = self.records.get(&name).cloned() {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
@@ -2507,6 +2560,25 @@ impl TypeChecker {
                 let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
+                // GAP (round 35 F4): duplicate fields in a record-update
+                // expression (e.g. `r.{ age: 1, age: 2 }`) used to be
+                // silently deduped downstream. Emit a diagnostic per
+                // duplicate so the typo is surfaced at compile time.
+                {
+                    let mut seen: std::collections::HashSet<Symbol> =
+                        std::collections::HashSet::new();
+                    for (field_name, _) in fields.iter() {
+                        if !seen.insert(*field_name) {
+                            self.error(
+                                format!(
+                                    "duplicate field '{}' in record update",
+                                    field_name
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
                 // Three cases:
                 //  1. Concrete `Type::Record(name, fields)` — validate directly.
                 //  2. `Type::Generic(name, args)` resolving to a declared

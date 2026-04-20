@@ -408,7 +408,22 @@ fn main() {
   println(label(Foo { v: 5 }, Foo { v: 4 }))
 }
 "#;
-    let tmp = std::env::temp_dir().join("silt_supertrait_runtime.silt");
+    // Unique temp-file name — pid + atomic counter + nanosecond timestamp —
+    // so parallel `cargo test` invocations / re-runs never race on the
+    // same path. Same pattern as `concurrency_stress_property_tests.rs`.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let tmp = std::env::temp_dir().join(format!(
+        "silt_supertrait_runtime_{}_{}_{}.silt",
+        std::process::id(),
+        ts,
+        n
+    ));
     std::fs::write(&tmp, src).expect("write temp file");
 
     let bin = env!("CARGO_BIN_EXE_silt");
@@ -423,9 +438,19 @@ fn main() {
         out.status.success(),
         "silt run should succeed; stdout={stdout}, stderr={stderr}"
     );
-    assert!(
-        stdout.contains("less") && stdout.contains("equal") && stdout.contains("greater"),
-        "expected all three labels in stdout; got: {stdout}"
+    // Lock the full output sequence. `main` prints label(1,2), label(3,3),
+    // label(5,4) in that order, so stdout must be exactly:
+    //   less
+    //   equal
+    //   greater
+    // The previous `contains(..) && contains(..) && contains(..)` chain
+    // didn't pin ordering — a bugged compile-order swap or a repeated
+    // label would still satisfy it.
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["less", "equal", "greater"],
+        "expected exact label sequence, got stdout={stdout:?}"
     );
 }
 

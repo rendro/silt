@@ -118,26 +118,22 @@ fn collect_local_bindings_in_expr(
                 match stmt {
                     Stmt::Let { pattern, value, .. } => {
                         let value_start = value.span.offset;
-                        if let PatternKind::Ident(name) = &pattern.kind {
-                            let name_str = resolve(*name);
-                            if let Some(off) =
-                                find_ident_in_range(source, scope_start, value_start, &name_str)
-                            {
-                                bindings.push(LocalBinding {
-                                    name: *name,
-                                    binding_offset: off,
-                                    binding_len: name_str.len(),
-                                    // Scope: from the start of the let's
-                                    // value expression to the end of the
-                                    // enclosing block. The binding itself
-                                    // sits just before `value_start` so the
-                                    // `binding_offset` check is separate.
-                                    scope_start: value_start,
-                                    scope_end,
-                                    ty: value.ty.clone(),
-                                });
-                            }
-                        }
+                        // Walk the pattern recursively so destructuring
+                        // (`let (a, b) = ...`, `let P { x, y } = ...`, etc.)
+                        // also registers each leaf ident as a binding. The
+                        // binding scope starts at `value_start` so the
+                        // binding ident on the LHS is still found by
+                        // `find_local_binding_at_offset` via its own
+                        // `binding_offset`/`binding_len`.
+                        collect_pattern_bindings(
+                            pattern,
+                            source,
+                            scope_start,
+                            value_start,
+                            value.ty.as_ref(),
+                            scope_end,
+                            bindings,
+                        );
                         collect_local_bindings_in_expr(
                             value,
                             source,
@@ -303,14 +299,34 @@ fn collect_pattern_bindings(
                 });
             }
         }
-        PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
+        PatternKind::Tuple(pats) => {
+            // Propagate element types when the value's type is a tuple of
+            // the same arity, so `let (a, b) = (1, 2)` gives `a: Int, b: Int`.
+            let elem_tys: Option<Vec<Type>> = match expr_ty {
+                Some(Type::Tuple(tys)) if tys.len() == pats.len() => Some(tys.clone()),
+                _ => None,
+            };
+            for (i, p) in pats.iter().enumerate() {
+                let inner = elem_tys.as_ref().and_then(|tys| tys.get(i));
+                collect_pattern_bindings(
+                    p,
+                    source,
+                    search_start,
+                    search_end,
+                    inner,
+                    scope_end,
+                    bindings,
+                );
+            }
+        }
+        PatternKind::Or(pats) => {
             for p in pats {
                 collect_pattern_bindings(
                     p,
                     source,
                     search_start,
                     search_end,
-                    None,
+                    expr_ty,
                     scope_end,
                     bindings,
                 );
@@ -337,14 +353,27 @@ fn collect_pattern_bindings(
             }
         }
         PatternKind::Record { fields, .. } => {
+            // Propagate each declared field's type when the value's type
+            // is a nominal record, so hover on a destructured field shows
+            // the right type.
+            let field_tys: Option<Vec<(Symbol, Type)>> = match expr_ty {
+                Some(Type::Record(_, fs)) => Some(fs.clone()),
+                _ => None,
+            };
+            let lookup_field_ty = |fname: Symbol| -> Option<Type> {
+                field_tys
+                    .as_ref()
+                    .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
+            };
             for (name, sub) in fields {
                 if let Some(p) = sub {
+                    let ty = lookup_field_ty(*name);
                     collect_pattern_bindings(
                         p,
                         source,
                         search_start,
                         search_end,
-                        None,
+                        ty.as_ref(),
                         scope_end,
                         bindings,
                     );
@@ -359,20 +388,26 @@ fn collect_pattern_bindings(
                             binding_len: name_str.len(),
                             scope_start: search_end,
                             scope_end,
-                            ty: None,
+                            ty: lookup_field_ty(*name),
                         });
                     }
                 }
             }
         }
         PatternKind::List(pats, rest) => {
+            // A list destructure binds each head element to the list's
+            // element type and the tail to the full list type.
+            let (elem_ty, list_ty): (Option<Type>, Option<Type>) = match expr_ty {
+                Some(t @ Type::List(inner)) => (Some((**inner).clone()), Some(t.clone())),
+                _ => (None, None),
+            };
             for p in pats {
                 collect_pattern_bindings(
                     p,
                     source,
                     search_start,
                     search_end,
-                    None,
+                    elem_ty.as_ref(),
                     scope_end,
                     bindings,
                 );
@@ -383,7 +418,7 @@ fn collect_pattern_bindings(
                     source,
                     search_start,
                     search_end,
-                    None,
+                    list_ty.as_ref(),
                     scope_end,
                     bindings,
                 );

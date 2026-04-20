@@ -1128,12 +1128,18 @@ fn test_empty_program() {
 
 #[test]
 fn test_program_without_main() {
-    // Helper functions but no main — should compile but may error at runtime
-    let result = std::panic::catch_unwind(|| {
-        run("fn helper(x) = x + 1");
-    });
-    // Should not crash the process; an error is fine
-    let _ = result;
+    // Helper functions but no main — compiles successfully, but at
+    // runtime the entry-point script emits `GetGlobal("main")` which
+    // fails with "undefined global: main". Locks that exact VM message
+    // (same shape as `test_runtime_undefined_global` above) so a
+    // silent success or wrong-message regression is caught. The
+    // previous body discarded `catch_unwind`'s result, so any behaviour
+    // (including the program succeeding) satisfied the test.
+    let err = run_err("fn helper(x) = x + 1");
+    assert!(
+        err.contains("undefined global: main"),
+        "expected undefined-main runtime error, got: {err}"
+    );
 }
 
 #[test]

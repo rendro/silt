@@ -8,7 +8,7 @@ order: 16
 
 Immutable byte sequences. The `Bytes` value type carries arbitrary binary
 data — useful for protocol parsing, file I/O, hashing, encoding/decoding,
-and (when paired with `tcp` from v0.9) network communication.
+and (when paired with `tcp`) network communication.
 
 `Bytes` values use **structural equality**: two byte sequences with the
 same content compare equal regardless of how they were constructed. They

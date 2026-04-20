@@ -1910,6 +1910,24 @@ impl TypeChecker {
             return;
         }
 
+        // GAP (round 35 F6): duplicate method names in a trait
+        // declaration used to silently overwrite each other in the
+        // trait's `methods` Vec (first entry won for method lookup but
+        // the second's signature won for any HashMap-based bookkeeping
+        // like `default_method_bodies`). Emit a diagnostic per dup.
+        {
+            let mut seen: std::collections::HashSet<Symbol> =
+                std::collections::HashSet::new();
+            for m in &t.methods {
+                if !seen.insert(m.name) {
+                    self.error(
+                        format!("duplicate method '{}' in trait '{}'", m.name, t.name),
+                        m.span,
+                    );
+                }
+            }
+        }
+
         let self_var = self.fresh_var();
         let methods: Vec<(Symbol, Type)> = t
             .methods
@@ -2250,6 +2268,44 @@ impl TypeChecker {
         if !impl_obligations_by_index.is_empty() {
             self.impl_constraints
                 .insert((ti.trait_name, ti.target_type), impl_obligations_by_index);
+        }
+
+        // GAP (round 35 F5): extraneous trait-impl methods — methods on
+        // the impl whose names aren't declared in the trait — used to
+        // get silently registered into the method_table. Reject each
+        // method whose name is not in the trait's declared method list.
+        //
+        // GAP (round 35 F6): duplicate method names within a single
+        // trait impl used to silently overwrite the earlier definition
+        // in the method_table. Track a seen-set and reject the second
+        // (and subsequent) occurrences.
+        let trait_method_names: Option<std::collections::HashSet<Symbol>> = self
+            .traits
+            .get(&ti.trait_name)
+            .map(|info| info.methods.iter().map(|(n, _)| *n).collect());
+        let mut seen_impl_methods: std::collections::HashSet<Symbol> =
+            std::collections::HashSet::new();
+        for method in &ti.methods {
+            if !seen_impl_methods.insert(method.name) {
+                self.error(
+                    format!(
+                        "duplicate method '{}' in trait impl '{} for {}'",
+                        method.name, ti.trait_name, ti.target_type
+                    ),
+                    method.span,
+                );
+            }
+            if let Some(names) = &trait_method_names
+                && !names.contains(&method.name)
+            {
+                self.error(
+                    format!(
+                        "method '{}' is not declared in trait '{}'",
+                        method.name, ti.trait_name
+                    ),
+                    method.span,
+                );
+            }
         }
 
         let self_sym = intern("self");

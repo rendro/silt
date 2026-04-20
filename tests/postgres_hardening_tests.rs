@@ -154,8 +154,14 @@ fn connect_with_unknown_keys_ignored() {
 /// Rust layer still double-checks).
 #[test]
 fn connect_with_non_map_opts_rejected() {
+    // Lock the exact phrase from the only error-constructor site
+    // (`src/builtins/postgres.rs` `parse_connect_opts`):
+    //   "postgres.connect_with: opts must be a Map (e.g. #{})"
+    // The previous `"Map" || "opts"` chain was weaker than a single
+    // `contains` against the unique phrase, because both substrings are
+    // always present in the only possible message.
     let err = read_max_pool_size_for_tests(&Value::Int(1)).expect_err("Int rejected");
-    assert!(err.contains("Map") || err.contains("opts"), "err: {err}");
+    assert!(err.contains("opts must be a Map"), "err: {err}");
 }
 
 // ── LOW-2: redact_pg_message strips DETAIL / WHERE / HINT ──────────

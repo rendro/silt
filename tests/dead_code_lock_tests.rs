@@ -192,3 +192,29 @@ fn no_op_set_upvalue_opcode_exists() {
          If you added one, the language gained mutation — revisit invariants."
     );
 }
+
+// ── F18: Colors.dim stayed deleted ─────────────────────────────────────
+//
+// `Colors.dim` was written in both COLORS_ON ("\x1b[2m") and COLORS_OFF
+// ("") but never read by the Display impl. The struct-level
+// `#[allow(dead_code)]` that silenced it was removed along with the
+// field and both initializer lines. Since the field had zero readers,
+// deletion is behaviour-identical — this test locks against
+// resurrection without a corresponding reader.
+
+#[test]
+fn colors_dim_field_stays_deleted() {
+    let errors_rs = include_str!("../src/errors.rs");
+    assert!(
+        !errors_rs.contains("    dim: &'static str"),
+        "Colors.dim field was deleted — don't resurrect without a reader"
+    );
+    assert!(
+        !errors_rs.contains("pub dim:"),
+        "Colors.dim field was deleted — don't resurrect (pub form) without a reader"
+    );
+    assert!(
+        !errors_rs.contains(r#"dim: "\x1b[2m""#),
+        "Colors.dim ON-initializer was deleted — don't resurrect without a reader"
+    );
+}

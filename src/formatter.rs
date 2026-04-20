@@ -2222,7 +2222,28 @@ fn splice_inline_block_comments(
         }
         // Insertion position: just before the next source-corresponding
         // output token.
-        let insert_at = gap_hi;
+        //
+        // Special case: `StringMiddle(s)` and `StringEnd(s)` tokens have
+        // their span starting AFTER the `}` that closes the preceding
+        // string interpolation (see lexer.rs:748 `cont_start = self.span()`
+        // is captured after `}` is consumed). A block comment that sat
+        // inside the interpolation body in source must land INSIDE the
+        // interpolation in the output too — i.e., BEFORE that `}`, not
+        // after it. Otherwise the comment text gets swallowed into the
+        // string literal content, changing semantics.
+        //
+        // We back `insert_at` up by one byte when the next source-
+        // corresponding output token is StringMiddle/StringEnd and the
+        // byte immediately before `gap_hi` is `}`.
+        let mut insert_at = gap_hi;
+        if matches!(
+            out_tokens[gap_hi_out].0,
+            crate::lexer::Token::StringMiddle(_) | crate::lexer::Token::StringEnd(_)
+        ) && insert_at > 0
+            && output.as_bytes()[insert_at - 1] == b'}'
+        {
+            insert_at -= 1;
+        }
         let before = output[..insert_at].chars().last();
         let after_ch = output[insert_at..].chars().next();
         let needs_lead_space = match before {
@@ -2304,87 +2325,142 @@ fn token_kinds_equivalent(a: &crate::lexer::Token, b: &crate::lexer::Token) -> b
 /// of (byte_start, raw_text) where `raw_text` includes the outermost
 /// `{-` and `-}`. Nesting is tracked so `{- outer {- inner -} outer -}`
 /// produces ONE span covering the entire outer comment.
+///
+/// Mirrors the lexer's state machine for string interpolation: inside
+/// `"..."`, a `{` (not `\{`) enters an interpolation region in which
+/// full code-mode scanning resumes (including nested strings, line
+/// comments, and block comments). The matching `}` returns to string
+/// scanning. Interpolations may nest via further strings within them.
 fn collect_source_block_comments(source: &str) -> Vec<(usize, String)> {
     let bytes = source.as_bytes();
     let mut out: Vec<(usize, String)> = Vec::new();
     let mut i = 0;
-    let mut in_string = false;
-    let mut in_triple = false;
+
+    // Mode stack: outermost is Code. Pushing String/Triple lets us return
+    // to Code when `{` opens an interpolation inside the string, and back
+    // to String when the matching `}` closes it. `brace_depth` within a
+    // Code frame tracks non-interpolation braces; the interpolation opening
+    // `{` bumps brace_depth from 0 to 1 so we can pop the frame when the
+    // matching `}` drops it back to 0.
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code { brace_depth: usize },
+        String,
+        Triple,
+    }
+    let mut stack: Vec<Mode> = vec![Mode::Code { brace_depth: 0 }];
+
     while i < bytes.len() {
-        // Triple-quoted string: skip content until closing `"""`.
-        if !in_string
-            && !in_triple
-            && i + 2 < bytes.len()
-            && bytes[i] == b'"'
-            && bytes[i + 1] == b'"'
-            && bytes[i + 2] == b'"'
-        {
-            in_triple = true;
-            i += 3;
-            continue;
-        }
-        if in_triple {
-            if i + 2 < bytes.len()
-                && bytes[i] == b'"'
-                && bytes[i + 1] == b'"'
-                && bytes[i + 2] == b'"'
-            {
-                in_triple = false;
-                i += 3;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_string {
-            if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                i += 2;
-                continue;
-            }
-            if bytes[i] == b'"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'"' {
-            in_string = true;
-            i += 1;
-            continue;
-        }
-        // Line comment `-- ...` to end of line.
-        if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Block comment `{- ... -}` (nesting allowed).
-        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
-            let start = i;
-            let mut depth: usize = 1;
-            i += 2;
-            while i < bytes.len() && depth > 0 {
-                if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
-                    depth += 1;
-                    i += 2;
-                    continue;
-                }
-                if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
-                    depth -= 1;
-                    i += 2;
+        match *stack.last().unwrap() {
+            Mode::Triple => {
+                if i + 2 < bytes.len()
+                    && bytes[i] == b'"'
+                    && bytes[i + 1] == b'"'
+                    && bytes[i + 2] == b'"'
+                {
+                    stack.pop();
+                    i += 3;
                     continue;
                 }
                 i += 1;
+                continue;
             }
-            if depth == 0 {
-                // Valid, terminated block comment.
-                let text = source[start..i].to_string();
-                out.push((start, text));
+            Mode::String => {
+                // Escape sequence: `\{` is a literal brace (NOT an interp
+                // entry), `\"` is a literal quote, etc.
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'{' {
+                    // Enter interpolation: resume code-mode scanning.
+                    stack.push(Mode::Code { brace_depth: 1 });
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    stack.pop();
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+                continue;
             }
-            continue;
+            Mode::Code { brace_depth } => {
+                // Triple-quoted string: must be checked before single `"`.
+                if i + 2 < bytes.len()
+                    && bytes[i] == b'"'
+                    && bytes[i + 1] == b'"'
+                    && bytes[i + 2] == b'"'
+                {
+                    stack.push(Mode::Triple);
+                    i += 3;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    stack.push(Mode::String);
+                    i += 1;
+                    continue;
+                }
+                // Line comment `-- ...` to end of line.
+                if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+                    while i < bytes.len() && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                    continue;
+                }
+                // Block comment `{- ... -}` (nesting allowed).
+                if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+                    let start = i;
+                    let mut depth: usize = 1;
+                    i += 2;
+                    while i < bytes.len() && depth > 0 {
+                        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'-' {
+                            depth += 1;
+                            i += 2;
+                            continue;
+                        }
+                        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'}' {
+                            depth -= 1;
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                    }
+                    if depth == 0 {
+                        // Valid, terminated block comment.
+                        let text = source[start..i].to_string();
+                        out.push((start, text));
+                    }
+                    continue;
+                }
+                // Brace-depth tracking. Only load-bearing inside an interp
+                // frame (depth starts at 1 there). For the outermost Code
+                // frame the depth is decorative — we don't pop it.
+                if bytes[i] == b'{' {
+                    if let Some(Mode::Code { brace_depth: bd }) = stack.last_mut() {
+                        *bd += 1;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'}' {
+                    // In an interp frame, brace_depth==1 means this `}`
+                    // closes the interpolation and returns to string mode.
+                    if stack.len() > 1 && brace_depth == 1 {
+                        stack.pop(); // pop interp Code frame → back to String
+                        i += 1;
+                        continue;
+                    }
+                    if let Some(Mode::Code { brace_depth: bd }) = stack.last_mut() {
+                        *bd = bd.saturating_sub(1);
+                    }
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+            }
         }
-        i += 1;
     }
     out
 }
@@ -3723,15 +3799,34 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
         }
 
         ExprKind::Range(start, end) => {
-            format!("{}..{}", format_expr(start, depth), format_expr(end, depth))
+            // Range bp = (60, 61). Left child parsed with min_bp=60, right
+            // with min_bp=61. A child whose top-level construct has an
+            // l_bp < that would get re-parsed as the parent.
+            // Example: `(a else b)..n` must keep parens; otherwise
+            // `a else b..n` re-parses as `FloatElse(a, Range(b, n))`.
+            let l = paren_wrap_if_needed(start, bp::RANGE_L, depth);
+            let r = paren_wrap_if_needed(end, bp::RANGE_R, depth);
+            format!("{}..{}", l, r)
         }
 
         ExprKind::QuestionMark(expr) => {
-            format!("{}?", format_expr(expr, depth))
+            // Postfix `?` bp = 110. Any child whose top-level l_bp < 110
+            // must be parenthesized, otherwise re-parsing attaches `?`
+            // to the inner tail instead of the whole expression.
+            format!(
+                "{}?",
+                paren_wrap_if_needed(expr, bp::QUESTIONMARK, depth)
+            )
         }
 
         ExprKind::Ascription(expr, ty) => {
-            format!("{} as {}", format_expr(expr, depth), format_type_expr(ty))
+            // Postfix `as T` bp = 95. Same reasoning as QuestionMark:
+            // `(x else 0.0) as Int` must stay parenthesized.
+            format!(
+                "{} as {}",
+                paren_wrap_if_needed(expr, bp::ASCRIPTION, depth),
+                format_type_expr(ty)
+            )
         }
 
         ExprKind::Call(callee, args) => {
@@ -3856,11 +3951,15 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             }
         }
         ExprKind::FloatElse(expr, fallback) => {
-            format!(
-                "{} else {}",
-                format_expr(expr, depth),
-                format_expr(fallback, depth)
-            )
+            // FloatElse bp = (10, 11). Left child parsed with min_bp=10,
+            // right with min_bp=11. Since FloatElse is the lowest-bp
+            // infix, most children won't need wrapping — but nested
+            // FloatElse on the LEFT would re-parse right-associatively
+            // otherwise: `a else b else c` with LHS=FloatElse(a,b) must
+            // emit as `(a else b) else c`.
+            let l = paren_wrap_if_needed(expr, bp::FLOATELSE_L, depth);
+            let r = paren_wrap_if_needed(fallback, bp::FLOATELSE_R, depth);
+            format!("{} else {}", l, r)
         }
     }
 }
@@ -4092,17 +4191,92 @@ fn precedence(op: BinOp) -> u8 {
     }
 }
 
+/// Binding powers mirroring `parse_expr_bp` in src/parser.rs. These are
+/// the parser's `(l_bp, r_bp)` pairs for each infix/postfix construct.
+/// When re-emitting `<child> OP ...` or `... OP <child>`, a child whose
+/// top-level construct has an `l_bp` strictly below the parent position's
+/// required min_bp will be re-parsed with the wrong associativity.
+mod bp {
+    pub const FLOATELSE_L: u8 = 10;
+    pub const FLOATELSE_R: u8 = 11;
+    pub const RANGE_L: u8 = 60;
+    pub const RANGE_R: u8 = 61;
+    pub const ASCRIPTION: u8 = 95;
+    pub const QUESTIONMARK: u8 = 110;
+}
+
+/// Left binding power at the TOP of `expr` — i.e. the lowest-bp operator
+/// a re-parser would see at position 0 when scanning this expression's
+/// formatted text. Atoms/prefix/postfix (whose top is not an infix) return
+/// `u8::MAX` to mean "binds tighter than any possible parent".
+///
+/// Used by `paren_wrap_if_needed` to decide whether to wrap a child in
+/// parens when emitting it as part of a larger expression.
+fn expr_top_l_bp(expr: &Expr) -> u8 {
+    match &expr.kind {
+        ExprKind::FloatElse(..) => bp::FLOATELSE_L,
+        ExprKind::Range(..) => bp::RANGE_L,
+        ExprKind::Pipe(..) => 55,
+        ExprKind::Binary(_, op, _) => match op {
+            BinOp::Or => 20,
+            BinOp::And => 30,
+            BinOp::Eq | BinOp::Neq => 40,
+            BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
+            BinOp::Add | BinOp::Sub => 70,
+            BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
+        },
+        // Postfix operators sit at the TOP of the formatted text. A parent
+        // whose min_bp exceeds the postfix's bp would not consume the
+        // postfix on re-parse, splitting the tree differently.
+        ExprKind::Ascription(..) => bp::ASCRIPTION,
+        ExprKind::QuestionMark(..) => bp::QUESTIONMARK,
+        // Unary prefix: re-parsed as prefix from any position. No infix
+        // at the top, so safe as an atom from the parent's perspective.
+        ExprKind::Unary(..) => u8::MAX,
+        // Atoms/closed forms: literals, idents, Call, Index, FieldAccess,
+        // parenthesized/tuple/unit, block, match, loop, record literal.
+        _ => u8::MAX,
+    }
+}
+
+/// Wrap `expr`'s formatted text in parens if its top-level binding power
+/// is strictly less than `required_min_bp`. Used by sites that emit sub-
+/// expressions in a position where the parser expected min_bp >= P.
+fn paren_wrap_if_needed(expr: &Expr, required_min_bp: u8, depth: usize) -> String {
+    if expr_top_l_bp(expr) < required_min_bp {
+        format!("({})", format_expr(expr, depth))
+    } else {
+        format_expr(expr, depth)
+    }
+}
+
 fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: usize) -> String {
+    // 1) Same-family Binary-within-Binary precedence (existing behavior).
     if let ExprKind::Binary(_, child_op, _) = &expr.kind {
         let parent_prec = precedence(parent_op);
         let child_prec = precedence(*child_op);
-        // Need parens if child has lower precedence, or same precedence on the right
-        // (for left-associative operators)
+        // Need parens if child has lower precedence, or same precedence
+        // on the right (for left-associative operators).
         if child_prec < parent_prec || (child_prec == parent_prec && !is_left) {
             return format!("({})", format_expr(expr, depth));
         }
     }
-    format_expr(expr, depth)
+    // 2) Cross-family: the child might be a lower-bp construct (FloatElse,
+    //    Range, Pipe, Ascription, QuestionMark). Compute the parent
+    //    Binary position's required min_bp and wrap if the child's top bp
+    //    is lower. All our Binary operators are left-associative
+    //    (l_bp, l_bp+1), so the left child uses l_bp and the right child
+    //    uses l_bp+1.
+    let parent_l_bp: u8 = match parent_op {
+        BinOp::Or => 20,
+        BinOp::And => 30,
+        BinOp::Eq | BinOp::Neq => 40,
+        BinOp::Lt | BinOp::Gt | BinOp::Leq | BinOp::Geq => 50,
+        BinOp::Add | BinOp::Sub => 70,
+        BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
+    };
+    let required = if is_left { parent_l_bp } else { parent_l_bp + 1 };
+    paren_wrap_if_needed(expr, required, depth)
 }
 
 #[cfg(test)]

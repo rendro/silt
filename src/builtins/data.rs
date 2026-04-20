@@ -1825,6 +1825,72 @@ fn ureq_response_to_value(
     Ok(make_http_response(status, headers, body))
 }
 
+/// Scrub URL userinfo (`user:password@`) from an error message.
+///
+/// `ureq::Error`'s Display impl can include the request URL, and if
+/// the caller embedded credentials in the URL (`https://user:tok@h`),
+/// those credentials leak into the `Err` string that's handed back
+/// to the silt program (F12). Replace the userinfo segment with
+/// `***@` for any `http://` / `https://` substring that carries one.
+///
+/// Grammar: the userinfo component of RFC 3986 is
+/// `*( unreserved / pct-encoded / sub-delims / ":" )`. We accept a
+/// conservative superset: alphanumerics, `%` escapes, and the common
+/// URL-safe punctuation (`._~-+`) in the user segment, optionally
+/// followed by `:<password>` where password is any non-`@`,
+/// non-whitespace run. The `@` terminates userinfo.
+#[cfg(feature = "http")]
+pub fn redact_http_url_userinfo(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let bytes = msg.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for scheme prefix at position `i`.
+        let rest = &msg[i..];
+        let scheme_len = if rest.starts_with("https://") {
+            8
+        } else if rest.starts_with("http://") {
+            7
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        };
+        // Scan forward for `@` before any URL terminator char.
+        // Valid userinfo chars: alphanumeric, `%`, `.`, `_`, `~`, `-`, `+`, `:`.
+        let host_start = i + scheme_len;
+        let mut j = host_start;
+        let mut at_pos: Option<usize> = None;
+        while j < bytes.len() {
+            let b = bytes[j];
+            // Terminators for the authority component.
+            if b == b'@' {
+                at_pos = Some(j);
+                break;
+            }
+            if b == b'/' || b == b'?' || b == b'#' || b == b' ' || b == b'\t' || b == b'\n' {
+                break;
+            }
+            // Accept any non-terminator byte (covers alphanumeric, `%`
+            // escapes, `:` separator, and the `._~-+` URL-safe set).
+            j += 1;
+        }
+        // Copy scheme verbatim.
+        out.push_str(&msg[i..host_start]);
+        if let Some(at) = at_pos {
+            // Only scrub if we actually have content before the `@`
+            // (otherwise `scheme://@host` stays as-is).
+            if at > host_start {
+                out.push_str("***@");
+                i = at + 1; // skip the original userinfo + `@`
+                continue;
+            }
+        }
+        i = host_start;
+    }
+    out
+}
+
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
@@ -1843,7 +1909,10 @@ fn do_http_get(url: &str) -> Value {
             Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
             Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
         },
-        Err(e) => Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]),
+        Err(e) => Value::Variant(
+            "Err".into(),
+            vec![Value::String(redact_http_url_userinfo(&format!("{e}")))],
+        ),
     }
 }
 
@@ -1935,7 +2004,10 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
             Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
             Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
         },
-        Err(e) => Value::Variant("Err".into(), vec![Value::String(format!("{e}"))]),
+        Err(e) => Value::Variant(
+            "Err".into(),
+            vec![Value::String(redact_http_url_userinfo(&format!("{e}")))],
+        ),
     }
 }
 

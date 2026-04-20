@@ -26,29 +26,8 @@ import math as m              -- aliased: m.add(1, 2)
 ```
 
 **Built-in modules** are registered in the global environment (no `.silt`
-files needed):
-
-| Module    | Key Functions                                                |
-|-----------|--------------------------------------------------------------|
-| `io`      | `inspect`, `read_file`, `write_file`, `read_line`, `args`   |
-| `list`    | `map`, `filter`, `fold`, `each`, `find`, `zip`, ...         |
-| `map`     | `get`, `set`, `delete`, `contains`, `keys`, `values`, ...   |
-| `set`     | `new`, `from_list`, `to_list`, `contains`, `insert`, ...    |
-| `string`  | `split`, `join`, `trim`, `contains`, `replace`, `length`    |
-| `int`     | `parse`, `abs`, `min`, `max`, `to_float`, `to_string`       |
-| `float`   | `parse`, `round`, `ceil`, `floor`, `abs`, `to_int`, `to_string` |
-| `result`  | `is_ok`, `is_err`, `map_ok`, `map_err`, `unwrap_or`, `flatten`, `flat_map` |
-| `option`  | `is_some`, `is_none`, `map`, `unwrap_or`, `to_result`, `flat_map` |
-| `regex`   | `is_match`, `find`, `find_all`, `replace`, `replace_all_with` |
-| `json`    | `parse`, `stringify`, `pretty`                               |
-| `test`    | `assert`, `assert_eq`, `assert_ne`                           |
-| `channel` | `new`, `send`, `receive`, `close`, `select`, `each`         |
-| `task`    | `spawn`, `join`, `cancel`                                    |
-| `env`     | `get`, `set`                                                 |
-| `math`    | `sqrt`, `pow`, `exp`, `log`, `log10`, `sin`, `cos`, `tan`, `random`, `pi`, `e`, ... |
-| `time`    | `now`, `today`, `date`, `format`, `parse`, `add_days`, `weekday`, `sleep` |
-| `fs`      | `exists`, `is_file`, `is_dir`, `list_dir`, `mkdir`, `remove`, `copy`, `rename` |
-| `http`    | `get`, `request`, `serve`, `segments`                        |
+files needed). See [`docs/stdlib/index.md`](../stdlib/index.md) for the
+authoritative list of modules and their key functions.
 
 ## Notable Standard Library Details
 

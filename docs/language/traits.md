@@ -65,7 +65,10 @@ are also callable on `a`:
 ```silt
 fn check(a: t, b: t) -> Bool where t: Ordered {
   -- a.equal(b) works because Equal is a supertrait of Ordered
-  if a.equal(b) { true } else { a.less(b) }
+  match a.equal(b) {
+    true -> true
+    false -> a.less(b)
+  }
 }
 ```
 

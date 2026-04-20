@@ -6,9 +6,9 @@
 
 use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Weak;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -56,6 +56,43 @@ macro_rules! fire_hook {
 
 /// Maximum number of live (active + blocked + queued) tasks the scheduler allows.
 const MAX_TASKS: usize = 100_000;
+
+/// Test-only process-wide "park-entry pause" in microseconds. When set
+/// to a non-zero value, every worker that enters the Blocked arm for a
+/// Receive / Send / Select park will sleep for this many µs AFTER the
+/// initial cancel cleanup at `:626` is installed but BEFORE the per-arm
+/// `handle.clone()` runs. This widens the F10 race window (a concurrent
+/// `task.cancel(h)` firing the cleanup mid-setup) from nanoseconds to
+/// milliseconds so the regression test in
+/// `tests/scheduler_cancel_setup_race_tests.rs` can deterministically
+/// reproduce the panic pre-fix.
+///
+/// Gated on `cfg(any(test, feature = "test-hooks"))` along with the
+/// hook macro; the release `scheduler::worker_loop` path compiles the
+/// check out entirely.
+///
+/// Marked `#[doc(hidden)]` so downstream crates do not depend on this
+/// internal test knob.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub static F10_PARK_SETUP_PAUSE_US: AtomicU64 = AtomicU64::new(0);
+
+/// Inline helper: sleep for `F10_PARK_SETUP_PAUSE_US` microseconds if
+/// the atomic is set. Called at the top of every Blocked-arm branch
+/// (Receive / Send / Select) before the per-arm handle clone, so the
+/// F10 regression test can deterministically widen the race window.
+/// No-op when the atomic is zero (the test default).
+#[cfg(any(test, feature = "test-hooks"))]
+#[inline]
+fn f10_park_setup_pause() {
+    let us = F10_PARK_SETUP_PAUSE_US.load(Ordering::Relaxed);
+    if us != 0 {
+        std::thread::sleep(Duration::from_micros(us));
+    }
+}
+#[cfg(not(any(test, feature = "test-hooks")))]
+#[inline(always)]
+fn f10_park_setup_pause() {}
 
 /// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
 /// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
@@ -686,6 +723,11 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                 match reason {
                     Some(BlockReason::Receive(ch)) => {
                         fire_hook!(on_park, "blocked_arm_entry_recv");
+                        // F10 regression-test widener: sleep for a
+                        // configured microsecond count BEFORE the slot
+                        // check. Zero in production / default, non-zero
+                        // only when the regression test sets it.
+                        f10_park_setup_pause();
                         // Capture the handle BEFORE registering the waker.
                         // `register_recv_waker_guard` may synchronously invoke
                         // the waker closure if a peer is already parked at the
@@ -695,98 +737,126 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // `expect("task_slot just initialized")`. The slot was
                         // initialized above this `match` and nothing mutates
                         // it between there and here.
-                        let handle_for_cancel = task_slot
-                            .lock()
-                            .as_ref()
-                            .expect("task_slot just initialized")
-                            .handle
-                            .clone();
-                        let slot = task_slot.clone();
-                        let inner2 = inner.clone();
-                        let reg = ch.register_recv_waker_guard(Box::new(move || {
-                            if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task, false);
-                            }
-                        }));
-                        // Re-install the cancel cleanup so it ALSO owns
-                        // the `WakerRegistration` guard. The guard's
-                        // Drop deregisters the recv waker from the
-                        // channel on any path that drops the closure
-                        // (cancel → `complete` fires it, then closure
-                        // drops; or normal wake → `requeue` calls
-                        // `clear_cancel_cleanup`, closure drops).
-                        // Without this, round-27 B1/B2 leak the waker
-                        // into `recv_wakers` and permanently inflate
-                        // `waiting_receivers`: a later unrelated
-                        // `try_send` sees a phantom receiver (B1), or
-                        // a real receiver behind the dead waker in the
-                        // FIFO never wakes (B2).
                         //
-                        // Phase 3 / round 31: only install the new
-                        // cleanup if `task_slot` is still `Some`. If
-                        // `register_*_waker_guard` inline-fired (the
-                        // common rendezvous case), the closure took the
-                        // task out of `task_slot` and `requeue` already
-                        // cleared the prior cleanup AND reset the wake-
-                        // graph edge. A subsequent `set_cancel_cleanup`
-                        // here would race with a concurrent worker that
-                        // has already picked the requeued task up,
-                        // entered a NEW Blocked arm, and installed ITS
-                        // arm-specific cleanup. Replacing that newer
-                        // cleanup drops a `WakerRegistration` whose
-                        // entry is still live in the channel — the drop
-                        // calls `remove_*_waker`, deregistering the
-                        // newer arm's waker. Result: a parked task with
-                        // no waker, the wake-graph still listing it as
-                        // a Send/Recv listener, and the deadlock
-                        // detector firing a real-looking false positive.
-                        //
-                        // Closing the check+set under the same
-                        // `task_slot` lock keeps the protocol race-free:
-                        // if the slot is empty when checked, the
-                        // inline-fire (or a concurrent wake) already
-                        // owns the task and we must not touch the
-                        // cleanup; if the slot is `Some` while we hold
-                        // the lock, no waker can fire mid-set (the
-                        // waker closure also needs `slot.lock()` to
-                        // proceed), so our `set_cancel_cleanup` cannot
-                        // clobber a newer arm's cleanup. We do the
-                        // `set_cancel_cleanup` while still holding the
-                        // lock; the handle's `cancel_cleanup` Mutex is
-                        // a different lock, so no deadlock.
-                        let slot_guard = task_slot.lock();
-                        if slot_guard.is_some() {
-                            let cancel_slot = task_slot.clone();
-                            let cancel_inner = inner.clone();
-                            let cancel_task_id = id;
-                            handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                // Move the guard into the body so its Drop
-                                // runs at the end of this scope (cancel
-                                // path) or when the closure itself is
-                                // dropped (normal wake path).
-                                let _reg = reg;
-                                if cancel_slot.lock().take().is_none() {
-                                    return;
+                        // Finding F10 (cancel-setup race): a concurrent
+                        // `task.cancel(h)` between the initial
+                        // `set_cancel_cleanup` at :626 and the handle
+                        // clone here ALSO drains `task_slot` (the initial
+                        // cleanup takes it). Previously this branch did
+                        // `.expect(...)` and panicked the worker thread.
+                        // Instead, check the slot: if the task is gone,
+                        // take the cancelled-mid-setup path (skip waker
+                        // registration + per-arm cleanup, tear down the
+                        // phantom park edge inserted at :679).
+                        let handle_for_cancel_opt =
+                            task_slot.lock().as_ref().map(|t| t.handle.clone());
+                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
+                            let slot = task_slot.clone();
+                            let inner2 = inner.clone();
+                            let reg = ch.register_recv_waker_guard(Box::new(move || {
+                                if let Some(task) = slot.lock().take() {
+                                    requeue(&inner2, task, false);
                                 }
-                                if was_io {
-                                    cancel_inner.watchdog.remove(cancel_task_id);
-                                }
-                                cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                signal_progress(&cancel_inner);
                             }));
-                            drop(slot_guard);
+                            // Re-install the cancel cleanup so it ALSO owns
+                            // the `WakerRegistration` guard. The guard's
+                            // Drop deregisters the recv waker from the
+                            // channel on any path that drops the closure
+                            // (cancel → `complete` fires it, then closure
+                            // drops; or normal wake → `requeue` calls
+                            // `clear_cancel_cleanup`, closure drops).
+                            // Without this, round-27 B1/B2 leak the waker
+                            // into `recv_wakers` and permanently inflate
+                            // `waiting_receivers`: a later unrelated
+                            // `try_send` sees a phantom receiver (B1), or
+                            // a real receiver behind the dead waker in the
+                            // FIFO never wakes (B2).
+                            //
+                            // Phase 3 / round 31: only install the new
+                            // cleanup if `task_slot` is still `Some`. If
+                            // `register_*_waker_guard` inline-fired (the
+                            // common rendezvous case), the closure took the
+                            // task out of `task_slot` and `requeue` already
+                            // cleared the prior cleanup AND reset the wake-
+                            // graph edge. A subsequent `set_cancel_cleanup`
+                            // here would race with a concurrent worker that
+                            // has already picked the requeued task up,
+                            // entered a NEW Blocked arm, and installed ITS
+                            // arm-specific cleanup. Replacing that newer
+                            // cleanup drops a `WakerRegistration` whose
+                            // entry is still live in the channel — the drop
+                            // calls `remove_*_waker`, deregistering the
+                            // newer arm's waker. Result: a parked task with
+                            // no waker, the wake-graph still listing it as
+                            // a Send/Recv listener, and the deadlock
+                            // detector firing a real-looking false positive.
+                            //
+                            // Closing the check+set under the same
+                            // `task_slot` lock keeps the protocol race-free:
+                            // if the slot is empty when checked, the
+                            // inline-fire (or a concurrent wake) already
+                            // owns the task and we must not touch the
+                            // cleanup; if the slot is `Some` while we hold
+                            // the lock, no waker can fire mid-set (the
+                            // waker closure also needs `slot.lock()` to
+                            // proceed), so our `set_cancel_cleanup` cannot
+                            // clobber a newer arm's cleanup. We do the
+                            // `set_cancel_cleanup` while still holding the
+                            // lock; the handle's `cancel_cleanup` Mutex is
+                            // a different lock, so no deadlock.
+                            let slot_guard = task_slot.lock();
+                            if slot_guard.is_some() {
+                                let cancel_slot = task_slot.clone();
+                                let cancel_inner = inner.clone();
+                                let cancel_task_id = id;
+                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                                    // Move the guard into the body so its Drop
+                                    // runs at the end of this scope (cancel
+                                    // path) or when the closure itself is
+                                    // dropped (normal wake path).
+                                    let _reg = reg;
+                                    if cancel_slot.lock().take().is_none() {
+                                        return;
+                                    }
+                                    if was_io {
+                                        cancel_inner.watchdog.remove(cancel_task_id);
+                                    }
+                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
+                                    signal_progress(&cancel_inner);
+                                }));
+                                drop(slot_guard);
+                            } else {
+                                drop(slot_guard);
+                                // Inline-fire already requeued the task and
+                                // dropped the prior cleanup; `reg` here
+                                // refers to a drained entry whose Drop is a
+                                // no-op deregister.
+                                drop(reg);
+                            }
                         } else {
-                            drop(slot_guard);
-                            // Inline-fire already requeued the task and
-                            // dropped the prior cleanup; `reg` here
-                            // refers to a drained entry whose Drop is a
-                            // no-op deregister.
-                            drop(reg);
+                            // F10 cancelled-mid-setup: the initial cleanup
+                            // at :626 already took the task, decremented
+                            // `live_tasks`, and called `on_complete(id)`
+                            // (which tears down any edge in the graph).
+                            // But `on_park` at :679 may have run AFTER the
+                            // cleanup's `on_complete`, in which case the
+                            // graph retains a phantom park edge for a
+                            // dead task. Remove it now. `on_wake` is a
+                            // no-op when the edge is already gone, so it
+                            // is safe in the other ordering too. Do not
+                            // register the channel waker (would leak into
+                            // `recv_wakers` / `ch_recv_listeners` with no
+                            // owner to drain it), and do not install an
+                            // arm-specific cleanup (the task is gone).
+                            inner.wake_graph.on_wake(NodeId::Task(id));
+                            signal_progress(&inner);
                         }
                     }
                     Some(BlockReason::Send(ch)) => {
                         fire_hook!(on_park, "blocked_arm_entry_send");
+                        // F10 regression-test widener. See Receive arm.
+                        f10_park_setup_pause();
                         // Capture the handle BEFORE registering the waker.
                         // `register_send_waker_guard` may synchronously invoke
                         // the waker closure if a peer is already parked at
@@ -796,53 +866,67 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         // `expect("task_slot just initialized")`. The slot
                         // was initialized above this `match` and nothing
                         // mutates it between there and here.
-                        let handle_for_cancel = task_slot
-                            .lock()
-                            .as_ref()
-                            .expect("task_slot just initialized")
-                            .handle
-                            .clone();
-                        let slot = task_slot.clone();
-                        let inner2 = inner.clone();
-                        let reg = ch.register_send_waker_guard(Box::new(move || {
-                            if let Some(task) = slot.lock().take() {
-                                requeue(&inner2, task, false);
-                            }
-                        }));
-                        // See the Receive arm: cancel cleanup owns the
-                        // guard so Drop deregisters the send waker on
-                        // cancel (round-27 B3/B4). Phase 3 / round 31:
-                        // hold the `task_slot` lock across the
-                        // is_some-check + set_cancel_cleanup so an
-                        // inline-fire-then-new-arm sequence cannot
-                        // clobber a concurrent worker's NEW arm
-                        // cleanup. See the matching explanation in the
-                        // Receive arm above.
-                        let slot_guard = task_slot.lock();
-                        if slot_guard.is_some() {
-                            let cancel_slot = task_slot.clone();
-                            let cancel_inner = inner.clone();
-                            let cancel_task_id = id;
-                            handle_for_cancel.set_cancel_cleanup(Box::new(move || {
-                                let _reg = reg;
-                                if cancel_slot.lock().take().is_none() {
-                                    return;
+                        //
+                        // Finding F10: see the Receive arm above. A
+                        // concurrent `task.cancel(h)` between :626 and
+                        // here may already have drained `task_slot`;
+                        // defend with an `if let` and take the
+                        // cancelled-mid-setup path on `None`.
+                        let handle_for_cancel_opt =
+                            task_slot.lock().as_ref().map(|t| t.handle.clone());
+                        if let Some(handle_for_cancel) = handle_for_cancel_opt {
+                            let slot = task_slot.clone();
+                            let inner2 = inner.clone();
+                            let reg = ch.register_send_waker_guard(Box::new(move || {
+                                if let Some(task) = slot.lock().take() {
+                                    requeue(&inner2, task, false);
                                 }
-                                if was_io {
-                                    cancel_inner.watchdog.remove(cancel_task_id);
-                                }
-                                cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                                cancel_inner.wake_graph.on_complete(cancel_task_id);
-                                signal_progress(&cancel_inner);
                             }));
-                            drop(slot_guard);
+                            // See the Receive arm: cancel cleanup owns the
+                            // guard so Drop deregisters the send waker on
+                            // cancel (round-27 B3/B4). Phase 3 / round 31:
+                            // hold the `task_slot` lock across the
+                            // is_some-check + set_cancel_cleanup so an
+                            // inline-fire-then-new-arm sequence cannot
+                            // clobber a concurrent worker's NEW arm
+                            // cleanup. See the matching explanation in the
+                            // Receive arm above.
+                            let slot_guard = task_slot.lock();
+                            if slot_guard.is_some() {
+                                let cancel_slot = task_slot.clone();
+                                let cancel_inner = inner.clone();
+                                let cancel_task_id = id;
+                                handle_for_cancel.set_cancel_cleanup(Box::new(move || {
+                                    let _reg = reg;
+                                    if cancel_slot.lock().take().is_none() {
+                                        return;
+                                    }
+                                    if was_io {
+                                        cancel_inner.watchdog.remove(cancel_task_id);
+                                    }
+                                    cancel_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                                    cancel_inner.wake_graph.on_complete(cancel_task_id);
+                                    signal_progress(&cancel_inner);
+                                }));
+                                drop(slot_guard);
+                            } else {
+                                drop(slot_guard);
+                                drop(reg);
+                            }
                         } else {
-                            drop(slot_guard);
-                            drop(reg);
+                            // F10 cancelled-mid-setup: the initial cleanup
+                            // at :626 already took the task. Remove any
+                            // phantom park edge and skip waker/cleanup
+                            // install. See the Receive arm for the full
+                            // rationale.
+                            inner.wake_graph.on_wake(NodeId::Task(id));
+                            signal_progress(&inner);
                         }
                     }
                     Some(BlockReason::Select(ops)) => {
                         fire_hook!(on_park, "blocked_arm_entry_select");
+                        // F10 regression-test widener. See Receive arm.
+                        f10_park_setup_pause();
                         // Register waker on ALL channels. First waker to fire
                         // wakes the task AND deregisters the other siblings'
                         // wakers — this prevents a leaked `waiting_receivers`
@@ -872,68 +956,82 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                         let select_task_id = id;
                         let cancelled_for_cancel = cancelled.clone();
                         let entries_for_cancel = entries.clone();
-                        let handle_for_select = task_slot
-                            .lock()
-                            .as_ref()
-                            .expect("task_slot just initialized")
-                            .handle
-                            .clone();
-                        handle_for_select.set_cancel_cleanup(Box::new(move || {
-                            if select_slot.lock().take().is_none() {
-                                return;
-                            }
-                            // Prevent any still-racing waker from acting.
-                            cancelled_for_cancel.store(true, Ordering::Release);
-                            select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
-                            select_inner.wake_graph.on_complete(select_task_id);
-                            signal_progress(&select_inner);
-                            // Drop every still-pending registration guard;
-                            // each Drop calls remove_*_waker.
-                            drop(std::mem::take(&mut *entries_for_cancel.lock()));
-                        }));
-                        for (ch, kind) in ops.iter() {
-                            if cancelled.load(Ordering::Acquire) {
-                                // An earlier iteration's waker fired
-                                // inline during its double-check. Don't
-                                // register further wakers that would
-                                // leak into the channel queue.
-                                break;
-                            }
-                            let slot = task_slot.clone();
-                            let inner2 = inner.clone();
-                            let cancelled2 = cancelled.clone();
-                            let entries2 = entries.clone();
-                            let waker = Box::new(move || {
-                                if cancelled2.load(Ordering::Acquire) {
-                                    return; // Another waker already fired
+                        // Finding F10: see the Receive arm. A concurrent
+                        // `task.cancel(h)` between :626 and here may
+                        // already have drained `task_slot`; defend with
+                        // an `if let` and take the cancelled-mid-setup
+                        // path on `None`.
+                        let handle_for_select_opt =
+                            task_slot.lock().as_ref().map(|t| t.handle.clone());
+                        if let Some(handle_for_select) = handle_for_select_opt {
+                            handle_for_select.set_cancel_cleanup(Box::new(move || {
+                                if select_slot.lock().take().is_none() {
+                                    return;
                                 }
-                                if let Some(task) = slot.lock().take() {
-                                    cancelled2.store(true, Ordering::Release);
-                                    // Drain and drop sibling guards —
-                                    // each Drop calls remove_*_waker.
-                                    // Our own entry's guard is also in
-                                    // the vec, but its Drop is a no-op
-                                    // because `wake_*` already popped it.
-                                    drop(std::mem::take(&mut *entries2.lock()));
-                                    requeue(&inner2, task, false);
+                                // Prevent any still-racing waker from acting.
+                                cancelled_for_cancel.store(true, Ordering::Release);
+                                select_inner.live_tasks.fetch_sub(1, Ordering::SeqCst);
+                                select_inner.wake_graph.on_complete(select_task_id);
+                                signal_progress(&select_inner);
+                                // Drop every still-pending registration guard;
+                                // each Drop calls remove_*_waker.
+                                drop(std::mem::take(&mut *entries_for_cancel.lock()));
+                            }));
+                            for (ch, kind) in ops.iter() {
+                                if cancelled.load(Ordering::Acquire) {
+                                    // An earlier iteration's waker fired
+                                    // inline during its double-check. Don't
+                                    // register further wakers that would
+                                    // leak into the channel queue.
+                                    break;
                                 }
-                            });
-                            let reg = match kind {
-                                SelectOpKind::Receive => ch.register_recv_waker_guard(waker),
-                                SelectOpKind::Send => ch.register_send_waker_guard(waker),
-                            };
-                            // If the waker fired inline during the
-                            // double-check inside register_*_waker, the
-                            // winning waker already drained the vec and
-                            // set `cancelled = true`. In that case drop
-                            // our fresh guard immediately (idempotent
-                            // no-op) and stop iterating.
-                            if !cancelled.load(Ordering::Acquire) {
-                                entries.lock().push(reg);
-                            } else {
-                                drop(reg);
-                                break;
+                                let slot = task_slot.clone();
+                                let inner2 = inner.clone();
+                                let cancelled2 = cancelled.clone();
+                                let entries2 = entries.clone();
+                                let waker = Box::new(move || {
+                                    if cancelled2.load(Ordering::Acquire) {
+                                        return; // Another waker already fired
+                                    }
+                                    if let Some(task) = slot.lock().take() {
+                                        cancelled2.store(true, Ordering::Release);
+                                        // Drain and drop sibling guards —
+                                        // each Drop calls remove_*_waker.
+                                        // Our own entry's guard is also in
+                                        // the vec, but its Drop is a no-op
+                                        // because `wake_*` already popped it.
+                                        drop(std::mem::take(&mut *entries2.lock()));
+                                        requeue(&inner2, task, false);
+                                    }
+                                });
+                                let reg = match kind {
+                                    SelectOpKind::Receive => ch.register_recv_waker_guard(waker),
+                                    SelectOpKind::Send => ch.register_send_waker_guard(waker),
+                                };
+                                // If the waker fired inline during the
+                                // double-check inside register_*_waker, the
+                                // winning waker already drained the vec and
+                                // set `cancelled = true`. In that case drop
+                                // our fresh guard immediately (idempotent
+                                // no-op) and stop iterating.
+                                if !cancelled.load(Ordering::Acquire) {
+                                    entries.lock().push(reg);
+                                } else {
+                                    drop(reg);
+                                    break;
+                                }
                             }
+                        } else {
+                            // F10 cancelled-mid-setup: the initial cleanup
+                            // at :626 already took the task. Remove any
+                            // phantom park edge and skip per-channel waker
+                            // registration + cleanup install. See the
+                            // Receive arm for the full rationale. Note:
+                            // `entries` is still empty here (no wakers
+                            // were registered), so there is nothing to
+                            // drop on the channels.
+                            inner.wake_graph.on_wake(NodeId::Task(id));
+                            signal_progress(&inner);
                         }
                     }
                     Some(BlockReason::Join(target_handle)) => {

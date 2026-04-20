@@ -220,13 +220,11 @@ fn use_color() -> bool {
 
 // ── ANSI color helpers ─────────────────────────────────────────────
 
-#[allow(dead_code)]
 struct Colors {
     red: &'static str,
     yellow: &'static str,
     cyan: &'static str,
     bold: &'static str,
-    dim: &'static str,
     reset: &'static str,
 }
 
@@ -235,7 +233,6 @@ const COLORS_ON: Colors = Colors {
     yellow: "\x1b[33m",
     cyan: "\x1b[36m",
     bold: "\x1b[1m",
-    dim: "\x1b[2m",
     reset: "\x1b[0m",
 };
 
@@ -244,7 +241,6 @@ const COLORS_OFF: Colors = Colors {
     yellow: "",
     cyan: "",
     bold: "",
-    dim: "",
     reset: "",
 };
 
