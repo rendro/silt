@@ -13,6 +13,7 @@ Functions for parsing, converting, and comparing integers.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `abs` | `(Int) -> Int` | Absolute value |
+| `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
 | `parse` | `(String) -> Result(Int, String)` | Parse string to integer |
@@ -34,6 +35,26 @@ import int
 fn main() {
     println(int.abs(-42))  -- 42
     println(int.abs(7))    -- 7
+}
+```
+
+
+## `int.clamp`
+
+```
+int.clamp(x: Int, lo: Int, hi: Int) -> Int
+```
+
+Returns `x` constrained to the inclusive range `[lo, hi]`: `lo` if
+`x < lo`, `hi` if `x > hi`, otherwise `x`. Runtime error if `lo > hi`
+(invalid bounds).
+
+```silt
+import int
+fn main() {
+    println(int.clamp(5, 0, 10))    -- 5
+    println(int.clamp(-3, 0, 10))   -- 0
+    println(int.clamp(42, 0, 10))   -- 10
 }
 ```
 
@@ -145,7 +166,11 @@ Functions for parsing, rounding, converting, and comparing floats.
 |----------|-----------|-------------|
 | `abs` | `(Float) -> Float` | Absolute value |
 | `ceil` | `(Float) -> Float` | Round up to nearest integer (as Float) |
+| `clamp` | `(Float, Float, Float) -> Float` | Clamp value to `[lo, hi]` |
 | `floor` | `(Float) -> Float` | Round down to nearest integer (as Float) |
+| `is_finite` | `(ExtFloat) -> Bool` | True iff value is finite |
+| `is_infinite` | `(ExtFloat) -> Bool` | True iff value is `±∞` |
+| `is_nan` | `(ExtFloat) -> Bool` | True iff value is NaN |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
 | `parse` | `(String) -> Result(Float, String)` | Parse string to float |
@@ -192,6 +217,86 @@ import float
 fn main() {
     println(float.ceil(3.2))   -- 4.0
     println(float.ceil(-3.2))  -- -3.0
+}
+```
+
+
+## `float.clamp`
+
+```
+float.clamp(x: Float, lo: Float, hi: Float) -> Float
+```
+
+Returns `x` constrained to the inclusive range `[lo, hi]`: `lo` if
+`x < lo`, `hi` if `x > hi`, otherwise `x`. Runtime error if `lo > hi`
+(invalid bounds).
+
+Because `Float` is guaranteed finite, callers should not pass NaN here;
+the output is **undefined for NaN inputs**. Use `float.is_nan` on an
+`ExtFloat` first if you need to guard against this case.
+
+```silt
+import float
+fn main() {
+    println(float.clamp(0.5, 0.0, 1.0))   -- 0.5
+    println(float.clamp(-0.2, 0.0, 1.0))  -- 0.0
+    println(float.clamp(1.5, 0.0, 1.0))   -- 1.0
+}
+```
+
+
+## `float.is_finite`
+
+```
+float.is_finite(x: ExtFloat) -> Bool
+```
+
+Returns `true` iff `x` is a finite number (not NaN, not `±∞`). Takes
+`ExtFloat` because `Float` is guaranteed finite by construction — there
+is no way to produce a non-finite `Float` that would make this predicate
+interesting, so no `Float` overload is provided.
+
+```silt
+import float
+fn main() {
+    println(float.is_finite(float.nan))         -- false
+    println(float.is_finite(float.infinity))    -- false
+    println(float.is_finite(1.0 / 1.0))         -- true (division returns ExtFloat)
+}
+```
+
+
+## `float.is_infinite`
+
+```
+float.is_infinite(x: ExtFloat) -> Bool
+```
+
+Returns `true` iff `x` is positive or negative infinity.
+
+```silt
+import float
+fn main() {
+    println(float.is_infinite(float.infinity))      -- true
+    println(float.is_infinite(float.neg_infinity))  -- true
+    println(float.is_infinite(float.nan))           -- false
+}
+```
+
+
+## `float.is_nan`
+
+```
+float.is_nan(x: ExtFloat) -> Bool
+```
+
+Returns `true` iff `x` is NaN.
+
+```silt
+import float
+fn main() {
+    println(float.is_nan(float.nan))       -- true
+    println(float.is_nan(float.infinity))  -- false
 }
 ```
 

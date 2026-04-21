@@ -48,6 +48,8 @@ Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 | `minutes` | `(Int) -> Duration` | Create duration from minutes |
 | `seconds` | `(Int) -> Duration` | Create duration from seconds |
 | `ms` | `(Int) -> Duration` | Create duration from milliseconds |
+| `micros` | `(Int) -> Duration` | Create duration from microseconds |
+| `nanos` | `(Int) -> Duration` | Create duration from nanoseconds |
 | `weekday` | `(Date) -> Weekday` | Day of the week |
 | `days_between` | `(Date, Date) -> Int` | Signed number of days between two dates |
 | `days_in_month` | `(Int, Int) -> Int` | Days in month for given year and month |
@@ -361,24 +363,32 @@ fn main() {
 ```
 
 
-## `time.hours`, `time.minutes`, `time.seconds`, `time.ms`
+## `time.hours`, `time.minutes`, `time.seconds`, `time.ms`, `time.micros`, `time.nanos`
 
 ```
 time.hours(n: Int) -> Duration
 time.minutes(n: Int) -> Duration
 time.seconds(n: Int) -> Duration
 time.ms(n: Int) -> Duration
+time.micros(n: Int) -> Duration
+time.nanos(n: Int) -> Duration
 ```
 
-Duration constructor functions.
+Duration constructor functions. All units return a `Duration` with
+nanosecond precision; they differ only in the multiplier applied to
+their `Int` argument. `time.nanos` is the raw form (no multiplication).
+Overflowing the `Int` range (`i64::MAX` nanoseconds ≈ 292 years) is
+surfaced as a runtime error rather than a silent wrap.
 
 ```silt
 import time
 fn main() {
-    println(time.hours(1))     -- 1h
-    println(time.minutes(30))  -- 30m
-    println(time.seconds(5))   -- 5s
-    println(time.ms(500))      -- 500ms
+    println(time.hours(1))      -- 1h
+    println(time.minutes(30))   -- 30m
+    println(time.seconds(5))    -- 5s
+    println(time.ms(500))       -- 500ms
+    println(time.micros(250))   -- 250µs
+    println(time.nanos(42))     -- 42ns
 }
 ```
 

@@ -153,6 +153,42 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         )),
     );
 
+    // string.last_index_of: (String, String) -> Option(Int)
+    env.define(
+        intern("string.last_index_of"),
+        Scheme::mono(Type::Fun(
+            vec![Type::String, Type::String],
+            Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+        )),
+    );
+
+    // string.split_at: (String, Int) -> (String, String)
+    env.define(
+        intern("string.split_at"),
+        Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int],
+            Box::new(Type::Tuple(vec![Type::String, Type::String])),
+        )),
+    );
+
+    // string.lines: (String) -> List(String)
+    env.define(
+        intern("string.lines"),
+        Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::List(Box::new(Type::String))),
+        )),
+    );
+
+    // string.starts_with_at: (String, Int, String) -> Bool
+    env.define(
+        intern("string.starts_with_at"),
+        Scheme::mono(Type::Fun(
+            vec![Type::String, Type::Int, Type::String],
+            Box::new(Type::Bool),
+        )),
+    );
+
     // string.slice: (String, Int, Int) -> String
     env.define(
         intern("string.slice"),

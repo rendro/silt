@@ -133,6 +133,8 @@ Environment variable access. Requires `import env`.
 |----------|-----------|-------------|
 | `get` | `(String) -> Option(String)` | Read an environment variable |
 | `set` | `(String, String) -> ()` | Set an environment variable |
+| `remove` | `(String) -> ()` | Unset an environment variable (idempotent) |
+| `vars` | `() -> List((String, String))` | Snapshot every environment variable |
 
 
 ## `env.get`
@@ -172,6 +174,63 @@ fn main() {
     println(env.get("MY_VAR"))  -- Some("hello")
 }
 ```
+
+
+## `env.remove`
+
+```
+env.remove(name: String) -> ()
+```
+
+Unsets the environment variable `name` for the current process.
+Idempotent: removing a variable that is not set is not an error.
+
+```silt
+import env
+
+fn main() {
+    env.set("MY_VAR", "hello")
+    env.remove("MY_VAR")
+    println(env.get("MY_VAR"))  -- None
+
+    -- Already unset — still OK.
+    env.remove("MY_VAR")
+}
+```
+
+Like `env.set`, `env.remove` may only be called from the main task.
+Mutating the process-wide environment from a spawned task races with
+any other task reading it (libc's `setenv`/`unsetenv` are not
+synchronized), so the VM rejects it with an error.
+
+
+## `env.vars`
+
+```
+env.vars() -> List((String, String))
+```
+
+Returns a snapshot of every environment variable as a list of
+`(name, value)` pairs. The list is materialized at call time and is
+not affected by subsequent `env.set` / `env.remove` calls.
+
+```silt
+import env
+import list
+
+fn main() {
+    let all = env.vars()
+    println("env has {list.length(all)} vars")
+}
+```
+
+Ordering of the returned list is unspecified — it mirrors whatever
+order the underlying platform iterator produces (typically insertion
+order on glibc, but do not depend on it). If you need a stable order,
+sort the result yourself. A `List` of pairs was chosen over a `Map` so
+that callers who *do* want to preserve platform order can, and so
+duplicate-key environments (which some shells can produce) round-trip
+without silent dedup.
 
 
 ---

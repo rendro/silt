@@ -573,3 +573,86 @@ fn main() -> String {
         "expected 'invalid format specifier' rejection for '%Q', got: {err}"
     );
 }
+
+// ── time.nanos / time.micros ───────────────────────────────────────────
+//
+// These constructors mirror `time.ms` / `time.seconds` / `time.hours` /
+// `time.minutes`. We lock the multiplier (ns, µs) and the overflow
+// contract so a later refactor can't silently drop a unit or flip from
+// i64 saturation to wrap-around.
+
+/// `time.nanos(n)` should produce a Duration whose `ns` field is exactly `n`.
+/// No multiplication happens; this is the raw form.
+#[test]
+fn test_time_nanos_is_identity_on_ns_field() {
+    let r = run(r#"
+import time
+fn main() -> Int {
+  time.nanos(12345).ns
+}
+"#);
+    assert_eq!(r, Value::Int(12345));
+}
+
+/// `time.nanos(0)` produces a zero Duration. Guards against an
+/// off-by-one where an empty input might accidentally produce 1ns.
+#[test]
+fn test_time_nanos_zero() {
+    let r = run(r#"
+import time
+fn main() -> Int {
+  time.nanos(0).ns
+}
+"#);
+    assert_eq!(r, Value::Int(0));
+}
+
+/// `time.micros(n)` should produce a Duration whose `ns` field is
+/// `n * 1_000`. Pin one concrete case so a unit swap (e.g. accidentally
+/// using 1_000_000) is caught.
+#[test]
+fn test_time_micros_scales_by_thousand() {
+    let r = run(r#"
+import time
+fn main() -> Int {
+  time.micros(7).ns
+}
+"#);
+    assert_eq!(r, Value::Int(7_000));
+}
+
+/// `time.micros` and `time.ms` should relate by a factor of 1000 — i.e.
+/// `time.ms(1) == time.micros(1000)`. This is the real user-visible
+/// invariant that keeps the unit ladder consistent.
+#[test]
+fn test_time_micros_and_ms_are_consistent() {
+    let r = run(r#"
+import time
+fn main() -> Bool {
+  time.ms(1).ns == time.micros(1000).ns
+}
+"#);
+    assert_eq!(r, Value::Bool(true));
+}
+
+/// `time.nanos` and `time.micros` must surface overflow as a runtime
+/// error, not silently wrap. The trigger for nanos would be
+/// `i64::MAX + 1`, which isn't a representable literal — we use the
+/// micros path instead where `i64::MAX / 1000 + 1` is representable
+/// and still overflows after scaling.
+#[test]
+fn test_time_micros_overflow_errors() {
+    let err = run_err(r#"
+import time
+fn main() {
+  -- i64::MAX is 9223372036854775807. Divided by 1_000 is
+  -- 9223372036854775, and +1 still fits in an i64 literal but
+  -- overflows when multiplied by 1_000.
+  time.micros(9223372036854776)
+}
+"#);
+    assert!(
+        err.to_ascii_lowercase().contains("overflow"),
+        "expected overflow error, got: {err}"
+    );
+}

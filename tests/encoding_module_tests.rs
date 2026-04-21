@@ -434,6 +434,190 @@ fn test_documented_encoding_functions_match_registration() {
     }
 }
 
+// ── form_encode / form_decode ─────────────────────────────────────────
+
+/// An empty pair list must produce an empty string (not `"="` or `"&"`).
+/// We seed the list with a single pair and then use `list.tail` to get
+/// an empty list of the right type (bare `[]` needs a type annotation
+/// that's awkward to thread through the parser in this position).
+#[test]
+fn test_form_encode_empty_list_is_empty_string() {
+    let v = run(
+        r#"
+import encoding
+import list
+fn main() {
+  let seeded = [("k", "v")]
+  let pairs = list.tail(seeded)
+  encoding.form_encode(pairs)
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "");
+}
+
+/// Ordering matters for form-encode: the input list order must be the
+/// output order. This is the whole reason the signature is
+/// `List((String, String))` rather than `Map(String, String)`.
+#[test]
+fn test_form_encode_preserves_order() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  encoding.form_encode([("a", "1"), ("b", "2"), ("c", "3")])
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "a=1&b=2&c=3");
+}
+
+/// Space is `+` (form convention), `&` and `=` in values are `%26`/`%3D`.
+#[test]
+fn test_form_encode_space_plus_and_reserved() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  encoding.form_encode([("name", "Ada Lovelace"), ("role", "a & b = c")])
+}
+"#,
+    );
+    let s = expect_string(v);
+    assert_eq!(s, "name=Ada+Lovelace&role=a+%26+b+%3D+c");
+}
+
+/// Non-ASCII UTF-8 bytes must be percent-escaped.
+#[test]
+fn test_form_encode_non_ascii() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  encoding.form_encode([("q", "café")])
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "q=caf%C3%A9");
+}
+
+/// A literal `+` in input must be escaped as `%2B` so it does not
+/// collide with the space convention on round-trip.
+#[test]
+fn test_form_encode_literal_plus_becomes_percent_2b() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  encoding.form_encode([("math", "1+1")])
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "math=1%2B1");
+}
+
+/// form_decode: basic split and `+` → space.
+#[test]
+fn test_form_decode_basic_roundtrip() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  match encoding.form_decode("a=1&b=hello+world") {
+    Ok(pairs) -> match pairs {
+      [(_, v1), (_, v2)] -> v1 + "|" + v2
+      _ -> "wrong-shape"
+    }
+    Err(e) -> e
+  }
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "1|hello world");
+}
+
+/// A segment with no `=` decodes to (key, "").
+#[test]
+fn test_form_decode_missing_equals_is_empty_value() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  match encoding.form_decode("flag") {
+    Ok(pairs) -> match pairs {
+      [(k, v)] -> k + "=" + v
+      _ -> "wrong-shape"
+    }
+    Err(_) -> "err"
+  }
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "flag=");
+}
+
+/// Empty segments (leading `&`, `&&`, trailing `&`) are skipped.
+#[test]
+fn test_form_decode_empty_segments_skipped() {
+    let v = run(
+        r#"
+import encoding
+import list
+fn main() {
+  match encoding.form_decode("&a=1&&b=2&") {
+    Ok(pairs) -> list.length(pairs)
+    Err(_) -> -1
+  }
+}
+"#,
+    );
+    assert_eq!(v, Value::Int(2));
+}
+
+/// Malformed percent escape in value must return Err, not silently pass.
+#[test]
+fn test_form_decode_bad_percent_errors() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  match encoding.form_decode("a=bad%ZZ") {
+    Ok(_) -> "wrong: should error"
+    Err(e) -> e
+  }
+}
+"#,
+    );
+    let s = expect_string(v);
+    let lower = s.to_ascii_lowercase();
+    assert!(
+        lower.contains("percent") || lower.contains("invalid"),
+        "error should mention percent/invalid, got: {s}"
+    );
+}
+
+/// form_encode → form_decode must round-trip shape and values.
+#[test]
+fn test_form_round_trip() {
+    let v = run(
+        r#"
+import encoding
+fn main() {
+  let original = [("name", "Ada Lovelace"), ("q", "a & b = c"), ("lit", "1+1")]
+  let body = encoding.form_encode(original)
+  match encoding.form_decode(body) {
+    Ok(pairs) -> match pairs {
+      [(_, v0), (_, v1), (_, v2)] -> v0 + "|" + v1 + "|" + v2
+      _ -> "wrong-shape"
+    }
+    Err(e) -> e
+  }
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "Ada Lovelace|a & b = c|1+1");
+}
+
 /// Every function registered for the encoding module must also have a
 /// type signature in the type environment.
 #[test]

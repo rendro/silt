@@ -645,6 +645,222 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let items = materialize_iter(&args[0], "list.group_by")?;
             vm.iterate_builtin(BuiltinIterKind::ListGroupBy, items, args[1].clone(), args)
         }
+        "index_of" => {
+            if args.len() != 2 {
+                return Err(VmError::new("list.index_of takes 2 arguments".into()));
+            }
+            let iter = ValueIter::try_from(&args[0], "list.index_of")?;
+            let target = &args[1];
+            for (i, v) in iter.enumerate() {
+                if &v == target {
+                    let idx = i64::try_from(i).map_err(|_| {
+                        VmError::new(
+                            "list.index_of overflow: index too large to represent as Int".into(),
+                        )
+                    })?;
+                    return Ok(Value::Variant("Some".into(), vec![Value::Int(idx)]));
+                }
+            }
+            Ok(Value::Variant("None".into(), Vec::new()))
+        }
+        "remove_at" => {
+            if args.len() != 2 {
+                return Err(VmError::new("list.remove_at takes 2 arguments".into()));
+            }
+            let Value::Int(n) = &args[1] else {
+                return Err(VmError::new("list.remove_at index must be int".into()));
+            };
+            let n_val = *n;
+            if n_val < 0 {
+                return Err(VmError::new(format!(
+                    "list.remove_at: negative index {n_val}"
+                )));
+            }
+            let mut v = ValueIter::try_from(&args[0], "list.remove_at")?.collect_vec()?;
+            let idx = n_val as usize;
+            if idx >= v.len() {
+                return Err(VmError::new("list.remove_at index out of bounds".into()));
+            }
+            v.remove(idx);
+            Ok(Value::List(Arc::new(v)))
+        }
+        "min_by" => {
+            if args.len() != 2 {
+                return Err(VmError::new("list.min_by takes 2 arguments".into()));
+            }
+            let items = materialize_iter(&args[0], "list.min_by")?;
+            let func = &args[1];
+            let mut best: Option<(Value, Value)> = None;
+            for item in items {
+                let key = vm.invoke_callable(func, &[item.clone()])?;
+                best = Some(match best {
+                    None => (key, item),
+                    Some((bk, bv)) => {
+                        if key.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
+                            == std::cmp::Ordering::Less
+                        {
+                            (key, item)
+                        } else {
+                            (bk, bv)
+                        }
+                    }
+                });
+            }
+            match best {
+                Some((_, v)) => Ok(Value::Variant("Some".into(), vec![v])),
+                None => Ok(Value::Variant("None".into(), Vec::new())),
+            }
+        }
+        "max_by" => {
+            if args.len() != 2 {
+                return Err(VmError::new("list.max_by takes 2 arguments".into()));
+            }
+            let items = materialize_iter(&args[0], "list.max_by")?;
+            let func = &args[1];
+            let mut best: Option<(Value, Value)> = None;
+            for item in items {
+                let key = vm.invoke_callable(func, &[item.clone()])?;
+                best = Some(match best {
+                    None => (key, item),
+                    Some((bk, bv)) => {
+                        if key.partial_cmp(&bk).unwrap_or(std::cmp::Ordering::Equal)
+                            == std::cmp::Ordering::Greater
+                        {
+                            (key, item)
+                        } else {
+                            (bk, bv)
+                        }
+                    }
+                });
+            }
+            match best {
+                Some((_, v)) => Ok(Value::Variant("Some".into(), vec![v])),
+                None => Ok(Value::Variant("None".into(), Vec::new())),
+            }
+        }
+        "sum" => {
+            if args.len() != 1 {
+                return Err(VmError::new("list.sum takes 1 argument".into()));
+            }
+            let iter = ValueIter::try_from(&args[0], "list.sum")?;
+            let mut total: i64 = 0;
+            for v in iter {
+                match v {
+                    Value::Int(n) => {
+                        total = total.checked_add(n).ok_or_else(|| {
+                            VmError::new("list.sum overflow".into())
+                        })?;
+                    }
+                    _ => return Err(VmError::new("list.sum requires a list of Int".into())),
+                }
+            }
+            Ok(Value::Int(total))
+        }
+        "sum_float" => {
+            if args.len() != 1 {
+                return Err(VmError::new("list.sum_float takes 1 argument".into()));
+            }
+            let iter = ValueIter::try_from(&args[0], "list.sum_float")?;
+            let mut total: f64 = 0.0;
+            for v in iter {
+                match v {
+                    Value::Float(n) => total += n,
+                    _ => {
+                        return Err(VmError::new(
+                            "list.sum_float requires a list of Float".into(),
+                        ));
+                    }
+                }
+            }
+            Ok(Value::Float(total))
+        }
+        "product" => {
+            if args.len() != 1 {
+                return Err(VmError::new("list.product takes 1 argument".into()));
+            }
+            let iter = ValueIter::try_from(&args[0], "list.product")?;
+            let mut total: i64 = 1;
+            for v in iter {
+                match v {
+                    Value::Int(n) => {
+                        total = total.checked_mul(n).ok_or_else(|| {
+                            VmError::new("list.product overflow".into())
+                        })?;
+                    }
+                    _ => {
+                        return Err(VmError::new("list.product requires a list of Int".into()));
+                    }
+                }
+            }
+            Ok(Value::Int(total))
+        }
+        "product_float" => {
+            if args.len() != 1 {
+                return Err(VmError::new("list.product_float takes 1 argument".into()));
+            }
+            let iter = ValueIter::try_from(&args[0], "list.product_float")?;
+            let mut total: f64 = 1.0;
+            for v in iter {
+                match v {
+                    Value::Float(n) => total *= n,
+                    _ => {
+                        return Err(VmError::new(
+                            "list.product_float requires a list of Float".into(),
+                        ));
+                    }
+                }
+            }
+            Ok(Value::Float(total))
+        }
+        "scan" => {
+            if args.len() != 3 {
+                return Err(VmError::new("list.scan takes 3 arguments".into()));
+            }
+            let items = materialize_iter(&args[0], "list.scan")?;
+            let init = args[1].clone();
+            let func = &args[2];
+            let mut acc = init.clone();
+            let mut result = Vec::with_capacity(items.len() + 1);
+            result.push(acc.clone());
+            for item in items {
+                acc = vm.invoke_callable(func, &[acc.clone(), item])?;
+                result.push(acc.clone());
+                if result.len() > MAX_RANGE_MATERIALIZE {
+                    return Err(VmError::new(format!(
+                        "list.scan: accumulated result exceeds maximum list length of {} elements",
+                        MAX_RANGE_MATERIALIZE
+                    )));
+                }
+            }
+            Ok(Value::List(Arc::new(result)))
+        }
+        "intersperse" => {
+            if args.len() != 2 {
+                return Err(VmError::new("list.intersperse takes 2 arguments".into()));
+            }
+            let items = ValueIter::try_from(&args[0], "list.intersperse")?.collect_vec()?;
+            let sep = &args[1];
+            if items.len() <= 1 {
+                return Ok(Value::List(Arc::new(items)));
+            }
+            // Result length = 2*N - 1
+            let out_len = items.len() * 2 - 1;
+            if out_len > MAX_RANGE_MATERIALIZE {
+                return Err(VmError::new(format!(
+                    "list.intersperse: result length {out_len} exceeds maximum materialized length {MAX_RANGE_MATERIALIZE}"
+                )));
+            }
+            let mut result = Vec::with_capacity(out_len);
+            let mut iter = items.into_iter();
+            if let Some(first) = iter.next() {
+                result.push(first);
+            }
+            for v in iter {
+                result.push(sep.clone());
+                result.push(v);
+            }
+            Ok(Value::List(Arc::new(result)))
+        }
         _ => Err(VmError::new(format!("unknown list function: {name}"))),
     }
 }

@@ -51,6 +51,22 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             };
             Ok(Value::Int(*a.max(b)))
         }
+        "clamp" => {
+            if args.len() != 3 {
+                return Err(VmError::new("int.clamp takes 3 arguments".into()));
+            }
+            let (Value::Int(x), Value::Int(lo), Value::Int(hi)) =
+                (&args[0], &args[1], &args[2])
+            else {
+                return Err(VmError::new("int.clamp requires ints".into()));
+            };
+            if lo > hi {
+                return Err(VmError::new(format!(
+                    "int.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
+                )));
+            }
+            Ok(Value::Int((*x).clamp(*lo, *hi)))
+        }
         "to_float" => {
             if args.len() != 1 {
                 return Err(VmError::new("int.to_float takes 1 argument".into()));
@@ -268,6 +284,55 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
             } else {
                 Ok(Value::ExtFloat(result))
             }
+        }
+        "clamp" => {
+            // float.clamp(x, lo, hi) -> Float
+            // Panics if lo > hi (matches Rust's `f64::clamp` behavior).
+            // NaN inputs are not expected (Float is guaranteed finite in
+            // the silt type system); if one sneaks through, behavior is
+            // unspecified (we delegate to `f64::clamp`, which itself
+            // panics on NaN bounds and propagates NaN for a NaN `x`).
+            if args.len() != 3 {
+                return Err(VmError::new("float.clamp takes 3 arguments".into()));
+            }
+            let x = extract_float(&args[0], "float.clamp")?;
+            let lo = extract_float(&args[1], "float.clamp")?;
+            let hi = extract_float(&args[2], "float.clamp")?;
+            if lo > hi {
+                return Err(VmError::new(format!(
+                    "float.clamp: invalid bounds: lo ({lo}) > hi ({hi})"
+                )));
+            }
+            let result = x.clamp(lo, hi);
+            if result.is_finite() {
+                Ok(Value::Float(if result == 0.0 { 0.0 } else { result }))
+            } else {
+                // Shouldn't happen for well-typed Float inputs, but if a
+                // NaN leaks in we surface it as ExtFloat rather than
+                // silently materializing a non-finite `Float`.
+                Ok(Value::ExtFloat(result))
+            }
+        }
+        "is_finite" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_finite takes 1 argument".into()));
+            }
+            let f = extract_float(&args[0], "float.is_finite")?;
+            Ok(Value::Bool(f.is_finite()))
+        }
+        "is_infinite" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_infinite takes 1 argument".into()));
+            }
+            let f = extract_float(&args[0], "float.is_infinite")?;
+            Ok(Value::Bool(f.is_infinite()))
+        }
+        "is_nan" => {
+            if args.len() != 1 {
+                return Err(VmError::new("float.is_nan takes 1 argument".into()));
+            }
+            let f = extract_float(&args[0], "float.is_nan")?;
+            Ok(Value::Bool(f.is_nan()))
         }
         _ => Err(VmError::new(format!("unknown float function: {name}"))),
     }

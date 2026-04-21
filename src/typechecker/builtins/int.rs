@@ -35,6 +35,15 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         Scheme::mono(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
     );
 
+    // int.clamp: (Int, Int, Int) -> Int
+    env.define(
+        intern("int.clamp"),
+        Scheme::mono(Type::Fun(
+            vec![Type::Int, Type::Int, Type::Int],
+            Box::new(Type::Int),
+        )),
+    );
+
     // int.to_float: (Int) -> Float
     env.define(
         intern("int.to_float"),

@@ -474,6 +474,42 @@ pub fn call_env(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             unsafe { std::env::set_var(key, val) };
             Ok(Value::Unit)
         }
+        "remove" => {
+            if args.len() != 1 {
+                return Err(VmError::new("env.remove takes 1 argument".into()));
+            }
+            if vm.is_scheduled_task {
+                // Same rationale as env.set: mutating the process-wide
+                // environment from a spawned task races with any other
+                // task reading the env, and libc's setenv/unsetenv are
+                // not synchronized. Keep it to the main thread.
+                return Err(VmError::new(
+                    "env.remove cannot be called from a spawned task".into(),
+                ));
+            }
+            let Value::String(key) = &args[0] else {
+                return Err(VmError::new("env.remove requires a string key".into()));
+            };
+            // Idempotent by contract: std::env::remove_var does not
+            // error when the variable was not set, so we don't need to
+            // pre-check with env::var. SAFETY: main thread (guarded).
+            unsafe { std::env::remove_var(key) };
+            Ok(Value::Unit)
+        }
+        "vars" => {
+            if !args.is_empty() {
+                return Err(VmError::new("env.vars takes 0 arguments".into()));
+            }
+            // std::env::vars() snapshots the environment at call time
+            // into an iterator. The iteration order is unspecified (on
+            // glibc it's roughly insertion order into `environ`; we
+            // don't sort, to avoid lying about stability). Each entry
+            // becomes a `(String, String)` tuple.
+            let pairs: Vec<Value> = std::env::vars()
+                .map(|(k, v)| Value::Tuple(vec![Value::String(k), Value::String(v)]))
+                .collect();
+            Ok(Value::List(Arc::new(pairs)))
+        }
         _ => Err(VmError::new(format!("unknown env function: {name}"))),
     }
 }

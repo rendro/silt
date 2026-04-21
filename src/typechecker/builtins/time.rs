@@ -337,6 +337,18 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
     );
 
+    // time.micros: (Int) -> Duration
+    env.define(
+        intern("time.micros"),
+        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+    );
+
+    // time.nanos: (Int) -> Duration
+    env.define(
+        intern("time.nanos"),
+        Scheme::mono(Type::Fun(vec![Type::Int], Box::new(duration_ty.clone()))),
+    );
+
     // time.weekday: (Date) -> Weekday
     env.define(
         intern("time.weekday"),

@@ -35,6 +35,8 @@ not RFC 3986, and is out of scope here. Build form-encoding on top of
 |----------|-----------|-------------|
 | `url_encode` | `(String) -> String` | Percent-encode per RFC 3986 (unreserved = `ALPHA` / `DIGIT` / `-._~`) |
 | `url_decode` | `(String) -> Result(String, String)` | Inverse. Errors on malformed `%HH` or invalid UTF-8 after decoding |
+| `form_encode` | `(List((String, String))) -> String` | Build an `application/x-www-form-urlencoded` body |
+| `form_decode` | `(String) -> Result(List((String, String)), String)` | Parse an `application/x-www-form-urlencoded` body into pairs |
 
 ## Examples
 
@@ -89,3 +91,65 @@ any `String`.
 - Binary payloads should go through `bytes.to_base64` (or `bytes.to_hex`)
   first, then the resulting ASCII string can be fed to `url_encode` if
   it still needs URL-safety on top of base64.
+
+## `form_encode`
+
+```
+encoding.form_encode(pairs: List((String, String))) -> String
+```
+
+Produces an `application/x-www-form-urlencoded` body. Each `(key, value)`
+pair becomes `key=value`; both halves are percent-escaped with the
+WHATWG form-urlencoded byte set (space → `+`, `*-._` plus
+alphanumerics pass through, everything else becomes `%HH` with
+upper-case hex); pairs are joined with `&`. Input order is preserved
+in the output, so callers can build deterministic signatures. An empty
+list produces the empty string.
+
+```silt
+import encoding
+
+fn main() {
+  let body = encoding.form_encode([
+    ("name", "Ada Lovelace"),
+    ("role", "analyst & author"),
+    ("lang", "English"),
+  ])
+  println(body)
+  -- name=Ada+Lovelace&role=analyst+%26+author&lang=English
+}
+```
+
+The signature takes `List((String, String))` rather than
+`Map(String, String)` on purpose: order matters for APIs that sign or
+hash the encoded body (OAuth 1.0a, S3 canonical query strings, etc.),
+and a `List` preserves it. It also lets callers represent duplicate
+keys, which are legal in form bodies.
+
+## `form_decode`
+
+```
+encoding.form_decode(body: String) -> Result(List((String, String)), String)
+```
+
+Inverse of `form_encode`. Splits the body on `&`, splits each segment
+on its first `=`, and decodes both halves: `+` becomes a space, `%HH`
+becomes the corresponding byte, and the combined byte sequence must be
+valid UTF-8. A segment with no `=` is treated as `(key, "")`. Empty
+segments (produced by leading, trailing, or doubled `&`) are silently
+skipped, matching the WHATWG URL parser. Order is preserved.
+
+```silt
+import encoding
+
+fn main() {
+  match encoding.form_decode("a=1&b=hello+world&c=%26") {
+    Ok(pairs) -> println(pairs)
+    -- [("a", "1"), ("b", "hello world"), ("c", "&")]
+    Err(e) -> println(e)
+  }
+}
+```
+
+Malformed percent escapes or invalid UTF-8 surface as `Err(msg)` with
+a message identifying which pair and half (key / value) was bad.

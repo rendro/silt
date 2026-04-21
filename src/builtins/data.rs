@@ -1567,6 +1567,34 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             Ok(make_duration(ns))
         }
 
+        "micros" => {
+            if args.len() != 1 {
+                return Err(VmError::new("time.micros takes 1 argument".into()));
+            }
+            let Value::Int(n) = &args[0] else {
+                return Err(VmError::new("time.micros requires an Int".into()));
+            };
+            let ns = n.checked_mul(1_000).ok_or_else(|| {
+                VmError::new(format!(
+                    "time arithmetic overflow: time.micros({n}) exceeds i64 nanoseconds"
+                ))
+            })?;
+            Ok(make_duration(ns))
+        }
+
+        "nanos" => {
+            if args.len() != 1 {
+                return Err(VmError::new("time.nanos takes 1 argument".into()));
+            }
+            let Value::Int(n) = &args[0] else {
+                return Err(VmError::new("time.nanos requires an Int".into()));
+            };
+            // No multiplication: the input is already in nanoseconds.
+            // Still keep the pattern consistent with the siblings so
+            // callers reading the dispatcher see the uniform shape.
+            Ok(make_duration(*n))
+        }
+
         "weekday" => {
             if args.len() != 1 {
                 return Err(VmError::new("time.weekday takes 1 argument (date)".into()));

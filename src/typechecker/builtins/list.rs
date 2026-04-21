@@ -565,4 +565,149 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
+
+    // list.index_of: (List(a), a) -> Option(Int)
+    {
+        let (a, av) = checker.fresh_tv();
+        env.define(
+            intern("list.index_of"),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), a],
+                    Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
+    // list.remove_at: (List(a), Int) -> List(a)
+    {
+        let (a, av) = checker.fresh_tv();
+        env.define(
+            intern("list.remove_at"),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), Type::Int],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
+    // list.min_by: (List(a), (a -> b)) -> Option(a)
+    {
+        let (a, av) = checker.fresh_tv();
+        let (b, bv) = checker.fresh_tv();
+        env.define(
+            intern("list.min_by"),
+            Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(b)),
+                    ],
+                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
+    // list.max_by: (List(a), (a -> b)) -> Option(a)
+    {
+        let (a, av) = checker.fresh_tv();
+        let (b, bv) = checker.fresh_tv();
+        env.define(
+            intern("list.max_by"),
+            Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        Type::Fun(vec![a.clone()], Box::new(b)),
+                    ],
+                    Box::new(Type::Generic(intern("Option"), vec![a])),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
+    // list.sum: (List(Int)) -> Int
+    env.define(
+        intern("list.sum"),
+        Scheme::mono(Type::Fun(
+            vec![Type::List(Box::new(Type::Int))],
+            Box::new(Type::Int),
+        )),
+    );
+
+    // list.sum_float: (List(Float)) -> Float
+    env.define(
+        intern("list.sum_float"),
+        Scheme::mono(Type::Fun(
+            vec![Type::List(Box::new(Type::Float))],
+            Box::new(Type::Float),
+        )),
+    );
+
+    // list.product: (List(Int)) -> Int
+    env.define(
+        intern("list.product"),
+        Scheme::mono(Type::Fun(
+            vec![Type::List(Box::new(Type::Int))],
+            Box::new(Type::Int),
+        )),
+    );
+
+    // list.product_float: (List(Float)) -> Float
+    env.define(
+        intern("list.product_float"),
+        Scheme::mono(Type::Fun(
+            vec![Type::List(Box::new(Type::Float))],
+            Box::new(Type::Float),
+        )),
+    );
+
+    // list.scan: (List(a), b, (b, a) -> b) -> List(b)
+    {
+        let (a, av) = checker.fresh_tv();
+        let (b, bv) = checker.fresh_tv();
+        env.define(
+            intern("list.scan"),
+            Scheme {
+                vars: vec![av, bv],
+                ty: Type::Fun(
+                    vec![
+                        Type::List(Box::new(a.clone())),
+                        b.clone(),
+                        Type::Fun(vec![b.clone(), a], Box::new(b.clone())),
+                    ],
+                    Box::new(Type::List(Box::new(b))),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
+    // list.intersperse: (List(a), a) -> List(a)
+    {
+        let (a, av) = checker.fresh_tv();
+        env.define(
+            intern("list.intersperse"),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![Type::List(Box::new(a.clone())), a.clone()],
+                    Box::new(Type::List(Box::new(a))),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
 }

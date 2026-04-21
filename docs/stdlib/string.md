@@ -29,14 +29,18 @@ with `{expr}` interpolation.
 | `is_upper` | `(String) -> Bool` | All chars are uppercase |
 | `is_whitespace` | `(String) -> Bool` | All chars are whitespace |
 | `join` | `(List(String), String) -> String` | Join list with separator |
+| `last_index_of` | `(String, String) -> Option(Int)` | Character index of last occurrence |
 | `length` | `(String) -> Int` | Length in characters |
+| `lines` | `(String) -> List(String)` | Split on `\n` (strips trailing `\r`, no empty final element) |
 | `pad_left` | `(String, Int, String) -> String` | Pad to width on the left |
 | `pad_right` | `(String, Int, String) -> String` | Pad to width on the right |
 | `repeat` | `(String, Int) -> String` | Repeat string n times |
 | `replace` | `(String, String, String) -> String` | Replace all occurrences |
 | `slice` | `(String, Int, Int) -> String` | Substring by character indices |
 | `split` | `(String, String) -> List(String)` | Split on separator |
+| `split_at` | `(String, Int) -> (String, String)` | Split into two strings at character index |
 | `starts_with` | `(String, String) -> Bool` | Check prefix |
+| `starts_with_at` | `(String, Int, String) -> Bool` | Check prefix at a given character offset |
 | `to_lower` | `(String) -> String` | Convert to lowercase |
 | `to_upper` | `(String) -> String` | Convert to uppercase |
 | `trim` | `(String) -> String` | Remove leading and trailing whitespace |
@@ -158,6 +162,25 @@ import string
 fn main() {
     println(string.index_of("hello", "ll"))  -- Some(2)
     println(string.index_of("hello", "z"))   -- None
+}
+```
+
+
+## `string.last_index_of`
+
+```
+string.last_index_of(s: String, needle: String) -> Option(Int)
+```
+
+Returns `Some(index)` with the character index of the *last* occurrence of
+`needle` in `s`, or `None` if not found. Counterpart to `string.index_of`,
+using the same character-based indexing convention.
+
+```silt
+import string
+fn main() {
+    println(string.last_index_of("banana", "a"))  -- Some(5)
+    println(string.last_index_of("banana", "z"))  -- None
 }
 ```
 
@@ -346,6 +369,30 @@ fn main() {
 ```
 
 
+## `string.lines`
+
+```
+string.lines(s: String) -> List(String)
+```
+
+Splits `s` on `\n` newline characters. A trailing newline does *not* produce
+an empty final element, so `"a\nb\n"` yields `["a", "b"]`. A trailing `\r`
+on each line is stripped, which normalises `\r\n` line endings from Windows
+sources.
+
+```silt
+import string
+fn main() {
+    println(string.lines("a\nb\nc"))      -- ["a", "b", "c"]
+    println(string.lines("a\nb\n"))       -- ["a", "b"]
+    println(string.lines(""))             -- []
+}
+```
+
+Input containing `\r\n` sequences (Windows line endings) has the trailing
+`\r` on each line stripped automatically.
+
+
 ## `string.pad_left`
 
 ```
@@ -448,6 +495,27 @@ fn main() {
 ```
 
 
+## `string.split_at`
+
+```
+string.split_at(s: String, idx: Int) -> (String, String)
+```
+
+Splits `s` into `(left, right)` at character index `idx`. `idx == 0` yields
+`("", s)` and `idx == length(s)` yields `(s, "")`. Panics on a negative index,
+on an index past the end of the string, or on an index that does not fall on
+a UTF-8 character boundary.
+
+```silt
+import string
+fn main() {
+    println(string.split_at("hello", 2))  -- ("he", "llo")
+    println(string.split_at("hello", 0))  -- ("", "hello")
+    println(string.split_at("hello", 5))  -- ("hello", "")
+}
+```
+
+
 ## `string.starts_with`
 
 ```
@@ -460,6 +528,28 @@ Returns `true` if `s` starts with `prefix`.
 import string
 fn main() {
     println(string.starts_with("hello", "hel"))  -- true
+}
+```
+
+
+## `string.starts_with_at`
+
+```
+string.starts_with_at(s: String, offset: Int, prefix: String) -> Bool
+```
+
+Returns `true` if `prefix` appears in `s` starting at character `offset`.
+The offset is a character index (matching `string.index_of` and
+`string.slice`). Out-of-range offsets (negative, or past the end of the
+string) return `false` rather than panicking.
+
+```silt
+import string
+fn main() {
+    println(string.starts_with_at("hello", 2, "ll"))  -- true
+    println(string.starts_with_at("hello", 2, "lx"))  -- false
+    println(string.starts_with_at("hello", -1, "h"))  -- false
+    println(string.starts_with_at("hello", 99, ""))   -- false
 }
 ```
 
