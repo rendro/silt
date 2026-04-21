@@ -524,6 +524,26 @@ impl TypeChecker {
             )),
         );
 
+        // regex.captures_named: (String, String) -> Option(Map(String, String))
+        // Returns a map of named-group name → matched substring for the
+        // first match. `None` if the pattern has no named groups or the
+        // regex does not match. Named groups that are present in the
+        // pattern but did not participate in this match are omitted from
+        // the map (rather than being mapped to `""`).
+        env.define(
+            intern("regex.captures_named"),
+            Scheme::mono(Type::Fun(
+                vec![Type::String, Type::String],
+                Box::new(Type::Generic(
+                    intern("Option"),
+                    vec![Type::Map(
+                        Box::new(Type::String),
+                        Box::new(Type::String),
+                    )],
+                )),
+            )),
+        );
+
         // ── json module ─────────────────────────────────────────────────
 
         // json.parse: (String, type a) -> Result(a, String)

@@ -14,6 +14,7 @@ Regular expression functions. Pattern strings use standard regex syntax.
 |----------|-----------|-------------|
 | `captures` | `(String, String) -> Option(List(String))` | Capture groups from first match |
 | `captures_all` | `(String, String) -> List(List(String))` | Capture groups from all matches |
+| `captures_named` | `(String, String) -> Option(Map(String, String))` | Named capture groups from first match |
 | `find` | `(String, String) -> Option(String)` | First match |
 | `find_all` | `(String, String) -> List(String)` | All matches |
 | `is_match` | `(String, String) -> Bool` | Test if pattern matches |
@@ -61,6 +62,37 @@ import regex
 fn main() {
     let results = regex.captures_all("(\\d+)-(\\d+)", "1-2 and 3-4")
     -- [["1-2", "1", "2"], ["3-4", "3", "4"]]
+}
+```
+
+
+## `regex.captures_named`
+
+```
+regex.captures_named(pattern: String, text: String) -> Option(Map(String, String))
+```
+
+Returns a map of named capture groups from the first match. Named groups use
+the `(?P<name>...)` syntax.
+
+- Returns `None` if the pattern has no named groups or if it does not match.
+- A named group that is present in the pattern but did not participate in the
+  match (e.g. inside an optional `(...)?`) is **omitted** from the map — it is
+  not mapped to `""`.
+- Unnamed numbered groups are ignored; use `regex.captures` for positional
+  access.
+
+```silt
+import regex
+import map
+fn main() {
+    match regex.captures_named("(?P<user>\\w+)@(?P<host>\\w+)", "alice@example") {
+        Some(groups) -> {
+            println(map.get(groups, "user"))  -- Some("alice")
+            println(map.get(groups, "host"))  -- Some("example")
+        }
+        None -> println("no match")
+    }
 }
 ```
 

@@ -427,12 +427,15 @@ fn main() {
 fs.stat(path: String) -> Result(FileStat, String)
 
 record FileStat {
-    size: Int,        // size in bytes
+    size: Int,                   // size in bytes
     is_file: Bool,
     is_dir: Bool,
-    is_symlink: Bool, // true if the path itself is a symlink
-    modified: Int,    // modified time, unix seconds (0 if unsupported)
-    readonly: Bool,   // true if the OS reports the path as read-only
+    is_symlink: Bool,            // true if the path itself is a symlink
+    modified: Int,               // modified time, unix seconds (0 if unsupported)
+    readonly: Bool,              // true if the OS reports the path as read-only
+    mode: Int,                   // Unix permission bits (e.g. 0o755); 0 on Windows
+    accessed: Option(DateTime),  // last-access time, or None if unsupported / noatime
+    created: Option(DateTime),   // creation (birth) time, or None if unsupported
 }
 ```
 
@@ -442,6 +445,26 @@ is `true` and `is_file` / `is_dir` both report on the link rather than
 its target. To stat the target, call `fs.read_link` and then `fs.stat`
 on the result.
 
+`mode` carries the raw Unix permission/type bits as an integer — mask
+with `0o777` for permission bits, or compare against `0o040000`,
+`0o100000`, etc. for file-type bits. On Windows `mode` is always `0`
+because NTFS does not expose a Unix-style permission triple; use
+`readonly` / `is_dir` / `is_file` instead for portable code.
+
+`accessed` and `created` are `Option(DateTime)` because neither
+timestamp is universally available:
+
+- **`accessed`** is missing when the filesystem is mounted with
+  `noatime` (common on modern Linux). Where present, it may also be
+  coalesced (`relatime`) so it does not strictly reflect the *last*
+  read.
+- **`created`** (also called *birth time* or `btime`) is absent on
+  older ext4 inodes, some network filesystems, and any platform that
+  pre-dates the relevant `statx(2)` / `getattrlist(2)` surface.
+
+Both fields are expressed as naive UTC `DateTime` records (no timezone
+— see the `time` module's "naive" conventions).
+
 Returns `Err(message)` when the path does not exist, permission is
 denied, or the OS reports another I/O error.
 
@@ -450,7 +473,13 @@ import fs
 
 fn main() {
     match fs.stat("README.md") {
-        Ok(s) -> println("size = {s.size}, modified = {s.modified}")
+        Ok(s) -> {
+            println("size = {s.size}, modified = {s.modified}")
+            match s.created {
+                Some(dt) -> println("created at {dt.date.year}-{dt.date.month}-{dt.date.day}")
+                None -> println("creation time not tracked on this filesystem")
+            }
+        }
         Err(e) -> println("Error: {e}")
     }
 }

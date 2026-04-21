@@ -1011,6 +1011,47 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                 .collect();
             Ok(Value::List(Arc::new(all_captures)))
         }
+        "captures_named" => {
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "regex.captures_named takes 2 arguments (pattern, text)".into(),
+                ));
+            }
+            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+                return Err(VmError::new(
+                    "regex.captures_named requires string arguments".into(),
+                ));
+            };
+            let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
+            // `capture_names()` yields one entry per group, including the
+            // implicit whole-match group at index 0 (whose name is
+            // `None`) and any numbered-only groups (also `None`). We
+            // count only the *named* entries to decide whether the
+            // pattern is "nameless" — if so, the contract says `None`.
+            let named_count = re.capture_names().flatten().count();
+            if named_count == 0 {
+                return Ok(Value::Variant("None".into(), Vec::new()));
+            }
+            let Some(caps) = re.captures(text) else {
+                return Ok(Value::Variant("None".into(), Vec::new()));
+            };
+            // Collect (name → match) pairs. Skip any named group that
+            // did not participate in the match — per the spec we omit
+            // it entirely rather than mapping to "".
+            let mut out: BTreeMap<Value, Value> = BTreeMap::new();
+            for name in re.capture_names().flatten() {
+                if let Some(m) = caps.name(name) {
+                    out.insert(
+                        Value::String(name.to_string()),
+                        Value::String(m.as_str().to_string()),
+                    );
+                }
+            }
+            Ok(Value::Variant(
+                "Some".into(),
+                vec![Value::Map(Arc::new(out))],
+            ))
+        }
         _ => Err(VmError::new(format!("unknown regex function: {name}"))),
     }
 }
@@ -2398,6 +2439,59 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 .map(|s| Value::String(s.to_string()))
                 .collect();
             Ok(Value::List(Arc::new(segments)))
+        }
+
+        "parse_query" => {
+            if args.len() != 1 {
+                return Err(VmError::new(
+                    "http.parse_query takes 1 argument (query)".into(),
+                ));
+            }
+            let Value::String(raw) = &args[0] else {
+                return Err(VmError::new("http.parse_query requires a String".into()));
+            };
+            // Accept a leading `?` for convenience — e.g. directly
+            // passing a URL fragment like `?a=1&b=2` shouldn't require
+            // the caller to strip it first.
+            let body = raw.strip_prefix('?').unwrap_or(raw);
+            // Preserve insertion order of first appearance for each
+            // key. BTreeMap gives us stable ordering by key, which is
+            // fine for a value-semantic Map — repeated keys always
+            // append to the same List in encounter order.
+            let mut out: BTreeMap<Value, Value> = BTreeMap::new();
+            if body.is_empty() {
+                return Ok(Value::Map(Arc::new(out)));
+            }
+            for (i, segment) in body.split('&').enumerate() {
+                // Empty segments (leading `&`, `&&`, trailing `&`) are
+                // skipped, matching WHATWG's form-urlencoded parser and
+                // `encoding.form_decode`.
+                if segment.is_empty() {
+                    continue;
+                }
+                // Split on the FIRST `=`. Missing `=` → value is "".
+                // The spec says a bare key with no separator means
+                // "present with empty value", which matches how forms
+                // serialize a checkbox with value "".
+                let (raw_key, raw_val) = match segment.find('=') {
+                    Some(pos) => (&segment[..pos], &segment[pos + 1..]),
+                    None => (segment, ""),
+                };
+                let key = crate::builtins::encoding::form_decode_component(raw_key)
+                    .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
+                let val = crate::builtins::encoding::form_decode_component(raw_val)
+                    .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
+                let entry = out
+                    .entry(Value::String(key))
+                    .or_insert_with(|| Value::List(Arc::new(Vec::new())));
+                if let Value::List(list) = entry {
+                    // `Arc::make_mut` clones the Vec only on the
+                    // second and later pushes for the same key; the
+                    // first push sees refcount 1 and mutates in place.
+                    Arc::make_mut(list).push(Value::String(val));
+                }
+            }
+            Ok(Value::Map(Arc::new(out)))
         }
 
         _ => Err(VmError::new(format!("unknown http function: {name}"))),

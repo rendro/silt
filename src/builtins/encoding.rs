@@ -294,7 +294,7 @@ fn form_encode(args: &[Value]) -> Result<Value, VmError> {
 
 /// Decode a single form component: `+` → space, `%HH` → byte HH.
 /// Returns `Err(msg)` on malformed percent escapes or non-UTF-8 output.
-fn form_decode_component(s: &str) -> Result<String, String> {
+pub(crate) fn form_decode_component(s: &str) -> Result<String, String> {
     // Translate `+` to space before feeding the buffer to the
     // percent-decoder. Doing it in one pass keeps the validation /
     // decoding responsibilities separate from the +/space convention.

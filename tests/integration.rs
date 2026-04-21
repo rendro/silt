@@ -4259,6 +4259,98 @@ fn main() {
     );
 }
 
+// ── regex.captures_named ────────────────────────────────────────────
+
+#[test]
+fn test_regex_captures_named_basic() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_named("(?P<user>\\w+)@(?P<host>\\w+)", "alice@example")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("user".into()),
+        Value::String("alice".into()),
+    );
+    expected.insert(
+        Value::String("host".into()),
+        Value::String("example".into()),
+    );
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::Map(Arc::new(expected))])
+    );
+}
+
+#[test]
+fn test_regex_captures_named_no_match() {
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_named("(?P<n>\\d+)", "no numbers")
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}
+
+#[test]
+fn test_regex_captures_named_no_named_groups_is_none() {
+    // Pattern has ordinary (unnamed) capture groups but no `(?P<name>..)`.
+    // The contract: return None rather than Some(empty map).
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_named("(\\w+)@(\\w+)", "user@host")
+}
+    "#);
+    assert_eq!(result, Value::Variant("None".into(), Vec::new()));
+}
+
+#[test]
+fn test_regex_captures_named_optional_group_absent_is_omitted() {
+    // The `ext` group sits inside an outer `(...)?`, so when the input
+    // has no extension the group never participates in the match. The
+    // spec says we omit such keys from the map instead of mapping them
+    // to "".
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_named("(?P<name>\\w+)(?:\\.(?P<ext>\\w+))?", "file")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("name".into()),
+        Value::String("file".into()),
+    );
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::Map(Arc::new(expected))])
+    );
+}
+
+#[test]
+fn test_regex_captures_named_mixed_named_and_numbered() {
+    // Numbered groups are silently skipped; only the named group appears.
+    let result = run(r#"
+import regex
+fn main() {
+  regex.captures_named("(\\w+)-(?P<tag>\\w+)", "abc-xyz")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("tag".into()),
+        Value::String("xyz".into()),
+    );
+    assert_eq!(
+        result,
+        Value::Variant("Some".into(), vec![Value::Map(Arc::new(expected))])
+    );
+}
+
 // ── regex.replace_all_with ──────────────────────────────────────────
 
 #[test]
@@ -5294,6 +5386,55 @@ fn main() {
 }
 
 #[test]
+fn test_set_symmetric_difference() {
+    // elements in exactly one of a or b
+    let result = run(r#"
+import set
+fn main() {
+  let a = #[1, 2, 3]
+  let b = #[2, 3, 4]
+  set.to_list(set.symmetric_difference(a, b))
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![Value::Int(1), Value::Int(4)]))
+    );
+}
+
+#[test]
+fn test_set_symmetric_difference_disjoint() {
+    // Disjoint inputs: result is the union.
+    let result = run(r#"
+import set
+fn main() {
+  set.to_list(set.symmetric_difference(#[1, 2], #[3, 4]))
+}
+    "#);
+    assert_eq!(
+        result,
+        Value::List(Arc::new(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+        ]))
+    );
+}
+
+#[test]
+fn test_set_symmetric_difference_equal_sets_empty() {
+    // a ⊕ a = ∅
+    let result = run(r#"
+import set
+fn main() {
+  set.length(set.symmetric_difference(#[1, 2, 3], #[1, 2, 3]))
+}
+    "#);
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
 fn test_set_is_subset() {
     let result = run(r#"
 import set
@@ -6309,6 +6450,213 @@ fn main() {
         err.contains("http.segments requires a String"),
         "got: {err}"
     );
+}
+
+// ── http.parse_query ────────────────────────────────────────────────
+
+#[test]
+fn test_http_parse_query_basic() {
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("a=1&b=2")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("a".into()),
+        Value::List(Arc::new(vec![Value::String("1".into())])),
+    );
+    expected.insert(
+        Value::String("b".into()),
+        Value::List(Arc::new(vec![Value::String("2".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_leading_question_mark() {
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("?x=hi")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("x".into()),
+        Value::List(Arc::new(vec![Value::String("hi".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_empty() {
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("")
+}
+    "#);
+    assert_eq!(result, Value::Map(Arc::new(std::collections::BTreeMap::new())));
+}
+
+#[test]
+fn test_http_parse_query_lone_question_mark() {
+    // Just "?" is effectively an empty query.
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("?")
+}
+    "#);
+    assert_eq!(result, Value::Map(Arc::new(std::collections::BTreeMap::new())));
+}
+
+#[test]
+fn test_http_parse_query_repeated_keys_accumulate() {
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("a=1&a=2&a=3")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("a".into()),
+        Value::List(Arc::new(vec![
+            Value::String("1".into()),
+            Value::String("2".into()),
+            Value::String("3".into()),
+        ])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_missing_equals() {
+    // Key without `=` maps to a single empty string.
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("flag&other=x")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("flag".into()),
+        Value::List(Arc::new(vec![Value::String("".into())])),
+    );
+    expected.insert(
+        Value::String("other".into()),
+        Value::List(Arc::new(vec![Value::String("x".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_percent_decodes_values() {
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("q=hello%20world&n=%E2%9C%93")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("q".into()),
+        Value::List(Arc::new(vec![Value::String("hello world".into())])),
+    );
+    expected.insert(
+        Value::String("n".into()),
+        // UTF-8 for U+2713 (check mark).
+        Value::List(Arc::new(vec![Value::String("\u{2713}".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_plus_becomes_space() {
+    // Form convention: `+` is decoded as a space in values.
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("greeting=hello+world")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("greeting".into()),
+        Value::List(Arc::new(vec![Value::String("hello world".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_skips_empty_segments() {
+    // Leading, doubled, and trailing `&` produce empty segments that
+    // are silently skipped (same as `encoding.form_decode`).
+    let result = run(r#"
+import http
+fn main() {
+  http.parse_query("&a=1&&b=2&")
+}
+    "#);
+    let mut expected = std::collections::BTreeMap::new();
+    expected.insert(
+        Value::String("a".into()),
+        Value::List(Arc::new(vec![Value::String("1".into())])),
+    );
+    expected.insert(
+        Value::String("b".into()),
+        Value::List(Arc::new(vec![Value::String("2".into())])),
+    );
+    assert_eq!(result, Value::Map(Arc::new(expected)));
+}
+
+#[test]
+fn test_http_parse_query_wrong_arg_count() {
+    let err = run_err(
+        r#"
+import http
+fn main() {
+  http.parse_query("a=1", "b=2")
+}
+    "#,
+    );
+    assert!(
+        err.contains("http.parse_query takes 1 argument"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_parse_query_wrong_type() {
+    let err = run_err(
+        r#"
+import http
+fn main() {
+  http.parse_query(42)
+}
+    "#,
+    );
+    assert!(
+        err.contains("http.parse_query requires a String"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_http_parse_query_invalid_percent_escape() {
+    let err = run_err(
+        r#"
+import http
+fn main() {
+  http.parse_query("a=%ZZ")
+}
+    "#,
+    );
+    assert!(err.contains("http.parse_query"), "got: {err}");
 }
 
 #[test]

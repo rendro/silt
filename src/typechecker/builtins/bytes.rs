@@ -127,8 +127,44 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     env.define(
         intern("bytes.eq"),
         Scheme::mono(Type::Fun(
-            vec![bytes_ty.clone(), bytes_ty],
+            vec![bytes_ty.clone(), bytes_ty.clone()],
             Box::new(Type::Bool),
+        )),
+    );
+
+    // bytes.index_of: (Bytes, Bytes) -> Option(Int)
+    env.define(
+        intern("bytes.index_of"),
+        Scheme::mono(Type::Fun(
+            vec![bytes_ty.clone(), bytes_ty.clone()],
+            Box::new(Type::Generic(intern("Option"), vec![Type::Int])),
+        )),
+    );
+
+    // bytes.starts_with: (Bytes, Bytes) -> Bool
+    env.define(
+        intern("bytes.starts_with"),
+        Scheme::mono(Type::Fun(
+            vec![bytes_ty.clone(), bytes_ty.clone()],
+            Box::new(Type::Bool),
+        )),
+    );
+
+    // bytes.ends_with: (Bytes, Bytes) -> Bool
+    env.define(
+        intern("bytes.ends_with"),
+        Scheme::mono(Type::Fun(
+            vec![bytes_ty.clone(), bytes_ty.clone()],
+            Box::new(Type::Bool),
+        )),
+    );
+
+    // bytes.split: (Bytes, Bytes) -> List(Bytes)
+    env.define(
+        intern("bytes.split"),
+        Scheme::mono(Type::Fun(
+            vec![bytes_ty.clone(), bytes_ty.clone()],
+            Box::new(Type::List(Box::new(bytes_ty))),
         )),
     );
 }

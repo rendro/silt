@@ -165,4 +165,19 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Box::new(Type::List(Box::new(Type::String))),
         )),
     );
+
+    // http.parse_query: (String) -> Map(String, List(String))
+    // Parses a URL query string (with or without a leading `?`) into a
+    // multi-value map. Repeated keys accumulate into the same list in
+    // encounter order. An empty input yields the empty map.
+    env.define(
+        intern("http.parse_query"),
+        Scheme::mono(Type::Fun(
+            vec![Type::String],
+            Box::new(Type::Map(
+                Box::new(Type::String),
+                Box::new(Type::List(Box::new(Type::String))),
+            )),
+        )),
+    );
 }

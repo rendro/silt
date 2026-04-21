@@ -541,6 +541,268 @@ fn main() {
     assert!(errs.is_empty(), "got: {errs:?}");
 }
 
+// ── Search / prefix / suffix / split ─────────────────────────────────
+
+#[test]
+fn test_index_of_found() {
+    let v = run(r#"
+import bytes
+fn main() {
+  let hay = bytes.from_string("hello world")
+  let needle = bytes.from_string("world")
+  match bytes.index_of(hay, needle) {
+    Some(i) -> i
+    None -> -1
+  }
+}
+"#);
+    assert_eq!(v, Value::Int(6));
+}
+
+#[test]
+fn test_index_of_not_found() {
+    let v = run(r#"
+import bytes
+fn main() {
+  match bytes.index_of(bytes.from_string("hello"), bytes.from_string("xyz")) {
+    Some(_) -> 1
+    None -> 0
+  }
+}
+"#);
+    assert_eq!(v, Value::Int(0));
+}
+
+#[test]
+fn test_index_of_empty_needle_is_zero() {
+    let v = run(r#"
+import bytes
+fn main() {
+  match bytes.index_of(bytes.from_string("hello"), bytes.empty()) {
+    Some(i) -> i
+    None -> -1
+  }
+}
+"#);
+    assert_eq!(v, Value::Int(0));
+}
+
+#[test]
+fn test_index_of_first_occurrence() {
+    let v = run(r#"
+import bytes
+fn main() {
+  match bytes.index_of(bytes.from_string("abcabc"), bytes.from_string("b")) {
+    Some(i) -> i
+    None -> -1
+  }
+}
+"#);
+    assert_eq!(v, Value::Int(1));
+}
+
+#[test]
+fn test_starts_with_true() {
+    let v = run(r#"
+import bytes
+fn main() {
+  bytes.starts_with(bytes.from_string("hello world"), bytes.from_string("hello"))
+}
+"#);
+    assert_eq!(v, Value::Bool(true));
+}
+
+#[test]
+fn test_starts_with_false() {
+    let v = run(r#"
+import bytes
+fn main() {
+  bytes.starts_with(bytes.from_string("hello"), bytes.from_string("world"))
+}
+"#);
+    assert_eq!(v, Value::Bool(false));
+}
+
+#[test]
+fn test_starts_with_empty_prefix_is_true() {
+    let v = run(r#"
+import bytes
+fn main() {
+  [
+    bytes.starts_with(bytes.from_string("hello"), bytes.empty()),
+    bytes.starts_with(bytes.empty(), bytes.empty()),
+  ]
+}
+"#);
+    assert_eq!(
+        v,
+        Value::List(Arc::new(vec![Value::Bool(true), Value::Bool(true)]))
+    );
+}
+
+#[test]
+fn test_starts_with_prefix_longer_than_bytes() {
+    let v = run(r#"
+import bytes
+fn main() {
+  bytes.starts_with(bytes.from_string("hi"), bytes.from_string("hi there"))
+}
+"#);
+    assert_eq!(v, Value::Bool(false));
+}
+
+#[test]
+fn test_ends_with_true() {
+    let v = run(r#"
+import bytes
+fn main() {
+  bytes.ends_with(bytes.from_string("hello world"), bytes.from_string("world"))
+}
+"#);
+    assert_eq!(v, Value::Bool(true));
+}
+
+#[test]
+fn test_ends_with_false() {
+    let v = run(r#"
+import bytes
+fn main() {
+  bytes.ends_with(bytes.from_string("hello"), bytes.from_string("world"))
+}
+"#);
+    assert_eq!(v, Value::Bool(false));
+}
+
+#[test]
+fn test_ends_with_empty_suffix_is_true() {
+    let v = run(r#"
+import bytes
+fn main() {
+  [
+    bytes.ends_with(bytes.from_string("hello"), bytes.empty()),
+    bytes.ends_with(bytes.empty(), bytes.empty()),
+  ]
+}
+"#);
+    assert_eq!(
+        v,
+        Value::List(Arc::new(vec![Value::Bool(true), Value::Bool(true)]))
+    );
+}
+
+#[test]
+fn test_split_basic() {
+    let v = run(r#"
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.from_string("a,b,c"), bytes.from_string(","))
+  list.map(parts) { p ->
+    match bytes.to_string(p) {
+      Ok(s) -> s
+      Err(e) -> e
+    }
+  }
+}
+"#);
+    assert_eq!(
+        v,
+        Value::List(Arc::new(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+            Value::String("c".into()),
+        ]))
+    );
+}
+
+#[test]
+fn test_split_no_separator_occurrence() {
+    let v = run(r#"
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.from_string("hello"), bytes.from_string(","))
+  list.length(parts)
+}
+"#);
+    assert_eq!(v, Value::Int(1));
+}
+
+#[test]
+fn test_split_empty_bytes_yields_single_empty() {
+    // Consistent with Rust's str::split / silt's string.split on empty input.
+    let v = run(r#"
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.empty(), bytes.from_string(","))
+  let first_len = match list.head(parts) {
+    Some(b) -> bytes.length(b)
+    None -> -1
+  }
+  (list.length(parts), first_len)
+}
+"#);
+    // Expect length 1 with the single element having length 0.
+    assert_eq!(
+        v,
+        Value::Tuple(vec![Value::Int(1), Value::Int(0)])
+    );
+}
+
+#[test]
+fn test_split_consecutive_separators_produce_empties() {
+    let v = run(r#"
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.from_string("a,,b"), bytes.from_string(","))
+  list.length(parts)
+}
+"#);
+    assert_eq!(v, Value::Int(3));
+}
+
+#[test]
+fn test_split_multibyte_separator() {
+    let v = run(r#"
+import bytes
+import list
+fn main() {
+  let parts = bytes.split(bytes.from_string("foo::bar::baz"), bytes.from_string("::"))
+  list.length(parts)
+}
+"#);
+    assert_eq!(v, Value::Int(3));
+}
+
+#[test]
+fn test_split_empty_sep_errors() {
+    // Empty separator is ambiguous; runtime must panic/error rather than
+    // silently infinite-loop.
+    let tokens = silt::lexer::Lexer::new(
+        r#"
+import bytes
+fn main() {
+  bytes.split(bytes.from_string("hello"), bytes.empty())
+}
+"#,
+    )
+    .tokenize()
+    .expect("lex error");
+    let mut program = silt::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("parse error");
+    let _ = silt::typechecker::check(&mut program);
+    let mut compiler = silt::compiler::Compiler::new();
+    let functions = compiler.compile_program(&program).expect("compile error");
+    let script = Arc::new(functions.into_iter().next().unwrap());
+    let mut vm = silt::vm::Vm::new();
+    let err = vm.run(script).expect_err("expected runtime error");
+    let msg = format!("{err}");
+    assert!(msg.contains("non-empty") || msg.contains("empty"), "got: {msg}");
+}
+
 #[test]
 fn test_typechecker_rejects_wrong_arg_type() {
     // bytes.length takes Bytes, not String.

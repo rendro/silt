@@ -21,14 +21,18 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `concat` | `(Bytes, Bytes) -> Bytes` | Concatenate two byte sequences |
 | `concat_all` | `(List(Bytes)) -> Bytes` | Concatenate every element of a list |
 | `empty` | `() -> Bytes` | Zero-length byte sequence |
+| `ends_with` | `(Bytes, Bytes) -> Bool` | True if `b` ends with `suffix` |
 | `eq` | `(Bytes, Bytes) -> Bool` | Structural byte-by-byte comparison |
 | `from_base64` | `(String) -> Result(Bytes, String)` | Decode base64 string |
 | `from_hex` | `(String) -> Result(Bytes, String)` | Decode hex string (case-insensitive) |
 | `from_list` | `(List(Int)) -> Result(Bytes, String)` | Build from a list of byte values (0..=255) |
 | `from_string` | `(String) -> Bytes` | UTF-8 encode a string |
 | `get` | `(Bytes, Int) -> Result(Int, String)` | Read a single byte at index |
+| `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
 | `length` | `(Bytes) -> Int` | Number of bytes |
 | `slice` | `(Bytes, Int, Int) -> Result(Bytes, String)` | Half-open `[start, end)` slice |
+| `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (panics if `sep` is empty) |
+| `starts_with` | `(Bytes, Bytes) -> Bool` | True if `b` begins with `prefix` |
 | `to_base64` | `(Bytes) -> String` | Encode as base64 |
 | `to_hex` | `(Bytes) -> String` | Encode as lowercase hex |
 | `to_list` | `(Bytes) -> List(Int)` | Materialize as a list of byte values |
@@ -77,6 +81,18 @@ fn main() {
   let a = bytes.from_string("foo")
   let b = bytes.from_string("foo")
   println(a == b)                                  -- true
+
+  -- Search / prefix / suffix / split
+  let msg = bytes.from_string("foo::bar::baz")
+  let sep = bytes.from_string("::")
+  match bytes.index_of(msg, sep) {
+    Some(i) -> println(i)                          -- 3
+    None -> println(-1)
+  }
+  println(bytes.starts_with(msg, bytes.from_string("foo")))  -- true
+  println(bytes.ends_with(msg, bytes.from_string("baz")))    -- true
+  -- bytes.split yields [foo, bar, baz] as three Bytes values.
+  let parts = bytes.split(msg, sep)
 }
 ```
 
@@ -101,6 +117,10 @@ error message:
 - Display format is `bytes(<hex preview, up to 32 bytes>, length: N)`,
   intended for debugging output. Use `bytes.to_hex` or `bytes.to_base64`
   for stable serialization.
+- `bytes.index_of` returns `Some(0)` for an empty `needle`. `bytes.starts_with`
+  and `bytes.ends_with` return `true` for an empty prefix / suffix.
+- `bytes.split` panics if `sep` is empty (ambiguous). Splitting an empty
+  `b` yields `[empty_bytes]` — one element — mirroring `string.split`.
 - A future silt release may promote `Bytes` to a language-level type with
   literal syntax (e.g. `b"hello"`) and method-form access. Today's API
   is forward-compatible: programs written against the current `bytes`

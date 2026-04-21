@@ -168,6 +168,25 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
     }
 
+    // set.symmetric_difference: (Set(a), Set(a)) -> Set(a)
+    {
+        let (a, av) = checker.fresh_tv();
+        env.define(
+            intern("set.symmetric_difference"),
+            Scheme {
+                vars: vec![av],
+                ty: Type::Fun(
+                    vec![
+                        Type::Set(Box::new(a.clone())),
+                        Type::Set(Box::new(a.clone())),
+                    ],
+                    Box::new(Type::Set(Box::new(a))),
+                ),
+                constraints: vec![],
+            },
+        );
+    }
+
     // set.is_subset: (Set(a), Set(a)) -> Bool
     {
         let (a, av) = checker.fresh_tv();

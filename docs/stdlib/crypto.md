@@ -6,10 +6,12 @@ order: 17
 
 # crypto
 
-Cryptographic primitives: SHA-256 / SHA-512 hashing, HMAC message
-authentication, an OS-backed CSPRNG, and a timing-safe byte-comparison
-routine. All functions consume and produce `Bytes` values — pipe through
-`bytes.to_hex` / `bytes.to_base64` when you need a string representation.
+Cryptographic primitives: SHA-256 / SHA-512 / BLAKE2b / MD5 hashing,
+HMAC message authentication, an OS-backed CSPRNG, and a timing-safe
+byte-comparison routine. Most functions consume and produce `Bytes`
+values — pipe through `bytes.to_hex` / `bytes.to_base64` when you need
+a string representation, or use the `_hex` convenience variants (e.g.
+`md5_hex`, `blake2b_hex`).
 
 `crypto.random_bytes` reads directly from the operating system's
 cryptographically secure pseudo-random number generator (`getrandom(2)`
@@ -29,6 +31,10 @@ beforehand if length privacy matters for your protocol.
 |----------|-----------|-------------|
 | `sha256` | `(Bytes) -> Bytes` | SHA-256 digest (32 bytes) |
 | `sha512` | `(Bytes) -> Bytes` | SHA-512 digest (64 bytes) |
+| `md5` | `(Bytes) -> Bytes` | MD5 digest (16 bytes) — **legacy / non-security use only** |
+| `md5_hex` | `(Bytes) -> String` | MD5 digest as lower-case hex (32 chars) |
+| `blake2b` | `(Bytes) -> Bytes` | BLAKE2b-512 digest (64 bytes), RFC 7693 |
+| `blake2b_hex` | `(Bytes) -> String` | BLAKE2b-512 digest as lower-case hex (128 chars) |
 | `hmac_sha256` | `(Bytes, Bytes) -> Bytes` | HMAC-SHA256 over `(key, msg)` (32 bytes) |
 | `hmac_sha512` | `(Bytes, Bytes) -> Bytes` | HMAC-SHA512 over `(key, msg)` (64 bytes) |
 | `random_bytes` | `(Int) -> Result(Bytes, String)` | OS CSPRNG, `0..=1_048_576` bytes |
@@ -76,10 +82,22 @@ total functions over their `Bytes` inputs.
 
 ## Notes
 
-- Digest outputs are always exactly `32` bytes (`sha256`, `hmac_sha256`)
-  or `64` bytes (`sha512`, `hmac_sha512`). The typechecker has no
-  dependent-type support for fixed-width `Bytes`, so the returned type
-  is the same opaque `Bytes` the rest of the module uses.
+- Digest outputs have fixed widths: `16` bytes (`md5`), `32` bytes
+  (`sha256`, `hmac_sha256`), `64` bytes (`sha512`, `hmac_sha512`,
+  `blake2b`). The typechecker has no dependent-type support for
+  fixed-width `Bytes`, so the returned type is the same opaque `Bytes`
+  the rest of the module uses.
+- **MD5 is not collision-resistant.** Use it only for interop with
+  legacy systems (etags, Git-style content hashing, cache keys where
+  an adversary isn't in play). Never use MD5 for signatures,
+  certificates, or any security decision — prefer `sha256` or
+  `blake2b`.
+- `blake2b` is BLAKE2b-512 (the 512-bit-output variant from RFC 7693).
+  It's faster than SHA-512 on 64-bit hardware and is a sound default
+  for new protocols that don't need to match a SHA-family spec.
+- The `_hex` variants (`md5_hex`, `blake2b_hex`) exist so common use
+  cases (log lines, cache keys) don't need a round-trip through
+  `bytes.to_hex`. Output is always lower-case hex.
 - `random_bytes(0)` returns an empty `Bytes` (not an error). This keeps
   caller code simpler when the length comes from a variable.
 - The 1 MiB cap on `random_bytes` is a sanity guard against accidental

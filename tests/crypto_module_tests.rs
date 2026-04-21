@@ -134,6 +134,153 @@ fn main() {
     assert_eq!(v, Value::Int(64));
 }
 
+// ── MD5 KATs (RFC 1321) ────────────────────────────────────────────────
+
+/// RFC 1321 test vector: MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
+#[test]
+fn test_md5_abc_matches_rfc1321_kat() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.to_hex(crypto.md5(bytes.from_string("abc")))
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "900150983cd24fb0d6963f7d28e17f72");
+}
+
+/// MD5 of the empty string = d41d8cd98f00b204e9800998ecf8427e (RFC 1321).
+#[test]
+fn test_md5_empty_matches_rfc1321_kat() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.to_hex(crypto.md5(bytes.empty()))
+}
+"#,
+    );
+    assert_eq!(expect_string(v), "d41d8cd98f00b204e9800998ecf8427e");
+}
+
+#[test]
+fn test_md5_output_is_16_bytes() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.length(crypto.md5(bytes.from_string("anything")))
+}
+"#,
+    );
+    assert_eq!(v, Value::Int(16));
+}
+
+/// `md5_hex` should return the lower-case hex of the MD5 digest and
+/// match `bytes.to_hex(md5(input))` exactly. We verify by running both
+/// separately and comparing at the test harness level.
+#[test]
+fn test_md5_hex_matches_to_hex_of_md5() {
+    let hex_direct = expect_string(run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  crypto.md5_hex(bytes.from_string("abc"))
+}
+"#,
+    ));
+    let hex_roundtrip = expect_string(run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.to_hex(crypto.md5(bytes.from_string("abc")))
+}
+"#,
+    ));
+    assert_eq!(hex_direct, hex_roundtrip);
+    assert_eq!(hex_direct, "900150983cd24fb0d6963f7d28e17f72");
+}
+
+// ── BLAKE2b-512 KATs ───────────────────────────────────────────────────
+
+/// RFC 7693 Appendix A: BLAKE2b-512("abc") =
+///   ba80a53f981c4d0d 6a2797b69f12f6e9
+///   4c212f14685ac4b7 4b12bb6fdbffa2d1
+///   7d87c5392aab792d c252d5de4533cc95
+///   18d38aa8dbf1925a b92386edd4009923
+#[test]
+fn test_blake2b_abc_matches_rfc7693_kat() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.to_hex(crypto.blake2b(bytes.from_string("abc")))
+}
+"#,
+    );
+    assert_eq!(
+        expect_string(v),
+        "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1\
+         7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"
+    );
+}
+
+#[test]
+fn test_blake2b_output_is_64_bytes() {
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  bytes.length(crypto.blake2b(bytes.from_string("anything")))
+}
+"#,
+    );
+    assert_eq!(v, Value::Int(64));
+}
+
+#[test]
+fn test_blake2b_hex_matches_expected_kat() {
+    // blake2b_hex should return lower-case hex of the same digest.
+    let v = run(
+        r#"
+import bytes
+import crypto
+fn main() {
+  crypto.blake2b_hex(bytes.from_string("abc"))
+}
+"#,
+    );
+    assert_eq!(
+        expect_string(v),
+        "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1\
+         7d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"
+    );
+}
+
+#[test]
+fn test_blake2b_hex_length_is_128_chars() {
+    // BLAKE2b-512 has a 64-byte digest ⇒ 128 hex chars.
+    let v = run(
+        r#"
+import bytes
+import crypto
+import string
+fn main() {
+  string.length(crypto.blake2b_hex(bytes.from_string("x")))
+}
+"#,
+    );
+    assert_eq!(v, Value::Int(128));
+}
+
 // ── HMAC-SHA256 / HMAC-SHA512 KATs (RFC 4231) ──────────────────────────
 
 /// RFC 4231 test case 1:

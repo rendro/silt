@@ -39,6 +39,7 @@ type Response {
 | `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `127.0.0.1` (loopback only) |
 | `serve_all` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces) |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
+| `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
 
 
 ## `http.get`
@@ -210,3 +211,43 @@ http.segments("//foo//bar/")     -- ["foo", "bar"]
 ```
 
 This function has no dependencies and works even with `--no-default-features`.
+
+
+## `http.parse_query`
+
+```
+http.parse_query(query: String) -> Map(String, List(String))
+```
+
+Parses a URL query string into a map from key to a list of values. Repeated
+keys accumulate into the same list in the order they appear, so a query like
+`tag=a&tag=b` parses as `#{"tag": ["a", "b"]}`.
+
+- A leading `?` is accepted and ignored.
+- Percent escapes (`%HH`) in both keys and values are decoded. Invalid or
+  truncated escapes cause a runtime error.
+- Following the `application/x-www-form-urlencoded` convention, `+` decodes
+  to a space in values.
+- A key with no `=` (e.g. `flag&other=x`) is treated as having an empty
+  string value: `#{"flag": [""], "other": ["x"]}`.
+- Empty segments from leading, doubled, or trailing `&` are silently skipped.
+- An empty input (or a bare `?`) returns the empty map.
+
+```silt
+import http
+
+fn main() {
+    http.parse_query("name=alice&tag=dev&tag=admin")
+    -- #{"name": ["alice"], "tag": ["dev", "admin"]}
+
+    http.parse_query("?q=hello%20world")
+    -- #{"q": ["hello world"]}
+
+    http.parse_query("")
+    -- #{}
+}
+```
+
+Like `http.segments`, this function has no network dependencies and works
+with `--no-default-features`. Pair it with `req.query` in an `http.serve`
+handler to route on query parameters.

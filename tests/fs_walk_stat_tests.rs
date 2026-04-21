@@ -144,6 +144,111 @@ fn main() {{
     // readonly is platform-dependent for a freshly-written file; we just
     // assert the field exists and is a Bool.
     assert!(matches!(fields.get("readonly"), Some(Value::Bool(_))));
+    // mode is an Int on every platform (0 on non-unix). On unix the
+    // permission bits for a freshly-written file are non-zero (umask
+    // stripping leaves at least the owner-read bit), so we can assert
+    // > 0 under cfg(unix). Elsewhere only assert type shape.
+    match fields.get("mode") {
+        Some(Value::Int(m)) => {
+            #[cfg(unix)]
+            {
+                // Mask off the file-type bits (S_IFMT = 0o170000) to get
+                // just the permission triple, then require at least
+                // "owner can read" (0o400). Anything less would mean the
+                // umask / perms system didn't kick in.
+                let perms = (*m as u32) & 0o777;
+                assert!(perms & 0o400 != 0, "expected owner-read bit set; mode perms = {perms:o}");
+            }
+            #[cfg(not(unix))]
+            {
+                assert_eq!(*m, 0, "non-unix platforms report mode=0");
+            }
+        }
+        other => panic!("mode field missing or non-int: {other:?}"),
+    }
+    // accessed: should be Some(DateTime) on effectively every common
+    // filesystem. We don't assert the inner structure beyond "it's a
+    // Some variant"; the clock details are covered by time.* tests.
+    match fields.get("accessed") {
+        Some(Value::Variant(tag, _)) => {
+            assert!(
+                tag == "Some" || tag == "None",
+                "accessed should be Option variant, got tag {tag}"
+            );
+        }
+        other => panic!("accessed field missing or not a variant: {other:?}"),
+    }
+    // created: may legitimately be None on older ext4 or some network
+    // filesystems. Just assert it's an Option variant.
+    match fields.get("created") {
+        Some(Value::Variant(tag, _)) => {
+            assert!(
+                tag == "Some" || tag == "None",
+                "created should be Option variant, got tag {tag}"
+            );
+        }
+        other => panic!("created field missing or not a variant: {other:?}"),
+    }
+}
+
+#[test]
+fn test_fs_stat_mode_field_typechecks_as_int() {
+    // Exercises the typechecker scheme registration: reading `.mode` as
+    // an Int must compile cleanly. Regression guard against drift where
+    // the runtime adds a field that the type scheme doesn't advertise.
+    let dir = TempDir::new("stat_mode_ty");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").unwrap();
+    let file_str = file.to_str().unwrap().replace('\\', "/");
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    match fs.stat("{file_str}") {{
+        Ok(s) -> s.mode
+        Err(_) -> -1
+    }}
+}}
+"#
+    );
+    let result = run(&input);
+    assert!(matches!(result, Value::Int(_)));
+}
+
+#[test]
+fn test_fs_stat_accessed_and_created_are_option_datetime() {
+    // Exercises typechecker registration of `accessed` / `created` as
+    // Option(DateTime). The user code pattern-matches through Some/None
+    // and reads nested date fields — the typechecker has to see those
+    // paths to confirm the record scheme is right.
+    let dir = TempDir::new("stat_opt_dt");
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "x").unwrap();
+    let file_str = file.to_str().unwrap().replace('\\', "/");
+    let input = format!(
+        r#"
+import fs
+fn main() {{
+    match fs.stat("{file_str}") {{
+        Ok(s) -> match s.accessed {{
+            Some(dt) -> dt.date.year
+            None -> 0
+        }}
+        Err(_) -> -1
+    }}
+}}
+"#
+    );
+    let result = run(&input);
+    // Either we got an Int year >= 1970 (accessed present) or 0 (noatime).
+    // -1 would indicate fs.stat returned Err, which shouldn't happen for
+    // a file we just wrote.
+    match result {
+        Value::Int(y) => {
+            assert!(y == 0 || y >= 1970, "unexpected year value {y}");
+        }
+        other => panic!("expected Int, got {other:?}"),
+    }
 }
 
 #[test]

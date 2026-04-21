@@ -34,6 +34,10 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
         "concat_all" => concat_all(args),
         "get" => get(args),
         "eq" => eq(args),
+        "index_of" => index_of(args),
+        "starts_with" => starts_with(args),
+        "ends_with" => ends_with(args),
+        "split" => split(args),
         _ => Err(VmError::new(format!("unknown bytes function: {name}"))),
     }
 }
@@ -340,6 +344,91 @@ fn eq(args: &[Value]) -> Result<Value, VmError> {
     let a = require_bytes(&args[0], "bytes.eq")?;
     let b = require_bytes(&args[1], "bytes.eq")?;
     Ok(Value::Bool(a == b))
+}
+
+// ── Search / prefix / suffix / split ──────────────────────────────────
+
+/// Find the byte offset of the first occurrence of `needle` in `hay`.
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > hay.len() {
+        return None;
+    }
+    // Simple linear scan — hay.len() small in practice and avoids a
+    // dependency on memchr. Callers with large buffers can layer their
+    // own optimized search on top.
+    let last = hay.len() - needle.len();
+    let mut i = 0;
+    while i <= last {
+        if &hay[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn index_of(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new("bytes.index_of takes 2 arguments".into()));
+    }
+    let b = require_bytes(&args[0], "bytes.index_of")?;
+    let needle = require_bytes(&args[1], "bytes.index_of")?;
+    match find_subslice(&b, &needle) {
+        Some(i) => Ok(Value::Variant("Some".into(), vec![Value::Int(i as i64)])),
+        None => Ok(Value::Variant("None".into(), Vec::new())),
+    }
+}
+
+fn starts_with(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new("bytes.starts_with takes 2 arguments".into()));
+    }
+    let b = require_bytes(&args[0], "bytes.starts_with")?;
+    let prefix = require_bytes(&args[1], "bytes.starts_with")?;
+    Ok(Value::Bool(b.starts_with(&prefix)))
+}
+
+fn ends_with(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new("bytes.ends_with takes 2 arguments".into()));
+    }
+    let b = require_bytes(&args[0], "bytes.ends_with")?;
+    let suffix = require_bytes(&args[1], "bytes.ends_with")?;
+    Ok(Value::Bool(b.ends_with(&suffix)))
+}
+
+fn split(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new("bytes.split takes 2 arguments".into()));
+    }
+    let b = require_bytes(&args[0], "bytes.split")?;
+    let sep = require_bytes(&args[1], "bytes.split")?;
+    if sep.is_empty() {
+        return Err(VmError::new(
+            "bytes.split: separator must be non-empty".into(),
+        ));
+    }
+    // Mirror Rust's `str::split` / silt's `string.split` on empty input:
+    // splitting an empty `b` yields a list with a single empty-bytes element.
+    let mut parts: Vec<Value> = Vec::new();
+    let mut start = 0usize;
+    while start <= b.len() {
+        match find_subslice(&b[start..], &sep) {
+            Some(rel) => {
+                let i = start + rel;
+                parts.push(Value::Bytes(Arc::new(b[start..i].to_vec())));
+                start = i + sep.len();
+            }
+            None => {
+                parts.push(Value::Bytes(Arc::new(b[start..].to_vec())));
+                break;
+            }
+        }
+    }
+    Ok(Value::List(Arc::new(parts)))
 }
 
 // ── Hex digit helpers ──────────────────────────────────────────────────

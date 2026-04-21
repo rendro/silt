@@ -2,10 +2,36 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::builtins::data::make_datetime;
 use crate::value::Value;
 use crate::vm::{BlockReason, Vm, VmError};
+
+/// Convert a `SystemTime` into a Silt `Option(DateTime)`. A missing /
+/// unsupported timestamp (the OS returned `Err`, or the value predates
+/// UNIX_EPOCH by more than chrono can represent) collapses to `None`
+/// rather than failing the whole `fs.stat` call — some filesystems do
+/// not expose creation time (`btime`) at all, and ext4 inodes created
+/// before Linux 4.11 lack it even where the kernel supports it.
+fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Value {
+    let Ok(t) = t else {
+        return Value::Variant("None".into(), vec![]);
+    };
+    let Ok(d) = t.duration_since(UNIX_EPOCH) else {
+        return Value::Variant("None".into(), vec![]);
+    };
+    // i64 seconds range ≈ ±292 billion years — the cast is never a
+    // truncation in practice but we guard against negative→overflow
+    // below. `chrono::DateTime::from_timestamp` returns None if the
+    // seconds/nanoseconds compose to a value outside chrono's range.
+    let secs = d.as_secs() as i64;
+    let nanos = d.subsec_nanos();
+    let Some(dt) = chrono::DateTime::from_timestamp(secs, nanos) else {
+        return Value::Variant("None".into(), vec![]);
+    };
+    Value::Variant("Some".into(), vec![make_datetime(dt.naive_utc())])
+}
 
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
@@ -330,6 +356,27 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
                     let readonly = md.permissions().readonly();
+                    // Unix permission bits (e.g. 0o755). On Windows no
+                    // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
+                    // bits via `MetadataExt::file_attributes()` but those
+                    // aren't permission bits, so we report 0 to signal
+                    // "not applicable". User code that actually needs
+                    // Unix perms should only read `mode` under `cfg(unix)`.
+                    #[cfg(unix)]
+                    let mode: i64 = {
+                        use std::os::unix::fs::MetadataExt;
+                        md.mode() as i64
+                    };
+                    #[cfg(not(unix))]
+                    let mode: i64 = 0;
+                    // accessed() may fail on filesystems mounted with
+                    // `noatime`, and created() (`btime`) is notoriously
+                    // flaky: it's absent on older ext4, only surfaced via
+                    // statx(2) on Linux, and not exposed at all on some
+                    // Unixes. Both map to Option(DateTime) so callers can
+                    // pattern-match rather than probe for sentinels.
+                    let accessed = system_time_to_option_datetime(md.accessed());
+                    let created = system_time_to_option_datetime(md.created());
                     let mut fields: BTreeMap<String, Value> = BTreeMap::new();
                     fields.insert("size".into(), Value::Int(md.len() as i64));
                     fields.insert("is_file".into(), Value::Bool(is_file));
@@ -337,6 +384,9 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                     fields.insert("is_symlink".into(), Value::Bool(is_symlink));
                     fields.insert("modified".into(), Value::Int(modified));
                     fields.insert("readonly".into(), Value::Bool(readonly));
+                    fields.insert("mode".into(), Value::Int(mode));
+                    fields.insert("accessed".into(), accessed);
+                    fields.insert("created".into(), created);
                     let rec = Value::Record("FileStat".into(), Arc::new(fields));
                     Ok(fs_ok(rec))
                 }

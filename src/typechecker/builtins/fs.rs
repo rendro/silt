@@ -54,6 +54,38 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // used by `time.{Instant,Date,DateTime}` and `http.{Request,Response}`:
     // register the record type for field typechecking, then use the
     // resulting `Type::Record` in the function signatures below.
+    //
+    // `mode` is the Unix permission-bit triple (e.g. 0o755). On Windows
+    // this is always 0. `accessed` / `created` are `Option(DateTime)`:
+    // some filesystems / platforms (notably older ext4 and the btime
+    // field pre-Linux-4.11) do not expose the respective timestamp, in
+    // which case `None` is returned rather than failing the whole stat.
+    let date_ty = Type::Record(
+        intern("Date"),
+        vec![
+            (intern("year"), Type::Int),
+            (intern("month"), Type::Int),
+            (intern("day"), Type::Int),
+        ],
+    );
+    let time_of_day_ty = Type::Record(
+        intern("Time"),
+        vec![
+            (intern("hour"), Type::Int),
+            (intern("minute"), Type::Int),
+            (intern("second"), Type::Int),
+            (intern("ns"), Type::Int),
+        ],
+    );
+    let datetime_ty = Type::Record(
+        intern("DateTime"),
+        vec![
+            (intern("date"), date_ty),
+            (intern("time"), time_of_day_ty),
+        ],
+    );
+    let opt_datetime_ty =
+        Type::Generic(intern("Option"), vec![datetime_ty.clone()]);
     let file_stat_fields = vec![
         (intern("size"), Type::Int),
         (intern("is_file"), Type::Bool),
@@ -61,6 +93,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         (intern("is_symlink"), Type::Bool),
         (intern("modified"), Type::Int),
         (intern("readonly"), Type::Bool),
+        (intern("mode"), Type::Int),
+        (intern("accessed"), opt_datetime_ty.clone()),
+        (intern("created"), opt_datetime_ty),
     ];
     let file_stat_ty = Type::Record(intern("FileStat"), file_stat_fields.clone());
     checker.records.insert(

@@ -18,7 +18,9 @@
 
 use std::sync::Arc;
 
+use blake2::Blake2b512;
 use hmac::{Hmac, Mac};
+use md5::Md5;
 use sha2::{Digest, Sha256, Sha512};
 
 use crate::value::Value;
@@ -34,6 +36,10 @@ pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> 
     match name {
         "sha256" => sha256(args),
         "sha512" => sha512(args),
+        "md5" => md5(args),
+        "md5_hex" => md5_hex(args),
+        "blake2b" => blake2b(args),
+        "blake2b_hex" => blake2b_hex(args),
         "hmac_sha256" => hmac_sha256(args),
         "hmac_sha512" => hmac_sha512(args),
         "random_bytes" => random_bytes(args),
@@ -104,6 +110,64 @@ fn sha512(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "crypto.sha512")?;
     let digest = Sha512::digest(b.as_slice());
     Ok(Value::Bytes(Arc::new(digest.to_vec())))
+}
+
+/// Lower-case hex encoding. Kept local (rather than a round-trip
+/// through `bytes::to_hex`) so the hex-variant helpers don't grow a
+/// dependency on the `bytes` module's public API surface.
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn md5(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new("crypto.md5 takes 1 argument".into()));
+    }
+    let b = require_bytes(&args[0], "crypto.md5")?;
+    // MD5 is cryptographically broken for collision-resistance (well
+    // under 2^64 work). It lives here for interop with legacy content
+    // stores, Git-style hashing, and cache keys where an adversary
+    // isn't in play. Do NOT use it for signatures, certs, or any
+    // security decision — use `sha256` / `blake2b` instead.
+    let digest = Md5::digest(b.as_slice());
+    Ok(Value::Bytes(Arc::new(digest.to_vec())))
+}
+
+fn md5_hex(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new("crypto.md5_hex takes 1 argument".into()));
+    }
+    let b = require_bytes(&args[0], "crypto.md5_hex")?;
+    let digest = Md5::digest(b.as_slice());
+    Ok(Value::String(hex_encode(&digest)))
+}
+
+fn blake2b(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new("crypto.blake2b takes 1 argument".into()));
+    }
+    let b = require_bytes(&args[0], "crypto.blake2b")?;
+    // Blake2b512 = BLAKE2b at the full 512-bit (64-byte) output width,
+    // per RFC 7693. Faster than SHA-512 on 64-bit hardware and with a
+    // cleaner design than SHA-2; preferred for new protocols unless
+    // there's a specific reason to match a SHA-family spec.
+    let digest = Blake2b512::digest(b.as_slice());
+    Ok(Value::Bytes(Arc::new(digest.to_vec())))
+}
+
+fn blake2b_hex(args: &[Value]) -> Result<Value, VmError> {
+    if args.len() != 1 {
+        return Err(VmError::new("crypto.blake2b_hex takes 1 argument".into()));
+    }
+    let b = require_bytes(&args[0], "crypto.blake2b_hex")?;
+    let digest = Blake2b512::digest(b.as_slice());
+    Ok(Value::String(hex_encode(&digest)))
 }
 
 // ── HMAC ───────────────────────────────────────────────────────────────

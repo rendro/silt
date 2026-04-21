@@ -1158,6 +1158,21 @@ pub fn call_set(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErro
             };
             Ok(Value::Bool(a.is_subset(b)))
         }
+        "symmetric_difference" => {
+            if args.len() != 2 {
+                return Err(VmError::new(
+                    "set.symmetric_difference takes 2 arguments".into(),
+                ));
+            }
+            let (Value::Set(a), Value::Set(b)) = (&args[0], &args[1]) else {
+                return Err(VmError::new(
+                    "set.symmetric_difference requires sets".into(),
+                ));
+            };
+            Ok(Value::Set(Arc::new(
+                a.symmetric_difference(b).cloned().collect(),
+            )))
+        }
         "map" => {
             if args.len() != 2 {
                 return Err(VmError::new("set.map takes 2 arguments".into()));

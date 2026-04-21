@@ -267,6 +267,10 @@ pub fn builtin_module_functions(module: &str) -> Vec<&'static str> {
         "crypto" => vec![
             "sha256",
             "sha512",
+            "md5",
+            "md5_hex",
+            "blake2b",
+            "blake2b_hex",
             "hmac_sha256",
             "hmac_sha512",
             "random_bytes",

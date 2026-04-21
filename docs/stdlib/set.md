@@ -26,6 +26,7 @@ literal syntax and contain unique values.
 | `map` | `(Set(a), (a) -> b) -> Set(b)` | Transform each element |
 | `new` | `() -> Set(a)` | Create an empty set |
 | `remove` | `(Set(a), a) -> Set(a)` | Remove an element |
+| `symmetric_difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in exactly one of the two sets |
 | `to_list` | `(Set(a)) -> List(a)` | Convert set to sorted list |
 | `union` | `(Set(a), Set(a)) -> Set(a)` | Combine all elements |
 
@@ -248,6 +249,24 @@ import set
 fn main() {
     let s = set.remove(#[1, 2, 3], 2)
     println(set.to_list(s))  -- [1, 3]
+}
+```
+
+
+## `set.symmetric_difference`
+
+```
+set.symmetric_difference(a: Set(a), b: Set(a)) -> Set(a)
+```
+
+Returns elements that are in exactly one of `a` or `b` — equivalent to
+`(a - b) ∪ (b - a)`.
+
+```silt
+import set
+fn main() {
+    let diff = set.symmetric_difference(#[1, 2, 3], #[2, 3, 4])
+    println(set.to_list(diff))  -- [1, 4]
 }
 ```
 
