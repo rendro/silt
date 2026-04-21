@@ -13,8 +13,8 @@ match today. See the design rationale in
 
 Phase 1 of the redesign is migrating stdlib signatures from
 `Result(T, String)` to `Result(T, ModuleError)` module-by-module.
-Already landed: `io.*`, `fs.*`, `int.parse`, `float.parse`. The
-remaining modules (`json`, `toml`, `http`, `regex`) still return
+Already landed: `io.*`, `fs.*`, `json.parse*`, `toml.*`, `int.parse`,
+`float.parse`. The remaining modules (`http`, `regex`) still return
 `Result(T, String)` today — users who want a typed handle wrap the
 string errors in their own code until the relevant phase lands.
 
