@@ -299,6 +299,30 @@ impl Server {
     }
 }
 
+/// Convert a `file://` URI from the initialize params into a native
+/// `PathBuf`. Handles Unix (`file:///home/klaus`) and Windows
+/// (`file:///C:/Users/...`) shapes; on Windows we strip the leading
+/// `/` before the drive letter because Rust's `PathBuf` expects
+/// `C:/Users/...`, not `/C:/Users/...`.
+fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+    let stripped = uri.strip_prefix("file://")?;
+    #[cfg(windows)]
+    let stripped = {
+        // `file:///C:/foo` → stripped = "/C:/foo"
+        // Drop the leading `/` if followed by a drive letter.
+        if stripped.len() >= 4
+            && stripped.as_bytes()[0] == b'/'
+            && stripped.as_bytes()[1].is_ascii_alphabetic()
+            && stripped.as_bytes()[2] == b':'
+        {
+            &stripped[1..]
+        } else {
+            stripped
+        }
+    };
+    Some(std::path::PathBuf::from(stripped))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 /// Attempt to extract a typed parameter set from `req` for method `R`.
@@ -412,8 +436,7 @@ pub fn run() {
                 .pointer("/workspaceFolders/0/uri")
                 .and_then(|v| v.as_str())
         })
-        .and_then(|s| s.strip_prefix("file://"))
-        .map(std::path::PathBuf::from);
+        .and_then(file_uri_to_path);
     if let Some(root) = root_path {
         preload::preload_workspace(&mut server, &root);
     }
