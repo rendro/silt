@@ -589,7 +589,7 @@ fn main() {{
         for e in &errs {
             let lower = e.to_ascii_lowercase();
             assert!(
-                !(lower.contains("unknown") && lower.contains(name.as_ref() as &str)),
+                !(lower.contains("unknown") && lower.contains(name as &str)),
                 "encoding.{name} appears to be unregistered in the typechecker: {e}"
             );
         }

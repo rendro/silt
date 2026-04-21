@@ -72,8 +72,7 @@ fn decl_rejects_uppercase_param_name() {
     .expect("lexer");
     let err = Parser::new(tokens)
         .parse_program()
-        .err()
-        .expect("expected parse error");
+        .expect_err("expected parse error");
     assert!(
         err.message.contains("lowercase"),
         "unexpected: {}",

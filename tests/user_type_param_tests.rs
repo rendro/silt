@@ -89,8 +89,7 @@ fn user_type_param_last_enforced_full_program() {
     let tokens = Lexer::new(src).tokenize().expect("lexer");
     let err = Parser::new(tokens)
         .parse_program()
-        .err()
-        .expect("expected parse error");
+        .expect_err("expected parse error");
     assert!(
         err.message.contains("type' parameters must come after"),
         "unexpected message: {}",

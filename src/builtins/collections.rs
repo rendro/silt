@@ -692,7 +692,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let func = &args[1];
             let mut best: Option<(Value, Value)> = None;
             for item in items {
-                let key = vm.invoke_callable(func, &[item.clone()])?;
+                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 best = Some(match best {
                     None => (key, item),
                     Some((bk, bv)) => {
@@ -719,7 +719,7 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             let func = &args[1];
             let mut best: Option<(Value, Value)> = None;
             for item in items {
-                let key = vm.invoke_callable(func, &[item.clone()])?;
+                let key = vm.invoke_callable(func, std::slice::from_ref(&item))?;
                 best = Some(match best {
                     None => (key, item),
                     Some((bk, bv)) => {

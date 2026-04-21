@@ -345,7 +345,7 @@ impl TypeChecker {
                                 .zip(bound_args.iter())
                                 .map(|(&tv, arg)| (tv, arg.clone()))
                                 .collect();
-                            substitute_vars(&method_ty, &mapping)
+                            substitute_vars(method_ty, &mapping)
                         } else {
                             method_ty.clone()
                         };

@@ -470,7 +470,7 @@ fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) 
     }
 
     // Workspace lookup: search other open documents.
-    for (_uri, other) in &server.documents {
+    for other in server.documents.values() {
         if let Some(program) = other.program.as_ref() {
             for decl in &program.decls {
                 match decl {

@@ -141,8 +141,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                         Some(Value::Record(_, date_fields)),
                         Some(Value::Record(_, time_fields)),
                     ) = (fields.get("date"), fields.get("time"))
-                    {
-                        if let (
+                        && let (
                             Some(Value::Int(y)),
                             Some(Value::Int(mo)),
                             Some(Value::Int(d)),
@@ -163,7 +162,6 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                             }
                             return Ok(::toml::Value::String(iso));
                         }
-                    }
                 }
                 _ => {}
             }
