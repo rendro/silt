@@ -43,11 +43,35 @@ impl Server {
             )));
         }
 
-        let def = doc.definitions.get(&name)?;
+        // Current-file definition first; fall back to workspace-wide
+        // lookup when the identifier isn't declared in this file.
+        if let Some(def) = doc.definitions.get(&name) {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                uri.clone(),
+                span_to_range(&def.span, &doc.source),
+            )));
+        }
 
-        Some(GotoDefinitionResponse::Scalar(Location::new(
-            uri.clone(),
-            span_to_range(&def.span, &doc.source),
-        )))
+        // Workspace fallback: search every open document's top-level
+        // definitions. Multiple hits become an array response — LSP
+        // clients display a picker.
+        let hits = self.workspace_lookup_definition(name);
+        if hits.is_empty() {
+            return None;
+        }
+        let locations: Vec<Location> = hits
+            .into_iter()
+            .filter_map(|(hit_uri, span)| {
+                let src = self.documents.get(&hit_uri).map(|d| d.source.as_str())?;
+                Some(Location::new(hit_uri, span_to_range(&span, src)))
+            })
+            .collect();
+        if locations.len() == 1 {
+            Some(GotoDefinitionResponse::Scalar(
+                locations.into_iter().next().unwrap(),
+            ))
+        } else {
+            Some(GotoDefinitionResponse::Array(locations))
+        }
     }
 }

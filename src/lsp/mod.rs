@@ -10,31 +10,49 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, Request as _,
-    SignatureHelpRequest,
+    CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
+    DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation,
+    GotoTypeDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References, Rename,
+    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
-    CompletionOptions, HoverProviderCapability, OneOf, ServerCapabilities, SignatureHelpOptions,
+    CompletionOptions, Diagnostic, DiagnosticOptions, DiagnosticServerCapabilities,
+    HoverProviderCapability, OneOf, ServerCapabilities, SignatureHelpOptions,
     TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 
 use crate::typechecker;
 
 mod ast_walk;
+mod code_action;
 mod completion;
 mod conversions;
 mod definition;
 mod definitions;
+mod diagnostic_pull;
 mod diagnostics;
+mod document_highlight;
 mod document_symbols;
 mod fields;
+mod folding;
 mod formatting;
 mod hover;
+mod implementation;
+mod inlay_hints;
 mod local_bindings;
 mod locals;
+mod preload;
+mod references;
+mod rename;
+mod selection_range;
+mod semantic_tokens;
 mod signature_help;
 mod state;
 mod text_utils;
+mod type_definition;
+mod workspace;
+mod workspace_symbol;
 
 use state::Document;
 
@@ -45,6 +63,10 @@ struct Server {
     documents: HashMap<Uri, Document>,
     /// Cached builtin type signatures: "module.func" → type string.
     builtin_sigs: HashMap<String, String>,
+    /// Per-URI cache of the last computed diagnostics. Populated by
+    /// `update_document` so the pull-based `textDocument/diagnostic`
+    /// handler can answer without re-running the pipeline.
+    diagnostics_cache: HashMap<Uri, Vec<Diagnostic>>,
 }
 
 impl Server {
@@ -53,6 +75,7 @@ impl Server {
             connection,
             documents: HashMap::new(),
             builtin_sigs: typechecker::builtin_type_signatures(),
+            diagnostics_cache: HashMap::new(),
         }
     }
 
@@ -159,6 +182,111 @@ impl Server {
                 }
                 Err(resp) => resp,
             },
+            References::METHOD => match extract_request::<References>(req) {
+                Ok((id, params)) => {
+                    let result = self.references(params);
+                    Response::new_ok(id, result)
+                }
+                Err(resp) => resp,
+            },
+            Rename::METHOD => match extract_request::<Rename>(req) {
+                Ok((id, params)) => match self.rename(params, id.clone()) {
+                    Ok(result) => Response::new_ok(id, result),
+                    Err(err_resp) => err_resp,
+                },
+                Err(resp) => resp,
+            },
+            PrepareRenameRequest::METHOD => {
+                match extract_request::<PrepareRenameRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.prepare_rename(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            WorkspaceSymbolRequest::METHOD => {
+                match extract_request::<WorkspaceSymbolRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.workspace_symbol(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            InlayHintRequest::METHOD => match extract_request::<InlayHintRequest>(req) {
+                Ok((id, params)) => {
+                    let result = self.inlay_hints(params);
+                    Response::new_ok(id, result)
+                }
+                Err(resp) => resp,
+            },
+            DocumentHighlightRequest::METHOD => {
+                match extract_request::<DocumentHighlightRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.document_highlight(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            FoldingRangeRequest::METHOD => {
+                match extract_request::<FoldingRangeRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.folding_range(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            SelectionRangeRequest::METHOD => {
+                match extract_request::<SelectionRangeRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.selection_range(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            GotoTypeDefinition::METHOD => match extract_request::<GotoTypeDefinition>(req) {
+                Ok((id, params)) => {
+                    let result = self.type_definition(params);
+                    Response::new_ok(id, result)
+                }
+                Err(resp) => resp,
+            },
+            GotoImplementation::METHOD => match extract_request::<GotoImplementation>(req) {
+                Ok((id, params)) => {
+                    let result = self.goto_implementation(params);
+                    Response::new_ok(id, result)
+                }
+                Err(resp) => resp,
+            },
+            DocumentDiagnosticRequest::METHOD => {
+                match extract_request::<DocumentDiagnosticRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.document_diagnostic(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            SemanticTokensFullRequest::METHOD => {
+                match extract_request::<SemanticTokensFullRequest>(req) {
+                    Ok((id, params)) => {
+                        let result = self.semantic_tokens_full(params);
+                        Response::new_ok(id, result)
+                    }
+                    Err(resp) => resp,
+                }
+            }
+            CodeActionRequest::METHOD => match extract_request::<CodeActionRequest>(req) {
+                Ok((id, params)) => {
+                    let result = self.code_action(params);
+                    Response::new_ok(id, result)
+                }
+                Err(resp) => resp,
+            },
             _ => {
                 // Unknown request method.  We must reply with
                 // MethodNotFound so the client doesn't hang waiting for a
@@ -229,6 +357,35 @@ pub fn run() {
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(lsp_types::OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
+        selection_range_provider: Some(lsp_types::SelectionRangeProviderCapability::Simple(true)),
+        type_definition_provider: Some(lsp_types::TypeDefinitionProviderCapability::Simple(true)),
+        implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(true)),
+        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
+            identifier: None,
+            inter_file_dependencies: true,
+            workspace_diagnostics: false,
+            work_done_progress_options: Default::default(),
+        })),
+        semantic_tokens_provider: Some(
+            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp_types::SemanticTokensOptions {
+                    legend: crate::lsp::semantic_tokens::semantic_tokens_legend(),
+                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+                    range: Some(false),
+                    work_done_progress_options: Default::default(),
+                },
+            ),
+        ),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
         ..ServerCapabilities::default()
     };
 
@@ -239,12 +396,34 @@ pub fn run() {
             return;
         }
     };
-    if let Err(e) = connection.initialize(init_value) {
-        eprintln!("silt-lsp: initialization failed: {e}");
-        return;
-    }
+    let init_params = match connection.initialize(init_value) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("silt-lsp: initialization failed: {e}");
+            return;
+        }
+    };
 
     let mut server = Server::new(connection);
+
+    // Workspace preload: if the client supplied `rootUri` or
+    // `workspaceFolders`, pre-index every `.silt` file under that root
+    // so cross-file goto, references, rename, and workspace/symbol work
+    // immediately on files the editor has not yet opened.
+    let root_path: Option<std::path::PathBuf> = init_params
+        .get("rootUri")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            init_params
+                .pointer("/workspaceFolders/0/uri")
+                .and_then(|v| v.as_str())
+        })
+        .and_then(|s| s.strip_prefix("file://"))
+        .map(std::path::PathBuf::from);
+    if let Some(root) = root_path {
+        preload::preload_workspace(&mut server, &root);
+    }
+
     server.run();
     if let Err(e) = io_threads.join() {
         eprintln!("silt-lsp: I/O thread error: {e}");

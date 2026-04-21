@@ -60,6 +60,8 @@ impl Server {
                         locals: Vec::new(),
                     },
                 );
+                self.diagnostics_cache
+                    .insert(uri.clone(), diagnostics.clone());
                 self.publish_diagnostics(uri, diagnostics);
                 return;
             }
@@ -97,6 +99,12 @@ impl Server {
                 locals,
             },
         );
+
+        // Cache diagnostics for the pull-model handler
+        // (`textDocument/diagnostic`). We store a clone before
+        // publishing so the cache and the push always match.
+        self.diagnostics_cache
+            .insert(uri.clone(), diagnostics.clone());
 
         self.publish_diagnostics(uri, diagnostics);
     }
