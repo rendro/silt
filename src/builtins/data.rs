@@ -198,6 +198,114 @@ pub fn call_json_error_trait(name: &str, args: &[Value]) -> Result<Value, VmErro
     }
 }
 
+/// Dispatch the builtin `trait Error for HttpError` method table.
+pub fn call_http_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "HttpError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("HttpConnect", [Value::String(m)]) => format!("connect failed: {m}"),
+                    ("HttpTls", [Value::String(m)]) => format!("TLS error: {m}"),
+                    ("HttpTimeout", []) => "request timed out".to_string(),
+                    ("HttpInvalidUrl", [Value::String(u)]) => format!("invalid url: {u}"),
+                    ("HttpInvalidResponse", [Value::String(m)]) => {
+                        format!("invalid response: {m}")
+                    }
+                    ("HttpClosedEarly", []) => {
+                        "connection closed before response completed".to_string()
+                    }
+                    ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
+                        if body.is_empty() {
+                            format!("http {code}")
+                        } else {
+                            format!("http {code}: {body}")
+                        }
+                    }
+                    ("HttpUnknown", [Value::String(m)]) => m.clone(),
+                    _ => format!("HttpError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "HttpError.message: expected HttpError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown HttpError trait method: {name}"
+        ))),
+    }
+}
+
+/// Dispatch the builtin `trait Error for RegexError` method table.
+pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "RegexError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+                        format!("invalid regex pattern at position {pos}: {m}")
+                    }
+                    ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
+                    _ => format!("RegexError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "RegexError.message: expected RegexError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown RegexError trait method: {name}"
+        ))),
+    }
+}
+
+/// Dispatch the builtin `trait Error for TimeError` method table.
+pub fn call_time_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "TimeError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
+                    ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+                    _ => format!("TimeError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "TimeError.message: expected TimeError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown TimeError trait method: {name}"
+        ))),
+    }
+}
+
 fn json_type_name(v: &serde_json::Value) -> &'static str {
     match v {
         serde_json::Value::Null => "null",

@@ -92,7 +92,71 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         ],
     );
 
-    // ── trait Error for IoError / JsonError / TomlError / ParseError ────────
+    register_enum(
+        checker,
+        env,
+        "PgError",
+        &[
+            ("PgConnect", &[Type::String]),
+            ("PgTls", &[Type::String]),
+            ("PgAuthFailed", &[Type::String]),
+            ("PgQuery", &[Type::String, Type::String]),
+            (
+                "PgTypeMismatch",
+                &[Type::String, Type::String, Type::String],
+            ),
+            ("PgNoSuchColumn", &[Type::String]),
+            ("PgClosed", &[]),
+            ("PgTimeout", &[]),
+            ("PgTxnAborted", &[]),
+            ("PgUnknown", &[Type::String]),
+        ],
+    );
+
+    register_enum(
+        checker,
+        env,
+        "TcpError",
+        &[
+            ("TcpConnect", &[Type::String]),
+            ("TcpTls", &[Type::String]),
+            ("TcpClosed", &[]),
+            ("TcpTimeout", &[]),
+            ("TcpUnknown", &[Type::String]),
+        ],
+    );
+
+    register_enum(
+        checker,
+        env,
+        "TimeError",
+        &[
+            ("TimeParseFormat", &[Type::String]),
+            ("TimeOutOfRange", &[Type::String]),
+        ],
+    );
+
+    register_enum(
+        checker,
+        env,
+        "BytesError",
+        &[
+            ("BytesInvalidUtf8", &[Type::Int]),
+            ("BytesInvalidHex", &[Type::String]),
+            ("BytesInvalidBase64", &[Type::String]),
+            ("BytesByteOutOfRange", &[Type::Int]),
+            ("BytesOutOfBounds", &[Type::Int]),
+        ],
+    );
+
+    register_enum(
+        checker,
+        env,
+        "ChannelError",
+        &[("ChannelTimeout", &[]), ("ChannelClosed", &[])],
+    );
+
+    // ── trait Error for all stdlib error enums ────────
     // Phase 1 of the stdlib error redesign: each stdlib error enum
     // implements the built-in `Error` trait (and, transitively, its
     // `Display` supertrait) with a custom `message(self) -> String`
@@ -107,7 +171,19 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // fns with `where e: Error` constraints. The runtime counterpart
     // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
     let dummy_span = crate::lexer::Span::new(0, 0);
-    for enum_name in &["IoError", "JsonError", "TomlError", "ParseError"] {
+    for enum_name in &[
+        "IoError",
+        "JsonError",
+        "TomlError",
+        "ParseError",
+        "HttpError",
+        "RegexError",
+        "PgError",
+        "TcpError",
+        "TimeError",
+        "BytesError",
+        "ChannelError",
+    ] {
         for trait_name in &["Error", "Display"] {
             checker
                 .trait_impl_set

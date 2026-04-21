@@ -16,6 +16,47 @@ use base64::Engine;
 use crate::value::Value;
 use crate::vm::{Vm, VmError};
 
+/// Dispatch the builtin `trait Error for BytesError` method table.
+pub fn call_bytes_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "BytesError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("BytesInvalidUtf8", [Value::Int(offset)]) => {
+                        format!("invalid UTF-8 at byte {offset}")
+                    }
+                    ("BytesInvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
+                    ("BytesInvalidBase64", [Value::String(m)]) => {
+                        format!("invalid base64: {m}")
+                    }
+                    ("BytesByteOutOfRange", [Value::Int(v)]) => {
+                        format!("byte value out of range (expected 0..=255): {v}")
+                    }
+                    ("BytesOutOfBounds", [Value::Int(idx)]) => {
+                        format!("index out of bounds: {idx}")
+                    }
+                    _ => format!("BytesError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "BytesError.message: expected BytesError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown BytesError trait method: {name}"
+        ))),
+    }
+}
+
 /// Dispatch `bytes.<name>(args)`.
 pub fn call(_vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {

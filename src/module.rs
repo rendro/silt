@@ -43,6 +43,18 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
         | "HttpStatusCode"
         | "HttpUnknown" => Some("http"),
         "RegexInvalidPattern" | "RegexTooBig" => Some("regex"),
+        "PgConnect" | "PgTls" | "PgAuthFailed" | "PgQuery" | "PgTypeMismatch"
+        | "PgNoSuchColumn" | "PgClosed" | "PgTimeout" | "PgTxnAborted" | "PgUnknown" => {
+            Some("postgres")
+        }
+        "TcpConnect" | "TcpTls" | "TcpClosed" | "TcpTimeout" | "TcpUnknown" => Some("tcp"),
+        "TimeParseFormat" | "TimeOutOfRange" => Some("time"),
+        "BytesInvalidUtf8"
+        | "BytesInvalidHex"
+        | "BytesInvalidBase64"
+        | "BytesByteOutOfRange"
+        | "BytesOutOfBounds" => Some("bytes"),
+        "ChannelTimeout" | "ChannelClosed" => Some("channel"),
         _ => None,
     }
 }
@@ -134,6 +146,43 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
             ],
         ),
         ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
+        (
+            "PgError",
+            &[
+                "PgConnect",
+                "PgTls",
+                "PgAuthFailed",
+                "PgQuery",
+                "PgTypeMismatch",
+                "PgNoSuchColumn",
+                "PgClosed",
+                "PgTimeout",
+                "PgTxnAborted",
+                "PgUnknown",
+            ],
+        ),
+        (
+            "TcpError",
+            &[
+                "TcpConnect",
+                "TcpTls",
+                "TcpClosed",
+                "TcpTimeout",
+                "TcpUnknown",
+            ],
+        ),
+        ("TimeError", &["TimeParseFormat", "TimeOutOfRange"]),
+        (
+            "BytesError",
+            &[
+                "BytesInvalidUtf8",
+                "BytesInvalidHex",
+                "BytesInvalidBase64",
+                "BytesByteOutOfRange",
+                "BytesOutOfBounds",
+            ],
+        ),
+        ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
     ]
 }
 

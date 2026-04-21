@@ -307,63 +307,118 @@ pub fn redact_pg_message(s: &str) -> String {
     out
 }
 
-/// Build a `PgError` variant matching the silt-side `pg.silt` ADT.
-///
-/// Strings inside each variant are run through `redact_pg_message` so
-/// that DETAIL / WHERE / HINT follow-on text (which routinely contains
-/// user row values) is stripped before silt code ever sees it. See
-/// `redact_pg_message`'s docstring for the `detail_redacted: true`
-/// rationale.
-fn pg_error_value(e: &postgres::Error) -> Value {
+// ── PgError helpers (Phase 2 of stdlib error redesign) ─────────────
+//
+// Every fallible postgres.* call now surfaces a typed `PgError` variant
+// wrapped in `Err(...)`. Variants (see `src/typechecker/builtins/errors.rs`):
+//   PgConnect(msg)         — pool checkout / URL parse / transport setup
+//   PgTls(msg)             — TLS handshake / setup / cert read
+//   PgAuthFailed(msg)      — SQLSTATE class 28 (invalid auth)
+//   PgQuery(msg, sqlstate) — any other DbError with a SQLSTATE
+//   PgTypeMismatch(col, expected, actual)
+//   PgNoSuchColumn(col)
+//   PgClosed               — connection closed / broken pipe
+//   PgTimeout              — query canceled / statement timeout
+//   PgTxnAborted           — 25P02 in_failed_sql_transaction
+//   PgUnknown(msg)         — fallback for shapes we can't classify
+//
+// All message strings are first run through `redact_pg_message` so
+// DETAIL / WHERE / HINT follow-on rows don't leak across the VM boundary.
+
+/// Build a bare `PgConnect(msg)` variant (no Err wrapper).
+fn pg_connect(msg: impl Into<String>) -> Value {
+    Value::Variant(
+        "PgConnect".into(),
+        vec![Value::String(redact_pg_message(&msg.into()))],
+    )
+}
+
+/// Build a bare `PgTls(msg)` variant (no Err wrapper).
+fn pg_tls(msg: impl Into<String>) -> Value {
+    Value::Variant(
+        "PgTls".into(),
+        vec![Value::String(redact_pg_message(&msg.into()))],
+    )
+}
+
+/// Build a bare `PgUnknown(msg)` variant (no Err wrapper).
+fn pg_unknown(msg: impl Into<String>) -> Value {
+    Value::Variant(
+        "PgUnknown".into(),
+        vec![Value::String(redact_pg_message(&msg.into()))],
+    )
+}
+
+/// Classify a `postgres::Error` into the matching `PgError` variant.
+/// For DbError we inspect SQLSTATE; for transport errors we sniff the
+/// Display text for "closed" / "broken pipe" / "timed out" keywords.
+fn pg_error_to_variant(e: &postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
-        // `db.message()` is the short primary message, NOT the Display
-        // output of the DbError — Display additionally appends
-        // `\nDETAIL: ...` / `\nHINT: ...` lines. We intentionally avoid
-        // using `format!("{db}")` here for that reason. The redaction
-        // helper is applied as defence-in-depth for custom constraints
-        // that may embed row values in the primary message itself.
         let message = redact_pg_message(db.message());
         let sqlstate = db.code().code().to_string();
         match sqlstate.as_str() {
-            "23505" => Value::Variant("UniqueViolation".into(), vec![Value::String(message)]),
-            "23503" => Value::Variant("ForeignKeyViolation".into(), vec![Value::String(message)]),
-            "23502" => Value::Variant("NotNullViolation".into(), vec![Value::String(message)]),
-            "23514" => Value::Variant("CheckViolation".into(), vec![Value::String(message)]),
-            "40001" | "40P01" => Value::Variant("SerializationFailure".into(), vec![]),
-            code if code.starts_with("08") => {
-                Value::Variant("ConnectionError".into(), vec![Value::String(message)])
-            }
-            _ => Value::Variant(
-                "Other".into(),
-                vec![Value::String(sqlstate), Value::String(message)],
+            // 25P02: in_failed_sql_transaction.
+            "25P02" => Value::Variant("PgTxnAborted".into(), vec![]),
+            // 57014: query_canceled (statement_timeout fires with this).
+            "57014" => Value::Variant("PgTimeout".into(), vec![]),
+            // 42703: undefined_column.
+            "42703" => Value::Variant(
+                "PgNoSuchColumn".into(),
+                vec![Value::String(message)],
+            ),
+            code if code.starts_with("28") => Value::Variant(
+                "PgAuthFailed".into(),
+                vec![Value::String(message)],
+            ),
+            code if code.starts_with("08") => Value::Variant(
+                "PgConnect".into(),
+                vec![Value::String(message)],
+            ),
+            code => Value::Variant(
+                "PgQuery".into(),
+                vec![Value::String(message), Value::String(code.to_string())],
             ),
         }
     } else {
-        // Non-DB error (transport, protocol, etc.). Treat as ConnectionError
-        // when we can't read a SQLSTATE. The `postgres::Error` Display
-        // for non-DB kinds is a fixed short string without row data, but
-        // wrapped sources (e.g. an io::Error chained via source()) could
-        // theoretically carry path / user data — run through the scrub
-        // to be safe.
-        Value::Variant(
-            "ConnectionError".into(),
-            vec![Value::String(redact_pg_message(&format!("{e}")))],
-        )
+        // Non-DB: transport / protocol. Sniff keywords to pick a
+        // more specific variant where we can; fall back to PgUnknown.
+        let raw = format!("{e}");
+        let lc = raw.to_ascii_lowercase();
+        let scrubbed = redact_pg_message(&raw);
+        if lc.contains("timed out") || lc.contains("timeout") {
+            Value::Variant("PgTimeout".into(), vec![])
+        } else if lc.contains("closed")
+            || lc.contains("broken pipe")
+            || lc.contains("eof")
+            || lc.contains("reset by peer")
+        {
+            Value::Variant("PgClosed".into(), vec![])
+        } else {
+            Value::Variant("PgUnknown".into(), vec![Value::String(scrubbed)])
+        }
     }
 }
 
+/// Build a typed `PgError` variant from an `r2d2::Error` (pool checkout
+/// / build failure). r2d2 wraps the underlying postgres error inside —
+/// we classify on the Display text: a timeout while waiting for a slot
+/// maps to `PgTimeout`, anything else to `PgConnect`.
 fn pool_error_value(e: &r2d2::Error) -> Value {
-    Value::Variant(
-        "ConnectionError".into(),
-        vec![Value::String(redact_pg_message(&format!("{e}")))],
-    )
+    let raw = format!("{e}");
+    let lc = raw.to_ascii_lowercase();
+    if lc.contains("timed out") || lc.contains("timeout") {
+        Value::Variant("PgTimeout".into(), vec![])
+    } else {
+        pg_connect(raw)
+    }
 }
 
+/// Ad-hoc `PgUnknown(msg)` for misuse errors (wrong variant shape, bad
+/// argument types, cursor registry miss). These aren't transport or
+/// query failures — they're programmer errors that still need to
+/// surface as a typed `PgError` because the signature says so.
 fn other_error(detail: impl Into<String>) -> Value {
-    Value::Variant(
-        "Other".into(),
-        vec![Value::String(String::new()), Value::String(detail.into())],
-    )
+    pg_unknown(detail)
 }
 
 // ── Value <-> SQL marshalling ───────────────────────────────────────
@@ -847,12 +902,9 @@ fn extract_tx_id(v: &Value) -> Result<u64, VmError> {
 fn extract_pool(v: &Value) -> Result<Arc<PgPool>, Value> {
     let id = extract_pool_id(v).map_err(|e| other_error(e.message))?;
     lookup_pool(id).ok_or_else(|| {
-        Value::Variant(
-            "ConnectionError".into(),
-            vec![Value::String(format!(
-                "postgres: pool handle {id} is not registered (closed or never opened)"
-            ))],
-        )
+        pg_connect(format!(
+            "postgres: pool handle {id} is not registered (closed or never opened)"
+        ))
     })
 }
 
@@ -878,12 +930,9 @@ fn resolve_executor(v: &Value) -> Result<ExecutorRef, Value> {
             let id = extract_tx_id(v).map_err(|e| other_error(e.message))?;
             match lookup_tx(id) {
                 Some(cell) => Ok(ExecutorRef::Tx(cell)),
-                None => Err(Value::Variant(
-                    "ConnectionError".into(),
-                    vec![Value::String(format!(
-                        "postgres: tx handle {id} is not registered (transaction ended)"
-                    ))],
-                )),
+                None => Err(pg_connect(format!(
+                    "postgres: tx handle {id} is not registered (transaction ended)"
+                ))),
             }
         }
         other => Err(other_error(format!(
@@ -916,20 +965,14 @@ fn do_connect_with(url: String, opts: ConnectOpts) -> Value {
     let (stripped_url, ext) = match extract_ssl_url_params(&url) {
         Ok(x) => x,
         Err(e) => {
-            return err(Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(format!("postgres: invalid URL: {e}"))],
-            ));
+            return err(pg_connect(format!("postgres: invalid URL: {e}")));
         }
     };
 
     let cfg: postgres::Config = match stripped_url.parse() {
         Ok(cfg) => cfg,
         Err(e) => {
-            return err(Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(format!("postgres: invalid URL: {e}"))],
-            ));
+            return err(pg_connect(format!("postgres: invalid URL: {e}")));
         }
     };
 
@@ -1078,14 +1121,10 @@ fn build_pool(
             EffectiveSslMode::Disable | EffectiveSslMode::Prefer => build_pool_notls(cfg, &opts),
             EffectiveSslMode::Require
             | EffectiveSslMode::VerifyCa
-            | EffectiveSslMode::VerifyFull => Err(Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(
-                    "TLS required but silt was built without the postgres-tls feature \
-                     (URL had no `sslmode=`, which now defaults to verify-full; \
-                     use `?sslmode=disable` to connect without TLS)"
-                        .into(),
-                )],
+            | EffectiveSslMode::VerifyFull => Err(pg_tls(
+                "TLS required but silt was built without the postgres-tls feature \
+                 (URL had no `sslmode=`, which now defaults to verify-full; \
+                 use `?sslmode=disable` to connect without TLS)",
             )),
         }
     }
@@ -1126,30 +1165,17 @@ fn build_tls_connector(
 
     if let Some(path) = root_cert_path {
         let pem = fs::read(path).map_err(|e| {
-            Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(format!(
-                    "postgres: failed to read sslrootcert {path}: {e}"
-                ))],
-            )
+            pg_tls(format!("postgres: failed to read sslrootcert {path}: {e}"))
         })?;
         let cert = native_tls::Certificate::from_pem(&pem).map_err(|e| {
-            Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(format!(
-                    "postgres: invalid sslrootcert PEM at {path}: {e}"
-                ))],
-            )
+            pg_tls(format!("postgres: invalid sslrootcert PEM at {path}: {e}"))
         })?;
         builder.add_root_certificate(cert);
     }
 
-    let connector = builder.build().map_err(|e| {
-        Value::Variant(
-            "ConnectionError".into(),
-            vec![Value::String(format!("postgres: TLS setup failed: {e}"))],
-        )
-    })?;
+    let connector = builder
+        .build()
+        .map_err(|e| pg_tls(format!("postgres: TLS setup failed: {e}")))?;
     Ok(postgres_native_tls::MakeTlsConnector::new(connector))
 }
 
@@ -1222,7 +1248,7 @@ fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
                     let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
                     ok(make_query_result(mapped))
                 }
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         }
         ExecutorRef::Tx(cell) => {
@@ -1232,7 +1258,7 @@ fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
                     let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
                     ok(make_query_result(mapped))
                 }
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         }
     }
@@ -1266,12 +1292,12 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value 
                     let affected = returning.len() as u64;
                     ok(make_exec_result(affected, returning))
                 }
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         } else {
             match conn.execute(sql, bind) {
                 Ok(n) => ok(make_exec_result(n, Vec::new())),
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         }
     }
@@ -1384,14 +1410,14 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    let wrapped = Value::Variant("Err".into(), vec![pg_error_value(&e)]);
+                    let wrapped = Value::Variant("Err".into(), vec![pg_error_to_variant(&e)]);
                     let _ = send_or_stop(wrapped);
                     break;
                 }
             }
         },
         Err(e) => {
-            let wrapped = Value::Variant("Err".into(), vec![pg_error_value(&e)]);
+            let wrapped = Value::Variant("Err".into(), vec![pg_error_to_variant(&e)]);
             let _ = send_or_stop(wrapped);
         }
     };
@@ -1438,7 +1464,7 @@ fn do_cursor_open(
         Err(e) => {
             // Undo the registry insert so the id is not leaked.
             let _ = remove_cursor(cursor_id);
-            err(pg_error_value(&e))
+            err(pg_error_to_variant(&e))
         }
     }
 }
@@ -1481,7 +1507,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
             }
             ok(Value::List(Arc::new(mapped)))
         }
-        Err(e) => err(pg_error_value(&e)),
+        Err(e) => err(pg_error_to_variant(&e)),
     }
 }
 
@@ -1506,7 +1532,7 @@ fn do_cursor_close(cursor_id: u64) -> Value {
     let mut conn = cell.lock().unwrap();
     match conn.client_mut().execute(close_sql.as_str(), &[]) {
         Ok(_) => ok(Value::Unit),
-        Err(e) => err(pg_error_value(&e)),
+        Err(e) => err(pg_error_to_variant(&e)),
     }
 }
 
@@ -1634,16 +1660,73 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
             };
             match conn.client_mut().execute(sql, &params) {
                 Ok(_) => ok(Value::Unit),
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         }
         ExecutorRef::Tx(cell) => {
             let mut conn = cell.lock().unwrap();
             match conn.client_mut().execute(sql, &params) {
                 Ok(_) => ok(Value::Unit),
-                Err(e) => err(pg_error_value(&e)),
+                Err(e) => err(pg_error_to_variant(&e)),
             }
         }
+    }
+}
+
+// ── trait Error for PgError ─────────────────────────────────────────
+
+/// Dispatch the builtin `trait Error for PgError` method table.
+pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "PgError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
+                    ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
+                    ("PgAuthFailed", [Value::String(m)]) => {
+                        format!("postgres authentication failed: {m}")
+                    }
+                    ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
+                        if sqlstate.is_empty() {
+                            format!("postgres query error: {msg}")
+                        } else {
+                            format!("postgres query error [{sqlstate}]: {msg}")
+                        }
+                    }
+                    (
+                        "PgTypeMismatch",
+                        [Value::String(col), Value::String(exp), Value::String(act)],
+                    ) => format!(
+                        "postgres type mismatch on column `{col}`: expected {exp}, got {act}"
+                    ),
+                    ("PgNoSuchColumn", [Value::String(col)]) => {
+                        format!("postgres: no such column `{col}`")
+                    }
+                    ("PgClosed", []) => "postgres connection closed".to_string(),
+                    ("PgTimeout", []) => "postgres operation timed out".to_string(),
+                    ("PgTxnAborted", []) => {
+                        "postgres transaction aborted; rollback required".to_string()
+                    }
+                    ("PgUnknown", [Value::String(m)]) => m.clone(),
+                    _ => format!("PgError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "PgError.message: expected PgError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown PgError trait method: {name}"
+        ))),
     }
 }
 
@@ -1945,7 +2028,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             Err(e) => return Ok(err(pool_error_value(&e))),
         };
         if let Err(e) = conn.client_mut().batch_execute("BEGIN") {
-            return Ok(err(pg_error_value(&e)));
+            return Ok(err(pg_error_to_variant(&e)));
         }
         insert_tx(conn)
     };
@@ -1991,7 +2074,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             Ok(mutex) => {
                 let mut conn = mutex.into_inner().unwrap();
                 if let Err(e) = conn.client_mut().batch_execute(sql) {
-                    return Some(err(pg_error_value(&e)));
+                    return Some(err(pg_error_to_variant(&e)));
                 }
                 // `conn` drops here → returns to pool.
                 None
@@ -2001,7 +2084,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 // The conn lingers until the other reference is dropped.
                 let mut conn = shared.lock().unwrap();
                 if let Err(e) = conn.client_mut().batch_execute(sql) {
-                    return Some(err(pg_error_value(&e)));
+                    return Some(err(pg_error_to_variant(&e)));
                 }
                 None
             }
@@ -2129,12 +2212,9 @@ fn cursor_open(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let cell = match lookup_tx(tx_id) {
         Some(c) => c,
         None => {
-            return Ok(err(Value::Variant(
-                "ConnectionError".into(),
-                vec![Value::String(format!(
-                    "postgres: tx handle {tx_id} is not registered (transaction ended)"
-                ))],
-            )));
+            return Ok(err(pg_connect(format!(
+                "postgres: tx handle {tx_id} is not registered (transaction ended)"
+            ))));
         }
     };
     let Value::String(sql) = &args[1] else {
@@ -2324,7 +2404,7 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         };
         let listen_sql = format!("LISTEN {channel_name_owned}");
         if let Err(e) = conn.client_mut().batch_execute(&listen_sql) {
-            return err(pg_error_value(&e));
+            return err(pg_error_to_variant(&e));
         }
         // LISTEN ok — spawn the long-lived worker onto the io_pool.
         // The worker owns `conn` for its whole lifetime; on exit the
@@ -2456,7 +2536,11 @@ mod tests {
         let Value::Variant(etag, epayload) = inner else {
             panic!("expected inner Variant, got {inner:?}");
         };
-        assert_eq!(etag, "ConnectionError");
+        // Error redesign Phase 2: non-TLS builds that are asked for
+        // TLS now surface `PgTls(msg)` instead of the legacy
+        // `ConnectionError`. The message text still mentions TLS /
+        // postgres-tls so operators see the feature-flag hint.
+        assert_eq!(etag, "PgTls");
         let Some(Value::String(msg)) = epayload.first() else {
             panic!("expected message string");
         };

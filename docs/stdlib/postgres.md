@@ -200,7 +200,33 @@ unauthenticated callers.
 
 Silt strips those follow-on fields before the error crosses the VM
 boundary into silt. The primary short message and SQLSTATE code
-remain intact so callers can still pattern-match on `UniqueViolation`,
-`ForeignKeyViolation`, etc. If you need the full un-redacted text for
-diagnostics, log it on the Rust side (e.g. via a custom embedder) —
-the silt-side `PgError` value is intentionally scrubbed.
+remain intact so callers can still pattern-match on the typed
+`PgError` variants (e.g. `PgQuery(msg, sqlstate)` carries the five-
+character SQLSTATE code so constraint-specific branches can match on
+`"23505"` for unique violations, `"23503"` for FK violations, etc.).
+If you need the full un-redacted text for diagnostics, log it on the
+Rust side (e.g. via a custom embedder) — the silt-side `PgError` value
+is intentionally scrubbed.
+
+## PgError variants
+
+All fallible `postgres.*` calls return `Result(T, PgError)`. The
+variants (declared in silt's stdlib, no user `pg.silt` entries
+needed) are:
+
+| Variant | Fields | Raised for |
+| --- | --- | --- |
+| `PgConnect(msg)` | `String` | Pool checkout, URL parse, SQLSTATE class `08` |
+| `PgTls(msg)` | `String` | TLS handshake / cert read / connector build |
+| `PgAuthFailed(msg)` | `String` | SQLSTATE class `28` (invalid auth) |
+| `PgQuery(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
+| `PgTypeMismatch(col, expected, actual)` | `String, String, String` | Row decode failures |
+| `PgNoSuchColumn(col)` | `String` | SQLSTATE `42703` (undefined_column) |
+| `PgClosed` | — | Connection dropped mid-query |
+| `PgTimeout` | — | SQLSTATE `57014` or transport timeout |
+| `PgTxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
+| `PgUnknown(msg)` | `String` | Catch-all for shapes we can't classify |
+
+`PgError` implements the stdlib `Error` trait, so if you don't want
+to pattern-match on variants you can always call `err.message()` to
+get a formatted user-friendly string.

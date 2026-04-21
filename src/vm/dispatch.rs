@@ -193,6 +193,58 @@ impl Vm {
             Value::Variant("RegexTooBig".into(), Vec::new()),
         );
 
+        // PgError
+        for (name, arity) in [
+            ("PgConnect", 1usize),
+            ("PgTls", 1),
+            ("PgAuthFailed", 1),
+            ("PgQuery", 2),
+            ("PgTypeMismatch", 3),
+            ("PgNoSuchColumn", 1),
+            ("PgUnknown", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+        for name in ["PgClosed", "PgTimeout", "PgTxnAborted"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
+        // TcpError
+        for (name, arity) in [("TcpConnect", 1usize), ("TcpTls", 1), ("TcpUnknown", 1)] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+        for name in ["TcpClosed", "TcpTimeout"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
+        // TimeError
+        for (name, arity) in [("TimeParseFormat", 1usize), ("TimeOutOfRange", 1)] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+
+        // BytesError
+        for (name, arity) in [
+            ("BytesInvalidUtf8", 1usize),
+            ("BytesInvalidHex", 1),
+            ("BytesInvalidBase64", 1),
+            ("BytesByteOutOfRange", 1),
+            ("BytesOutOfBounds", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+
+        // ChannelError
+        for name in ["ChannelTimeout", "ChannelClosed"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
         // ── __type_of__<variant> mappings for builtin error enums ──
         // Phase 1 of the stdlib error redesign: `CallMethod` dispatch
         // looks up the parent type name via `__type_of__<tag>` to route
@@ -213,7 +265,19 @@ impl Vm {
         // and is routed through the matching `dispatch_builtin` arm.
         // `.display()` is handled generically by `dispatch_trait_method`
         // via `display_value`, so it does not need a per-enum BuiltinFn.
-        for enum_name in &["IoError", "JsonError", "TomlError", "ParseError"] {
+        for enum_name in &[
+            "IoError",
+            "JsonError",
+            "TomlError",
+            "ParseError",
+            "HttpError",
+            "RegexError",
+            "PgError",
+            "TcpError",
+            "TimeError",
+            "BytesError",
+            "ChannelError",
+        ] {
             let key = format!("{enum_name}.message");
             self.globals
                 .insert(key.clone(), Value::BuiltinFn(key.clone()));
@@ -493,6 +557,37 @@ impl Vm {
                 "ParseError" => catch_builtin_panic(
                     "ParseError",
                     AssertUnwindSafe(|| builtins::numeric::call_parse_error_trait(func, args)),
+                ),
+                "HttpError" => catch_builtin_panic(
+                    "HttpError",
+                    AssertUnwindSafe(|| builtins::data::call_http_error_trait(func, args)),
+                ),
+                "RegexError" => catch_builtin_panic(
+                    "RegexError",
+                    AssertUnwindSafe(|| builtins::data::call_regex_error_trait(func, args)),
+                ),
+                #[cfg(feature = "postgres")]
+                "PgError" => catch_builtin_panic(
+                    "PgError",
+                    AssertUnwindSafe(|| builtins::postgres::call_pg_error_trait(func, args)),
+                ),
+                "TcpError" => catch_builtin_panic(
+                    "TcpError",
+                    AssertUnwindSafe(|| builtins::tcp::call_tcp_error_trait(func, args)),
+                ),
+                "TimeError" => catch_builtin_panic(
+                    "TimeError",
+                    AssertUnwindSafe(|| builtins::data::call_time_error_trait(func, args)),
+                ),
+                "BytesError" => catch_builtin_panic(
+                    "BytesError",
+                    AssertUnwindSafe(|| builtins::bytes::call_bytes_error_trait(func, args)),
+                ),
+                "ChannelError" => catch_builtin_panic(
+                    "ChannelError",
+                    AssertUnwindSafe(|| {
+                        builtins::concurrency::call_channel_error_trait(func, args)
+                    }),
                 ),
                 #[cfg(test)]
                 "__test_panic_builtin" => {
