@@ -27,10 +27,7 @@ use super::conversions::span_to_range;
 impl Server {
     /// Find every top-level definition of `name` across all open
     /// documents. Returns `(uri, span)` per hit.
-    pub(super) fn workspace_lookup_definition(
-        &self,
-        name: Symbol,
-    ) -> Vec<(Uri, Span)> {
+    pub(super) fn workspace_lookup_definition(&self, name: Symbol) -> Vec<(Uri, Span)> {
         let mut hits = Vec::new();
         for (uri, doc) in &self.documents {
             if let Some(def) = doc.definitions.get(&name) {
@@ -51,12 +48,12 @@ impl Server {
     ) -> Vec<Location> {
         let mut locations = Vec::new();
         for (uri, doc) in &self.documents {
-            let Some(program) = &doc.program else { continue };
+            let Some(program) = &doc.program else {
+                continue;
+            };
             let mut spans: Vec<Span> = Vec::new();
             collect_references(program, name, &mut spans);
-            if include_definition
-                && let Some(def) = doc.definitions.get(&name)
-            {
+            if include_definition && let Some(def) = doc.definitions.get(&name) {
                 spans.push(def.span);
             }
             // Deduplicate by (offset, line, col) — definition and first
@@ -79,14 +76,13 @@ impl Server {
     /// returns every symbol. Non-empty query does a case-insensitive
     /// substring match — more friendly than exact prefix for
     /// `workspace/symbol` UX.
-    pub(super) fn workspace_symbols_matching(
-        &self,
-        query: &str,
-    ) -> Vec<SymbolInformation> {
+    pub(super) fn workspace_symbols_matching(&self, query: &str) -> Vec<SymbolInformation> {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
         for (uri, doc) in &self.documents {
-            let Some(program) = &doc.program else { continue };
+            let Some(program) = &doc.program else {
+                continue;
+            };
             for decl in &program.decls {
                 match decl {
                     Decl::Fn(f) => {
@@ -105,13 +101,9 @@ impl Server {
                             });
                         }
                     }
-                    Decl::Type(t) => push_type_symbols(
-                        t,
-                        uri,
-                        &doc.source,
-                        &query_lower,
-                        &mut results,
-                    ),
+                    Decl::Type(t) => {
+                        push_type_symbols(t, uri, &doc.source, &query_lower, &mut results)
+                    }
                     Decl::Trait(tr) => {
                         let name = resolve_sym(tr.name);
                         if matches_query(&name, &query_lower) {
@@ -175,10 +167,7 @@ fn push_type_symbols(
                     kind: SymbolKind::ENUM_MEMBER,
                     tags: None,
                     deprecated: None,
-                    location: Location::new(
-                        uri.clone(),
-                        span_to_range(&t.span, source),
-                    ),
+                    location: Location::new(uri.clone(), span_to_range(&t.span, source)),
                     container_name: Some(container.clone()),
                 });
             }
@@ -246,12 +235,21 @@ fn collect_references_in_stmt(stmt: &Stmt, name: Symbol, out: &mut Vec<Span>) {
             collect_references_in_pattern(pattern, name, out);
             collect_references_in_expr(value, name, out);
         }
-        Stmt::When { expr, else_body, pattern, .. } => {
+        Stmt::When {
+            expr,
+            else_body,
+            pattern,
+            ..
+        } => {
             collect_references_in_pattern(pattern, name, out);
             collect_references_in_expr(expr, name, out);
             collect_references_in_expr(else_body, name, out);
         }
-        Stmt::WhenBool { condition, else_body, .. } => {
+        Stmt::WhenBool {
+            condition,
+            else_body,
+            ..
+        } => {
             collect_references_in_expr(condition, name, out);
             collect_references_in_expr(else_body, name, out);
         }

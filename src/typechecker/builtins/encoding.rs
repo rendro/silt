@@ -15,10 +15,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // encoding.url_encode: String -> String
     env.define(
         intern("encoding.url_encode"),
-        Scheme::mono(Type::Fun(
-            vec![Type::String],
-            Box::new(Type::String),
-        )),
+        Scheme::mono(Type::Fun(vec![Type::String], Box::new(Type::String))),
     );
 
     // encoding.url_decode: String -> Result(String, String)

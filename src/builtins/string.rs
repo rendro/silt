@@ -240,9 +240,7 @@ pub fn call(vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 ));
             }
             let (Value::String(s), Value::String(needle)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "string.last_index_of requires strings".into(),
-                ));
+                return Err(VmError::new("string.last_index_of requires strings".into()));
             };
             match s.rfind(needle.as_str()) {
                 Some(byte_pos) => {

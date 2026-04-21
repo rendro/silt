@@ -2789,8 +2789,7 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             let rendered = if trait_args.is_empty() {
                 format!("{trait_name}")
             } else {
-                let args: Vec<String> =
-                    trait_args.iter().map(format_type_expr).collect();
+                let args: Vec<String> = trait_args.iter().map(format_type_expr).collect();
                 format!("{trait_name}({})", args.join(", "))
             };
             if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
@@ -3172,8 +3171,7 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
                     if args.is_empty() {
                         name.to_string()
                     } else {
-                        let rendered: Vec<String> =
-                            args.iter().map(format_type_expr).collect();
+                        let rendered: Vec<String> = args.iter().map(format_type_expr).collect();
                         format!("{name}({})", rendered.join(", "))
                     }
                 })
@@ -3833,10 +3831,7 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             // Postfix `?` bp = 110. Any child whose top-level l_bp < 110
             // must be parenthesized, otherwise re-parsing attaches `?`
             // to the inner tail instead of the whole expression.
-            format!(
-                "{}?",
-                paren_wrap_if_needed(expr, bp::QUESTIONMARK, depth)
-            )
+            format!("{}?", paren_wrap_if_needed(expr, bp::QUESTIONMARK, depth))
         }
 
         ExprKind::Ascription(expr, ty) => {
@@ -4295,7 +4290,11 @@ fn format_expr_with_parens(expr: &Expr, parent_op: BinOp, is_left: bool, depth: 
         BinOp::Add | BinOp::Sub => 70,
         BinOp::Mul | BinOp::Div | BinOp::Mod => 80,
     };
-    let required = if is_left { parent_l_bp } else { parent_l_bp + 1 };
+    let required = if is_left {
+        parent_l_bp
+    } else {
+        parent_l_bp + 1
+    };
     paren_wrap_if_needed(expr, required, depth)
 }
 

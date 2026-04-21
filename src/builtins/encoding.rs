@@ -269,9 +269,7 @@ fn upper_hex(nibble: u8) -> char {
 
 fn form_encode(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::new(
-            "encoding.form_encode takes 1 argument".into(),
-        ));
+        return Err(VmError::new("encoding.form_encode takes 1 argument".into()));
     }
     let pairs = require_pair_list(&args[0], "encoding.form_encode")?;
     if pairs.is_empty() {
@@ -315,9 +313,7 @@ pub(crate) fn form_decode_component(s: &str) -> Result<String, String> {
 
 fn form_decode(args: &[Value]) -> Result<Value, VmError> {
     if args.len() != 1 {
-        return Err(VmError::new(
-            "encoding.form_decode takes 1 argument".into(),
-        ));
+        return Err(VmError::new("encoding.form_decode takes 1 argument".into()));
     }
     let body = require_string(&args[0], "encoding.form_decode")?;
     if body.is_empty() {

@@ -29,10 +29,7 @@ use super::ast_walk::{has_unresolved_vars, visit_expr_children};
 use super::conversions::span_to_range;
 
 impl Server {
-    pub(super) fn inlay_hints(
-        &self,
-        params: lsp_types::InlayHintParams,
-    ) -> Option<Vec<InlayHint>> {
+    pub(super) fn inlay_hints(&self, params: lsp_types::InlayHintParams) -> Option<Vec<InlayHint>> {
         let uri = &params.text_document.uri;
         let doc = self.documents.get(uri)?;
         let program = doc.program.as_ref()?;
@@ -79,10 +76,7 @@ fn walk_decl(decl: &Decl, out: &mut Vec<HintRecord>) {
             collect_fn_hints(f, out);
         }
         Decl::Let {
-            pattern,
-            ty,
-            value,
-            ..
+            pattern, ty, value, ..
         } => {
             if ty.is_none()
                 && let Some(binding_ty) = &value.ty
@@ -110,8 +104,7 @@ fn collect_fn_hints(f: &FnDecl, out: &mut Vec<HintRecord>) {
             let name_str = crate::intern::resolve(*name);
             // Pull the inferred param type by finding the ident in the
             // typed body.
-            let inferred =
-                super::definitions::find_param_type(&f.body, *name);
+            let inferred = super::definitions::find_param_type(&f.body, *name);
             if let Some(ty) = inferred
                 && !has_unresolved_vars(&ty)
             {
@@ -139,11 +132,16 @@ fn walk_expr(expr: &Expr, out: &mut Vec<HintRecord>) {
                     walk_expr(value, out);
                 }
                 Stmt::Expr(e) => walk_expr(e, out),
-                Stmt::When { expr, else_body, .. } => {
+                Stmt::When {
+                    expr, else_body, ..
+                } => {
                     walk_expr(expr, out);
                     walk_expr(else_body, out);
                 }
-                Stmt::WhenBool { condition, else_body } => {
+                Stmt::WhenBool {
+                    condition,
+                    else_body,
+                } => {
                     walk_expr(condition, out);
                     walk_expr(else_body, out);
                 }
@@ -184,8 +182,7 @@ fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
     // Recompute: advance from start by counting UTF-16 units of the ident.
     let start_line = ident_range.start.line;
     let start_char = ident_range.start.character;
-    let ident_text = source
-        .get(h.ident_span.offset..h.ident_span.offset + h.ident_len)?;
+    let ident_text = source.get(h.ident_span.offset..h.ident_span.offset + h.ident_len)?;
     let width_utf16: u32 = ident_text.encode_utf16().count() as u32;
     let position = Position {
         line: start_line,

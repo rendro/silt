@@ -141,7 +141,7 @@ pub enum Value {
     /// `type a` argument. Keeps `type T`-style values distinct from
     /// primitives (see `PrimitiveDescriptor`).
     TypeDescriptor(String),
-    PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
+    PrimitiveDescriptor(String), // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
     /// Immutable byte sequence. Structural equality and hashing — two

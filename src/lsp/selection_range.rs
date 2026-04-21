@@ -58,7 +58,9 @@ impl Server {
 fn span_extent(span: &Span, source: &str) -> usize {
     let (end, _) = (
         // Minimal: use offset + crude forward scan via source length clamp.
-        source.len().min(span.offset + span_width_guess(span, source)),
+        source
+            .len()
+            .min(span.offset + span_width_guess(span, source)),
         span.offset,
     );
     end.saturating_sub(span.offset)
@@ -76,10 +78,7 @@ fn build_chain(ranges: &[Span], source: &str) -> SelectionRange {
     // Walk outermost → innermost, building parents as we go.
     for span in ranges.iter().rev() {
         let range = span_to_range(span, source);
-        parent = Some(Box::new(SelectionRange {
-            range,
-            parent,
-        }));
+        parent = Some(Box::new(SelectionRange { range, parent }));
     }
     match parent {
         Some(inner) => *inner,
@@ -92,12 +91,7 @@ fn build_chain(ranges: &[Span], source: &str) -> SelectionRange {
 
 // ── Decl walkers ───────────────────────────────────────────────────
 
-fn collect_decl_ranges(
-    decl: &Decl,
-    source: &str,
-    cursor: usize,
-    out: &mut Vec<Span>,
-) {
+fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<Span>) {
     match decl {
         Decl::Fn(f) => {
             let (end, _) = expr_extent(&f.body, source);
@@ -136,12 +130,7 @@ fn collect_decl_ranges(
     }
 }
 
-fn collect_expr_ranges(
-    expr: &Expr,
-    source: &str,
-    cursor: usize,
-    out: &mut Vec<Span>,
-) {
+fn collect_expr_ranges(expr: &Expr, source: &str, cursor: usize, out: &mut Vec<Span>) {
     let (end, _) = expr_extent(expr, source);
     if cursor < expr.span.offset || cursor > end {
         return;

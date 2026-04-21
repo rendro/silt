@@ -22,7 +22,12 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     //  - sha512   -> 64 bytes
     //  - md5      -> 16 bytes  (legacy / compat only — NOT collision-resistant)
     //  - blake2b  -> 64 bytes  (BLAKE2b-512, RFC 7693)
-    for name in &["crypto.sha256", "crypto.sha512", "crypto.md5", "crypto.blake2b"] {
+    for name in &[
+        "crypto.sha256",
+        "crypto.sha512",
+        "crypto.md5",
+        "crypto.blake2b",
+    ] {
         env.define(
             intern(name),
             Scheme::mono(Type::Fun(
@@ -38,10 +43,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     for name in &["crypto.md5_hex", "crypto.blake2b_hex"] {
         env.define(
             intern(name),
-            Scheme::mono(Type::Fun(
-                vec![bytes_ty.clone()],
-                Box::new(Type::String),
-            )),
+            Scheme::mono(Type::Fun(vec![bytes_ty.clone()], Box::new(Type::String))),
         );
     }
 

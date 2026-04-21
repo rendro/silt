@@ -55,8 +55,7 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
             if args.len() != 3 {
                 return Err(VmError::new("int.clamp takes 3 arguments".into()));
             }
-            let (Value::Int(x), Value::Int(lo), Value::Int(hi)) =
-                (&args[0], &args[1], &args[2])
+            let (Value::Int(x), Value::Int(lo), Value::Int(hi)) = (&args[0], &args[1], &args[2])
             else {
                 return Err(VmError::new("int.clamp requires ints".into()));
             };

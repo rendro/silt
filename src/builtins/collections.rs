@@ -747,9 +747,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             for v in iter {
                 match v {
                     Value::Int(n) => {
-                        total = total.checked_add(n).ok_or_else(|| {
-                            VmError::new("list.sum overflow".into())
-                        })?;
+                        total = total
+                            .checked_add(n)
+                            .ok_or_else(|| VmError::new("list.sum overflow".into()))?;
                     }
                     _ => return Err(VmError::new("list.sum requires a list of Int".into())),
                 }
@@ -783,9 +783,9 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             for v in iter {
                 match v {
                     Value::Int(n) => {
-                        total = total.checked_mul(n).ok_or_else(|| {
-                            VmError::new("list.product overflow".into())
-                        })?;
+                        total = total
+                            .checked_mul(n)
+                            .ok_or_else(|| VmError::new("list.product overflow".into()))?;
                     }
                     _ => {
                         return Err(VmError::new("list.product requires a list of Int".into()));

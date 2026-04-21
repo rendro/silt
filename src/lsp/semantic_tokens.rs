@@ -125,12 +125,7 @@ fn encode_deltas(tokens: &[RawToken]) -> Vec<SemanticToken> {
 
 // ── Collection ─────────────────────────────────────────────────────
 
-fn collect_tokens(
-    server: &Server,
-    doc: &Document,
-    program: &Program,
-    out: &mut Vec<RawToken>,
-) {
+fn collect_tokens(server: &Server, doc: &Document, program: &Program, out: &mut Vec<RawToken>) {
     let source = &doc.source;
 
     for decl in &program.decls {
@@ -427,12 +422,7 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &str, out: &mut Vec<Ra
 /// Returns None when we can't be confident — callers should omit the
 /// token rather than mis-classify (the textmate grammar still covers
 /// keywords / literals).
-fn classify_ident(
-    name: Symbol,
-    offset: usize,
-    doc: &Document,
-    server: &Server,
-) -> Option<u32> {
+fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) -> Option<u32> {
     // Local binding (let / param): VARIABLE. We distinguish PARAMETER at
     // binding sites only — references to a param are just VARIABLEs in
     // the standard LSP encoding since the semantics are the same for

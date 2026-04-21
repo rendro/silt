@@ -109,11 +109,9 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
             // through `toml.parse` preserve type.
             match name.as_str() {
                 "Date" => {
-                    if let (Some(Value::Int(y)), Some(Value::Int(m)), Some(Value::Int(d))) = (
-                        fields.get("year"),
-                        fields.get("month"),
-                        fields.get("day"),
-                    ) {
+                    if let (Some(Value::Int(y)), Some(Value::Int(m)), Some(Value::Int(d))) =
+                        (fields.get("year"), fields.get("month"), fields.get("day"))
+                    {
                         let iso = format!("{y:04}-{m:02}-{d:02}");
                         // Parse the string through toml's own Datetime type
                         // so the output renders as a native TOML date.
@@ -159,9 +157,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                             time_fields.get("minute"),
                             time_fields.get("second"),
                         ) {
-                            let iso = format!(
-                                "{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}"
-                            );
+                            let iso = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}");
                             if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
                                 return Ok(::toml::Value::Datetime(dt));
                             }
@@ -188,10 +184,7 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
         }
         Value::Variant(name, fields) => {
             let mut table = ::toml::map::Map::new();
-            table.insert(
-                "variant".into(),
-                ::toml::Value::String(name.clone()),
-            );
+            table.insert("variant".into(), ::toml::Value::String(name.clone()));
             if !fields.is_empty() {
                 let items: Result<Vec<_>, _> = fields.iter().map(value_to_toml).collect();
                 table.insert("fields".into(), ::toml::Value::Array(items?));
@@ -246,19 +239,17 @@ fn toml_to_record(
     let mut record_fields: BTreeMap<String, Value> = BTreeMap::new();
     for (field_name, field_type) in fields {
         match table.get(field_name) {
-            Some(val) => {
-                match toml_to_typed_value(vm, val, field_type, type_name, field_name) {
-                    Ok(v) => {
-                        record_fields.insert(field_name.clone(), v);
-                    }
-                    Err(e) => {
-                        return Ok(Value::Variant(
-                            "Err".into(),
-                            vec![Value::String(e.message.clone())],
-                        ));
-                    }
+            Some(val) => match toml_to_typed_value(vm, val, field_type, type_name, field_name) {
+                Ok(v) => {
+                    record_fields.insert(field_name.clone(), v);
                 }
-            }
+                Err(e) => {
+                    return Ok(Value::Variant(
+                        "Err".into(),
+                        vec![Value::String(e.message.clone())],
+                    ));
+                }
+            },
             None => match field_type {
                 FieldType::Option(_) => {
                     record_fields.insert(
@@ -279,7 +270,10 @@ fn toml_to_record(
     }
     Ok(Value::Variant(
         "Ok".into(),
-        vec![Value::Record(type_name.to_string(), Arc::new(record_fields))],
+        vec![Value::Record(
+            type_name.to_string(),
+            Arc::new(record_fields),
+        )],
     ))
 }
 
@@ -338,11 +332,7 @@ fn toml_to_record_list(
     ))
 }
 
-fn toml_to_map(
-    vm: &mut Vm,
-    value_type: &str,
-    tv: &::toml::Value,
-) -> Result<Value, VmError> {
+fn toml_to_map(vm: &mut Vm, value_type: &str, tv: &::toml::Value) -> Result<Value, VmError> {
     let ::toml::Value::Table(table) = tv else {
         return Ok(Value::Variant(
             "Err".into(),
@@ -676,10 +666,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let tv = match value_to_top_level_toml(&args[0]) {
                 Ok(t) => t,
                 Err(e) => {
-                    return Ok(Value::Variant(
-                        "Err".into(),
-                        vec![Value::String(e.message)],
-                    ));
+                    return Ok(Value::Variant("Err".into(), vec![Value::String(e.message)]));
                 }
             };
             match ::toml::to_string(&tv) {
@@ -697,10 +684,7 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
             let tv = match value_to_top_level_toml(&args[0]) {
                 Ok(t) => t,
                 Err(e) => {
-                    return Ok(Value::Variant(
-                        "Err".into(),
-                        vec![Value::String(e.message)],
-                    ));
+                    return Ok(Value::Variant("Err".into(), vec![Value::String(e.message)]));
                 }
             };
             match ::toml::to_string_pretty(&tv) {

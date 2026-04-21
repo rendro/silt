@@ -536,10 +536,7 @@ impl TypeChecker {
                 vec![Type::String, Type::String],
                 Box::new(Type::Generic(
                     intern("Option"),
-                    vec![Type::Map(
-                        Box::new(Type::String),
-                        Box::new(Type::String),
-                    )],
+                    vec![Type::Map(Box::new(Type::String), Box::new(Type::String))],
                 )),
             )),
         );
@@ -668,10 +665,7 @@ impl TypeChecker {
                 intern("List"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(
-                        intern("TypeOf"),
-                        vec![Type::List(Box::new(a))],
-                    ),
+                    ty: Type::Generic(intern("TypeOf"), vec![Type::List(Box::new(a))]),
                     constraints: vec![],
                 },
             );
@@ -683,10 +677,7 @@ impl TypeChecker {
                 intern("Set"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(
-                        intern("TypeOf"),
-                        vec![Type::Set(Box::new(a))],
-                    ),
+                    ty: Type::Generic(intern("TypeOf"), vec![Type::Set(Box::new(a))]),
                     constraints: vec![],
                 },
             );
@@ -698,10 +689,7 @@ impl TypeChecker {
                 intern("Channel"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Generic(
-                        intern("TypeOf"),
-                        vec![Type::Channel(Box::new(a))],
-                    ),
+                    ty: Type::Generic(intern("TypeOf"), vec![Type::Channel(Box::new(a))]),
                     constraints: vec![],
                 },
             );
@@ -714,10 +702,7 @@ impl TypeChecker {
                 intern("Map"),
                 Scheme {
                     vars: vec![kv, vv],
-                    ty: Type::Generic(
-                        intern("TypeOf"),
-                        vec![Type::Map(Box::new(k), Box::new(v))],
-                    ),
+                    ty: Type::Generic(intern("TypeOf"), vec![Type::Map(Box::new(k), Box::new(v))]),
                     constraints: vec![],
                 },
             );

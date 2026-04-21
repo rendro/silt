@@ -65,14 +65,16 @@ fn expect_tuple2(v: Value) -> (Value, Value) {
 /// every non-hyphen char is a lowercase hex digit. Returns `Ok(())` on
 /// match, `Err(reason)` otherwise.
 fn assert_canonical(s: &str) {
-    assert_eq!(s.len(), 36, "expected 36-char UUID, got {} chars: {s:?}", s.len());
+    assert_eq!(
+        s.len(),
+        36,
+        "expected 36-char UUID, got {} chars: {s:?}",
+        s.len()
+    );
     let b = s.as_bytes();
     for (i, byte) in b.iter().enumerate() {
         match i {
-            8 | 13 | 18 | 23 => assert_eq!(
-                *byte, b'-',
-                "expected '-' at position {i} in {s:?}"
-            ),
+            8 | 13 | 18 | 23 => assert_eq!(*byte, b'-', "expected '-' at position {i} in {s:?}"),
             _ => {
                 let ok = byte.is_ascii_digit() || (b'a'..=b'f').contains(byte);
                 assert!(
@@ -92,14 +94,12 @@ fn assert_canonical(s: &str) {
 /// ~2^-122, treated as impossible).
 #[test]
 fn test_v4_returns_canonical_form_and_is_unique_across_calls() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   (uuid.v4(), uuid.v4())
 }
-"#,
-    );
+"#);
     let (a, b) = expect_tuple2(v);
     let a = expect_string(a);
     let b = expect_string(b);
@@ -119,14 +119,12 @@ fn main() {
 /// comparison. That monotonic property is the whole point of v7.
 #[test]
 fn test_v7_returns_canonical_form_and_sorts_in_generation_order() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   (uuid.v7(), uuid.v7())
 }
-"#,
-    );
+"#);
     let (a, b) = expect_tuple2(v);
     let a = expect_string(a);
     let b = expect_string(b);
@@ -152,8 +150,7 @@ fn main() {
 #[test]
 fn test_parse_accepts_valid_canonicalizes_rejects_malformed() {
     // Uppercase input → lowercase canonical output.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   match uuid.parse("550E8400-E29B-41D4-A716-446655440000") {
@@ -161,8 +158,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "550e8400-e29b-41d4-a716-446655440000",
@@ -170,8 +166,7 @@ fn main() {
     );
 
     // Already-canonical lowercase input → unchanged.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   match uuid.parse("550e8400-e29b-41d4-a716-446655440000") {
@@ -179,16 +174,11 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
-    assert_eq!(
-        expect_string(v),
-        "550e8400-e29b-41d4-a716-446655440000"
-    );
+"#);
+    assert_eq!(expect_string(v), "550e8400-e29b-41d4-a716-446655440000");
 
     // Malformed input → Err branch taken, error message surfaces.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   match uuid.parse("not-a-uuid") {
@@ -196,8 +186,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.to_ascii_lowercase().contains("invalid") || s.to_ascii_lowercase().contains("uuid"),
@@ -206,8 +195,7 @@ fn main() {
 
     // A second malformed form (wrong length): make sure the check
     // doesn't trip on only-one-shape-of-malformed.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   match uuid.parse("550e8400e29b41d4a71644665544") {
@@ -215,8 +203,7 @@ fn main() {
     Err(_) -> "err"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "err");
 }
 
@@ -225,18 +212,13 @@ fn main() {
 /// `uuid.nil` returns exactly the all-zero UUID.
 #[test]
 fn test_nil_returns_all_zero_uuid() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.nil()
 }
-"#,
-    );
-    assert_eq!(
-        expect_string(v),
-        "00000000-0000-0000-0000-000000000000"
-    );
+"#);
+    assert_eq!(expect_string(v), "00000000-0000-0000-0000-000000000000");
 }
 
 // ── is_valid ────────────────────────────────────────────────────────────
@@ -248,69 +230,57 @@ fn main() {
 #[test]
 fn test_is_valid_matches_parse_ok_err_classification() {
     // Valid → true.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.is_valid("550e8400-e29b-41d4-a716-446655440000")
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(true));
 
     // Mixed-case valid → true (parser is case-insensitive).
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.is_valid("550E8400-e29b-41D4-A716-446655440000")
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(true));
 
     // Nil UUID is a syntactically valid UUID.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.is_valid("00000000-0000-0000-0000-000000000000")
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(true));
 
     // Malformed → false.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.is_valid("not-a-uuid")
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(false));
 
     // Empty → false.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   uuid.is_valid("")
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(false));
 
     // Freshly generated v4 / v7 both classify as valid.
-    let v = run(
-        r#"
+    let v = run(r#"
 import uuid
 fn main() {
   (uuid.is_valid(uuid.v4()), uuid.is_valid(uuid.v7()))
 }
-"#,
-    );
+"#);
     let (a, b) = expect_tuple2(v);
     assert_eq!(a, Value::Bool(true));
     assert_eq!(b, Value::Bool(true));

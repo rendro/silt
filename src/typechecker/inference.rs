@@ -533,9 +533,7 @@ impl TypeChecker {
             let applied = self.apply(pt);
             match &applied {
                 Type::Var(v) => self.current_fn_param_tyvars.push(*v),
-                Type::Generic(name, args)
-                    if resolve(*name) == "TypeOf" && args.len() == 1 =>
-                {
+                Type::Generic(name, args) if resolve(*name) == "TypeOf" && args.len() == 1 => {
                     if let Type::Var(v) = self.apply(&args[0]) {
                         self.current_fn_param_tyvars.push(v);
                     }
@@ -1688,9 +1686,7 @@ impl TypeChecker {
                     && resolve(*gname) == "TypeOf"
                     && gargs.len() == 1
                 {
-                    let resolved = self.resolve_type_descriptor_method(
-                        &gargs[0], field, span,
-                    );
+                    let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
                     if let Some(ty) = resolved {
                         self.last_field_access_was_method = false;
                         expr.ty = Some(ty.clone());
@@ -2560,11 +2556,7 @@ impl TypeChecker {
                         let remaining_params = params.len().saturating_sub(param_offset);
                         let min_len = remaining_params.min(arg_types.len());
                         for i in 0..min_len {
-                            self.unify(
-                                &arg_types[i],
-                                &params[i + param_offset],
-                                arg_spans[i],
-                            );
+                            self.unify(&arg_types[i], &params[i + param_offset], arg_spans[i]);
                         }
                         // Check arity:
                         // - method call (dispatch_method_entry set the flag):
@@ -2798,10 +2790,7 @@ impl TypeChecker {
                     for (field_name, _) in fields.iter() {
                         if !seen.insert(*field_name) {
                             self.error(
-                                format!(
-                                    "duplicate field '{}' in record update",
-                                    field_name
-                                ),
+                                format!("duplicate field '{}' in record update", field_name),
                                 span,
                             );
                         }
@@ -3540,11 +3529,7 @@ impl TypeChecker {
 /// (the enclosing trait's supplied args at the call site). Nested forms
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
-fn resolve_supertrait_arg(
-    te: &TypeExpr,
-    trait_info: &TraitInfo,
-    base_args: &[Type],
-) -> Type {
+fn resolve_supertrait_arg(te: &TypeExpr, trait_info: &TraitInfo, base_args: &[Type]) -> Type {
     match te {
         TypeExpr::Named(sym) => {
             if let Some(idx) = trait_info.params.iter().position(|p| p == sym)

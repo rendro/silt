@@ -143,11 +143,9 @@ impl QuickFix for AddImport {
         let module = import_module_from_message(&diag.message)?;
         // Don't duplicate an existing import.
         let needle = format!("import {module}");
-        if doc
-            .source
-            .lines()
-            .any(|line| line.trim() == needle || line.trim_start().starts_with(&(needle.clone() + " ")))
-        {
+        if doc.source.lines().any(|line| {
+            line.trim() == needle || line.trim_start().starts_with(&(needle.clone() + " "))
+        }) {
             return None;
         }
         // Simplest safe placement: line 0, column 0.
@@ -257,9 +255,7 @@ impl QuickFix for WrapInOk {
 
     fn diagnostic_matcher(&self, diag: &Diagnostic) -> bool {
         let m = &diag.message;
-        m.contains("type mismatch")
-            && m.contains("expected Result")
-            && !m.contains("got Result")
+        m.contains("type mismatch") && m.contains("expected Result") && !m.contains("got Result")
     }
 
     fn build_edits(

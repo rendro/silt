@@ -69,8 +69,7 @@ fn main() {
     );
     assert!(
         errs.iter()
-            .any(|e| e.contains("duplicate field 'name'")
-                && e.contains("record literal")),
+            .any(|e| e.contains("duplicate field 'name'") && e.contains("record literal")),
         "expected `duplicate field 'name'` in record literal diagnostic, got: {errs:?}"
     );
 }
@@ -128,8 +127,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("duplicate method 'say'")
-            && e.contains("trait impl")),
+        errs.iter()
+            .any(|e| e.contains("duplicate method 'say'") && e.contains("trait impl")),
         "expected `duplicate method 'say' in trait impl ...`, got: {errs:?}"
     );
 }

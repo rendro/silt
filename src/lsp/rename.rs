@@ -169,17 +169,50 @@ fn is_valid_silt_ident(name: &str) -> bool {
 }
 
 const SILT_KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return",
-    "trait", "type", "when", "where", "true", "false",
+    "as", "else", "fn", "import", "let", "loop", "match", "mod", "pub", "return", "trait", "type",
+    "when", "where", "true", "false",
 ];
 
 const BUILTIN_CONSTRUCTORS: &[&str] = &[
-    "Ok", "Err", "Some", "None", "Stop", "Continue", "Message", "Closed", "Empty",
-    "Sent", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "Monday",
-    "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Ok",
+    "Err",
+    "Some",
+    "None",
+    "Stop",
+    "Continue",
+    "Message",
+    "Closed",
+    "Empty",
+    "Sent",
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "HEAD",
+    "OPTIONS",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 ];
 
 const BUILTIN_GLOBALS: &[&str] = &[
-    "println", "print", "panic", "unreachable", "Int", "Float", "String", "Bool",
-    "ExtFloat", "List", "Map", "Set", "Channel", "Tuple",
+    "println",
+    "print",
+    "panic",
+    "unreachable",
+    "Int",
+    "Float",
+    "String",
+    "Bool",
+    "ExtFloat",
+    "List",
+    "Map",
+    "Set",
+    "Channel",
+    "Tuple",
 ];

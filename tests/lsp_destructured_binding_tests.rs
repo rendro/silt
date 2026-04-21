@@ -295,11 +295,10 @@ fn goto_def_at(
     if result.is_null() {
         return None;
     }
-    let def_uri = result
-        .get("uri")
-        .and_then(|v| v.as_str())?
-        .to_string();
-    let line = result.pointer("/range/start/line").and_then(|v| v.as_u64())?;
+    let def_uri = result.get("uri").and_then(|v| v.as_str())?.to_string();
+    let line = result
+        .pointer("/range/start/line")
+        .and_then(|v| v.as_u64())?;
     let character = result
         .pointer("/range/start/character")
         .and_then(|v| v.as_u64())?;
@@ -362,7 +361,10 @@ fn test_goto_def_on_tuple_destructure_usage() {
     // Goto-def on the `a` of `println(a + b)` on line 2, col 10.
     let (def_uri, line, character) = goto_def_at(&mut client, &uri, 2, 10)
         .expect("goto-def on usage of `a` must return a non-null result");
-    assert_eq!(def_uri, uri, "definition must point back into this document");
+    assert_eq!(
+        def_uri, uri,
+        "definition must point back into this document"
+    );
     assert_eq!(
         line, 1,
         "definition of `a` should be on line 1 (the `let` pattern), got {line}"
@@ -387,8 +389,7 @@ fn test_hover_on_nested_tuple_destructure_usage() {
     //   line 1:   let ((a, b), c) = ((1, 2), 3)
     //   line 2:   println(a + b + c)
     //   line 3: }
-    let source =
-        "fn main() {\n  let ((a, b), c) = ((1, 2), 3)\n  println(a + b + c)\n}\n";
+    let source = "fn main() {\n  let ((a, b), c) = ((1, 2), 3)\n  println(a + b + c)\n}\n";
 
     let mut client = LspClient::spawn();
     client.initialize();
@@ -400,9 +401,8 @@ fn test_hover_on_nested_tuple_destructure_usage() {
     //          0123456789012345678
     // col 10 = a, col 14 = b, col 18 = c
     for (col, name) in [(10u32, "a"), (14u32, "b"), (18u32, "c")] {
-        let value = hover_value_at(&mut client, &uri, 2, col).unwrap_or_else(|| {
-            panic!("hover on usage of `{name}` must return a non-null result")
-        });
+        let value = hover_value_at(&mut client, &uri, 2, col)
+            .unwrap_or_else(|| panic!("hover on usage of `{name}` must return a non-null result"));
         assert!(
             value.contains("Int"),
             "hover on usage of `{name}` must resolve to `Int`, got: {value}"
@@ -441,9 +441,8 @@ fn test_hover_on_record_destructure_usage() {
     //          01234567890123
     // col 10 = x, col 14 = y
     for (col, name) in [(10u32, "x"), (14u32, "y")] {
-        let value = hover_value_at(&mut client, &uri, 3, col).unwrap_or_else(|| {
-            panic!("hover on usage of `{name}` must return a non-null result")
-        });
+        let value = hover_value_at(&mut client, &uri, 3, col)
+            .unwrap_or_else(|| panic!("hover on usage of `{name}` must return a non-null result"));
         assert!(
             value.contains("Int"),
             "hover on usage of `{name}` must resolve to `Int`, got: {value}"
@@ -480,7 +479,10 @@ fn test_goto_def_on_top_level_tuple_destructure_usage() {
     // The `a` of `println(a + b)` is at column 20.
     let (def_uri, line, character) = goto_def_at(&mut client, &uri, 1, 20)
         .expect("goto-def on top-level destructured `a` must return a non-null result");
-    assert_eq!(def_uri, uri, "definition must point back into this document");
+    assert_eq!(
+        def_uri, uri,
+        "definition must point back into this document"
+    );
     assert_eq!(
         line, 0,
         "definition of top-level `a` should be on line 0, got {line}"

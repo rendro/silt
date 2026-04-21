@@ -1187,7 +1187,8 @@ fn main() {
 "#,
     );
     assert!(
-        errs.iter().any(|e| e.contains("`recur` can only appear inside a `loop(")),
+        errs.iter()
+            .any(|e| e.contains("`recur` can only appear inside a `loop(")),
         "expected 'recur outside of loop' error, got: {errs:?}"
     );
 }

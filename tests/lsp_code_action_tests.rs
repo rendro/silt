@@ -286,7 +286,10 @@ fn add_import_quickfix_offered_for_unimported_module() {
             .and_then(|t| t.as_str())
             .is_some_and(|t| t.contains("import list"))
     });
-    assert!(any_contains, "expected edit inserting `import list`; got {edits:?}");
+    assert!(
+        any_contains,
+        "expected edit inserting `import list`; got {edits:?}"
+    );
     client.shutdown();
 }
 

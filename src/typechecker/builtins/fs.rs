@@ -79,13 +79,9 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     );
     let datetime_ty = Type::Record(
         intern("DateTime"),
-        vec![
-            (intern("date"), date_ty),
-            (intern("time"), time_of_day_ty),
-        ],
+        vec![(intern("date"), date_ty), (intern("time"), time_of_day_ty)],
     );
-    let opt_datetime_ty =
-        Type::Generic(intern("Option"), vec![datetime_ty.clone()]);
+    let opt_datetime_ty = Type::Generic(intern("Option"), vec![datetime_ty.clone()]);
     let file_stat_fields = vec![
         (intern("size"), Type::Int),
         (intern("is_file"), Type::Bool),

@@ -143,8 +143,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // rendezvous sender already parked wins over an expired timer.
     {
         let (a, av) = checker.fresh_tv();
-        let duration_ty =
-            Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
+        let duration_ty = Type::Record(intern("Duration"), vec![(intern("ns"), Type::Int)]);
         env.define(
             intern("channel.recv_timeout"),
             Scheme {

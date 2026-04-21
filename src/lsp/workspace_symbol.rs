@@ -10,8 +10,7 @@ impl Server {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Option<WorkspaceSymbolResponse> {
-        let symbols: Vec<SymbolInformation> =
-            self.workspace_symbols_matching(&params.query);
+        let symbols: Vec<SymbolInformation> = self.workspace_symbols_matching(&params.query);
         if symbols.is_empty() {
             None
         } else {

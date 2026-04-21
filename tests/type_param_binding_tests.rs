@@ -18,7 +18,11 @@ fn check(input: &str) -> Vec<String> {
 
 fn assert_ok(input: &str) {
     let errs = check(input);
-    assert!(errs.is_empty(), "expected no errors, got:\n{}", errs.join("\n"));
+    assert!(
+        errs.is_empty(),
+        "expected no errors, got:\n{}",
+        errs.join("\n")
+    );
 }
 
 fn assert_error_contains(input: &str, needle: &str) {
@@ -53,7 +57,8 @@ fn type_param_in_scope_for_return() {
         .filter(|m| m.contains("'a'") || m.contains("\"a\""))
         .count();
     assert_eq!(
-        unrelated, 0,
+        unrelated,
+        0,
         "type var 'a' should be in scope for return; got:\n{}",
         errs.join("\n")
     );
@@ -73,7 +78,8 @@ fn return_only_var_with_where_rejected() {
     // Should report both the return-binding error and the where-clause error.
     let errs = check(src);
     assert!(
-        errs.iter().any(|m| m.contains("type variable 'a' in return type")),
+        errs.iter()
+            .any(|m| m.contains("type variable 'a' in return type")),
         "expected return-type error, got:\n{}",
         errs.join("\n")
     );
@@ -92,7 +98,9 @@ fn return_var_anchored_by_type_param_accepted_signature() {
     let src = "fn default(type a) -> a\n";
     let errs = check(src);
     assert!(
-        !errs.iter().any(|m| m.contains("in return type is not introduced")),
+        !errs
+            .iter()
+            .any(|m| m.contains("in return type is not introduced")),
         "type `a` anchored by `type a` param should be accepted; got:\n{}",
         errs.join("\n")
     );
@@ -103,7 +111,9 @@ fn type_param_multiple_vars_in_return() {
     let src = "fn make_pair(type a, type b) -> (a, b)\n";
     let errs = check(src);
     assert!(
-        !errs.iter().any(|m| m.contains("in return type is not introduced")),
+        !errs
+            .iter()
+            .any(|m| m.contains("in return type is not introduced")),
         "both `a` and `b` anchored by `type` params; got:\n{}",
         errs.join("\n")
     );
@@ -114,7 +124,9 @@ fn type_param_mixed_with_data_anchored_returns() {
     let src = "fn tag(x: a, type b) -> (a, b)\n";
     let errs = check(src);
     assert!(
-        !errs.iter().any(|m| m.contains("in return type is not introduced")),
+        !errs
+            .iter()
+            .any(|m| m.contains("in return type is not introduced")),
         "`a` via data param, `b` via type param; got:\n{}",
         errs.join("\n")
     );

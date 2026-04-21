@@ -282,7 +282,10 @@ fn folding_range_covers_fn_body() {
                 .map(|l| l > 0)
                 .unwrap_or(false)
     });
-    assert!(has_fn_fold, "expected a fold covering the fn body; got {arr:?}");
+    assert!(
+        has_fn_fold,
+        "expected a fold covering the fn body; got {arr:?}"
+    );
     client.shutdown();
 }
 

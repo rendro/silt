@@ -105,8 +105,8 @@ fn collect_let_pattern_defs(
             // position) to preserve the pre-fix goto-def behaviour. For
             // leaves of a compound pattern (e.g. `a` inside `(a, b)`) use
             // the ident's own span so goto-def lands on the identifier.
-            let is_bare = pattern.span.offset == decl_span.offset
-                && pattern.span.line == decl_span.line;
+            let is_bare =
+                pattern.span.offset == decl_span.offset && pattern.span.line == decl_span.line;
             defs.insert(
                 *name,
                 DefInfo {

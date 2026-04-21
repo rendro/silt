@@ -123,7 +123,10 @@ fn main() {
         Value::String(s) => s,
         other => panic!("expected String error, got {other:?}"),
     };
-    assert!(msg.contains("field 'name'"), "error should name field 'name': {msg}");
+    assert!(
+        msg.contains("field 'name'"),
+        "error should name field 'name': {msg}"
+    );
     assert!(
         msg.contains("expected String"),
         "error should say expected String: {msg}"

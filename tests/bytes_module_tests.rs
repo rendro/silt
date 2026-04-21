@@ -744,10 +744,7 @@ fn main() {
 }
 "#);
     // Expect length 1 with the single element having length 0.
-    assert_eq!(
-        v,
-        Value::Tuple(vec![Value::Int(1), Value::Int(0)])
-    );
+    assert_eq!(v, Value::Tuple(vec![Value::Int(1), Value::Int(0)]));
 }
 
 #[test]
@@ -800,7 +797,10 @@ fn main() {
     let mut vm = silt::vm::Vm::new();
     let err = vm.run(script).expect_err("expected runtime error");
     let msg = format!("{err}");
-    assert!(msg.contains("non-empty") || msg.contains("empty"), "got: {msg}");
+    assert!(
+        msg.contains("non-empty") || msg.contains("empty"),
+        "got: {msg}"
+    );
 }
 
 #[test]

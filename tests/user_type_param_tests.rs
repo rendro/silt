@@ -18,7 +18,11 @@ fn type_errors(input: &str) -> Vec<String> {
 
 fn assert_ok(src: &str) {
     let errs = type_errors(src);
-    assert!(errs.is_empty(), "expected no errors, got:\n{}", errs.join("\n"));
+    assert!(
+        errs.is_empty(),
+        "expected no errors, got:\n{}",
+        errs.join("\n")
+    );
 }
 
 #[test]
@@ -66,7 +70,8 @@ fn user_return_only_var_rejected_full_program() {
     "#;
     let errs = type_errors(src);
     assert!(
-        errs.iter().any(|m| m.contains("type variable 'a' in return type")),
+        errs.iter()
+            .any(|m| m.contains("type variable 'a' in return type")),
         "expected return-type binding error; got:\n{}",
         errs.join("\n")
     );
@@ -139,7 +144,9 @@ fn user_type_param_multiple_anchored_returns() {
     "#;
     let errs = type_errors(src);
     assert!(
-        !errs.iter().any(|m| m.contains("in return type is not introduced")),
+        !errs
+            .iter()
+            .any(|m| m.contains("in return type is not introduced")),
         "two-type-param signature should accept paired return; got:\n{}",
         errs.join("\n")
     );

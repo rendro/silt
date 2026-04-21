@@ -132,10 +132,7 @@ fn formatter_roundtrips_mixed_params() {
         formatted.contains("body: String"),
         "missing body param: {formatted}"
     );
-    assert!(
-        formatted.contains("type a"),
-        "missing type a: {formatted}"
-    );
+    assert!(formatted.contains("type a"), "missing type a: {formatted}");
     let body_pos = formatted.find("body:").unwrap();
     let type_pos = formatted.find("type a").unwrap();
     assert!(

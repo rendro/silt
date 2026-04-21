@@ -222,10 +222,9 @@ fn cross_file_definition() {
     let result = resp.get("result").expect("definition result");
     let uri = match result {
         Value::Object(obj) => obj.get("uri").and_then(|v| v.as_str()).map(String::from),
-        Value::Array(arr) if !arr.is_empty() => arr[0]
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .map(String::from),
+        Value::Array(arr) if !arr.is_empty() => {
+            arr[0].get("uri").and_then(|v| v.as_str()).map(String::from)
+        }
         _ => None,
     };
     assert_eq!(

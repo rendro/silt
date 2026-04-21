@@ -75,14 +75,12 @@ fn main() {{
 /// (application/x-www-form-urlencoded), not RFC 3986 percent-encoding.
 #[test]
 fn test_url_encode_space_is_percent_twenty_not_plus() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.url_encode("hello world")
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert_eq!(s, "hello%20world");
     assert!(!s.contains('+'), "space must not encode as `+`, got: {s}");
@@ -92,14 +90,12 @@ fn main() {
 /// strings should become their exact `%HH` forms.
 #[test]
 fn test_url_encode_reserved_query_chars() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.url_encode("a&b=c?d#e")
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     // Don't pin the full output — just assert the reserved bytes are
     // escaped. Alpha passes through; `&`, `=`, `?`, `#` must not.
@@ -112,14 +108,12 @@ fn main() {
 /// Non-ASCII input encodes its UTF-8 bytes. "é" is U+00E9, UTF-8 `C3 A9`.
 #[test]
 fn test_url_encode_non_ascii_encodes_utf8_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.url_encode("café")
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "caf%C3%A9");
 }
 
@@ -127,14 +121,12 @@ fn main() {
 /// §6.2.2.1). Decoders must accept either case.
 #[test]
 fn test_url_encode_emits_upper_case_hex() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.url_encode("/")
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "%2F");
 }
 
@@ -143,8 +135,7 @@ fn main() {
 /// Decoder must accept both `%2F` and `%2f`.
 #[test]
 fn test_url_decode_accepts_lower_and_upper_case_hex() {
-    let v_upper = run(
-        r#"
+    let v_upper = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("%2F") {
@@ -152,12 +143,10 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v_upper), "/");
 
-    let v_lower = run(
-        r#"
+    let v_lower = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("%2f") {
@@ -165,8 +154,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v_lower), "/");
 }
 
@@ -174,8 +162,7 @@ fn main() {
 /// distinct concern; this primitive never does it.
 #[test]
 fn test_url_decode_plus_stays_literal() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("a+b") {
@@ -183,16 +170,14 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "a+b");
 }
 
 /// Truncated `%` at end of string must error.
 #[test]
 fn test_url_decode_truncated_percent_errors() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("bad%") {
@@ -200,8 +185,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.to_ascii_lowercase().contains("percent") || s.to_ascii_lowercase().contains("truncated"),
@@ -212,8 +196,7 @@ fn main() {
 /// `%` followed by non-hex digits must error.
 #[test]
 fn test_url_decode_non_hex_digits_errors() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("bad%ZZ") {
@@ -221,8 +204,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.to_ascii_lowercase().contains("invalid") || s.to_ascii_lowercase().contains("percent"),
@@ -237,8 +219,7 @@ fn main() {
 /// bytes have been assembled.
 #[test]
 fn test_url_decode_invalid_utf8_errors() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.url_decode("%C3%28") {
@@ -246,8 +227,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.to_ascii_lowercase().contains("utf-8") || s.to_ascii_lowercase().contains("utf8"),
@@ -275,10 +255,10 @@ fn test_round_trip_tricky_strings() {
     let cases: &[&str] = &[
         "hello world",
         "a & b = c ? d # e",
-        "café ☕ 🚀",                      // multi-byte UTF-8 + emoji
-        "quotes: \\\" and `backtick`",       // embeds \" — reads back as "
-        "",                                  // empty string
-        "just.a-simple_url.com/path",        // already safe; tests identity round-trip
+        "café ☕ 🚀",                  // multi-byte UTF-8 + emoji
+        "quotes: \\\" and `backtick`", // embeds \" — reads back as "
+        "",                            // empty string
+        "just.a-simple_url.com/path",  // already safe; tests identity round-trip
     ];
 
     for input_silt in cases {
@@ -315,8 +295,7 @@ fn main() {{
 /// byte-identity round-trip.
 #[test]
 fn test_round_trip_nul_byte() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 import string
 fn main() {
@@ -328,8 +307,7 @@ fn main() {
     Err(_) -> -1
   }
 }
-"#,
-    );
+"#);
     // "a" + NUL + "b" is 3 bytes. A correct round-trip preserves length.
     assert_eq!(v, Value::Int(3), "NUL byte did not round-trip");
 }
@@ -338,23 +316,20 @@ fn main() {
 /// the NUL byte (it's a control character, outside the unreserved set).
 #[test]
 fn test_url_encode_nul_byte_is_percent_zero_zero() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 import string
 fn main() {
   encoding.url_encode(string.from_char_code(0))
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "%00");
 }
 
 /// Separate test for a newline — similar rationale to the NUL test.
 #[test]
 fn test_round_trip_newline() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   let s = "line1\nline2"
@@ -363,8 +338,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "line1\nline2");
 }
 
@@ -413,8 +387,7 @@ fn test_documented_encoding_functions_match_registration() {
         .join("docs")
         .join("stdlib")
         .join("encoding.md");
-    let body =
-        std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/encoding.md");
+    let body = std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/encoding.md");
 
     let expected = silt::module::builtin_module_functions("encoding");
     assert!(
@@ -442,8 +415,7 @@ fn test_documented_encoding_functions_match_registration() {
 /// that's awkward to thread through the parser in this position).
 #[test]
 fn test_form_encode_empty_list_is_empty_string() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 import list
 fn main() {
@@ -451,8 +423,7 @@ fn main() {
   let pairs = list.tail(seeded)
   encoding.form_encode(pairs)
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "");
 }
 
@@ -461,28 +432,24 @@ fn main() {
 /// `List((String, String))` rather than `Map(String, String)`.
 #[test]
 fn test_form_encode_preserves_order() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.form_encode([("a", "1"), ("b", "2"), ("c", "3")])
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "a=1&b=2&c=3");
 }
 
 /// Space is `+` (form convention), `&` and `=` in values are `%26`/`%3D`.
 #[test]
 fn test_form_encode_space_plus_and_reserved() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.form_encode([("name", "Ada Lovelace"), ("role", "a & b = c")])
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert_eq!(s, "name=Ada+Lovelace&role=a+%26+b+%3D+c");
 }
@@ -490,14 +457,12 @@ fn main() {
 /// Non-ASCII UTF-8 bytes must be percent-escaped.
 #[test]
 fn test_form_encode_non_ascii() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.form_encode([("q", "café")])
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "q=caf%C3%A9");
 }
 
@@ -505,22 +470,19 @@ fn main() {
 /// collide with the space convention on round-trip.
 #[test]
 fn test_form_encode_literal_plus_becomes_percent_2b() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   encoding.form_encode([("math", "1+1")])
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "math=1%2B1");
 }
 
 /// form_decode: basic split and `+` → space.
 #[test]
 fn test_form_decode_basic_roundtrip() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.form_decode("a=1&b=hello+world") {
@@ -531,16 +493,14 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "1|hello world");
 }
 
 /// A segment with no `=` decodes to (key, "").
 #[test]
 fn test_form_decode_missing_equals_is_empty_value() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.form_decode("flag") {
@@ -551,16 +511,14 @@ fn main() {
     Err(_) -> "err"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "flag=");
 }
 
 /// Empty segments (leading `&`, `&&`, trailing `&`) are skipped.
 #[test]
 fn test_form_decode_empty_segments_skipped() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 import list
 fn main() {
@@ -569,16 +527,14 @@ fn main() {
     Err(_) -> -1
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(2));
 }
 
 /// Malformed percent escape in value must return Err, not silently pass.
 #[test]
 fn test_form_decode_bad_percent_errors() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   match encoding.form_decode("a=bad%ZZ") {
@@ -586,8 +542,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     let lower = s.to_ascii_lowercase();
     assert!(
@@ -599,8 +554,7 @@ fn main() {
 /// form_encode → form_decode must round-trip shape and values.
 #[test]
 fn test_form_round_trip() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import encoding
 fn main() {
   let original = [("name", "Ada Lovelace"), ("q", "a & b = c"), ("lit", "1+1")]
@@ -613,8 +567,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "Ada Lovelace|a & b = c|1+1");
 }
 

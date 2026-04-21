@@ -122,7 +122,10 @@ fn main() { string.split_at("hello", 0) }
 "#);
     assert_eq!(
         result,
-        Value::Tuple(vec![Value::String("".into()), Value::String("hello".into())])
+        Value::Tuple(vec![
+            Value::String("".into()),
+            Value::String("hello".into())
+        ])
     );
 }
 
@@ -134,7 +137,10 @@ fn main() { string.split_at("hello", 5) }
 "#);
     assert_eq!(
         result,
-        Value::Tuple(vec![Value::String("hello".into()), Value::String("".into())])
+        Value::Tuple(vec![
+            Value::String("hello".into()),
+            Value::String("".into())
+        ])
     );
 }
 
@@ -153,10 +159,12 @@ fn main() { string.split_at("café", 3) }
 
 #[test]
 fn test_split_at_negative_panics() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import string
 fn main() { string.split_at("hello", -1) }
-"#);
+"#,
+    );
     assert!(
         err.contains("split_at") && err.contains("negative"),
         "expected split_at/negative error, got: {err}"
@@ -165,10 +173,12 @@ fn main() { string.split_at("hello", -1) }
 
 #[test]
 fn test_split_at_out_of_bounds_panics() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import string
 fn main() { string.split_at("hello", 99) }
-"#);
+"#,
+    );
     assert!(
         err.contains("split_at") && err.contains("out of bounds"),
         "expected split_at/out of bounds error, got: {err}"

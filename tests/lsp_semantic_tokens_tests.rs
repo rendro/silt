@@ -216,7 +216,8 @@ fn semantic_tokens_full_returns_classified_tokens() {
     let uri = "file:///tmp/silt_sem_tokens_a.silt";
     // Has: fn decl (foo), let-binding (x), type decl (Color), variant (Red),
     // trait decl (Show), method inside trait (show).
-    let src = "fn foo() { let x = 42 }\ntype Color { Red }\ntrait Show { fn show(self) -> String }\n";
+    let src =
+        "fn foo() { let x = 42 }\ntype Color { Red }\ntrait Show { fn show(self) -> String }\n";
     client.did_open_and_wait(uri, src);
 
     let resp = client.request(

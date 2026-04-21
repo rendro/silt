@@ -1952,9 +1952,7 @@ impl TypeChecker {
                     // descriptor globals at call sites.
                     let name = match &param.pattern.kind {
                         PatternKind::Ident(n) => *n,
-                        _ => unreachable!(
-                            "parser guarantees `type` params use an Ident pattern"
-                        ),
+                        _ => unreachable!("parser guarantees `type` params use an Ident pattern"),
                     };
                     let var = param_map
                         .entry(name)
@@ -2073,8 +2071,7 @@ impl TypeChecker {
         // the second's signature won for any HashMap-based bookkeeping
         // like `default_method_bodies`). Emit a diagnostic per dup.
         {
-            let mut seen: std::collections::HashSet<Symbol> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
             for m in &t.methods {
                 if !seen.insert(m.name) {
                     self.error(
@@ -2090,11 +2087,8 @@ impl TypeChecker {
         // are in scope across every method signature — writing
         // `trait TryInto(b) { fn try_into(self) -> Result(b, Error) }`
         // makes `b` resolve to the same TyVar in the method.
-        let trait_param_vars: Vec<(Symbol, Type)> = t
-            .params
-            .iter()
-            .map(|p| (*p, self.fresh_var()))
-            .collect();
+        let trait_param_vars: Vec<(Symbol, Type)> =
+            t.params.iter().map(|p| (*p, self.fresh_var())).collect();
         let param_var_ids: Vec<TyVar> = trait_param_vars
             .iter()
             .map(|(_, ty)| match ty {
@@ -2166,8 +2160,7 @@ impl TypeChecker {
             .map(|(var, tr, _args)| (*var, *tr))
             .collect();
 
-        let supertrait_names: Vec<Symbol> =
-            t.supertraits.iter().map(|(n, _)| *n).collect();
+        let supertrait_names: Vec<Symbol> = t.supertraits.iter().map(|(n, _)| *n).collect();
         let supertrait_args: Vec<Vec<TypeExpr>> =
             t.supertraits.iter().map(|(_, a)| a.clone()).collect();
 
@@ -2522,8 +2515,7 @@ impl TypeChecker {
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
                 for (param_name, bound_trait) in &trait_info.param_where_clauses {
-                    let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
-                    else {
+                    let Some(idx) = trait_info.params.iter().position(|p| p == param_name) else {
                         continue;
                     };
                     let Some(arg_ty) = resolved_trait_args.get(idx) else {
@@ -2586,9 +2578,9 @@ impl TypeChecker {
                     ParamKind::Type => {
                         let name = match &param.pattern.kind {
                             PatternKind::Ident(n) => *n,
-                            _ => unreachable!(
-                                "parser guarantees `type` params use an Ident pattern"
-                            ),
+                            _ => {
+                                unreachable!("parser guarantees `type` params use an Ident pattern")
+                            }
                         };
                         let var = param_map
                             .entry(name)

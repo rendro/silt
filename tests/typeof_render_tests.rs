@@ -1,5 +1,5 @@
-use silt::types::Type;
 use silt::intern::intern;
+use silt::types::Type;
 
 #[test]
 fn typeof_renders_as_type() {

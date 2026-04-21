@@ -196,15 +196,13 @@ impl Server {
                 },
                 Err(resp) => resp,
             },
-            PrepareRenameRequest::METHOD => {
-                match extract_request::<PrepareRenameRequest>(req) {
-                    Ok((id, params)) => {
-                        let result = self.prepare_rename(params);
-                        Response::new_ok(id, result)
-                    }
-                    Err(resp) => resp,
+            PrepareRenameRequest::METHOD => match extract_request::<PrepareRenameRequest>(req) {
+                Ok((id, params)) => {
+                    let result = self.prepare_rename(params);
+                    Response::new_ok(id, result)
                 }
-            }
+                Err(resp) => resp,
+            },
             WorkspaceSymbolRequest::METHOD => {
                 match extract_request::<WorkspaceSymbolRequest>(req) {
                     Ok((id, params)) => {
@@ -230,24 +228,20 @@ impl Server {
                     Err(resp) => resp,
                 }
             }
-            FoldingRangeRequest::METHOD => {
-                match extract_request::<FoldingRangeRequest>(req) {
-                    Ok((id, params)) => {
-                        let result = self.folding_range(params);
-                        Response::new_ok(id, result)
-                    }
-                    Err(resp) => resp,
+            FoldingRangeRequest::METHOD => match extract_request::<FoldingRangeRequest>(req) {
+                Ok((id, params)) => {
+                    let result = self.folding_range(params);
+                    Response::new_ok(id, result)
                 }
-            }
-            SelectionRangeRequest::METHOD => {
-                match extract_request::<SelectionRangeRequest>(req) {
-                    Ok((id, params)) => {
-                        let result = self.selection_range(params);
-                        Response::new_ok(id, result)
-                    }
-                    Err(resp) => resp,
+                Err(resp) => resp,
+            },
+            SelectionRangeRequest::METHOD => match extract_request::<SelectionRangeRequest>(req) {
+                Ok((id, params)) => {
+                    let result = self.selection_range(params);
+                    Response::new_ok(id, result)
                 }
-            }
+                Err(resp) => resp,
+            },
             GotoTypeDefinition::METHOD => match extract_request::<GotoTypeDefinition>(req) {
                 Ok((id, params)) => {
                     let result = self.type_definition(params);

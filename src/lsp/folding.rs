@@ -32,11 +32,7 @@ impl Server {
         for decl in &program.decls {
             collect_decl_folds(decl, source, &mut folds);
         }
-        if folds.is_empty() {
-            None
-        } else {
-            Some(folds)
-        }
+        if folds.is_empty() { None } else { Some(folds) }
     }
 }
 
@@ -106,12 +102,7 @@ fn push_span_fold(span: &Span, source: &str, out: &mut Vec<FoldingRange>) {
     }
 }
 
-fn push_block_fold(
-    span: &Span,
-    expr: &Expr,
-    source: &str,
-    out: &mut Vec<FoldingRange>,
-) {
+fn push_block_fold(span: &Span, expr: &Expr, source: &str, out: &mut Vec<FoldingRange>) {
     let (end_offset, _) = expr_extent(expr, source);
     let start_line = span.line.saturating_sub(1) as u32;
     let end_line = offset_to_line(source, end_offset);

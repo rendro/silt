@@ -39,8 +39,7 @@ fn test_env_remove_nonexistent_is_idempotent() {
     // Pre-clear in case a prior test in the same process left something
     // behind. SAFETY: main thread at test entry.
     unsafe { std::env::remove_var("SILT_TEST_ENV_NEVER_EXISTED_XYZ") };
-    let v = run(
-        r#"
+    let v = run(r#"
 import env
 fn main() {
   env.remove("SILT_TEST_ENV_NEVER_EXISTED_XYZ")
@@ -49,16 +48,14 @@ fn main() {
     None -> "ok"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "ok");
 }
 
 /// `env.set` then `env.remove` then `env.get` must round-trip to None.
 #[test]
 fn test_env_remove_after_set_clears_value() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import env
 fn main() {
   env.set("SILT_TEST_ENV_ROUND_TRIP", "hello")
@@ -68,8 +65,7 @@ fn main() {
     None -> "ok"
   }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "ok");
 }
 
@@ -79,8 +75,7 @@ fn main() {
 #[test]
 fn test_env_vars_contains_newly_set() {
     unsafe { std::env::remove_var("SILT_TEST_ENV_VARS_PROBE") };
-    let v = run(
-        r#"
+    let v = run(r#"
 import env
 import list
 fn main() {
@@ -93,8 +88,7 @@ fn main() {
     }
   } }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "42");
     // Clean up so a later test doesn't see it.
     unsafe { std::env::remove_var("SILT_TEST_ENV_VARS_PROBE") };
@@ -106,8 +100,7 @@ fn test_env_vars_reflects_remove() {
     // Set via the libc side so we don't depend on env.set semantics in
     // this specific test.
     unsafe { std::env::set_var("SILT_TEST_ENV_VARS_REMOVED", "present") };
-    let v = run(
-        r#"
+    let v = run(r#"
 import env
 import list
 fn main() {
@@ -120,8 +113,7 @@ fn main() {
     }
   } }
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "missing");
 }
 
@@ -130,8 +122,7 @@ fn main() {
 #[test]
 fn test_env_vars_shape_is_pairs() {
     unsafe { std::env::set_var("SILT_TEST_ENV_SHAPE_PROBE", "xy") };
-    let v = run(
-        r#"
+    let v = run(r#"
 import env
 import list
 import string
@@ -144,8 +135,7 @@ fn main() {
     }
   } }
 }
-"#,
-    );
+"#);
     // "xy" is two characters.
     assert_eq!(v, Value::Int(2));
     unsafe { std::env::remove_var("SILT_TEST_ENV_SHAPE_PROBE") };

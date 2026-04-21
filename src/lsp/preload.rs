@@ -97,10 +97,7 @@ fn load_file(server: &mut Server, path: &Path) {
     let contents = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(err) => {
-            eprintln!(
-                "silt-lsp: preload: cannot read {}: {err}",
-                path.display()
-            );
+            eprintln!("silt-lsp: preload: cannot read {}: {err}", path.display());
             return;
         }
     };

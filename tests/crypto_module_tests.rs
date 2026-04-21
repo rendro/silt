@@ -54,15 +54,13 @@ fn expect_string(v: Value) -> String {
 /// Canonical NIST test vector: SHA-256("abc").
 #[test]
 fn test_sha256_abc_matches_nist_kat() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.sha256(bytes.from_string("abc")))
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -72,15 +70,13 @@ fn main() {
 #[test]
 fn test_sha256_empty_input_matches_known_answer() {
     // SHA256("") == e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.sha256(bytes.empty()))
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -89,30 +85,26 @@ fn main() {
 
 #[test]
 fn test_sha256_output_is_32_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.sha256(bytes.from_string("anything")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(32));
 }
 
 /// NIST SHA-512("abc") KAT.
 #[test]
 fn test_sha512_abc_matches_nist_kat() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.sha512(bytes.from_string("abc")))
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
@@ -122,15 +114,13 @@ fn main() {
 
 #[test]
 fn test_sha512_output_is_64_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.sha512(bytes.from_string("anything")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(64));
 }
 
@@ -139,44 +129,38 @@ fn main() {
 /// RFC 1321 test vector: MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
 #[test]
 fn test_md5_abc_matches_rfc1321_kat() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.md5(bytes.from_string("abc")))
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "900150983cd24fb0d6963f7d28e17f72");
 }
 
 /// MD5 of the empty string = d41d8cd98f00b204e9800998ecf8427e (RFC 1321).
 #[test]
 fn test_md5_empty_matches_rfc1321_kat() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.md5(bytes.empty()))
 }
-"#,
-    );
+"#);
     assert_eq!(expect_string(v), "d41d8cd98f00b204e9800998ecf8427e");
 }
 
 #[test]
 fn test_md5_output_is_16_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.md5(bytes.from_string("anything")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(16));
 }
 
@@ -185,24 +169,20 @@ fn main() {
 /// separately and comparing at the test harness level.
 #[test]
 fn test_md5_hex_matches_to_hex_of_md5() {
-    let hex_direct = expect_string(run(
-        r#"
+    let hex_direct = expect_string(run(r#"
 import bytes
 import crypto
 fn main() {
   crypto.md5_hex(bytes.from_string("abc"))
 }
-"#,
-    ));
-    let hex_roundtrip = expect_string(run(
-        r#"
+"#));
+    let hex_roundtrip = expect_string(run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.md5(bytes.from_string("abc")))
 }
-"#,
-    ));
+"#));
     assert_eq!(hex_direct, hex_roundtrip);
     assert_eq!(hex_direct, "900150983cd24fb0d6963f7d28e17f72");
 }
@@ -216,15 +196,13 @@ fn main() {
 ///   18d38aa8dbf1925a b92386edd4009923
 #[test]
 fn test_blake2b_abc_matches_rfc7693_kat() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.to_hex(crypto.blake2b(bytes.from_string("abc")))
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1\
@@ -234,30 +212,26 @@ fn main() {
 
 #[test]
 fn test_blake2b_output_is_64_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.blake2b(bytes.from_string("anything")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(64));
 }
 
 #[test]
 fn test_blake2b_hex_matches_expected_kat() {
     // blake2b_hex should return lower-case hex of the same digest.
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   crypto.blake2b_hex(bytes.from_string("abc"))
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d1\
@@ -268,16 +242,14 @@ fn main() {
 #[test]
 fn test_blake2b_hex_length_is_128_chars() {
     // BLAKE2b-512 has a 64-byte digest ⇒ 128 hex chars.
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 import string
 fn main() {
   string.length(crypto.blake2b_hex(bytes.from_string("x")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(128));
 }
 
@@ -290,8 +262,7 @@ fn main() {
 #[test]
 fn test_hmac_sha256_rfc4231_tc1() {
     // 20 * 0x0b = "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -300,8 +271,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
@@ -310,15 +280,13 @@ fn main() {
 
 #[test]
 fn test_hmac_sha256_output_is_32_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.hmac_sha256(bytes.from_string("k"), bytes.from_string("m")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(32));
 }
 
@@ -331,8 +299,7 @@ fn main() {
 ///                 be9d914eeb61f1702e696c203a126854
 #[test]
 fn test_hmac_sha512_rfc4231_tc1() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -341,8 +308,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     assert_eq!(
         expect_string(v),
         "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cde\
@@ -352,15 +318,13 @@ fn main() {
 
 #[test]
 fn test_hmac_sha512_output_is_64_bytes() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   bytes.length(crypto.hmac_sha512(bytes.from_string("k"), bytes.from_string("m")))
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(64));
 }
 
@@ -368,8 +332,7 @@ fn main() {
 
 #[test]
 fn test_random_bytes_zero_returns_empty() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -378,15 +341,13 @@ fn main() {
     Err(_) -> -1
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(0));
 }
 
 #[test]
 fn test_random_bytes_32_is_correct_length() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -395,8 +356,7 @@ fn main() {
     Err(_) -> -1
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Int(32));
 }
 
@@ -404,8 +364,7 @@ fn main() {
 fn test_random_bytes_two_calls_are_distinct() {
     // Two 32-byte CSPRNG draws collide with probability ~2^-256. Treat
     // equality as a fatal deterministic bug, not a "flaky test".
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -417,15 +376,13 @@ fn main() {
     Err(_) -> true
   }
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(false), "two 32-byte CSPRNG draws were equal");
 }
 
 #[test]
 fn test_random_bytes_negative_returns_err() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -434,8 +391,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.contains("non-negative"),
@@ -445,8 +401,7 @@ fn main() {
 
 #[test]
 fn test_random_bytes_over_cap_returns_err() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -455,8 +410,7 @@ fn main() {
     Err(e) -> e
   }
 }
-"#,
-    );
+"#);
     let s = expect_string(v);
     assert!(
         s.contains("cap") || s.contains("1 MiB"),
@@ -468,8 +422,7 @@ fn main() {
 
 #[test]
 fn test_constant_time_eq_identical_bytes_returns_true() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -477,15 +430,13 @@ fn main() {
   let b = bytes.from_string("secret-token-123")
   crypto.constant_time_eq(a, b)
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(true));
 }
 
 #[test]
 fn test_constant_time_eq_same_length_different_contents_returns_false() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -493,8 +444,7 @@ fn main() {
   let b = bytes.from_string("secret-token-124")
   crypto.constant_time_eq(a, b)
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(false));
 }
 
@@ -505,8 +455,7 @@ fn main() {
 /// a fixed width before comparing.
 #[test]
 fn test_constant_time_eq_different_length_returns_false() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
@@ -514,22 +463,19 @@ fn main() {
   let b = bytes.from_string("muchlonger")
   crypto.constant_time_eq(a, b)
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(false));
 }
 
 #[test]
 fn test_constant_time_eq_both_empty_returns_true() {
-    let v = run(
-        r#"
+    let v = run(r#"
 import bytes
 import crypto
 fn main() {
   crypto.constant_time_eq(bytes.empty(), bytes.empty())
 }
-"#,
-    );
+"#);
     assert_eq!(v, Value::Bool(true));
 }
 
@@ -585,8 +531,7 @@ fn test_documented_crypto_functions_match_registration() {
         .join("docs")
         .join("stdlib")
         .join("crypto.md");
-    let body =
-        std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/crypto.md");
+    let body = std::fs::read_to_string(&doc_path).expect("failed to read docs/stdlib/crypto.md");
 
     // The expected set is the on-disk truth: the function list in
     // src/module.rs::builtin_module_functions("crypto").

@@ -598,9 +598,8 @@ impl Parser {
                 let pattern = self.parse_simple_param_pattern()?;
                 if self.peek_skip_nl() == &Token::Colon {
                     return Err(ParseError {
-                        message:
-                            "'type' parameter cannot carry a type annotation; write `type a`"
-                                .to_string(),
+                        message: "'type' parameter cannot carry a type annotation; write `type a`"
+                            .to_string(),
                         span: self.span(),
                     });
                 }
@@ -907,10 +906,9 @@ impl Parser {
             for arg in &trait_args {
                 let TypeExpr::Named(arg_sym) = arg else {
                     return Err(ParseError {
-                        message:
-                            "trait declaration parameters must be lowercase type variables \
+                        message: "trait declaration parameters must be lowercase type variables \
                              (e.g. `trait TryInto(b) { ... }`)"
-                                .to_string(),
+                            .to_string(),
                         span,
                     });
                 };

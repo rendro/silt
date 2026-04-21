@@ -2477,10 +2477,14 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     Some(pos) => (&segment[..pos], &segment[pos + 1..]),
                     None => (segment, ""),
                 };
-                let key = crate::builtins::encoding::form_decode_component(raw_key)
-                    .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} key: {msg}")))?;
-                let val = crate::builtins::encoding::form_decode_component(raw_val)
-                    .map_err(|msg| VmError::new(format!("http.parse_query: pair {i} value: {msg}")))?;
+                let key =
+                    crate::builtins::encoding::form_decode_component(raw_key).map_err(|msg| {
+                        VmError::new(format!("http.parse_query: pair {i} key: {msg}"))
+                    })?;
+                let val =
+                    crate::builtins::encoding::form_decode_component(raw_val).map_err(|msg| {
+                        VmError::new(format!("http.parse_query: pair {i} value: {msg}"))
+                    })?;
                 let entry = out
                     .entry(Value::String(key))
                     .or_insert_with(|| Value::List(Arc::new(Vec::new())));

@@ -17,7 +17,7 @@ pub mod numeric;
 pub mod postgres;
 pub mod stream;
 pub mod string;
-pub mod toml;
 #[cfg(feature = "tcp")]
 pub mod tcp;
+pub mod toml;
 pub mod uuid;

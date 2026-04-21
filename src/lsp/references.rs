@@ -7,10 +7,7 @@ use super::ast_walk::find_ident_at_offset;
 use super::conversions::position_to_offset;
 
 impl Server {
-    pub(super) fn references(
-        &self,
-        params: lsp_types::ReferenceParams,
-    ) -> Option<Vec<Location>> {
+    pub(super) fn references(&self, params: lsp_types::ReferenceParams) -> Option<Vec<Location>> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         let doc = self.documents.get(uri)?;

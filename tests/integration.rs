@@ -4270,10 +4270,7 @@ fn main() {
 }
     "#);
     let mut expected = std::collections::BTreeMap::new();
-    expected.insert(
-        Value::String("user".into()),
-        Value::String("alice".into()),
-    );
+    expected.insert(Value::String("user".into()), Value::String("alice".into()));
     expected.insert(
         Value::String("host".into()),
         Value::String("example".into()),
@@ -4321,10 +4318,7 @@ fn main() {
 }
     "#);
     let mut expected = std::collections::BTreeMap::new();
-    expected.insert(
-        Value::String("name".into()),
-        Value::String("file".into()),
-    );
+    expected.insert(Value::String("name".into()), Value::String("file".into()));
     assert_eq!(
         result,
         Value::Variant("Some".into(), vec![Value::Map(Arc::new(expected))])
@@ -4341,10 +4335,7 @@ fn main() {
 }
     "#);
     let mut expected = std::collections::BTreeMap::new();
-    expected.insert(
-        Value::String("tag".into()),
-        Value::String("xyz".into()),
-    );
+    expected.insert(Value::String("tag".into()), Value::String("xyz".into()));
     assert_eq!(
         result,
         Value::Variant("Some".into(), vec![Value::Map(Arc::new(expected))])
@@ -6498,7 +6489,10 @@ fn main() {
   http.parse_query("")
 }
     "#);
-    assert_eq!(result, Value::Map(Arc::new(std::collections::BTreeMap::new())));
+    assert_eq!(
+        result,
+        Value::Map(Arc::new(std::collections::BTreeMap::new()))
+    );
 }
 
 #[test]
@@ -6510,7 +6504,10 @@ fn main() {
   http.parse_query("?")
 }
     "#);
-    assert_eq!(result, Value::Map(Arc::new(std::collections::BTreeMap::new())));
+    assert_eq!(
+        result,
+        Value::Map(Arc::new(std::collections::BTreeMap::new()))
+    );
 }
 
 #[test]

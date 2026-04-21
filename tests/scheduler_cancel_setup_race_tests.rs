@@ -80,13 +80,13 @@
 //! modest number of spawn/cancel trials and asserts NO worker panic.
 
 use std::panic;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use silt::scheduler::F10_PARK_SETUP_PAUSE_US;
 use silt::scheduler::test_hooks;
 use silt::scheduler::test_support::{InProcessRunner, TrialOutcome};
-use silt::scheduler::F10_PARK_SETUP_PAUSE_US;
 
 /// Process-wide flag set by the panic hook when any thread panics with
 /// a message containing "task_slot just initialized". Worker-thread

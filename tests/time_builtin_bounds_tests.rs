@@ -642,7 +642,8 @@ fn main() -> Bool {
 /// and still overflows after scaling.
 #[test]
 fn test_time_micros_overflow_errors() {
-    let err = run_err(r#"
+    let err = run_err(
+        r#"
 import time
 fn main() {
   -- i64::MAX is 9223372036854775807. Divided by 1_000 is
@@ -650,7 +651,8 @@ fn main() {
   -- overflows when multiplied by 1_000.
   time.micros(9223372036854776)
 }
-"#);
+"#,
+    );
     assert!(
         err.to_ascii_lowercase().contains("overflow"),
         "expected overflow error, got: {err}"

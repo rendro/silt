@@ -247,10 +247,7 @@ fn count_fn_defs_in_typechecker(needle: &str) -> usize {
         include_str!("../src/typechecker/resolve.rs"),
         include_str!("../src/typechecker/builtins.rs"),
     ];
-    files
-        .iter()
-        .map(|src| src.matches(needle).count())
-        .sum()
+    files.iter().map(|src| src.matches(needle).count()).sum()
 }
 
 #[test]

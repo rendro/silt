@@ -1,8 +1,18 @@
 /target
 /fuzz/target
 /fuzz/Cargo.lock
+# Fuzz corpus entries are generated artifacts; we keep a hand-seeded
+# corpus under version control via individual `.silt` / named entries,
+# but the auto-generated hex-name files are transient and would swamp
+# the history. Exclude anything matching the 40-char sha-ish pattern.
+/fuzz/corpus/fuzz_lexer/[0-9a-f]*
+/fuzz/corpus/fuzz_parser/[0-9a-f]*
+/fuzz/corpus/fuzz_roundtrip/[0-9a-f]*
+/fuzz/corpus/fuzz_formatter/[0-9a-f]*
 .sediment
 .DS_Store
 .env
 .silt_history
 .claude/
+/output.txt
+/output/reports/

@@ -85,7 +85,10 @@ fn f12_redactor_strips_user_and_password() {
     let out = redact_http_url_userinfo(input);
     assert!(!out.contains("alice"), "user not scrubbed: {out}");
     assert!(!out.contains("s3cret"), "password not scrubbed: {out}");
-    assert!(out.contains("https://***@example.com"), "bad redaction: {out}");
+    assert!(
+        out.contains("https://***@example.com"),
+        "bad redaction: {out}"
+    );
 }
 
 #[cfg(feature = "http")]
@@ -94,7 +97,10 @@ fn f12_redactor_strips_user_only_no_password() {
     let input = "failed: http://bob@host.internal/x";
     let out = redact_http_url_userinfo(input);
     assert!(!out.contains("bob@"), "userinfo not scrubbed: {out}");
-    assert!(out.contains("http://***@host.internal/x"), "bad redaction: {out}");
+    assert!(
+        out.contains("http://***@host.internal/x"),
+        "bad redaction: {out}"
+    );
 }
 
 #[cfg(feature = "http")]
@@ -116,7 +122,10 @@ fn f12_redactor_handles_pct_encoded_userinfo() {
     let out = redact_http_url_userinfo(input);
     assert!(!out.contains("user%40corp"), "user not scrubbed: {out}");
     assert!(!out.contains("p%21w"), "password not scrubbed: {out}");
-    assert!(out.contains("https://***@host.example/"), "bad redaction: {out}");
+    assert!(
+        out.contains("https://***@host.example/"),
+        "bad redaction: {out}"
+    );
 }
 
 #[cfg(feature = "http")]
@@ -127,7 +136,10 @@ fn f12_redactor_handles_both_schemes_in_one_message() {
     assert!(!out.contains("u:p@"), "http scheme not scrubbed: {out}");
     assert!(!out.contains("u2:p2@"), "https scheme not scrubbed: {out}");
     assert!(out.contains("http://***@h1/"), "bad http redaction: {out}");
-    assert!(out.contains("https://***@h2/"), "bad https redaction: {out}");
+    assert!(
+        out.contains("https://***@h2/"),
+        "bad https redaction: {out}"
+    );
 }
 
 #[cfg(feature = "http")]

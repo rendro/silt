@@ -660,7 +660,10 @@ impl Compiler {
                         // field access can be rewritten to a bare global
                         // lookup at codegen time.
                         let enum_name = resolve(type_decl.name);
-                        let variant_set = self.known_enum_variants.entry(enum_name.clone()).or_default();
+                        let variant_set = self
+                            .known_enum_variants
+                            .entry(enum_name.clone())
+                            .or_default();
                         for variant in variants {
                             variant_set.insert(resolve(variant.name));
                         }
@@ -670,15 +673,14 @@ impl Compiler {
                         // (mirrors records). Skipped when a variant shares
                         // the enum's name — the variant constructor owns the
                         // symbol in that case.
-                        let variant_shares_name =
-                            variants.iter().any(|v| v.name == type_decl.name);
+                        let variant_shares_name = variants.iter().any(|v| v.name == type_decl.name);
                         if !variant_shares_name {
                             let val = Value::TypeDescriptor(enum_name.clone());
                             let val_idx = self.add_constant(val, span)?;
                             self.current_chunk().emit_op(Op::Constant, span);
                             self.current_chunk().emit_u16(val_idx, span);
-                            let name_idx = self
-                                .add_constant(Value::String(enum_name.clone()), span)?;
+                            let name_idx =
+                                self.add_constant(Value::String(enum_name.clone()), span)?;
                             self.current_chunk().emit_op(Op::SetGlobal, span);
                             self.current_chunk().emit_u16(name_idx, span);
                             self.current_chunk().emit_op(Op::Pop, span);

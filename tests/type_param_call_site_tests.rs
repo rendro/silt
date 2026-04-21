@@ -30,7 +30,11 @@ fn json_parse_new_order_typechecks() {
         }
     "#;
     let errs = type_errors(src);
-    assert!(errs.is_empty(), "expected no errors, got:\n{}", errs.join("\n"));
+    assert!(
+        errs.is_empty(),
+        "expected no errors, got:\n{}",
+        errs.join("\n")
+    );
 }
 
 #[test]

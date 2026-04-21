@@ -157,7 +157,10 @@ fn main() {{
                 // "owner can read" (0o400). Anything less would mean the
                 // umask / perms system didn't kick in.
                 let perms = (*m as u32) & 0o777;
-                assert!(perms & 0o400 != 0, "expected owner-read bit set; mode perms = {perms:o}");
+                assert!(
+                    perms & 0o400 != 0,
+                    "expected owner-read bit set; mode perms = {perms:o}"
+                );
             }
             #[cfg(not(unix))]
             {

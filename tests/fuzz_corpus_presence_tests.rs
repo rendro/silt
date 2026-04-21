@@ -45,7 +45,11 @@ fn fuzz_corpus_dirs_have_seeds() {
 #[test]
 fn fuzz_parser_target_invokes_both_entry_points() {
     let path = std::path::Path::new("fuzz/fuzz_targets/fuzz_parser.rs");
-    assert!(path.exists(), "fuzz_parser.rs missing at {}", path.display());
+    assert!(
+        path.exists(),
+        "fuzz_parser.rs missing at {}",
+        path.display()
+    );
     let src = std::fs::read_to_string(path).unwrap();
     assert!(
         src.contains("fuzz_target!"),

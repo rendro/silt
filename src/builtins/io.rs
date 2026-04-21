@@ -416,9 +416,7 @@ pub fn call_fs(_vm: &Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("fs.read_link requires a string path".into()));
             };
             match std::fs::read_link(path) {
-                Ok(target) => Ok(fs_ok(Value::String(
-                    target.to_string_lossy().into_owned(),
-                ))),
+                Ok(target) => Ok(fs_ok(Value::String(target.to_string_lossy().into_owned()))),
                 Err(e) => Ok(fs_err(e.to_string())),
             }
         }
