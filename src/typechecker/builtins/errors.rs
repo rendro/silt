@@ -91,6 +91,54 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             ("RegexTooBig", &[]),
         ],
     );
+
+    // ── trait Error for IoError / JsonError / TomlError / ParseError ────────
+    // Phase 1 of the stdlib error redesign: each stdlib error enum
+    // implements the built-in `Error` trait (and, transitively, its
+    // `Display` supertrait) with a custom `message(self) -> String`
+    // body wired up in `src/builtins/io.rs::call_io_error_trait`,
+    // `src/builtins/data.rs::call_json_error_trait`,
+    // `src/builtins/toml.rs::call_toml_error_trait`, and
+    // `src/builtins/numeric.rs::call_parse_error_trait`.
+    //
+    // The TypeChecker registration here records the impl in
+    // `trait_impl_set` and `method_table` so downstream code can call
+    // `err.message()` / `err.display()` and pass the error value to
+    // fns with `where e: Error` constraints. The runtime counterpart
+    // registers `<EnumName>.message` as a BuiltinFn in the VM globals.
+    let dummy_span = crate::lexer::Span::new(0, 0);
+    for enum_name in &["IoError", "JsonError", "TomlError", "ParseError"] {
+        for trait_name in &["Error", "Display"] {
+            checker
+                .trait_impl_set
+                .insert((intern(trait_name), intern(enum_name)));
+        }
+        let self_ty = Type::Generic(intern(enum_name), vec![]);
+        // Error::message(self) -> String
+        checker.method_table.insert(
+            (intern(enum_name), intern("message")),
+            MethodEntry {
+                method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
+                span: dummy_span,
+                is_auto_derived: false,
+                trait_name: Some(intern("Error")),
+                method_constraints: Vec::new(),
+            },
+        );
+        // Display::display(self) -> String — provided automatically
+        // via the Error trait's Display supertrait requirement, so
+        // calling `err.display()` also works.
+        checker.method_table.insert(
+            (intern(enum_name), intern("display")),
+            MethodEntry {
+                method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
+                span: dummy_span,
+                is_auto_derived: false,
+                trait_name: Some(intern("Display")),
+                method_constraints: Vec::new(),
+            },
+        );
+    }
 }
 
 /// Register a concrete (no type parameters) builtin enum + its variants.

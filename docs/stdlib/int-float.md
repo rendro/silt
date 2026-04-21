@@ -16,7 +16,7 @@ Functions for parsing, converting, and comparing integers.
 | `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
-| `parse` | `(String) -> Result(Int, String)` | Parse string to integer |
+| `parse` | `(String) -> Result(Int, ParseError)` | Parse string to integer |
 | `to_float` | `(Int) -> Float` | Convert to float |
 | `to_string` | `(Int) -> String` | Convert to string |
 
@@ -94,18 +94,30 @@ fn main() {
 ## `int.parse`
 
 ```
-int.parse(s: String) -> Result(Int, String)
+int.parse(s: String) -> Result(Int, ParseError)
 ```
 
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
-`Ok(n)` on success, `Err(message)` on failure.
+`Ok(n)` on success, `Err(ParseError)` on failure — a typed enum with variants
+`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`, and `ParseUnderflow`.
+Match on the variant to handle specific cases, or fall back to `e.message()` for
+a human-readable default.
 
 ```silt
 import int
 fn main() {
     match int.parse("42") {
         Ok(n) -> println(n)
-        Err(e) -> println("parse error: {e}")
+        Err(e) -> println("parse error: {e.message()}")
+    }
+
+    -- Pattern-match on specific failure modes:
+    match int.parse("") {
+        Ok(_) -> ()
+        Err(ParseEmpty) -> println("cannot parse empty input")
+        Err(ParseInvalidDigit(i)) -> println("bad digit at byte {i}")
+        Err(ParseOverflow) -> println("too large")
+        Err(ParseUnderflow) -> println("too small")
     }
 }
 ```
@@ -173,7 +185,7 @@ Functions for parsing, rounding, converting, and comparing floats.
 | `is_nan` | `(ExtFloat) -> Bool` | True iff value is NaN |
 | `max` | `(Float, Float) -> Float` | Larger of two values |
 | `min` | `(Float, Float) -> Float` | Smaller of two values |
-| `parse` | `(String) -> Result(Float, String)` | Parse string to float |
+| `parse` | `(String) -> Result(Float, ParseError)` | Parse string to float |
 | `round` | `(Float) -> Float` | Round to nearest integer (as Float) |
 | `to_int` | `(Float) -> Int` | Truncate to integer |
 | `to_string` | `(Float) -> String` | Shortest round-trippable representation |
@@ -353,19 +365,21 @@ fn main() {
 ## `float.parse`
 
 ```
-float.parse(s: String) -> Result(Float, String)
+float.parse(s: String) -> Result(Float, ParseError)
 ```
 
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
-`Ok(f)` on success, `Err(message)` on failure. Strings like `"NaN"` and
-`"Infinity"` are rejected.
+`Ok(f)` on success, `Err(ParseError)` on failure — the same typed enum
+`int.parse` uses (`ParseEmpty`, `ParseInvalidDigit(offset)`, `ParseOverflow`,
+`ParseUnderflow`). Strings like `"NaN"` and `"Infinity"` are rejected as
+`ParseInvalidDigit(0)` since silt's `Float` is guaranteed finite.
 
 ```silt
 import float
 fn main() {
     match float.parse("3.14") {
         Ok(f) -> println(f)
-        Err(e) -> println("error: {e}")
+        Err(e) -> println("error: {e.message()}")
     }
 }
 ```

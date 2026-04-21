@@ -12,17 +12,31 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, String)` | Parse a TOML document (top-level table) into a record |
-| `parse_list` | `(String, type a) -> Result(List(a), String)` | Parse a single `[[items]]` section into a list of records |
-| `parse_map` | `(String, type v) -> Result(Map(String, v), String)` | Parse a top-level table into a map |
-| `pretty` | `(a) -> Result(String, String)` | Pretty-print a value as TOML |
-| `stringify` | `(a) -> Result(String, String)` | Serialize a value as TOML |
+| `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record |
+| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse a single `[[items]]` section into a list of records |
+| `parse_map` | `(String, type v) -> Result(Map(String, v), TomlError)` | Parse a top-level table into a map |
+| `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
+| `stringify` | `(a) -> Result(String, TomlError)` | Serialize a value as TOML |
+
+## Errors
+
+Every fallible `toml.*` call returns `Result(T, TomlError)`. The `TomlError`
+enum has four variants you can pattern-match on, or fall back to
+`e.message()` when you just want a rendered string (`trait Error for
+TomlError` is wired in):
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `TomlSyntax(msg, offset)` | `String`, `Int` | Malformed TOML at `offset` bytes |
+| `TomlTypeMismatch(expected, actual)` | `String`, `String` | A field's TOML type did not match the target field type |
+| `TomlMissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `TomlUnknown(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
 
 
 ## `toml.parse`
 
 ```
-toml.parse(s: String, type a) -> Result(a, String)
+toml.parse(s: String, type a) -> Result(a, TomlError)
 ```
 
 Parses a TOML document into a record of type `a`. The type is passed as a
@@ -52,7 +66,7 @@ fn main() {
     let input = "name = \"Alice\"\nage = 30\nactive = true\n"
     match toml.parse(input, User) {
         Ok(user) -> println(user.name)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -61,7 +75,7 @@ fn main() {
 ## `toml.parse_list`
 
 ```
-toml.parse_list(s: String, type a) -> Result(List(a), String)
+toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
 ```
 
 TOML's spec requires the top level of every document to be a table, so there is
@@ -79,7 +93,7 @@ fn main() {
     let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
     match toml.parse_list(input, Point) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -91,7 +105,7 @@ top-level array-of-tables key works.
 ## `toml.parse_map`
 
 ```
-toml.parse_map(s: String, type v) -> Result(Map(String, v), String)
+toml.parse_map(s: String, type v) -> Result(Map(String, v), TomlError)
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
@@ -104,7 +118,7 @@ fn main() {
     let input = "x = 10\ny = 20\n"
     match toml.parse_map(input, Int) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -113,7 +127,7 @@ fn main() {
 ## `toml.pretty`
 
 ```
-toml.pretty(value: a) -> Result(String, String)
+toml.pretty(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
@@ -131,7 +145,7 @@ fn main() {
     let data = #{"name": "silt", "version": "1.0"}
     match toml.pretty(data) {
         Ok(s) -> println(s)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -140,7 +154,7 @@ fn main() {
 ## `toml.stringify`
 
 ```
-toml.stringify(value: a) -> Result(String, String)
+toml.stringify(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record or map to a TOML document. Like `toml.pretty`, the
@@ -153,7 +167,7 @@ fn main() {
     let data = Package { name: "silt", version: "1.0" }
     match toml.stringify(data) {
         Ok(s) -> println(s)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```

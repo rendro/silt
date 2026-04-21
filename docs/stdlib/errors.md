@@ -11,10 +11,12 @@ per fallible stdlib module — that user code can construct and pattern
 match today. See the design rationale in
 [stdlib-errors proposal](../proposals/stdlib-errors.md).
 
-In this phase the stdlib itself still returns `Result(T, String)`;
-Phase 1 migrates those signatures to `Result(T, ModuleError)`. Users
-who want a typed handle today wrap the existing string errors in their
-own code.
+Phase 1 of the redesign is migrating stdlib signatures from
+`Result(T, String)` to `Result(T, ModuleError)` module-by-module.
+Already landed: `io.*`, `fs.*`, `int.parse`, `float.parse`. The
+remaining modules (`json`, `toml`, `http`, `regex`) still return
+`Result(T, String)` today — users who want a typed handle wrap the
+string errors in their own code until the relevant phase lands.
 
 ## Variant naming
 
@@ -68,11 +70,11 @@ regardless of imports.
 | `TomlMissingField(String)` | field name | required field absent |
 | `TomlUnknown(String)` | message | unclassified parse failure |
 
-### `ParseError` (requires `import int`)
+### `ParseError` (requires `import int` or `import float`)
 
-Shared by `int.parse` and `float.parse`. Variants are routed through
-`io` → `int`; `import int` is the canonical guard. Users who import
-only `float` can still match on values they receive.
+Shared by `int.parse` and `float.parse`. Either import unlocks the
+variants; users who import only one can still match on values they
+receive from the other.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

@@ -11,36 +11,41 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         env.define(intern(name), string_to_bool.clone());
     }
 
-    // fs.list_dir: (String) -> Result(List(String), String)
+    // All fallible fs.* signatures now surface `Err(IoError)` so match
+    // arms receive a typed enum that can be destructured. Phase 1 of
+    // the stdlib error redesign; see `docs/proposals/stdlib-errors.md`.
+    let io_error_ty = Type::Generic(intern("IoError"), vec![]);
+
+    // fs.list_dir: (String) -> Result(List(String), IoError)
     env.define(
         intern("fs.list_dir"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![Type::List(Box::new(Type::String)), Type::String],
+                vec![Type::List(Box::new(Type::String)), io_error_ty.clone()],
             )),
         )),
     );
 
-    // fs.mkdir / fs.remove: (String) -> Result(Unit, String)
+    // fs.mkdir / fs.remove: (String) -> Result(Unit, IoError)
     let string_to_result = Scheme::mono(Type::Fun(
         vec![Type::String],
         Box::new(Type::Generic(
             intern("Result"),
-            vec![Type::Unit, Type::String],
+            vec![Type::Unit, io_error_ty.clone()],
         )),
     ));
     for name in &["fs.mkdir", "fs.remove"] {
         env.define(intern(name), string_to_result.clone());
     }
 
-    // fs.rename / fs.copy: (String, String) -> Result(Unit, String)
+    // fs.rename / fs.copy: (String, String) -> Result(Unit, IoError)
     let ss_to_result = Scheme::mono(Type::Fun(
         vec![Type::String, Type::String],
         Box::new(Type::Generic(
             intern("Result"),
-            vec![Type::Unit, Type::String],
+            vec![Type::Unit, io_error_ty.clone()],
         )),
     ));
     for name in &["fs.rename", "fs.copy"] {
@@ -105,40 +110,40 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     super::super::register_auto_derived_impls_for(
         checker,
         &["FileStat"],
-        super::super::BUILTIN_TRAIT_NAMES,
+        super::super::BUILTIN_AUTO_DERIVED_TRAIT_NAMES,
     );
 
-    // fs.stat: (String) -> Result(FileStat, String)
+    // fs.stat: (String) -> Result(FileStat, IoError)
     env.define(
         intern("fs.stat"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![file_stat_ty, Type::String],
+                vec![file_stat_ty, io_error_ty.clone()],
             )),
         )),
     );
 
-    // fs.read_link: (String) -> Result(String, String)
+    // fs.read_link: (String) -> Result(String, IoError)
     env.define(
         intern("fs.read_link"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![Type::String, Type::String],
+                vec![Type::String, io_error_ty.clone()],
             )),
         )),
     );
 
-    // fs.walk: (String) -> Result(List(String), String)
-    // fs.glob: (String) -> Result(List(String), String)
+    // fs.walk: (String) -> Result(List(String), IoError)
+    // fs.glob: (String) -> Result(List(String), IoError)
     let string_to_result_list_string = Scheme::mono(Type::Fun(
         vec![Type::String],
         Box::new(Type::Generic(
             intern("Result"),
-            vec![Type::List(Box::new(Type::String)), Type::String],
+            vec![Type::List(Box::new(Type::String)), io_error_ty],
         )),
     ));
     for name in &["fs.walk", "fs.glob"] {

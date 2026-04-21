@@ -211,7 +211,7 @@ fn main() {
   let handle = task.spawn_until(time.ms(0), fn() {
     match io.read_file("/tmp/silt_spawn_until_noent") {
       Ok(s) -> s
-      Err(msg) -> msg
+      Err(e) -> e.message()
     }
   })
   println(task.join(handle))
@@ -240,7 +240,7 @@ fn main() {{
   let handle = task.spawn_until(time.seconds(60), fn() {{
     match io.read_file("{}") {{
       Ok(s) -> s
-      Err(msg) -> msg
+      Err(e) -> e.message()
     }}
   }})
   println(task.join(handle))
@@ -383,7 +383,7 @@ fn main() {
   let handle = task.spawn(fn() {
     match io.read_line() {
       Ok(_) -> "unexpected_ok"
-      Err(msg) -> msg
+      Err(e) -> e.message()
     }
   })
   println(task.join(handle))

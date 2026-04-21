@@ -1008,6 +1008,10 @@ fn main() { result.is_err(io.read_file("/tmp/silt_test_nonexistent_file_12345.tx
 
 #[test]
 fn test_read_file_nonexistent_error_message() {
+    // Phase 1 of the stdlib error redesign: `io.read_file` now returns
+    // `Err(IoError)`. We render the typed variant through its
+    // `message()` method and assert that the rendered string is
+    // non-empty.
     assert_eq!(
         run(r#"
 import io
@@ -1015,8 +1019,8 @@ import result
 fn main() {
   match io.read_file("/tmp/silt_test_nonexistent_file_12345.txt") {
     Ok(_) -> "unexpected success"
-    Err(msg) -> match {
-      msg == "" -> "empty error"
+    Err(e) -> match {
+      e.message() == "" -> "empty error"
       _ -> "has error message"
     }
   }
@@ -1559,15 +1563,29 @@ fn main() = json.parse("""{"n": 1e100}""", Payload)
     match result {
         Value::Variant(ref tag, ref payload) if tag == "Err" => {
             assert_eq!(payload.len(), 1);
-            let msg = match &payload[0] {
-                Value::String(s) => s.clone(),
-                other => panic!("expected Err payload to be String, got: {other:?}"),
-            };
-            // Production message from src/builtins/json.rs number-parse path.
-            assert!(
-                msg.contains("json.parse(Payload): field 'n'") && msg.contains("out of Int range"),
-                "expected clean out-of-range error, got: {msg}"
-            );
+            // Phase 1 of the stdlib error redesign: the Err payload is
+            // now a typed `JsonError` variant rather than a bare string.
+            // Out-of-range numbers land in `JsonUnknown(msg)` since
+            // serde doesn't classify them as a type mismatch.
+            match &payload[0] {
+                Value::Variant(inner_tag, inner_fields)
+                    if inner_tag == "JsonUnknown" && inner_fields.len() == 1 =>
+                {
+                    let msg = match &inner_fields[0] {
+                        Value::String(s) => s.clone(),
+                        other => {
+                            panic!("expected JsonUnknown payload to be String, got: {other:?}")
+                        }
+                    };
+                    assert!(
+                        msg.contains("out of Int range"),
+                        "expected out-of-range hint, got: {msg}"
+                    );
+                }
+                other => panic!(
+                    "expected Err(JsonUnknown(...)) variant, got: {other:?} — saturation bug?"
+                ),
+            }
         }
         other => panic!(
             "expected Err variant from json.parse on out-of-range number; saturation bug still present? got: {other:?}"

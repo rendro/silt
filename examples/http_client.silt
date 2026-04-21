@@ -13,8 +13,15 @@ type Repo {
 }
 
 fn fetch_repos(user) {
+  -- `?` propagates the http.get failure (Result(_, String)) as-is.
+  -- json.parse_list returns Result(_, JsonError) in phase 1, so we
+  -- fold it into the same String channel using `match + .message()`
+  -- to keep fetch_repos' error type uniform.
   let resp = http.get("https://api.github.com/users/{user}/repos")?
-  json.parse_list(resp.body, Repo)
+  match json.parse_list(resp.body, Repo) {
+    Ok(repos) -> Ok(repos)
+    Err(e) -> Err(e.message())
+  }
 }
 
 fn main() {

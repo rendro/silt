@@ -130,11 +130,19 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
 /// don't have to distinguish between "timed out at entry" and "timed
 /// out while parked". Single source of truth for the message text
 /// lives on `scheduler::DeadlineSource`.
+///
+/// Phase 1 of the stdlib error redesign: wrapped in `IoUnknown(msg)`
+/// so the outer `Err` payload has the typed `IoError` shape every io/fs
+/// signature now returns. Users can still substring-match on the
+/// message via `e.message()`.
 pub(crate) fn deadline_exceeded_err_value() -> Value {
     Value::Variant(
         "Err".into(),
-        vec![Value::String(
-            crate::scheduler::DeadlineSource::Task.message().to_string(),
+        vec![Value::Variant(
+            "IoUnknown".into(),
+            vec![Value::String(
+                crate::scheduler::DeadlineSource::Task.message().to_string(),
+            )],
         )],
     )
 }

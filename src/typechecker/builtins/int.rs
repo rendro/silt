@@ -5,14 +5,21 @@
 use super::super::*;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
-    // int.parse: (String) -> Result(Int, String)
+    // int.parse: (String) -> Result(Int, ParseError)
+    //
+    // Phase 1 of the stdlib error redesign: `Err` surfaces a typed
+    // `ParseError` enum (variants: `ParseEmpty`, `ParseInvalidDigit(Int)`,
+    // `ParseOverflow`, `ParseUnderflow`) so callers can pattern-match on
+    // the specific failure mode, and can still fall back to
+    // `e.message()` via `trait Error for ParseError` when they don't
+    // care about the variant.
     env.define(
         intern("int.parse"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![Type::Int, Type::String],
+                vec![Type::Int, Type::Generic(intern("ParseError"), vec![])],
             )),
         )),
     );

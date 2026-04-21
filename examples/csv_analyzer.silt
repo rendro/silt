@@ -112,7 +112,7 @@ fn main() {
   -- Read and parse CSV using match with Never-typed panic in Err arm
   let content = match io.read_file("examples/data.csv") {
     Ok(text) -> text
-    Err(e) -> panic("Error reading data.csv: {e}")
+    Err(e) -> panic("Error reading data.csv: {e.message()}")
   }
   let lines = content
   |> string.split("\n")

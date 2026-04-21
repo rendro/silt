@@ -75,12 +75,42 @@ fn ok_inner(v: Value) -> Value {
     }
 }
 
-/// Expect an `Err(msg)` variant; return `msg`.
+/// Expect an `Err(IoError)` variant; return the renderer's `message()`
+/// string so the assertions that follow can match substrings against
+/// human-readable text.
+///
+/// Phase 1 of the stdlib error redesign replaced the old
+/// `Err(String)` shape with `Err(IoError)`, so this helper now walks the
+/// `IoError` variant and reconstructs the message the same way
+/// `trait Error for IoError` does at runtime.
 fn err_msg(v: Value) -> String {
     match v {
         Value::Variant(tag, args) if tag == "Err" => match args.into_iter().next() {
+            // Still accept bare strings in case any caller ever hands us
+            // one, but the modern path is the IoError variant arm below.
             Some(Value::String(s)) => s,
-            other => panic!("Err payload was not a string: {other:?}"),
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                let first_str = |vs: Vec<Value>| -> String {
+                    match vs.into_iter().next() {
+                        Some(Value::String(s)) => s,
+                        other => format!("<non-string payload: {other:?}>"),
+                    }
+                };
+                match inner_tag.as_str() {
+                    "IoNotFound" => format!("file not found: {}", first_str(inner_args)),
+                    "IoPermissionDenied" => {
+                        format!("permission denied: {}", first_str(inner_args))
+                    }
+                    "IoAlreadyExists" => format!("already exists: {}", first_str(inner_args)),
+                    "IoInvalidInput" => format!("invalid input: {}", first_str(inner_args)),
+                    "IoInterrupted" => "operation interrupted".into(),
+                    "IoUnexpectedEof" => "unexpected end of file".into(),
+                    "IoWriteZero" => "zero-byte write".into(),
+                    "IoUnknown" => first_str(inner_args),
+                    other => format!("unknown IoError variant: {other}"),
+                }
+            }
+            other => panic!("Err payload was not a string or IoError variant: {other:?}"),
         },
         other => panic!("expected Err(_) variant, got {other:?}"),
     }

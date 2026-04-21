@@ -123,7 +123,7 @@ When type inference cannot determine a type from context, use `as` to assert it:
 
 ```silt
 let x = [] as List(Int)
-let r = (int.parse("42") as Result(Int, String))?
+let r = (int.parse("42") as Result(Int, ParseError))?
 ```
 
 `as` is a compile-time assertion — if the types conflict, you get a type error.

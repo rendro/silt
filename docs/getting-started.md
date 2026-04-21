@@ -112,27 +112,27 @@ fn area(shape) {
 
 ## 5. Errors as values
 
-No exceptions. Fallible functions return `Result`. The `?` operator propagates errors:
+No exceptions. Fallible functions return `Result`. The `?` operator propagates errors when the
+surrounding function returns the same `Err` type:
 
 ```silt
 import io
-import json
 
-type Config { name: String }
-
-fn read_config(path) {
+fn read_head(path) {
   let content = io.read_file(path)?
-  let config = json.parse(content, Config)?
-  Ok(config)
+  Ok(content)
 }
 ```
 
-Use `match` to handle the result:
+Use `match` to handle the result. Every stdlib error enum (here `IoError`) implements the built-in
+`Error` trait, so you can pattern-match on specific variants and fall back to `.message()` for
+anything else:
 
 ```silt
-match read_config("app.json") {
-  Ok(cfg) -> println("loaded: {cfg.name}")
-  Err(e) -> println("error: {e}")
+match io.read_file("app.json") {
+  Ok(content) -> println("loaded {string.length(content)} bytes")
+  Err(IoNotFound(path)) -> println("file does not exist: {path}")
+  Err(e) -> println("error: {e.message()}")
 }
 ```
 

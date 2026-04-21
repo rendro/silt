@@ -193,6 +193,32 @@ impl Vm {
             Value::Variant("RegexTooBig".into(), Vec::new()),
         );
 
+        // ── __type_of__<variant> mappings for builtin error enums ──
+        // Phase 1 of the stdlib error redesign: `CallMethod` dispatch
+        // looks up the parent type name via `__type_of__<tag>` to route
+        // `err.message()` to `IoError.message`, etc. User-declared enums
+        // register these globals at codegen time; builtin enums have to
+        // be seeded here so the same dispatch works.
+        for (enum_name, variants) in module::builtin_enum_variants() {
+            for variant in *variants {
+                let key = format!("__type_of__{variant}");
+                self.globals.insert(key, Value::String((*enum_name).into()));
+            }
+        }
+
+        // ── trait Error for builtin error enums — compiled message() ──
+        // Registered as built-in functions so `err.message()` dispatches
+        // via `CallMethod` → `<EnumName>.message` global. The function
+        // body lives in the corresponding `call_*_error_trait` helper
+        // and is routed through the matching `dispatch_builtin` arm.
+        // `.display()` is handled generically by `dispatch_trait_method`
+        // via `display_value`, so it does not need a per-enum BuiltinFn.
+        for enum_name in &["IoError", "JsonError", "TomlError", "ParseError"] {
+            let key = format!("{enum_name}.message");
+            self.globals
+                .insert(key.clone(), Value::BuiltinFn(key.clone()));
+        }
+
         // Primitive type descriptors
         self.globals
             .insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
@@ -443,6 +469,30 @@ impl Vm {
                 "postgres" => catch_builtin_panic(
                     "postgres",
                     AssertUnwindSafe(|| builtins::postgres::call(self, func, args)),
+                ),
+                // ── Built-in trait Error impls ──
+                // Phase 1 of the stdlib error redesign: `trait Error`
+                // impls for builtin error enums are routed through
+                // dedicated dispatch helpers rather than compiled from
+                // silt source. IoError, JsonError, TomlError, and
+                // ParseError are wired up; HttpError/RegexError trait
+                // impls still return `Result(_, String)` today and
+                // will migrate in later phases.
+                "IoError" => catch_builtin_panic(
+                    "IoError",
+                    AssertUnwindSafe(|| builtins::io::call_io_error_trait(func, args)),
+                ),
+                "JsonError" => catch_builtin_panic(
+                    "JsonError",
+                    AssertUnwindSafe(|| builtins::data::call_json_error_trait(func, args)),
+                ),
+                "TomlError" => catch_builtin_panic(
+                    "TomlError",
+                    AssertUnwindSafe(|| builtins::toml::call_toml_error_trait(func, args)),
+                ),
+                "ParseError" => catch_builtin_panic(
+                    "ParseError",
+                    AssertUnwindSafe(|| builtins::numeric::call_parse_error_trait(func, args)),
                 ),
                 #[cfg(test)]
                 "__test_panic_builtin" => {

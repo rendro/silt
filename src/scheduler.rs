@@ -218,7 +218,23 @@ impl WatchdogRegistry {
         let mut fired = 0;
         for (weak_completion, msg) in to_fire {
             if let Some(completion) = weak_completion.upgrade() {
-                let err_value = Value::Variant("Err".into(), vec![Value::String(msg.to_string())]);
+                // Phase 1 of the stdlib error redesign: io/fs signatures
+                // now return `Result(T, IoError)`, so the watchdog must
+                // also surface a typed `IoError` variant. Timeouts map
+                // to `IoInterrupted` — the only nullary variant whose
+                // semantics match a forcibly aborted I/O — with the
+                // descriptive message mirrored onto `IoUnknown` when
+                // the test wants to inspect the text via `.message()`.
+                // We pick `IoUnknown(msg)` here so tests that substring-
+                // match on "task.deadline exceeded" / "SILT_IO_TIMEOUT
+                // exceeded" keep working against `e.message()`.
+                let err_value = Value::Variant(
+                    "Err".into(),
+                    vec![Value::Variant(
+                        "IoUnknown".into(),
+                        vec![Value::String(msg.to_string())],
+                    )],
+                );
                 if completion.complete(err_value) {
                     fired += 1;
                 }
@@ -1405,11 +1421,19 @@ fn main() {{
         let fired = registry.scan_and_fire();
         assert_eq!(fired, 1, "one timeout should fire");
         let result = completion.try_get().expect("completion should be set");
+        // Phase 1 of the stdlib error redesign: watchdog now emits
+        // `Err(IoUnknown(msg))` so the outer `Err` payload matches
+        // io/fs's `Result(T, IoError)` shape. The message text stays
+        // accessible via the inner `IoUnknown` variant's field.
         match result {
             Value::Variant(name, fields) => {
                 assert_eq!(name.as_str(), "Err");
-                let Value::String(msg) = &fields[0] else {
-                    panic!("expected String in Err");
+                let Value::Variant(inner_name, inner_fields) = &fields[0] else {
+                    panic!("expected IoError variant in Err");
+                };
+                assert_eq!(inner_name.as_str(), "IoUnknown");
+                let Value::String(msg) = &inner_fields[0] else {
+                    panic!("expected String payload in IoUnknown");
                 };
                 assert!(msg.contains("I/O timeout"), "unexpected: {msg}");
                 assert!(msg.contains("SILT_IO_TIMEOUT"), "unexpected: {msg}");
@@ -1429,8 +1453,12 @@ fn main() {{
         let Value::Variant(_, fields) = completion.try_get().unwrap() else {
             panic!("expected variant");
         };
-        let Value::String(msg) = &fields[0] else {
-            panic!("expected String");
+        // Same reshape: Err(IoUnknown(msg)) post-migration.
+        let Value::Variant(_, inner_fields) = &fields[0] else {
+            panic!("expected IoError variant");
+        };
+        let Value::String(msg) = &inner_fields[0] else {
+            panic!("expected String payload");
         };
         assert!(msg.contains("task.deadline"), "unexpected: {msg}");
     }

@@ -12,17 +12,31 @@ Parse JSON strings into typed silt values and serialize values to JSON.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, String)` | Parse JSON object into record |
-| `parse_list` | `(String, type a) -> Result(List(a), String)` | Parse JSON array into record list |
-| `parse_map` | `(String, type v) -> Result(Map(String, v), String)` | Parse JSON object into map |
+| `parse` | `(String, type a) -> Result(a, JsonError)` | Parse JSON object into record |
+| `parse_list` | `(String, type a) -> Result(List(a), JsonError)` | Parse JSON array into record list |
+| `parse_map` | `(String, type v) -> Result(Map(String, v), JsonError)` | Parse JSON object into map |
 | `pretty` | `(a) -> String` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String` | Serialize value as compact JSON |
+
+## Errors
+
+Every fallible `json.*` call returns `Result(T, JsonError)`. The `JsonError`
+enum has four variants you can pattern-match on, or fall back to
+`e.message()` when you just want a rendered string (`trait Error for
+JsonError` is wired in):
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `JsonSyntax(msg, offset)` | `String`, `Int` | Malformed JSON at `offset` bytes |
+| `JsonTypeMismatch(expected, actual)` | `String`, `String` | A field's JSON type did not match the target field type |
+| `JsonMissingField(name)` | `String` | A required (non-`Option`) field was absent |
+| `JsonUnknown(msg)` | `String` | Anything else (out-of-range numbers, internal failures) |
 
 
 ## `json.parse`
 
 ```
-json.parse(s: String, type a) -> Result(a, String)
+json.parse(s: String, type a) -> Result(a, JsonError)
 ```
 
 Parses a JSON string into a record of type `a`. The type is passed as a `type`
@@ -51,7 +65,7 @@ fn main() {
     let input = """{"name": "Alice", "age": 30}"""
     match json.parse(input, User) {
         Ok(user) -> println(user.name)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -67,7 +81,7 @@ type Event {
     date: Date,
 }
 
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, JsonError) {
     let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
     println(e.date |> time.weekday)  -- Friday
     Ok(())
@@ -78,7 +92,7 @@ fn main() -> Result(Unit, String) {
 ## `json.parse_list`
 
 ```
-json.parse_list(s: String, type a) -> Result(List(a), String)
+json.parse_list(s: String, type a) -> Result(List(a), JsonError)
 ```
 
 Parses a JSON array where each element is a record of type `a`.
@@ -95,7 +109,7 @@ fn main() {
     let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
     match json.parse_list(input, Point) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -104,7 +118,7 @@ fn main() {
 ## `json.parse_map`
 
 ```
-json.parse_map(s: String, type v) -> Result(Map(String, v), String)
+json.parse_map(s: String, type v) -> Result(Map(String, v), JsonError)
 ```
 
 Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
@@ -117,7 +131,7 @@ fn main() {
     let input = """{"x": 10, "y": 20}"""
     match json.parse_map(input, Int) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```

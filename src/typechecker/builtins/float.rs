@@ -5,14 +5,17 @@
 use super::super::*;
 
 pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
-    // float.parse: (String) -> Result(Float, String)
+    // float.parse: (String) -> Result(Float, ParseError)
+    //
+    // Phase 1 of the stdlib error redesign — shares `ParseError` with
+    // `int.parse`. See the note on `int.parse` for rationale.
     env.define(
         intern("float.parse"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![Type::Float, Type::String],
+                vec![Type::Float, Type::Generic(intern("ParseError"), vec![])],
             )),
         )),
     );

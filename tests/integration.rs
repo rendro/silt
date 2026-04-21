@@ -3661,20 +3661,21 @@ fn main() {
 
 #[test]
 fn test_json_parse_missing_field_error() {
+    // Phase 1 of the stdlib error redesign: json.parse now returns
+    // `Err(JsonError)`. Pattern-match the typed variant directly
+    // rather than asserting a brittle message string.
     let result = run(r#"
 import json
 type User { name: String, age: Int }
 fn main() {
   match json.parse("\{\"name\": \"Alice\"\}", User) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonMissingField(f)) -> f
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String("json.parse(User): missing field 'age'".into())
-    );
+    assert_eq!(result, Value::String("age".into()));
 }
 
 #[test]
@@ -3685,14 +3686,12 @@ type User { name: String, age: Int }
 fn main() {
   match json.parse("\{\"name\": 42, \"age\": 30\}", User) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String("json.parse(User): field 'name': expected String, got number".into())
-    );
+    assert_eq!(result, Value::String("String/number".into()));
 }
 
 #[test]
@@ -3703,14 +3702,12 @@ type User { name: String }
 fn main() {
   match json.parse("[1,2,3]", User) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String("json.parse(User): expected JSON object, got array".into())
-    );
+    assert_eq!(result, Value::String("object/array".into()));
 }
 
 #[test]
@@ -3789,14 +3786,12 @@ type Employee { name: String }
 fn main() {
   match json.parse_list("\{\"name\": \"Alice\"\}", Employee) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String("json.parse_list(Employee): expected JSON array, got object".into())
-    );
+    assert_eq!(result, Value::String("array/object".into()));
 }
 
 #[test]
@@ -3807,11 +3802,12 @@ type Employee { name: String, salary: Int }
 fn main() {
   match json.parse_list("[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]", Employee) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(result, Value::String("json.parse_list(Employee): element 0: json.parse(Employee): field 'salary': expected Int, got string".into()));
+    assert_eq!(result, Value::String("Int/string".into()));
 }
 
 #[test]
@@ -4171,14 +4167,12 @@ import json
 fn main() {
   match json.parse_map("[1, 2, 3]", String) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String("json.parse_map: expected JSON object, got array".into())
-    );
+    assert_eq!(result, Value::String("object/array".into()));
 }
 
 #[test]
@@ -4188,16 +4182,12 @@ import json
 fn main() {
   match json.parse_map("\{\"a\": \"hello\", \"b\": \"world\"\}", Int) {
     Ok(_) -> "unexpected"
-    Err(e) -> e
+    Err(JsonTypeMismatch(expected, actual)) -> "{expected}/{actual}"
+    Err(e) -> e.message()
   }
 }
     "#);
-    assert_eq!(
-        result,
-        Value::String(
-            "json.parse_map: key 'a': json.parse(Map): field 'a': expected Int, got string".into()
-        )
-    );
+    assert_eq!(result, Value::String("Int/string".into()));
 }
 
 // ── regex.captures ──────────────────────────────────────────────────
@@ -10247,7 +10237,9 @@ fn main() {{
 
 #[test]
 fn test_io_read_file_missing_returns_err() {
-    // Reading a path that does not exist should yield Err(message).
+    // Reading a path that does not exist should yield Err(IoNotFound(path)).
+    // Phase 1 of the stdlib error redesign — io/fs failures now surface
+    // typed `IoError` variants instead of raw strings.
     let path = std::env::temp_dir().join("silt_test_io_missing_file_002.txt");
     let path_str = path.to_str().unwrap().replace('\\', "/");
     // Make sure it really doesn't exist.
@@ -10264,11 +10256,18 @@ fn main() {{
     match result {
         Value::Variant(tag, args) => {
             assert_eq!(tag, "Err", "expected Err variant");
-            assert!(
-                matches!(args.first(), Some(Value::String(_))),
-                "expected Err payload to be a string, got {:?}",
-                args
-            );
+            match args.first() {
+                Some(Value::Variant(inner_tag, inner_args)) => {
+                    assert_eq!(inner_tag, "IoNotFound", "expected Err(IoNotFound(...))");
+                    assert!(
+                        matches!(inner_args.first(), Some(Value::String(_))),
+                        "expected IoNotFound to carry a path string, got {inner_args:?}"
+                    );
+                }
+                other => {
+                    panic!("expected Err(IoError variant), got {other:?} (full args {args:?})")
+                }
+            }
         }
         other => panic!("expected Err variant, got {other:?}"),
     }

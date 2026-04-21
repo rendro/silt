@@ -111,6 +111,15 @@ fn test_user_cannot_redefine_builtin_trait_display() {
     assert_builtin_redef_rejected("Display");
 }
 
+#[test]
+fn test_user_cannot_redefine_builtin_trait_error() {
+    // Phase 1 of the stdlib error redesign added `Error` as the fifth
+    // builtin trait. Same guard as the other four: users may
+    // `trait Error for MyErr { ... }` but they cannot redeclare the
+    // trait itself.
+    assert_builtin_redef_rejected("Error");
+}
+
 /// Control: declaring a trait whose name does NOT collide with a
 /// builtin — even if its method is called `eq` — must typecheck clean.
 /// This confirms the guard is keyed on the trait NAME, not the method

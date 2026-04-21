@@ -28,7 +28,14 @@ pub use crate::types::{Scheme, Severity, TyVar, Type, TypeError};
 /// so would shadow the compiler's TraitInfo (different method names,
 /// different signatures) and produce nonsensical cascade errors when
 /// the preregistered impls get revalidated against the user's body.
-pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
+pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+
+/// Subset of [`BUILTIN_TRAIT_NAMES`] that is auto-derived for every
+/// primitive and builtin container. `Error` is intentionally excluded:
+/// user types and stdlib types must implement `trait Error for ...`
+/// explicitly.
+pub(super) const BUILTIN_AUTO_DERIVED_TRAIT_NAMES: &[&str] =
+    &["Equal", "Compare", "Hash", "Display"];
 
 // ── Type environment ────────────────────────────────────────────────
 
@@ -2944,18 +2951,83 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             },
         );
     }
+    // ── Error trait ─────────────────────────────────────────────
+    // Phase 1 of the stdlib error redesign (see
+    // `docs/proposals/stdlib-errors.md`). `trait Error: Display`
+    // provides a single `message(self) -> String` method whose default
+    // body delegates to `self.display()`, so impls that are happy with
+    // the default don't need to write a body. `Error` is NOT
+    // auto-derived — stdlib and user types must write
+    // `trait Error for MyErr { ... }` explicitly.
+    {
+        let error_self = checker.fresh_var();
+        // Synthesize the default body `self.display()` as a real
+        // FnDecl so `synthesize_default_methods` can clone it into
+        // impls that omit `message`. The synthesized FnDecl goes
+        // through the normal method-compilation pipeline.
+        let dummy_span = Span::new(0, 0);
+        let self_sym = intern("self");
+        let self_param = Param {
+            kind: ParamKind::Data,
+            pattern: Pattern::new(PatternKind::Ident(self_sym), dummy_span),
+            ty: None,
+        };
+        let self_ident = Expr::new(ExprKind::Ident(self_sym), dummy_span);
+        let field_access = Expr::new(
+            ExprKind::FieldAccess(Box::new(self_ident), intern("display")),
+            dummy_span,
+        );
+        let default_body = Expr::new(
+            ExprKind::Call(Box::new(field_access), Vec::new()),
+            dummy_span,
+        );
+        let default_fn = FnDecl {
+            name: intern("message"),
+            params: vec![self_param],
+            return_type: Some(TypeExpr::Named(intern("String"))),
+            where_clauses: Vec::new(),
+            body: default_body,
+            is_pub: true,
+            span: dummy_span,
+            is_recovery_stub: false,
+            is_signature_only: false,
+        };
+        let mut default_bodies = HashMap::new();
+        default_bodies.insert(intern("message"), default_fn);
+        checker.traits.insert(
+            intern("Error"),
+            TraitInfo {
+                _name: intern("Error"),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
+                supertraits: vec![intern("Display")],
+                supertrait_args: vec![Vec::new()],
+                param_where_clauses: Vec::new(),
+                methods: vec![(
+                    intern("message"),
+                    Type::Fun(vec![error_self], Box::new(Type::String)),
+                )],
+                decl_span: Span::new(0, 0),
+                default_method_bodies: default_bodies,
+            },
+        );
+    }
 
     // ── Register auto-derived impls ─────────────────────────────
-    let all_traits: &[&str] = BUILTIN_TRAIT_NAMES;
+    // Error is intentionally excluded from auto-derive: user code and
+    // stdlib must `trait Error for XyzError { ... }` explicitly. Only
+    // Equal/Compare/Hash/Display are auto-derived for the built-in
+    // types below.
+    let all_auto_traits: &[&str] = BUILTIN_AUTO_DERIVED_TRAIT_NAMES;
     let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
 
-    // Primitives + List: all four traits.
+    // Primitives + List: all four auto-derived traits.
     register_auto_derived_impls_for(
         checker,
         &["Int", "Float", "Bool", "String", "()"],
-        all_traits,
+        all_auto_traits,
     );
-    register_auto_derived_impls_for(checker, &["List"], all_traits);
+    register_auto_derived_impls_for(checker, &["List"], all_auto_traits);
     // Tuple/Map/Set: Equal/Hash/Display only.
     register_auto_derived_impls_for(checker, &["Tuple", "Map", "Set"], non_ordering_traits);
     // Option/Result: Equal/Hash/Display only (generic wrappers, stored

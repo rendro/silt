@@ -3,6 +3,114 @@
 use crate::value::Value;
 use crate::vm::VmError;
 
+/// Locate the byte offset of the first character in `s` that could not
+/// plausibly be part of a numeric literal (base-10 int or decimal float).
+/// Used to build `ParseInvalidDigit(offset)` variants when Rust's
+/// `ParseIntError` / `ParseFloatError` don't expose a native offset.
+///
+/// `allow_decimal` toggles float-only characters (`.`, `e`, `E`). The
+/// scan tolerates a leading sign and underscore separators since Rust's
+/// float parser allows neither — the float path re-validates — but the
+/// helper is purposefully permissive so the returned offset is the
+/// first byte the parser itself would have rejected, not a pre-filter
+/// stricter than `parse::<f64>`. Falls through to `0` for strings that
+/// look fully numeric; the caller is expected to treat `0` as a
+/// "couldn't localize" sentinel.
+fn find_first_invalid_digit(s: &str, allow_decimal: bool) -> usize {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    while i < bytes.len() {
+        let b = bytes[i];
+        let ok = b.is_ascii_digit()
+            || b == b'_'
+            || (allow_decimal && (b == b'.' || b == b'e' || b == b'E' || b == b'+' || b == b'-'));
+        if !ok {
+            return i;
+        }
+        i += 1;
+    }
+    0
+}
+
+/// Classify a `ParseIntError` into the matching `ParseError` variant.
+/// `s` is the original input, used to recover an offset for
+/// `InvalidDigit` since `IntErrorKind::InvalidDigit` doesn't expose one.
+fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
+    use std::num::IntErrorKind;
+    match err.kind() {
+        IntErrorKind::Empty => Value::Variant("ParseEmpty".into(), vec![]),
+        IntErrorKind::PosOverflow => Value::Variant("ParseOverflow".into(), vec![]),
+        IntErrorKind::NegOverflow => Value::Variant("ParseUnderflow".into(), vec![]),
+        // InvalidDigit, Zero, and any future-added kinds fall through
+        // to `ParseInvalidDigit(offset)`: it's the only variant that
+        // carries data, so it doubles as the "anything else" sink.
+        // std doesn't promise IntErrorKind stays exhaustive, so the
+        // `_` arm is not dead code even today.
+        _ => {
+            let offset = find_first_invalid_digit(s.trim(), false) as i64;
+            Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(offset)])
+        }
+    }
+}
+
+/// Classify a `ParseFloatError` into the matching `ParseError` variant.
+/// `ParseFloatError` doesn't expose a stable discriminant, so we
+/// fall back to rescanning the input: empty → `ParseEmpty`, otherwise
+/// `ParseInvalidDigit(offset)`. Overflow/underflow aren't distinguishable
+/// at this layer — `f64::from_str` silently saturates to `±inf`, and
+/// `float.parse` rejects non-finite results upstream.
+fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Value {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Value::Variant("ParseEmpty".into(), vec![]);
+    }
+    // A string that's only a sign has no digits → treat as empty.
+    if trimmed == "+" || trimmed == "-" {
+        return Value::Variant("ParseEmpty".into(), vec![]);
+    }
+    let offset = find_first_invalid_digit(trimmed, true) as i64;
+    Value::Variant("ParseInvalidDigit".into(), vec![Value::Int(offset)])
+}
+
+/// Dispatch the builtin `trait Error for ParseError` method table.
+/// Routed through `dispatch_builtin`'s "ParseError" module arm, mirroring
+/// `call_io_error_trait`.
+pub fn call_parse_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
+    match name {
+        "message" => {
+            if args.len() != 1 {
+                return Err(VmError::new(format!(
+                    "ParseError.message takes 1 argument (self), got {}",
+                    args.len()
+                )));
+            }
+            let msg = match &args[0] {
+                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
+                    ("ParseEmpty", []) => "cannot parse empty string".to_string(),
+                    ("ParseInvalidDigit", [Value::Int(offset)]) => {
+                        format!("invalid digit at byte {offset}")
+                    }
+                    ("ParseOverflow", []) => "number too large".to_string(),
+                    ("ParseUnderflow", []) => "number too small".to_string(),
+                    _ => format!("ParseError: unrecognized variant shape `{tag}`"),
+                },
+                other => {
+                    return Err(VmError::new(format!(
+                        "ParseError.message: expected ParseError variant, got {other}"
+                    )));
+                }
+            };
+            Ok(Value::String(msg))
+        }
+        _ => Err(VmError::new(format!(
+            "unknown ParseError trait method: {name}"
+        ))),
+    }
+}
+
 /// Dispatch `int.<name>(args)`.
 pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -17,7 +125,7 @@ pub fn call_int(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Int(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
-                    vec![Value::String(e.to_string())],
+                    vec![classify_int_parse_error(&e, s)],
                 )),
             }
         }
@@ -109,14 +217,24 @@ pub fn call_float(name: &str, args: &[Value]) -> Result<Value, VmError> {
                 return Err(VmError::new("float.parse requires a string".into()));
             };
             match s.trim().parse::<f64>() {
+                // NaN / Infinity string inputs (`"NaN"`, `"inf"`) parse
+                // successfully but aren't representable as a finite `Float`.
+                // Classify them as `ParseInvalidDigit(0)` since they're
+                // syntactically well-formed but semantically rejected by
+                // silt's finite-float invariant; callers needing
+                // `±infinity` / NaN already go through `float.infinity`
+                // and friends.
                 Ok(n) if n.is_nan() || n.is_infinite() => Ok(Value::Variant(
                     "Err".into(),
-                    vec![Value::String("parsed value is not a finite number".into())],
+                    vec![Value::Variant(
+                        "ParseInvalidDigit".into(),
+                        vec![Value::Int(0)],
+                    )],
                 )),
                 Ok(n) => Ok(Value::Variant("Ok".into(), vec![Value::Float(n)])),
                 Err(e) => Ok(Value::Variant(
                     "Err".into(),
-                    vec![Value::String(e.to_string())],
+                    vec![classify_float_parse_error(&e, s)],
                 )),
             }
         }

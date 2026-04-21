@@ -544,7 +544,13 @@ impl TypeChecker {
 
         // ── json module ─────────────────────────────────────────────────
 
-        // json.parse: (String, type a) -> Result(a, String)
+        // Phase 1 of the stdlib error redesign: every fallible json.parse*
+        // call surfaces `Err(JsonError)` instead of `Err(String)` so
+        // downstream match arms can destructure the typed enum, and can
+        // fall back to `e.message()` via `trait Error for JsonError`.
+        let json_error_ty = Type::Generic(intern("JsonError"), vec![]);
+
+        // json.parse: (String, type a) -> Result(a, JsonError)
         // The `type a` parameter is lowered to a `TypeOf(a)` descriptor in
         // the function type; the carried type flows into the Result. Type
         // params come last so pipelines like
@@ -553,7 +559,7 @@ impl TypeChecker {
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
-            let result_ty = Type::Generic(intern("Result"), vec![a, Type::String]);
+            let result_ty = Type::Generic(intern("Result"), vec![a, json_error_ty.clone()]);
             env.define(
                 intern("json.parse"),
                 Scheme {
@@ -564,13 +570,13 @@ impl TypeChecker {
             );
         }
 
-        // json.parse_list: (String, type a) -> Result(List(a), String)
+        // json.parse_list: (String, type a) -> Result(List(a), JsonError)
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
             let result_ty = Type::Generic(
                 intern("Result"),
-                vec![Type::List(Box::new(a)), Type::String],
+                vec![Type::List(Box::new(a)), json_error_ty.clone()],
             );
             env.define(
                 intern("json.parse_list"),
@@ -582,13 +588,16 @@ impl TypeChecker {
             );
         }
 
-        // json.parse_map: (String, type v) -> Result(Map(String, v), String)
+        // json.parse_map: (String, type v) -> Result(Map(String, v), JsonError)
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
             let result_ty = Type::Generic(
                 intern("Result"),
-                vec![Type::Map(Box::new(Type::String), Box::new(a)), Type::String],
+                vec![
+                    Type::Map(Box::new(Type::String), Box::new(a)),
+                    json_error_ty,
+                ],
             );
             env.define(
                 intern("json.parse_map"),

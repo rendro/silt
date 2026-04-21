@@ -150,7 +150,7 @@ fn main() {
             body: json.stringify(user),
             headers: #{"Content-Type": "application/json"},
           }
-          Err(e) -> Response { status: 400, body: e, headers: #{} }
+          Err(e) -> Response { status: 400, body: e.message(), headers: #{} }
         }
 
       _ ->

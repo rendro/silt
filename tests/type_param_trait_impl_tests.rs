@@ -41,18 +41,20 @@ fn trait_method_decl_with_type_param() {
 fn trait_impl_with_type_param_registers_and_dispatches() {
     // A trait impl with a `type a` method: the signature must store the
     // `type a` parameter as `TypeOf(a)` so call-site dispatch can accept
-    // a type descriptor argument.
+    // a type descriptor argument. Phase 1 of the stdlib error redesign:
+    // json.parse now returns `Result(a, JsonError)` (not `Result(a,
+    // String)`), so the trait here uses `JsonError` as the error type.
     let src = r#"
         import json
 
         type Todo { id: Int, title: String }
 
         trait Decodable {
-            fn decode(self, type a) -> Result(a, String)
+            fn decode(self, type a) -> Result(a, JsonError)
         }
 
         trait Decodable for String {
-            fn decode(self, type a) -> Result(a, String) {
+            fn decode(self, type a) -> Result(a, JsonError) {
                 json.parse(self, a)
             }
         }

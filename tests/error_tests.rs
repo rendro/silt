@@ -725,11 +725,58 @@ fn test_runtime_int_parse_invalid() {
 import int
 fn main() { int.parse("not_a_number") }
     "#);
-    // Should return Err, not panic
+    // Phase 1 of the stdlib error redesign: the `Err` payload is now a
+    // typed `ParseError` variant, not a raw string.
     match result {
-        Value::Variant(tag, _) => assert_eq!(tag, "Err", "expected Err, got {tag}"),
+        Value::Variant(tag, args) => {
+            assert_eq!(tag, "Err", "expected Err, got {tag}");
+            match args.first() {
+                Some(Value::Variant(inner_tag, _)) => {
+                    assert_eq!(
+                        inner_tag, "ParseInvalidDigit",
+                        "expected ParseInvalidDigit, got {inner_tag}"
+                    );
+                }
+                other => panic!("expected ParseError variant, got {other:?}"),
+            }
+        }
         other => panic!("expected Err variant, got {other:?}"),
     }
+}
+
+#[test]
+fn test_runtime_int_parse_empty() {
+    // Phase 1: empty input → `Err(ParseEmpty)`.
+    let result = run(r#"
+import int
+fn main() { int.parse("") }
+    "#);
+    match result {
+        Value::Variant(tag, args) => {
+            assert_eq!(tag, "Err");
+            match args.first() {
+                Some(Value::Variant(inner, _)) => assert_eq!(inner, "ParseEmpty"),
+                other => panic!("expected ParseEmpty, got {other:?}"),
+            }
+        }
+        other => panic!("expected Err, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_runtime_int_parse_error_message_dispatch() {
+    // Phase 1: `e.message()` dispatches through `trait Error for
+    // ParseError` (wired as a BuiltinFn via `call_parse_error_trait`).
+    let result = run(r#"
+import int
+fn main() {
+    match int.parse("") {
+        Ok(_) -> "impossible"
+        Err(e) -> e.message()
+    }
+}
+    "#);
+    assert_eq!(result, Value::String("cannot parse empty string".into()));
 }
 
 #[test]
@@ -739,8 +786,14 @@ import float
 fn main() { float.parse("not_a_float") }
     "#);
     match result {
-        Value::Variant(tag, _) => assert_eq!(tag, "Err", "expected Err, got {tag}"),
-        other => panic!("expected Err variant, got {other:?}"),
+        Value::Variant(tag, args) => {
+            assert_eq!(tag, "Err");
+            match args.first() {
+                Some(Value::Variant(inner, _)) => assert_eq!(inner, "ParseInvalidDigit"),
+                other => panic!("expected ParseInvalidDigit, got {other:?}"),
+            }
+        }
+        other => panic!("expected Err, got {other:?}"),
     }
 }
 

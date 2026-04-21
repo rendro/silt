@@ -14,9 +14,19 @@ Functions for file I/O, stdin, command-line arguments, and debug inspection.
 |----------|-----------|-------------|
 | `args` | `() -> List(String)` | Command-line arguments |
 | `inspect` | `(a) -> String` | Debug representation of any value |
-| `read_file` | `(String) -> Result(String, String)` | Read entire file as string |
-| `read_line` | `() -> Result(String, String)` | Read one line from stdin |
-| `write_file` | `(String, String) -> Result((), String)` | Write string to file |
+| `read_file` | `(String) -> Result(String, IoError)` | Read entire file as string |
+| `read_line` | `() -> Result(String, IoError)` | Read one line from stdin |
+| `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
+
+Every fallible `io` / `fs` function returns `Result(T, IoError)`. `IoError`
+is the built-in error enum (variants: `IoNotFound(path)`,
+`IoPermissionDenied(path)`, `IoAlreadyExists(path)`, `IoInvalidInput(msg)`,
+`IoInterrupted`, `IoUnexpectedEof`, `IoWriteZero`, `IoUnknown(msg)`). It
+implements the built-in `Error` trait, so every `IoError` value exposes
+`.message() -> String` for a human-readable summary. Most call sites
+destructure specific variants when they need to branch (e.g. "create a
+default when the file does not exist") and fall through to `.message()`
+otherwise.
 
 
 ## `io.args`
@@ -59,11 +69,11 @@ fn main() {
 ## `io.read_file`
 
 ```
-io.read_file(path: String) -> Result(String, String)
+io.read_file(path: String) -> Result(String, IoError)
 ```
 
 Reads the entire contents of a file. Returns `Ok(contents)` on success or
-`Err(message)` on failure. When called from a spawned task, the operation
+`Err(IoError)` on failure. When called from a spawned task, the operation
 transparently yields to the scheduler while the file is being read.
 
 ```silt
@@ -71,7 +81,8 @@ import io
 fn main() {
     match io.read_file("data.txt") {
         Ok(contents) -> println(contents)
-        Err(e) -> println("Error: {e}")
+        Err(IoNotFound(path)) -> println("no such file: {path}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -80,12 +91,13 @@ fn main() {
 ## `io.read_line`
 
 ```
-io.read_line() -> Result(String, String)
+io.read_line() -> Result(String, IoError)
 ```
 
 Reads a single line from stdin (trailing newline stripped). Returns
-`Ok(line)` on success or `Err(message)` on failure. When called from a
-spawned task, the operation transparently yields to the scheduler.
+`Ok(line)` on success or `Err(IoError)` on failure — in particular
+`Err(IoUnexpectedEof)` when stdin is closed. When called from a spawned
+task, the operation transparently yields to the scheduler.
 
 ```silt
 import io
@@ -93,7 +105,8 @@ fn main() {
     print("Name: ")
     match io.read_line() {
         Ok(name) -> println("Hello, {name}!")
-        Err(e) -> println("Error: {e}")
+        Err(IoUnexpectedEof) -> println("(EOF)")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -102,11 +115,11 @@ fn main() {
 ## `io.write_file`
 
 ```
-io.write_file(path: String, contents: String) -> Result((), String)
+io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
 Writes a string to a file, creating or overwriting it. Returns `Ok(())` on
-success or `Err(message)` on failure. When called from a spawned task, the
+success or `Err(IoError)` on failure. When called from a spawned task, the
 operation transparently yields to the scheduler while the file is being
 written.
 
@@ -115,7 +128,7 @@ import io
 fn main() {
     match io.write_file("output.txt", "hello") {
         Ok(_) -> println("written")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -243,25 +256,25 @@ Filesystem operations: queries, directory management, and file manipulation.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `copy` | `(String, String) -> Result((), String)` | Copy a file |
+| `copy` | `(String, String) -> Result((), IoError)` | Copy a file |
 | `exists` | `(String) -> Bool` | Check if path exists |
-| `glob` | `(String) -> Result(List(String), String)` | Match paths by glob pattern |
+| `glob` | `(String) -> Result(List(String), IoError)` | Match paths by glob pattern |
 | `is_dir` | `(String) -> Bool` | Check if path is a directory |
 | `is_file` | `(String) -> Bool` | Check if path is a file |
 | `is_symlink` | `(String) -> Bool` | Check if path is a symlink (without following) |
-| `list_dir` | `(String) -> Result(List(String), String)` | List entries in a directory |
-| `mkdir` | `(String) -> Result((), String)` | Create a directory (and parents) |
-| `read_link` | `(String) -> Result(String, String)` | Read a symlink's target (without following) |
-| `remove` | `(String) -> Result((), String)` | Remove a file or empty directory |
-| `rename` | `(String, String) -> Result((), String)` | Rename / move a file or directory |
-| `stat` | `(String) -> Result(FileStat, String)` | Fetch filesystem metadata for a path |
-| `walk` | `(String) -> Result(List(String), String)` | Recursively list all paths under a directory |
+| `list_dir` | `(String) -> Result(List(String), IoError)` | List entries in a directory |
+| `mkdir` | `(String) -> Result((), IoError)` | Create a directory (and parents) |
+| `read_link` | `(String) -> Result(String, IoError)` | Read a symlink's target (without following) |
+| `remove` | `(String) -> Result((), IoError)` | Remove a file or empty directory |
+| `rename` | `(String, String) -> Result((), IoError)` | Rename / move a file or directory |
+| `stat` | `(String) -> Result(FileStat, IoError)` | Fetch filesystem metadata for a path |
+| `walk` | `(String) -> Result(List(String), IoError)` | Recursively list all paths under a directory |
 
 
 ## `fs.copy`
 
 ```
-fs.copy(from: String, to: String) -> Result((), String)
+fs.copy(from: String, to: String) -> Result((), IoError)
 ```
 
 Copies a file from `from` to `to`. Returns `Ok(())` on success or
@@ -273,7 +286,7 @@ import fs
 fn main() {
     match fs.copy("original.txt", "backup.txt") {
         Ok(_) -> println("copied")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -339,11 +352,11 @@ fn main() {
 ## `fs.list_dir`
 
 ```
-fs.list_dir(path: String) -> Result(List(String), String)
+fs.list_dir(path: String) -> Result(List(String), IoError)
 ```
 
 Returns `Ok(entries)` with a list of entry names in the given directory,
-or `Err(message)` if the path does not exist or is not a directory.
+or `Err(IoError)` if the path does not exist or is not a directory.
 
 ```silt
 import fs
@@ -352,7 +365,7 @@ import list
 fn main() {
     match fs.list_dir(".") {
         Ok(entries) -> list.each(entries) { name -> println(name) }
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -361,11 +374,11 @@ fn main() {
 ## `fs.mkdir`
 
 ```
-fs.mkdir(path: String) -> Result((), String)
+fs.mkdir(path: String) -> Result((), IoError)
 ```
 
 Creates a directory at `path`, including any missing parent directories.
-Returns `Ok(())` on success or `Err(message)` on failure.
+Returns `Ok(())` on success or `Err(IoError)` on failure.
 
 ```silt
 import fs
@@ -373,7 +386,7 @@ import fs
 fn main() {
     match fs.mkdir("output/reports") {
         Ok(_) -> println("directory created")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -382,7 +395,7 @@ fn main() {
 ## `fs.remove`
 
 ```
-fs.remove(path: String) -> Result((), String)
+fs.remove(path: String) -> Result((), IoError)
 ```
 
 Removes a file or an empty directory. Returns `Ok(())` on success or
@@ -394,7 +407,7 @@ import fs
 fn main() {
     match fs.remove("temp.txt") {
         Ok(_) -> println("removed")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -403,11 +416,11 @@ fn main() {
 ## `fs.rename`
 
 ```
-fs.rename(from: String, to: String) -> Result((), String)
+fs.rename(from: String, to: String) -> Result((), IoError)
 ```
 
 Renames (moves) a file or directory from `from` to `to`. Returns `Ok(())`
-on success or `Err(message)` on failure.
+on success or `Err(IoError)` on failure.
 
 ```silt
 import fs
@@ -415,7 +428,7 @@ import fs
 fn main() {
     match fs.rename("old_name.txt", "new_name.txt") {
         Ok(_) -> println("renamed")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -424,7 +437,7 @@ fn main() {
 ## `fs.stat`
 
 ```
-fs.stat(path: String) -> Result(FileStat, String)
+fs.stat(path: String) -> Result(FileStat, IoError)
 
 record FileStat {
     size: Int,                   // size in bytes
@@ -465,7 +478,7 @@ timestamp is universally available:
 Both fields are expressed as naive UTC `DateTime` records (no timezone
 — see the `time` module's "naive" conventions).
 
-Returns `Err(message)` when the path does not exist, permission is
+Returns `Err(IoError)` when the path does not exist, permission is
 denied, or the OS reports another I/O error.
 
 ```silt
@@ -480,7 +493,7 @@ fn main() {
                 None -> println("creation time not tracked on this filesystem")
             }
         }
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -510,7 +523,7 @@ fn main() {
 ## `fs.read_link`
 
 ```
-fs.read_link(path: String) -> Result(String, String)
+fs.read_link(path: String) -> Result(String, IoError)
 ```
 
 Returns the raw target of a symlink (the value it points at, not the
@@ -523,7 +536,7 @@ import fs
 fn main() {
     match fs.read_link("link") {
         Ok(target) -> println("points at {target}")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -532,7 +545,7 @@ fn main() {
 ## `fs.walk`
 
 ```
-fs.walk(root: String) -> Result(List(String), String)
+fs.walk(root: String) -> Result(List(String), IoError)
 ```
 
 Recursively walks the directory tree rooted at `root` and returns a
@@ -549,7 +562,7 @@ symlinks, walk, then post-filter with `fs.stat` / `fs.read_link`.
 
 **Entry cap.** To avoid accidental OOM on huge trees, `fs.walk`
 refuses to materialize more than `1_000_000` entries. Hitting the cap
-returns `Err("fs.walk: exceeded 1000000 entries (cap)")` rather than
+returns `Err(IoUnknown("fs.walk: exceeded 1000000 entries (cap)"))` rather than
 silently truncating — callers can then narrow the root or paginate at
 a higher layer.
 
@@ -559,7 +572,7 @@ import fs
 fn main() {
     match fs.walk("src") {
         Ok(paths) -> println("{paths}")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```
@@ -568,7 +581,7 @@ fn main() {
 ## `fs.glob`
 
 ```
-fs.glob(pattern: String) -> Result(List(String), String)
+fs.glob(pattern: String) -> Result(List(String), IoError)
 ```
 
 Returns the list of paths matching a Unix-style glob `pattern`.
@@ -581,7 +594,7 @@ start with `/` (or a drive prefix on Windows). Syntax mirrors the
 - `[abc]` / `[!abc]` matches one of a character set
 - `**` matches any number of directories recursively
 
-Returns `Err(message)` if the pattern itself is malformed. The result
+Returns `Err(IoInvalidInput(msg))` if the pattern itself is malformed. The result
 is subject to the same `1_000_000`-entry cap as `fs.walk`.
 
 ```silt
@@ -590,7 +603,7 @@ import fs
 fn main() {
     match fs.glob("src/**/*.silt") {
         Ok(files) -> println("{files}")
-        Err(e) -> println("Error: {e}")
+        Err(e) -> println("Error: {e.message()}")
     }
 }
 ```

@@ -32,7 +32,7 @@ fn user_decoder_wraps_json_parse() {
 
         type Todo { id: Int, title: String }
 
-        fn decode(body: String, type a) -> Result(a, String) {
+        fn decode(body: String, type a) -> Result(a, JsonError) {
             json.parse(body, a)
         }
 
@@ -50,7 +50,7 @@ fn user_fn_pipe_target_with_type_param() {
 
         type Todo { id: Int, title: String }
 
-        fn decode(body: String, type a) -> Result(a, String) {
+        fn decode(body: String, type a) -> Result(a, JsonError) {
             json.parse(body, a)
         }
 

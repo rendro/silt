@@ -149,7 +149,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     super::super::register_auto_derived_impls_for(
         checker,
         &["Instant", "Date", "Time", "DateTime", "Duration", "Weekday"],
-        super::super::BUILTIN_TRAIT_NAMES,
+        super::super::BUILTIN_AUTO_DERIVED_TRAIT_NAMES,
     );
 
     // ── Function signatures ──────────────────────────────────────

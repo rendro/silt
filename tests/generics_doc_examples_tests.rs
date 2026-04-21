@@ -115,22 +115,27 @@ fn default_descriptor_dispatch_example() {
 
 #[test]
 fn parse_descriptor_dispatch_example() {
+    // Phase 1 of the stdlib error redesign: `int.parse` now returns
+    // `Result(Int, ParseError)` instead of `Result(Int, String)`, so
+    // the Decode-for-Int impl propagates `ParseError` through the
+    // trait. The parameterized trait still demonstrates the type
+    // descriptor dispatch mechanism; only the error slot changed.
     assert_ok(
         "parse via type descriptor",
         r#"
         import int
 
         trait Decode {
-            fn decode(body: String) -> Result(Self, String)
+            fn decode(body: String) -> Result(Self, ParseError)
         }
 
         trait Decode for Int {
-            fn decode(body: String) -> Result(Int, String) {
+            fn decode(body: String) -> Result(Int, ParseError) {
                 int.parse(body)
             }
         }
 
-        fn parse(body: String, type a) -> Result(a, String) where a: Decode {
+        fn parse(body: String, type a) -> Result(a, ParseError) where a: Decode {
             a.decode(body)
         }
 

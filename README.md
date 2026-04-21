@@ -73,16 +73,13 @@ import json
 
 type Config { name: String }
 
-fn read_config(path) {
-  let content = io.read_file(path)?
-  let config = json.parse(content, Config)?
-  Ok(config)
-}
-
 fn main() {
-  match read_config("settings.json") {
-    Ok(cfg) -> println("loaded: {cfg.name}")
-    Err(e) -> println("error: {e}")
+  match io.read_file("settings.json") {
+    Ok(content) -> match json.parse(content, Config) {
+      Ok(cfg) -> println("loaded: {cfg.name}")
+      Err(msg) -> println("parse error: {msg}")
+    }
+    Err(e) -> println("read error: {e.message()}")
   }
 }
 ```
@@ -110,7 +107,7 @@ fn main() {
       (POST, ["todos"]) ->
         match json.parse(req.body, Todo) {
           Ok(todo) -> Response { status: 201, body: json.stringify(todo), headers: #{} }
-          Err(e) -> Response { status: 400, body: e, headers: #{} }
+          Err(e) -> Response { status: 400, body: e.message(), headers: #{} }
         }
       _ ->
         Response { status: 404, body: "Not found", headers: #{} }

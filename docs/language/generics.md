@@ -262,7 +262,7 @@ let todo: Todo = json.parse(body, Todo)
 `as`:
 
 ```silt
-let r = (int.parse("42") as Result(Int, String))?
+let r = (int.parse("42") as Result(Int, ParseError))?
 [] as List(Int)
 ```
 
