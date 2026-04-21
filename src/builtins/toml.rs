@@ -566,21 +566,21 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         "parse" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "toml.parse takes 2 arguments: (Type, String)".into(),
+                    "toml.parse takes 2 arguments: (String, type a)".into(),
                 ));
             }
-            let Value::RecordDescriptor(type_name) = &args[0] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "toml.parse: first argument must be a record type".into(),
-                ));
-            };
-            let type_name = type_name.clone();
-            let Value::String(s) = &args[1] else {
-                return Err(VmError::new(
-                    "toml.parse: second argument must be a string".into(),
+                    "toml.parse: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let Value::TypeDescriptor(type_name) = &args[1] else {
+                return Err(VmError::new(
+                    "toml.parse: type argument must be a record type".into(),
+                ));
+            };
+            let type_name = type_name.clone();
             let fields = load_record_fields(vm, &type_name)?;
             match ::toml::from_str::<::toml::Value>(&s) {
                 Ok(tv) => toml_to_record(vm, &type_name, &fields, &tv),
@@ -593,21 +593,21 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         "parse_list" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "toml.parse_list takes 2 arguments: (Type, String)".into(),
+                    "toml.parse_list takes 2 arguments: (String, type a)".into(),
                 ));
             }
-            let Value::RecordDescriptor(type_name) = &args[0] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "toml.parse_list: first argument must be a record type".into(),
-                ));
-            };
-            let type_name = type_name.clone();
-            let Value::String(s) = &args[1] else {
-                return Err(VmError::new(
-                    "toml.parse_list: second argument must be a string".into(),
+                    "toml.parse_list: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let Value::TypeDescriptor(type_name) = &args[1] else {
+                return Err(VmError::new(
+                    "toml.parse_list: type argument must be a record type".into(),
+                ));
+            };
+            let type_name = type_name.clone();
             let fields = load_record_fields(vm, &type_name)?;
             match ::toml::from_str::<::toml::Value>(&s) {
                 Ok(tv) => {
@@ -645,22 +645,22 @@ pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
         "parse_map" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "toml.parse_map takes 2 arguments: (ValueType, String)".into(),
+                    "toml.parse_map takes 2 arguments: (String, type v)".into(),
                 ));
             }
-            let value_type = match &args[0] {
-                Value::PrimitiveDescriptor(name) => name.clone(),
-                Value::RecordDescriptor(name) => name.clone(),
-                _ => return Err(VmError::new(
-                    "toml.parse_map: first argument must be a type (Int, Float, String, Bool, or a record type)".into()
-                )),
-            };
-            let Value::String(s) = &args[1] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "toml.parse_map: second argument must be a string".into(),
+                    "toml.parse_map: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let value_type = match &args[1] {
+                Value::PrimitiveDescriptor(name) => name.clone(),
+                Value::TypeDescriptor(name) => name.clone(),
+                _ => return Err(VmError::new(
+                    "toml.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into()
+                )),
+            };
             match ::toml::from_str::<::toml::Value>(&s) {
                 Ok(tv) => toml_to_map(vm, &value_type, &tv),
                 Err(e) => Ok(Value::Variant(

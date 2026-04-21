@@ -526,10 +526,12 @@ impl TypeChecker {
 
         // ── json module ─────────────────────────────────────────────────
 
-        // json.parse: (TypeOf(T), String) -> Result(T, String)
-        // The first arg is a type descriptor (represented as TypeOf(T) so
-        // that it cannot be confused with a value of the underlying type —
-        // T2 audit fix). The carried type flows into the Result.
+        // json.parse: (String, type a) -> Result(a, String)
+        // The `type a` parameter is lowered to a `TypeOf(a)` descriptor in
+        // the function type; the carried type flows into the Result. Type
+        // params come last so pipelines like
+        //   body |> json.parse(Todo)
+        // compose naturally (pipe inserts the piped value as first arg).
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -538,13 +540,13 @@ impl TypeChecker {
                 intern("json.parse"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
         }
 
-        // json.parse_list: (TypeOf(T), String) -> Result(List(T), String)
+        // json.parse_list: (String, type a) -> Result(List(a), String)
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -556,13 +558,13 @@ impl TypeChecker {
                 intern("json.parse_list"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
         }
 
-        // json.parse_map: (TypeOf(V), String) -> Result(Map(String, V), String)
+        // json.parse_map: (String, type v) -> Result(Map(String, v), String)
         {
             let (a, av) = self.fresh_tv();
             let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -574,7 +576,7 @@ impl TypeChecker {
                 intern("json.parse_map"),
                 Scheme {
                     vars: vec![av],
-                    ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                    ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                     constraints: vec![],
                 },
             );
@@ -626,6 +628,76 @@ impl TypeChecker {
                 Scheme {
                     vars: vec![],
                     ty: Type::Generic(intern("TypeOf"), vec![inner]),
+                    constraints: vec![],
+                },
+            );
+        }
+
+        // ── Builtin container descriptors ──────────────────────────────
+        // Parallel to records/enums: `List`, `Map`, `Set`, `Channel` are
+        // registered as polymorphic type descriptors so they can be
+        // passed to `type a` parameters (`make(type t) where t: Empty`
+        // called as `make(List)`). At runtime the compiler emits these
+        // as `Value::TypeDescriptor(<name>)` globals. Method dispatch
+        // via the descriptor routes to method_table[(<name>, method)]
+        // exactly like user-defined parameterized types.
+        {
+            // `List` → forall a. TypeOf(List(a))
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("List"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic(
+                        intern("TypeOf"),
+                        vec![Type::List(Box::new(a))],
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+        {
+            // `Set` → forall a. TypeOf(Set(a))
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("Set"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic(
+                        intern("TypeOf"),
+                        vec![Type::Set(Box::new(a))],
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+        {
+            // `Channel` → forall a. TypeOf(Channel(a))
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("Channel"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Generic(
+                        intern("TypeOf"),
+                        vec![Type::Channel(Box::new(a))],
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+        {
+            // `Map` → forall k v. TypeOf(Map(k, v))
+            let (k, kv) = self.fresh_tv();
+            let (v, vv) = self.fresh_tv();
+            env.define(
+                intern("Map"),
+                Scheme {
+                    vars: vec![kv, vv],
+                    ty: Type::Generic(
+                        intern("TypeOf"),
+                        vec![Type::Map(Box::new(k), Box::new(v))],
+                    ),
                     constraints: vec![],
                 },
             );

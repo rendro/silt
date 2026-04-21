@@ -137,7 +137,10 @@ pub enum Value {
     VmClosure(Arc<bytecode::VmClosure>),
     BuiltinFn(String),
     VariantConstructor(String, usize), // name, arity
-    RecordDescriptor(String),          // record type name
+    /// Runtime token for a user-defined type (record or enum) passed as a
+    /// `type a` argument. Keeps `type T`-style values distinct from
+    /// primitives (see `PrimitiveDescriptor`).
+    TypeDescriptor(String),
     PrimitiveDescriptor(String),       // "Int", "Float", "String", "Bool" — for json.parse_map etc.
     Channel(Arc<Channel>),
     Handle(Arc<TaskHandle>),
@@ -925,7 +928,7 @@ impl fmt::Debug for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::TypeDescriptor(name) => write!(f, "<type:{name}>"),
             Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
@@ -988,7 +991,7 @@ impl Value {
             Value::VmClosure(_) => "<fn>".to_string(),
             Value::BuiltinFn(_) => "<fn>".to_string(),
             Value::VariantConstructor(name, _) => format!("<constructor:{name}>"),
-            Value::RecordDescriptor(name) => format!("<type:{name}>"),
+            Value::TypeDescriptor(name) => format!("<type:{name}>"),
             Value::PrimitiveDescriptor(name) => format!("<type:{name}>"),
             Value::Channel(ch) => format!("<channel:{}>", ch.id),
             Value::Handle(h) => format!("<handle:{}>", h.id),
@@ -1234,7 +1237,7 @@ impl fmt::Display for Value {
             Value::VmClosure(c) => write!(f, "<fn:{}>", c.function.name),
             Value::BuiltinFn(name) => write!(f, "<builtin:{name}>"),
             Value::VariantConstructor(name, _) => write!(f, "<constructor:{name}>"),
-            Value::RecordDescriptor(name) => write!(f, "<type:{name}>"),
+            Value::TypeDescriptor(name) => write!(f, "<type:{name}>"),
             Value::PrimitiveDescriptor(name) => write!(f, "<type:{name}>"),
             Value::Channel(ch) => write!(f, "<channel:{}>", ch.id),
             Value::Handle(h) => write!(f, "<handle:{}>", h.id),
@@ -1370,7 +1373,7 @@ impl PartialEq for Value {
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
             (Value::Record(na, fa), Value::Record(nb, fb)) => na == nb && fa == fb,
-            (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a == b,
+            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a == b,
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a == b,
             (Value::Channel(a), Value::Channel(b)) => a.id == b.id,
             // Structural equality — same content, regardless of Arc identity.
@@ -1436,7 +1439,7 @@ impl Ord for Value {
                 Value::VmClosure(_) => 14,
                 Value::BuiltinFn(_) => 15,
                 Value::VariantConstructor(..) => 16,
-                Value::RecordDescriptor(_) => 17,
+                Value::TypeDescriptor(_) => 17,
                 Value::PrimitiveDescriptor(_) => 18,
                 Value::Bytes(_) => 19,
                 Value::TcpListener(_) => 20,
@@ -1508,7 +1511,7 @@ impl Ord for Value {
                     na.cmp(nb).then_with(|| fa.cmp(fb))
                 }
             }
-            (Value::RecordDescriptor(a), Value::RecordDescriptor(b)) => a.cmp(b),
+            (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.cmp(b),
             (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
             (Value::Channel(a), Value::Channel(b)) => a.id.cmp(&b.id),
             // Structural lex comparison on bytes — required for Eq/Ord
@@ -1699,7 +1702,7 @@ fn value_type_name(v: &Value) -> &'static str {
         Value::Variant(..) => "Variant",
         Value::VmClosure(_) | Value::BuiltinFn(_) => "Function",
         Value::VariantConstructor(..) => "Constructor",
-        Value::RecordDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
+        Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_) => "Type",
         Value::Channel(_) => "Channel",
         Value::Handle(_) => "Handle",
         Value::Bytes(_) => "Bytes",
@@ -1794,7 +1797,7 @@ impl Hash for Value {
                 name.hash(state);
                 arity.hash(state);
             }
-            Value::RecordDescriptor(name) => name.hash(state),
+            Value::TypeDescriptor(name) => name.hash(state),
             Value::PrimitiveDescriptor(name) => name.hash(state),
         }
     }

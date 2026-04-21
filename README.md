@@ -75,7 +75,7 @@ type Config { name: String }
 
 fn read_config(path) {
   let content = io.read_file(path)?
-  let config = json.parse(Config, content)?
+  let config = json.parse(content, Config)?
   Ok(config)
 }
 
@@ -108,7 +108,7 @@ fn main() {
         Response { status: 200, body: json.stringify(todos), headers: #{} }
       }
       (POST, ["todos"]) ->
-        match json.parse(Todo, req.body) {
+        match json.parse(req.body, Todo) {
           Ok(todo) -> Response { status: 201, body: json.stringify(todo), headers: #{} }
           Err(e) -> Response { status: 400, body: e, headers: #{} }
         }

@@ -136,6 +136,21 @@ pub(super) struct RecordInfo {
 #[derive(Debug, Clone)]
 pub(super) struct TraitInfo {
     pub(super) _name: Symbol,
+    /// Type-parameter names on the trait itself (e.g.
+    /// `trait TryInto(b)` yields `[b]`). Empty for parameter-less
+    /// traits — the common case.
+    #[allow(dead_code)]
+    pub(super) params: Vec<Symbol>,
+    /// Fresh TyVars allocated for each trait parameter at
+    /// `register_trait_decl`. Stored so impls (and where clauses with
+    /// trait args) can substitute their args into the trait's method
+    /// signatures via `substitute_vars`. Parallel to `params`.
+    pub(super) param_var_ids: Vec<TyVar>,
+    /// Bounds declared directly on trait params, e.g.
+    /// `trait HashTable(k) where k: Hash`. Each `(param_name, trait_name)`
+    /// entry is checked at `register_trait_impl` against the concrete
+    /// type the impl supplies for that param.
+    pub(super) param_where_clauses: Vec<(Symbol, Symbol)>,
     /// Supertrait names (e.g. `trait Ordered: Equal` yields `[Equal]`).
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in
@@ -143,6 +158,14 @@ pub(super) struct TraitInfo {
     /// transitively to enable supertrait method calls inside `where`
     /// clauses.
     pub(super) supertraits: Vec<Symbol>,
+    /// Parallel to `supertraits`: the TypeExpr args supplied to each
+    /// supertrait reference. For `trait Sub(a): Super(a)` the entry for
+    /// `Super` is `[TypeExpr::Named("a")]`. Empty when the supertrait
+    /// is referenced without args. The `expand_with_supertraits_args`
+    /// path uses these to propagate the enclosing trait's args into
+    /// the supertrait's `trait_arg_bindings` during where-clause
+    /// activation. Arg-less entries keep the bare-name behaviour.
+    pub(super) supertrait_args: Vec<Vec<TypeExpr>>,
     pub(super) methods: Vec<(Symbol, Type)>,
     /// Source span of the trait declaration. Used by
     /// `validate_trait_impls` to report unknown-supertrait errors at the
@@ -254,6 +277,14 @@ pub struct TypeChecker {
     /// Maps type variable → list of trait names it must satisfy.
     /// Populated during `check_fn_body` to enable method resolution on constrained vars.
     pub(super) active_constraints: HashMap<TyVar, Vec<Symbol>>,
+    /// Side channel holding trait arguments for parameterized-trait
+    /// constraints, e.g. `where a: TryInto(Int)` stores `[Int]` under
+    /// the key `(tyvar_of_a, TryInto)`. Populated during
+    /// `register_fn_decl` and `register_trait_impl` alongside the
+    /// parallel monomorphic `active_constraints`; consumed during
+    /// descriptor method resolution to substitute trait params.
+    /// Absent for bare `where a: Display` entries.
+    pub(super) trait_arg_bindings: HashMap<(TyVar, Symbol), Vec<Type>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
     /// Maps record type names to their type parameter TyVar ids.
@@ -348,6 +379,7 @@ impl TypeChecker {
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
+            trait_arg_bindings: HashMap::new(),
             current_return_type: None,
             record_param_var_ids: HashMap::new(),
             fn_body_types: HashMap::new(),
@@ -426,7 +458,29 @@ impl TypeChecker {
 
             (Type::Var(v), t) | (t, Type::Var(v)) => {
                 if occurs_in(*v, t) {
-                    self.error(format!("infinite type: ?{v} occurs in {t}"), span);
+                    // Special case: trying to unify a type var `a` with
+                    // `TypeOf(a)` means the user returned a `type a`
+                    // parameter's value where they promised a value of
+                    // type `a`. The descriptor is the *type*, not an
+                    // instance of it.
+                    if let Type::Generic(name, args) = t
+                        && resolve(*name) == "TypeOf"
+                        && args.len() == 1
+                        && matches!(&args[0], Type::Var(inner) if inner == v)
+                    {
+                        self.error(
+                            "cannot return a `type a` parameter as a value of type `a` — \
+                             the parameter is a type descriptor, not an instance. \
+                             Construct an `a` in the body instead."
+                                .to_string(),
+                            span,
+                        );
+                    } else {
+                        self.error(
+                            format!("infinite type: the type variable appears inside {t}"),
+                            span,
+                        );
+                    }
                 } else {
                     self.subst[*v] = Some(t.clone());
                 }
@@ -434,11 +488,11 @@ impl TypeChecker {
 
             (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
                 if p1.len() != p2.len() {
+                    let (exp, got) = (p1.len(), p2.len());
                     self.error(
                         format!(
-                            "function arity mismatch: expected {} args, got {}",
-                            p1.len(),
-                            p2.len()
+                            "function expects {exp} {arg_word}, got {got}",
+                            arg_word = if exp == 1 { "argument" } else { "arguments" }
                         ),
                         span,
                     );
@@ -596,7 +650,31 @@ impl TypeChecker {
             }
 
             _ => {
-                self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                // Suppress cascade errors where either side is already in
+                // error state — a previous diagnostic explained the root
+                // cause and further mismatch reports would confuse.
+                if matches!(&t1, Type::Error) || matches!(&t2, Type::Error) {
+                    return;
+                }
+                // When either side is an unresolved type variable, the
+                // user doesn't have a user-facing name for it yet
+                // (`?17` is internal). Report as "cannot determine" and
+                // nudge toward an annotation.
+                match (&t1, &t2) {
+                    (Type::Var(_), other) | (other, Type::Var(_)) => {
+                        self.error(
+                            format!(
+                                "cannot determine a consistent type here; \
+                                 one side resolved to `{other}` but the other \
+                                 is still unspecified — add a type annotation"
+                            ),
+                            span,
+                        );
+                    }
+                    _ => {
+                        self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                    }
+                }
             }
         }
     }
@@ -1482,6 +1560,29 @@ impl TypeChecker {
                     self.variant_to_enum.insert(variant.name, td.name);
                 }
 
+                // Register the enum type name as a value so it can be
+                // passed to `type a` parameters (`json.parse(body, Color)`,
+                // user-defined decoders, etc.). Mirrors the record path.
+                // Skipped when a variant shares the enum's name
+                // (e.g. `type Box(T) { Box(T) }`) because the variant
+                // constructor is already bound under the same symbol.
+                let variant_shares_name = variant_infos.iter().any(|v| v.name == td.name);
+                if !variant_shares_name {
+                    let enum_ty = if td.params.is_empty() {
+                        Type::Generic(td.name, vec![])
+                    } else {
+                        let args: Vec<Type> =
+                            td.params.iter().map(|p| param_vars[p].clone()).collect();
+                        Type::Generic(td.name, args)
+                    };
+                    let scheme = Scheme {
+                        vars: var_ids.clone(),
+                        ty: Type::Generic(intern("TypeOf"), vec![enum_ty]),
+                        constraints: vec![],
+                    };
+                    env.define(td.name, scheme);
+                }
+
                 self.enums.insert(
                     td.name,
                     EnumInfo {
@@ -1538,9 +1639,9 @@ impl TypeChecker {
                 );
 
                 // Register the record type name as a value so it can be
-                // passed to json.parse: `json.parse(Employee, str)`.
+                // passed to a `type a` parameter, e.g. `json.parse(body, Employee)`.
                 // The value is a TYPE DESCRIPTOR at runtime (represented
-                // as `Value::RecordDescriptor(name)`), so its type must
+                // as `Value::TypeDescriptor(name)`), so its type must
                 // be `TypeOf(Employee)` rather than `Employee` itself —
                 // otherwise the typechecker would let users write things
                 // like `Employee.field` or use the descriptor as an
@@ -1841,16 +1942,61 @@ impl TypeChecker {
         // arity error on parameter / return type annotations.
         let prev_type_span = self.current_type_anno_span.replace(f.span);
         for param in &f.params {
-            let ty = if let Some(te) = &param.ty {
-                self.resolve_type_expr(te, &mut param_map)
-            } else {
-                self.fresh_var()
+            let ty = match param.kind {
+                ParamKind::Type => {
+                    // `type a` parameter — seed `a` as a fresh type variable
+                    // in `param_map` so it is in scope for the rest of the
+                    // signature and any where clauses. The parameter's own
+                    // compile-time type is the runtime type descriptor
+                    // `TypeOf(a)`, which unifies with record / primitive
+                    // descriptor globals at call sites.
+                    let name = match &param.pattern.kind {
+                        PatternKind::Ident(n) => *n,
+                        _ => unreachable!(
+                            "parser guarantees `type` params use an Ident pattern"
+                        ),
+                    };
+                    let var = param_map
+                        .entry(name)
+                        .or_insert_with(|| self.fresh_var())
+                        .clone();
+                    Type::Generic(intern("TypeOf"), vec![var])
+                }
+                ParamKind::Data => {
+                    if let Some(te) = &param.ty {
+                        self.resolve_type_expr(te, &mut param_map)
+                    } else {
+                        self.fresh_var()
+                    }
+                }
             };
             param_types.push(ty);
         }
 
+        // Binding rule: every lowercase type variable that appears in the
+        // user-written return annotation must also be introduced by some
+        // parameter (regular annotation or `type a`). Detected by
+        // snapshotting `param_map` before resolving the return annotation —
+        // any new key added afterwards is a variable that only appears in
+        // the return, with no anchor.
+        let pre_return_keys: std::collections::HashSet<Symbol> =
+            param_map.keys().copied().collect();
         let ret_type = if let Some(te) = &f.return_type {
-            self.resolve_type_expr(te, &mut param_map)
+            let resolved = self.resolve_type_expr(te, &mut param_map);
+            for (name, _) in param_map.iter() {
+                if !pre_return_keys.contains(name) {
+                    let n = resolve(*name);
+                    self.error(
+                        format!(
+                            "type variable '{}' in return type is not introduced by any parameter; \
+                             add a `type {}` parameter or anchor it on an existing parameter's type",
+                            n, n
+                        ),
+                        f.span,
+                    );
+                }
+            }
+            resolved
         } else {
             self.fresh_var()
         };
@@ -1861,11 +2007,22 @@ impl TypeChecker {
 
         // Resolve where clauses to (TyVar, trait_name) using param_map.
         // Type variables must be introduced via explicit type annotations in the signature.
-        for (type_param, trait_name) in &f.where_clauses {
+        // Trait args (for parameterized traits like `a: TryInto(b)`) are
+        // resolved through `param_map` and stashed in `trait_arg_bindings`
+        // so descriptor method resolution can substitute them later.
+        for (type_param, trait_name, trait_args) in &f.where_clauses {
             if let Some(ty) = param_map.get(type_param) {
                 let resolved = self.apply(ty);
                 if let Type::Var(tv) = resolved {
                     scheme.constraints.push((tv, *trait_name));
+                    if !trait_args.is_empty() {
+                        let resolved_args: Vec<Type> = trait_args
+                            .iter()
+                            .map(|te| self.resolve_type_expr(te, &mut param_map))
+                            .collect();
+                        self.trait_arg_bindings
+                            .insert((tv, *trait_name), resolved_args);
+                    }
                 }
             } else {
                 let first_param_name = f
@@ -1929,18 +2086,54 @@ impl TypeChecker {
         }
 
         let self_var = self.fresh_var();
+        // Allocate a fresh TyVar for each trait-level parameter. These
+        // are in scope across every method signature — writing
+        // `trait TryInto(b) { fn try_into(self) -> Result(b, Error) }`
+        // makes `b` resolve to the same TyVar in the method.
+        let trait_param_vars: Vec<(Symbol, Type)> = t
+            .params
+            .iter()
+            .map(|p| (*p, self.fresh_var()))
+            .collect();
+        let param_var_ids: Vec<TyVar> = trait_param_vars
+            .iter()
+            .map(|(_, ty)| match ty {
+                Type::Var(v) => *v,
+                _ => unreachable!("fresh_var always returns Type::Var"),
+            })
+            .collect();
         let methods: Vec<(Symbol, Type)> = t
             .methods
             .iter()
             .map(|m| {
                 let mut param_map = HashMap::new();
                 param_map.insert(intern("Self"), self_var.clone());
+                for (name, ty) in &trait_param_vars {
+                    param_map.insert(*name, ty.clone());
+                }
                 let mut param_types = Vec::new();
                 for param in &m.params {
-                    let ty = if let Some(te) = &param.ty {
-                        self.resolve_type_expr(te, &mut param_map)
-                    } else {
-                        self.fresh_var()
+                    let ty = match param.kind {
+                        ParamKind::Type => {
+                            let name = match &param.pattern.kind {
+                                PatternKind::Ident(n) => *n,
+                                _ => unreachable!(
+                                    "parser guarantees `type` params use an Ident pattern"
+                                ),
+                            };
+                            let var = param_map
+                                .entry(name)
+                                .or_insert_with(|| self.fresh_var())
+                                .clone();
+                            Type::Generic(intern("TypeOf"), vec![var])
+                        }
+                        ParamKind::Data => {
+                            if let Some(te) = &param.ty {
+                                self.resolve_type_expr(te, &mut param_map)
+                            } else {
+                                self.fresh_var()
+                            }
+                        }
                     };
                     param_types.push(ty);
                 }
@@ -1963,11 +2156,30 @@ impl TypeChecker {
             .map(|m| (m.name, (*m).clone()))
             .collect();
 
+        // Trait-level where bounds on params. Only the (param_name,
+        // trait_name) shape is kept; trait_args on the bound are not
+        // yet honored (reserved for a future extension where bounds
+        // can themselves reference other trait args).
+        let param_where_clauses: Vec<(Symbol, Symbol)> = t
+            .param_where_clauses
+            .iter()
+            .map(|(var, tr, _args)| (*var, *tr))
+            .collect();
+
+        let supertrait_names: Vec<Symbol> =
+            t.supertraits.iter().map(|(n, _)| *n).collect();
+        let supertrait_args: Vec<Vec<TypeExpr>> =
+            t.supertraits.iter().map(|(_, a)| a.clone()).collect();
+
         self.traits.insert(
             t.name,
             TraitInfo {
                 _name: t.name,
-                supertraits: t.supertraits.clone(),
+                params: t.params.clone(),
+                param_var_ids,
+                supertraits: supertrait_names,
+                supertrait_args,
+                param_where_clauses,
                 methods,
                 decl_span: t.span,
                 default_method_bodies,
@@ -2225,7 +2437,7 @@ impl TypeChecker {
         // resolution can recursively verify the impl's own where clauses
         // against the actual concrete type arguments at the call site.
         let mut impl_obligations_by_index: Vec<(usize, Symbol)> = Vec::new();
-        for (type_param, trait_name) in &ti.where_clauses {
+        for (type_param, trait_name, _trait_args) in &ti.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
@@ -2279,6 +2491,58 @@ impl TypeChecker {
         // trait impl used to silently overwrite the earlier definition
         // in the method_table. Track a seen-set and reject the second
         // (and subsequent) occurrences.
+        // Validate trait_args against the trait's declared parameter
+        // count. `trait Foo(a, b)` must be implemented as `trait Foo(X, Y) for T`;
+        // a parameterless trait must be `trait Foo for T` (no args).
+        // When the count matches and the trait declared param-level
+        // where bounds, verify that each supplied arg satisfies the
+        // declared bounds — concrete types are checked now via
+        // `verify_trait_obligation`; unresolved tyvars are added as
+        // impl-level constraints so body checking sees them.
+        let trait_info_clone = self.traits.get(&ti.trait_name).cloned();
+        if let Some(trait_info) = &trait_info_clone {
+            if ti.trait_args.len() != trait_info.params.len() {
+                self.error(
+                    format!(
+                        "trait '{}' expects {} type argument(s), got {} in impl for '{}'",
+                        resolve(ti.trait_name),
+                        trait_info.params.len(),
+                        ti.trait_args.len(),
+                        resolve(ti.target_type),
+                    ),
+                    ti.span,
+                );
+            } else if !trait_info.param_where_clauses.is_empty() {
+                // Resolve each supplied trait arg through impl_param_map
+                // so lowercase names bind to the same fresh tyvars used
+                // by the impl's methods.
+                let resolved_trait_args: Vec<Type> = ti
+                    .trait_args
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
+                    .collect();
+                for (param_name, bound_trait) in &trait_info.param_where_clauses {
+                    let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
+                    else {
+                        continue;
+                    };
+                    let Some(arg_ty) = resolved_trait_args.get(idx) else {
+                        continue;
+                    };
+                    let applied = self.apply(arg_ty);
+                    match &applied {
+                        Type::Var(_) => {
+                            // Deferred — the impl's own where clause path
+                            // will propagate it; skip here.
+                        }
+                        _ => {
+                            self.verify_trait_obligation(*bound_trait, &applied, ti.span);
+                        }
+                    }
+                }
+            }
+        }
+
         let trait_method_names: Option<std::collections::HashSet<Symbol>> = self
             .traits
             .get(&ti.trait_name)
@@ -2318,17 +2582,34 @@ impl TypeChecker {
             param_map.insert(intern("Self"), self_type.clone());
             let mut param_types = Vec::new();
             for (i, param) in method.params.iter().enumerate() {
-                let ty = if let Some(te) = &param.ty {
-                    self.resolve_type_expr(te, &mut param_map)
-                } else if i == 0
-                    && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym)
-                {
-                    // Bare `self` parameter in a trait impl: type it as the
-                    // target type so field/method accesses on `self` are
-                    // properly checked against the impl's target.
-                    self_type.clone()
-                } else {
-                    self.fresh_var()
+                let ty = match param.kind {
+                    ParamKind::Type => {
+                        let name = match &param.pattern.kind {
+                            PatternKind::Ident(n) => *n,
+                            _ => unreachable!(
+                                "parser guarantees `type` params use an Ident pattern"
+                            ),
+                        };
+                        let var = param_map
+                            .entry(name)
+                            .or_insert_with(|| self.fresh_var())
+                            .clone();
+                        Type::Generic(intern("TypeOf"), vec![var])
+                    }
+                    ParamKind::Data => {
+                        if let Some(te) = &param.ty {
+                            self.resolve_type_expr(te, &mut param_map)
+                        } else if i == 0
+                            && matches!(&param.pattern.kind, PatternKind::Ident(n) if *n == self_sym)
+                        {
+                            // Bare `self` parameter in a trait impl: type it as the
+                            // target type so field/method accesses on `self` are
+                            // properly checked against the impl's target.
+                            self_type.clone()
+                        } else {
+                            self.fresh_var()
+                        }
+                    }
                 };
                 param_types.push(ty);
             }
@@ -2375,7 +2656,7 @@ impl TypeChecker {
             // never consulted `method.where_clauses`. The impl-level
             // follow-up folds that latent gap into the same code path.
             let mut method_constraints = impl_level_constraints.clone();
-            for (type_param, trait_name) in &method.where_clauses {
+            for (type_param, trait_name, _trait_args) in &method.where_clauses {
                 if !self.traits.contains_key(trait_name) {
                     self.error(
                         format!(
@@ -2595,7 +2876,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             intern("Display"),
             TraitInfo {
                 _name: intern("Display"),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
+                supertrait_args: Vec::new(),
+                param_where_clauses: Vec::new(),
                 methods: vec![(
                     intern("display"),
                     Type::Fun(vec![display_self], Box::new(Type::String)),
@@ -2612,7 +2897,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             intern("Compare"),
             TraitInfo {
                 _name: intern("Compare"),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
+                supertrait_args: Vec::new(),
+                param_where_clauses: Vec::new(),
                 methods: vec![(
                     intern("compare"),
                     Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
@@ -2629,7 +2918,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             intern("Equal"),
             TraitInfo {
                 _name: intern("Equal"),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
+                supertrait_args: Vec::new(),
+                param_where_clauses: Vec::new(),
                 methods: vec![(
                     intern("equal"),
                     Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
@@ -2645,7 +2938,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
             intern("Hash"),
             TraitInfo {
                 _name: intern("Hash"),
+                params: Vec::new(),
+                param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
+                supertrait_args: Vec::new(),
+                param_where_clauses: Vec::new(),
                 methods: vec![(
                     intern("hash"),
                     Type::Fun(vec![hash_self], Box::new(Type::Int)),
@@ -4814,7 +5111,7 @@ fn main() {
   42 - "hello"
 }
             "#,
-            "type mismatch",
+            "operator '-'",
         );
     }
 
@@ -5228,8 +5525,8 @@ fn main() -> Result {
             "function arity mismatch should produce an error"
         );
         assert!(
-            tc.errors[0].message.contains("arity mismatch"),
-            "expected 'arity mismatch' error, got: {}",
+            tc.errors[0].message.contains("expects") && tc.errors[0].message.contains("argument"),
+            "expected arity diagnostic, got: {}",
             tc.errors[0].message
         );
     }

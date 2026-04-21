@@ -1554,7 +1554,7 @@ fn test_json_parse_rejects_out_of_range_int() {
     let result = run(r#"
 import json
 type Payload { n: Int }
-fn main() = json.parse(Payload, """{"n": 1e100}""")
+fn main() = json.parse("""{"n": 1e100}""", Payload)
 "#);
     match result {
         Value::Variant(ref tag, ref payload) if tag == "Err" => {

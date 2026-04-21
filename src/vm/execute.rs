@@ -623,7 +623,7 @@ impl Vm {
             }
             _ => Err(VmError::new(format!(
                 "cannot call value of type {}",
-                self.type_name(&func_val)
+                self.user_facing_type_name(&func_val)
             ))),
         }
     }
@@ -830,7 +830,7 @@ impl Vm {
             }
             _ => Err(VmError::new(format!(
                 "cannot call value of type {}",
-                self.type_name(func)
+                self.user_facing_type_name(func)
             ))),
         }
     }
@@ -1176,7 +1176,7 @@ impl Vm {
                     other => {
                         return Err(VmError::new(format!(
                             "cannot negate {}",
-                            self.type_name(&other)
+                            self.user_facing_type_name(&other)
                         )));
                     }
                 }
@@ -1188,7 +1188,7 @@ impl Vm {
                     other => {
                         return Err(VmError::new(format!(
                             "cannot apply 'not' to {}",
-                            self.type_name(&other)
+                            self.user_facing_type_name(&other)
                         )));
                     }
                 }
@@ -1200,7 +1200,13 @@ impl Vm {
                     (Value::Bool(a_val), Value::Bool(b_val)) => {
                         self.push(Value::Bool(*a_val && *b_val))
                     }
-                    _ => return Err(VmError::new("logical 'and' requires two booleans".into())),
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "`and` requires two Bool operands, got {} and {}",
+                            self.user_facing_type_name(&a),
+                            self.user_facing_type_name(&b)
+                        )));
+                    }
                 }
             }
             Op::Or => {
@@ -1210,7 +1216,13 @@ impl Vm {
                     (Value::Bool(a_val), Value::Bool(b_val)) => {
                         self.push(Value::Bool(*a_val || *b_val))
                     }
-                    _ => return Err(VmError::new("logical 'or' requires two booleans".into())),
+                    _ => {
+                        return Err(VmError::new(format!(
+                            "`or` requires two Bool operands, got {} and {}",
+                            self.user_facing_type_name(&a),
+                            self.user_facing_type_name(&b)
+                        )));
+                    }
                 }
             }
             Op::DisplayValue => {
@@ -1226,7 +1238,7 @@ impl Vm {
                 let count = self.read_u8()? as usize;
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "StringConcat: need {} values but stack has {}",
+                        "internal: string interpolation expects {} values but only {} are available",
                         count,
                         self.stack.len()
                     )));
@@ -1238,9 +1250,11 @@ impl Vm {
                     if let Value::String(ref s) = self.stack[i] {
                         total_len += s.len();
                     } else {
-                        return Err(VmError::new(
-                            "StringConcat: non-string value on stack".into(),
-                        ));
+                        return Err(VmError::new(format!(
+                            "string interpolation requires string values, got {} \
+                             — call `.to_string()` or `.display()` on the value first",
+                            self.user_facing_type_name(&self.stack[i])
+                        )));
                     }
                 }
                 let mut result = String::with_capacity(total_len);
@@ -1580,7 +1594,10 @@ impl Vm {
                     }
                     self.push(Value::Record(type_name, existing));
                 } else {
-                    return Err(VmError::new("record update on non-record".into()));
+                    return Err(VmError::new(format!(
+                        "record update `.{{...}}` requires a record, got {}",
+                        self.user_facing_type_name(&base)
+                    )));
                 }
             }
             Op::MakeRange => {
@@ -1589,7 +1606,11 @@ impl Vm {
                 if let (Value::Int(a), Value::Int(b)) = (&start, &end) {
                     self.push(Value::Range(*a, *b));
                 } else {
-                    return Err(VmError::new("range requires two integers".into()));
+                    return Err(VmError::new(format!(
+                        "range `a..b` requires two Int operands, got {} and {}",
+                        self.user_facing_type_name(&start),
+                        self.user_facing_type_name(&end)
+                    )));
                 }
             }
             Op::ListConcat => {
@@ -1656,7 +1677,7 @@ impl Vm {
                         return Err(VmError::new(format!(
                             "cannot access field '{}' on {}",
                             name,
-                            self.type_name(&other)
+                            self.user_facing_type_name(&other)
                         )));
                     }
                 }
@@ -1673,7 +1694,7 @@ impl Vm {
                 } else {
                     return Err(VmError::new(format!(
                         "cannot index into {}",
-                        self.type_name(&target)
+                        self.user_facing_type_name(&target)
                     )));
                 }
             }
@@ -1791,7 +1812,7 @@ impl Vm {
                 } else {
                     return Err(VmError::new(format!(
                         "tuple destructure: expected tuple, got {}",
-                        self.type_name(&val)
+                        self.user_facing_type_name(&val)
                     )));
                 }
             }
@@ -1810,7 +1831,7 @@ impl Vm {
                 } else {
                     return Err(VmError::new(format!(
                         "variant destructure: expected variant, got {}",
-                        self.type_name(&val)
+                        self.user_facing_type_name(&val)
                     )));
                 }
             }
@@ -1840,7 +1861,7 @@ impl Vm {
                     _ => {
                         return Err(VmError::new(format!(
                             "list destructure: expected list, got {}",
-                            self.type_name(&val)
+                            self.user_facing_type_name(&val)
                         )));
                     }
                 }
@@ -1876,7 +1897,7 @@ impl Vm {
                     _ => {
                         return Err(VmError::new(format!(
                             "list destructure: expected list, got {}",
-                            self.type_name(&val)
+                            self.user_facing_type_name(&val)
                         )));
                     }
                 }
@@ -1894,7 +1915,7 @@ impl Vm {
                 } else {
                     return Err(VmError::new(format!(
                         "record destructure: expected record, got {}",
-                        self.type_name(&val)
+                        self.user_facing_type_name(&val)
                     )));
                 }
             }
@@ -1928,7 +1949,7 @@ impl Vm {
                 } else {
                     return Err(VmError::new(format!(
                         "map destructure: expected map, got {}",
-                        self.type_name(&val)
+                        self.user_facing_type_name(&val)
                     )));
                 }
             }
@@ -1985,12 +2006,16 @@ impl Vm {
                                 finished_base,
                             });
                         }
-                        _ => return Err(VmError::new(format!("? on non-Result/Option: {tag}"))),
+                        _ => {
+                            return Err(VmError::new(format!(
+                                "`?` applies only to Result or Option; got variant `{tag}`"
+                            )));
+                        }
                     },
                     _ => {
                         return Err(VmError::new(format!(
-                            "? on non-variant: {}",
-                            self.type_name(&val)
+                            "`?` applies only to Result or Option; got {}",
+                            self.user_facing_type_name(&val)
                         )));
                     }
                 }
@@ -2012,15 +2037,34 @@ impl Vm {
                 let receiver_slot = self.stack.len() - argc;
                 let receiver = self.stack[receiver_slot].clone();
                 let type_name = self.value_type_name_for_dispatch(&receiver);
+                // Descriptor-as-receiver (e.g. `Int.default()`,
+                // `body.decode(Todo)` where the descriptor is piped in) is
+                // a dispatch key, not a value argument. The method's
+                // compiled body never has a slot for it — skip it when
+                // assembling the argument vector.
+                let descriptor_receiver = matches!(
+                    &receiver,
+                    Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
+                );
                 let qualified = format!("{type_name}.{method_name}");
                 if let Some(func) = self.globals.get(&qualified).cloned() {
-                    let args: Vec<Value> = self.stack[receiver_slot..].to_vec();
+                    let args: Vec<Value> = if descriptor_receiver {
+                        self.stack[receiver_slot + 1..].to_vec()
+                    } else {
+                        self.stack[receiver_slot..].to_vec()
+                    };
                     self.stack.truncate(receiver_slot);
                     match self.invoke_callable(&func, &args) {
                         Ok(result) => self.push(result),
                         Err(e) if e.is_yield => {
-                            // Re-push receiver + args so CallMethod can re-read
-                            // them when the instruction re-executes after resume.
+                            // Re-push the stack frame this CallMethod read
+                            // so the instruction re-executes cleanly on
+                            // resume. For descriptor receivers we also
+                            // push the descriptor back so the next read
+                            // of argc slots finds it at the bottom.
+                            if descriptor_receiver {
+                                self.push(receiver.clone());
+                            }
                             for arg in &args {
                                 self.push(arg.clone());
                             }

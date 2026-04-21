@@ -71,7 +71,7 @@ type User { name: String, id: Int }
 
 fn fetch_user(name) {
   let resp = http.get("https://api.example.com/users/{name}")?
-  json.parse(User, resp.body)
+  json.parse(resp.body, User)
 }
 ```
 
@@ -143,7 +143,7 @@ fn main() {
         Response { status: 200, body: "User {id}", headers: #{} }
 
       (POST, ["users"]) ->
-        match json.parse(User, req.body) {
+        match json.parse(req.body, User) {
           Ok(user) -> Response {
             status: 201,
             body: json.stringify(user),

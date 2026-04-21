@@ -605,6 +605,10 @@ impl Vm {
         cache.get(pattern)
     }
 
+    /// Internal-facing type name used in debug / invariant checks.
+    /// Surfaces enum-variant names for the underlying `Value` kinds.
+    /// Do NOT use in user-facing diagnostics — call
+    /// `user_facing_type_name` instead.
     fn type_name(&self, val: &Value) -> &'static str {
         match val {
             Value::Int(_) => "Int",
@@ -622,7 +626,7 @@ impl Vm {
             Value::VmClosure(_) => "Function",
             Value::BuiltinFn(_) => "BuiltinFn",
             Value::VariantConstructor(..) => "VariantConstructor",
-            Value::RecordDescriptor(_) => "RecordDescriptor",
+            Value::TypeDescriptor(_) => "TypeDescriptor",
             Value::PrimitiveDescriptor(_) => "PrimitiveDescriptor",
             Value::Channel(_) => "Channel",
             Value::Handle(_) => "Handle",
@@ -630,6 +634,46 @@ impl Vm {
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
             Value::Unit => "Unit",
+        }
+    }
+
+    /// Human-readable type name for error messages. Renders descriptor
+    /// and function-shaped values in surface-syntax terms rather than
+    /// leaking internal `Value` variant names.
+    pub(crate) fn user_facing_type_name(&self, val: &Value) -> String {
+        match val {
+            Value::Int(_) => "Int".to_string(),
+            Value::Float(_) => "Float".to_string(),
+            Value::ExtFloat(_) => "ExtFloat".to_string(),
+            Value::Bool(_) => "Bool".to_string(),
+            Value::String(_) => "String".to_string(),
+            Value::List(_) => "List".to_string(),
+            Value::Range(..) => "range".to_string(),
+            Value::Map(_) => "Map".to_string(),
+            Value::Set(_) => "Set".to_string(),
+            Value::Tuple(_) => "tuple".to_string(),
+            Value::Record(name, _) => name.clone(),
+            Value::Variant(tag, _) => {
+                let key = format!("__type_of__{tag}");
+                if let Some(Value::String(type_name)) = self.globals.get(&key) {
+                    type_name.clone()
+                } else {
+                    tag.clone()
+                }
+            }
+            Value::VmClosure(_) | Value::BuiltinFn(_) => "a function".to_string(),
+            Value::VariantConstructor(name, _) => {
+                format!("a constructor `{name}`")
+            }
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => {
+                format!("type `{name}`")
+            }
+            Value::Channel(_) => "a channel".to_string(),
+            Value::Handle(_) => "a task handle".to_string(),
+            Value::Bytes(_) => "Bytes".to_string(),
+            Value::TcpListener(_) => "a TCP listener".to_string(),
+            Value::TcpStream(_) => "a TCP stream".to_string(),
+            Value::Unit => "Unit".to_string(),
         }
     }
 
@@ -654,6 +698,11 @@ impl Vm {
             Value::Map(_) => "Map".to_string(),
             Value::Set(_) => "Set".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),
+            // Type descriptors dispatch on the carried type name, so
+            // `Int.default()` and `Todo.decode(...)` route to impls of
+            // `Int` / `Todo` even though the descriptor value itself is
+            // neither an Int nor a Todo.
+            Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => name.clone(),
             _ => "Unknown".to_string(),
         }
     }

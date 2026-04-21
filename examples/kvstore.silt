@@ -97,7 +97,7 @@ fn handle_load() {
       #{}
     }
     Ok(content) -> {
-      match json.parse_map(String, content) {
+      match json.parse_map(content, String) {
         Ok(loaded) -> {
           println("OK - loaded {map.length(loaded)} entries from {db_path}")
           loaded

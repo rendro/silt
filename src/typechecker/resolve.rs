@@ -51,7 +51,9 @@ impl TypeChecker {
                 let bound_names = collect_pattern_vars(pattern);
                 if bound_names.is_empty() {
                     self.error(
-                        "could not fully determine the type of this expression; consider adding a type annotation".to_string(),
+                        "cannot infer the type of this expression — \
+                         add an annotation, e.g. `let x: SomeType = ...`"
+                            .to_string(),
                         *span,
                     );
                     continue;
@@ -71,8 +73,12 @@ impl TypeChecker {
                 });
 
                 if !used_elsewhere {
+                    let first = resolve(bound_names[0]);
                     self.error(
-                        "could not fully determine the type of this expression; consider adding a type annotation".to_string(),
+                        format!(
+                            "cannot infer the type of `{first}` — \
+                             add an annotation, e.g. `let {first}: SomeType = ...`"
+                        ),
                         *span,
                     );
                 }
@@ -266,8 +272,12 @@ impl TypeChecker {
                 });
 
                 if !used_later {
+                    let first = resolve(bound_names[0]);
                     self.error(
-                        "could not fully determine the type of this expression; consider adding a type annotation".to_string(),
+                        format!(
+                            "cannot infer the type of `{first}` — \
+                             add an annotation, e.g. `let {first}: SomeType = ...`"
+                        ),
                         value.span,
                     );
                 }

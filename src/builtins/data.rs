@@ -1023,21 +1023,21 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         "parse" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "json.parse takes 2 arguments: (Type, String)".into(),
+                    "json.parse takes 2 arguments: (String, type a)".into(),
                 ));
             }
-            let Value::RecordDescriptor(type_name) = &args[0] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "json.parse: first argument must be a record type".into(),
-                ));
-            };
-            let type_name = type_name.clone();
-            let Value::String(s) = &args[1] else {
-                return Err(VmError::new(
-                    "json.parse: second argument must be a string".into(),
+                    "json.parse: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let Value::TypeDescriptor(type_name) = &args[1] else {
+                return Err(VmError::new(
+                    "json.parse: type argument must be a record type".into(),
+                ));
+            };
+            let type_name = type_name.clone();
             let fields = load_record_fields(vm, &type_name)?;
             match serde_json::from_str::<serde_json::Value>(&s) {
                 Ok(json_val) => json_to_record(vm, &type_name, &fields, &json_val),
@@ -1050,21 +1050,21 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         "parse_list" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "json.parse_list takes 2 arguments: (Type, String)".into(),
+                    "json.parse_list takes 2 arguments: (String, type a)".into(),
                 ));
             }
-            let Value::RecordDescriptor(type_name) = &args[0] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "json.parse_list: first argument must be a record type".into(),
-                ));
-            };
-            let type_name = type_name.clone();
-            let Value::String(s) = &args[1] else {
-                return Err(VmError::new(
-                    "json.parse_list: second argument must be a string".into(),
+                    "json.parse_list: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let Value::TypeDescriptor(type_name) = &args[1] else {
+                return Err(VmError::new(
+                    "json.parse_list: type argument must be a record type".into(),
+                ));
+            };
+            let type_name = type_name.clone();
             let fields = load_record_fields(vm, &type_name)?;
             match serde_json::from_str::<serde_json::Value>(&s) {
                 Ok(json_val) => json_to_record_list(vm, &type_name, &fields, &json_val),
@@ -1077,22 +1077,22 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
         "parse_map" => {
             if args.len() != 2 {
                 return Err(VmError::new(
-                    "json.parse_map takes 2 arguments: (ValueType, String)".into(),
+                    "json.parse_map takes 2 arguments: (String, type v)".into(),
                 ));
             }
-            let value_type = match &args[0] {
-                Value::PrimitiveDescriptor(name) => name.clone(),
-                Value::RecordDescriptor(name) => name.clone(),
-                _ => return Err(VmError::new(
-                    "json.parse_map: first argument must be a type (Int, Float, String, Bool, or a record type)".into()
-                )),
-            };
-            let Value::String(s) = &args[1] else {
+            let Value::String(s) = &args[0] else {
                 return Err(VmError::new(
-                    "json.parse_map: second argument must be a string".into(),
+                    "json.parse_map: first argument must be a string".into(),
                 ));
             };
             let s = s.clone();
+            let value_type = match &args[1] {
+                Value::PrimitiveDescriptor(name) => name.clone(),
+                Value::TypeDescriptor(name) => name.clone(),
+                _ => return Err(VmError::new(
+                    "json.parse_map: type argument must be a type (Int, Float, String, Bool, or a record type)".into()
+                )),
+            };
             match serde_json::from_str::<serde_json::Value>(&s) {
                 Ok(json_val) => json_to_map(vm, &value_type, &json_val),
                 Err(e) => Ok(Value::Variant(

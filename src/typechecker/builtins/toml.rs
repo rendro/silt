@@ -1,16 +1,17 @@
 //! Type signatures for the `toml` builtin module.
 //!
 //! Mirrors the `json` signatures registered inline in
-//! `src/typechecker/builtins.rs`. The first argument to `parse` /
-//! `parse_list` / `parse_map` is a type descriptor (represented as
-//! `TypeOf(T)`) so the carried type flows into the result.
+//! `src/typechecker/builtins.rs`. Each `parse*` takes the source string as
+//! the data argument and the target type as a `type a` parameter, lowered
+//! here to a `TypeOf(a)` descriptor. Type params come last so pipelines
+//! compose naturally.
 
 use super::super::*;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let _ = checker; // no per-type record state to register for toml
 
-    // toml.parse: (TypeOf(T), String) -> Result(T, String)
+    // toml.parse: (String, type a) -> Result(a, String)
     {
         let (a, av) = checker.fresh_tv();
         let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -19,13 +20,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("toml.parse"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
             },
         );
     }
 
-    // toml.parse_list: (TypeOf(T), String) -> Result(List(T), String)
+    // toml.parse_list: (String, type a) -> Result(List(a), String)
     {
         let (a, av) = checker.fresh_tv();
         let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -37,13 +38,13 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("toml.parse_list"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
             },
         );
     }
 
-    // toml.parse_map: (TypeOf(V), String) -> Result(Map(String, V), String)
+    // toml.parse_map: (String, type v) -> Result(Map(String, v), String)
     {
         let (a, av) = checker.fresh_tv();
         let descriptor_ty = Type::Generic(intern("TypeOf"), vec![a.clone()]);
@@ -55,7 +56,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("toml.parse_map"),
             Scheme {
                 vars: vec![av],
-                ty: Type::Fun(vec![descriptor_ty, Type::String], Box::new(result_ty)),
+                ty: Type::Fun(vec![Type::String, descriptor_ty], Box::new(result_ty)),
                 constraints: vec![],
             },
         );

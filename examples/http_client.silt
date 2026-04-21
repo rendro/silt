@@ -14,7 +14,7 @@ type Repo {
 
 fn fetch_repos(user) {
   let resp = http.get("https://api.github.com/users/{user}/repos")?
-  json.parse_list(Repo, resp.body)
+  json.parse_list(resp.body, Repo)
 }
 
 fn main() {

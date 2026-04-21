@@ -55,7 +55,12 @@ impl std::fmt::Display for Type {
             Type::Bool => write!(f, "Bool"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "()"),
-            Type::Var(v) => write!(f, "?{v}"),
+            // Type variables have no user-facing name at this point in
+            // inference — rendering `?17` leaks an internal id. The
+            // underscore matches silt's own "I don't care about this
+            // type" convention in patterns and reads as "unknown type"
+            // in diagnostics.
+            Type::Var(_) => write!(f, "_"),
             Type::Fun(params, ret) => {
                 // Match the parser's surface syntax `Fn(A, B) -> C` so
                 // diagnostics render fn types in the same form users
@@ -93,6 +98,12 @@ impl std::fmt::Display for Type {
                 write!(f, "}}")
             }
             Type::Generic(name, args) => {
+                // `TypeOf(a)` is the internal lowering of a `type a`
+                // parameter. Render it as `type a` so diagnostics use the
+                // surface syntax the user wrote — never leak `TypeOf`.
+                if crate::intern::resolve(*name) == "TypeOf" && args.len() == 1 {
+                    return write!(f, "type {}", args[0]);
+                }
                 write!(f, "{name}")?;
                 if !args.is_empty() {
                     write!(f, "(")?;
@@ -109,7 +120,12 @@ impl std::fmt::Display for Type {
             Type::Map(k, v) => write!(f, "Map({k}, {v})"),
             Type::Set(inner) => write!(f, "Set({inner})"),
             Type::Channel(inner) => write!(f, "Channel({inner})"),
-            Type::Error => write!(f, "<error>"),
+            // A type that reached `Type::Error` already triggered a
+            // prior diagnostic; rendering `<error>` on cascading
+            // messages reads as double-reporting. An empty placeholder
+            // (`_`) keeps downstream messages readable without
+            // suggesting a second, distinct failure.
+            Type::Error => write!(f, "_"),
             Type::Never => write!(f, "Never"),
         }
     }

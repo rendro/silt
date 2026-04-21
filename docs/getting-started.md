@@ -122,7 +122,7 @@ type Config { name: String }
 
 fn read_config(path) {
   let content = io.read_file(path)?
-  let config = json.parse(Config, content)?
+  let config = json.parse(content, Config)?
   Ok(config)
 }
 ```

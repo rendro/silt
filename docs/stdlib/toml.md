@@ -12,9 +12,9 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(Type, String) -> Result(T, String)` | Parse a TOML document (top-level table) into a record |
-| `parse_list` | `(Type, String) -> Result(List(T), String)` | Parse a single `[[items]]` section into a list of records |
-| `parse_map` | `(Type, String) -> Result(Map(String, v), String)` | Parse a top-level table into a map |
+| `parse` | `(String, type a) -> Result(a, String)` | Parse a TOML document (top-level table) into a record |
+| `parse_list` | `(String, type a) -> Result(List(a), String)` | Parse a single `[[items]]` section into a list of records |
+| `parse_map` | `(String, type v) -> Result(Map(String, v), String)` | Parse a top-level table into a map |
 | `pretty` | `(a) -> Result(String, String)` | Pretty-print a value as TOML |
 | `stringify` | `(a) -> Result(String, String)` | Serialize a value as TOML |
 
@@ -22,12 +22,13 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 ## `toml.parse`
 
 ```
-toml.parse(T: Type, s: String) -> Result(T, String)
+toml.parse(s: String, type a) -> Result(a, String)
 ```
 
-Parses a TOML document into a record of type `T`. The first argument is a record
-type name (not a string). Fields are matched by name; `Option` fields default to
-`None` if missing from the document.
+Parses a TOML document into a record of type `a`. The type is passed as a
+`type` parameter (see [Generics](../language/generics.md) — not a string).
+Fields are matched by name; `Option` fields default to `None` if missing
+from the document.
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) accept
 either a TOML native datetime literal or an ISO 8601 string — the same formats
@@ -49,7 +50,7 @@ type User {
 
 fn main() {
     let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-    match toml.parse(User, input) {
+    match toml.parse(input, User) {
         Ok(user) -> println(user.name)
         Err(e) -> println("Error: {e}")
     }
@@ -60,7 +61,7 @@ fn main() {
 ## `toml.parse_list`
 
 ```
-toml.parse_list(T: Type, s: String) -> Result(List(T), String)
+toml.parse_list(s: String, type a) -> Result(List(a), String)
 ```
 
 TOML's spec requires the top level of every document to be a table, so there is
@@ -76,7 +77,7 @@ type Point { x: Int, y: Int }
 
 fn main() {
     let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
-    match toml.parse_list(Point, input) {
+    match toml.parse_list(input, Point) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
         Err(e) -> println("Error: {e}")
     }
@@ -90,18 +91,18 @@ top-level array-of-tables key works.
 ## `toml.parse_map`
 
 ```
-toml.parse_map(V: Type, s: String) -> Result(Map(String, V), String)
+toml.parse_map(s: String, type v) -> Result(Map(String, v), String)
 ```
 
-Parses a top-level TOML table into a `Map(String, V)`. The first argument is a
-type descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
+Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
+a `type` parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 import toml
 import map
 fn main() {
     let input = "x = 10\ny = 20\n"
-    match toml.parse_map(Int, input) {
+    match toml.parse_map(input, Int) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
         Err(e) -> println("Error: {e}")
     }

@@ -79,7 +79,17 @@ pub(super) fn build_signature_from_def(
     if let Some(Type::Fun(param_types, ret)) = &def.ty {
         for (i, pty) in param_types.iter().enumerate() {
             let pname = def.params.get(i).map(|s| s.as_str()).unwrap_or("_");
-            let param_label = format!("{pname}: {pty}");
+            // `type a` parameters carry compile-time type `TypeOf(a)` in the
+            // scheme. Render them as `type a` rather than leaking the
+            // internal descriptor name.
+            let param_label = match pty {
+                Type::Generic(sym, args)
+                    if crate::intern::resolve(*sym) == "TypeOf" && args.len() == 1 =>
+                {
+                    format!("type {pname}")
+                }
+                _ => format!("{pname}: {pty}"),
+            };
             let start = label.len() as u32;
             label.push_str(&param_label);
             let end = label.len() as u32;

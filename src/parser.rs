@@ -488,18 +488,18 @@ impl Parser {
         // Try where clauses.
         let where_clauses = if self.peek_skip_nl() == &Token::Where {
             self.advance();
-            let mut clauses = Vec::new();
+            let mut clauses: Vec<WhereClause> = Vec::new();
             let result: Result<()> = (|| {
                 loop {
                     self.skip_nl();
                     let (type_param, _) = self.expect_ident()?;
                     self.expect(&Token::Colon)?;
-                    let (trait_name, _) = self.expect_ident()?;
-                    clauses.push((type_param, trait_name));
+                    let (trait_name, trait_args) = self.parse_trait_ref()?;
+                    clauses.push((type_param, trait_name, trait_args));
                     while self.at(&Token::Plus) {
                         self.advance();
-                        let (trait_name, _) = self.expect_ident()?;
-                        clauses.push((type_param, trait_name));
+                        let (trait_name, trait_args) = self.parse_trait_ref()?;
+                        clauses.push((type_param, trait_name, trait_args));
                     }
                     self.skip_nl();
                     if self.at(&Token::Comma) {
@@ -589,16 +589,55 @@ impl Parser {
     fn parse_fn_params(&mut self) -> Result<Vec<Param>> {
         self.expect(&Token::LParen)?;
         let mut params = Vec::new();
+        let mut first_type_param_span: Option<Span> = None;
         self.skip_nl();
         while !self.at(&Token::RParen) {
-            let pattern = self.parse_simple_param_pattern()?;
-            let ty = if self.peek_skip_nl() == &Token::Colon {
+            if self.at(&Token::Type) {
+                let type_kw_span = self.span();
                 self.advance();
-                Some(self.parse_type_expr()?)
+                let pattern = self.parse_simple_param_pattern()?;
+                if self.peek_skip_nl() == &Token::Colon {
+                    return Err(ParseError {
+                        message:
+                            "'type' parameter cannot carry a type annotation; write `type a`"
+                                .to_string(),
+                        span: self.span(),
+                    });
+                }
+                params.push(Param {
+                    kind: ParamKind::Type,
+                    pattern,
+                    ty: None,
+                });
+                if first_type_param_span.is_none() {
+                    first_type_param_span = Some(type_kw_span);
+                }
             } else {
-                None
-            };
-            params.push(Param { pattern, ty });
+                if let Some(type_span) = first_type_param_span {
+                    // Point at the MISPLACED `type` keyword rather than
+                    // the innocent data param that follows. The reader
+                    // then sees the arrow at the thing that needs to
+                    // move, not at the thing sitting in a legal place.
+                    return Err(ParseError {
+                        message:
+                            "'type' parameters must come after all data parameters; move the `type` param to the end of the parameter list"
+                                .to_string(),
+                        span: type_span,
+                    });
+                }
+                let pattern = self.parse_simple_param_pattern()?;
+                let ty = if self.peek_skip_nl() == &Token::Colon {
+                    self.advance();
+                    Some(self.parse_type_expr()?)
+                } else {
+                    None
+                };
+                params.push(Param {
+                    kind: ParamKind::Data,
+                    pattern,
+                    ty,
+                });
+            }
             self.skip_nl();
             if self.at(&Token::Comma) {
                 self.advance();
@@ -752,7 +791,7 @@ impl Parser {
     /// trait-impl parser. The recovery-variant fn-decl parser at
     /// `parse_fn_decl_tail` keeps its inline copy because each failure
     /// site must emit a recovery stub instead of propagating the error.
-    fn parse_where_clauses_opt(&mut self) -> Result<Vec<(Symbol, Symbol)>> {
+    fn parse_where_clauses_opt(&mut self) -> Result<Vec<WhereClause>> {
         if self.peek_skip_nl() != &Token::Where {
             return Ok(Vec::new());
         }
@@ -762,13 +801,13 @@ impl Parser {
             self.skip_nl();
             let (type_param, _) = self.expect_ident()?;
             self.expect(&Token::Colon)?;
-            let (trait_name, _) = self.expect_ident()?;
-            clauses.push((type_param, trait_name));
+            let (trait_name, trait_args) = self.parse_trait_ref()?;
+            clauses.push((type_param, trait_name, trait_args));
             // Multi-trait bounds: `where a: Equal + Hash`
             while self.at(&Token::Plus) {
                 self.advance();
-                let (trait_name, _) = self.expect_ident()?;
-                clauses.push((type_param, trait_name));
+                let (trait_name, trait_args) = self.parse_trait_ref()?;
+                clauses.push((type_param, trait_name, trait_args));
             }
             self.skip_nl();
             if self.at(&Token::Comma) {
@@ -780,23 +819,76 @@ impl Parser {
         Ok(clauses)
     }
 
+    /// Parse a trait reference inside a where clause: either a bare
+    /// identifier (`Display`) or a parameterized form
+    /// (`TryInto(Int)`, `Convert(a, b)`).
+    fn parse_trait_ref(&mut self) -> Result<(Symbol, Vec<TypeExpr>)> {
+        let (name, _) = self.expect_ident()?;
+        let args = if self.at(&Token::LParen) {
+            self.advance();
+            let mut args = Vec::new();
+            self.skip_nl();
+            while !self.at(&Token::RParen) {
+                args.push(self.parse_type_expr()?);
+                self.skip_nl();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                    self.skip_nl();
+                }
+            }
+            self.expect(&Token::RParen)?;
+            args
+        } else {
+            Vec::new()
+        };
+        Ok((name, args))
+    }
+
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
         let span = self.span();
         self.expect(&Token::Trait)?;
         let (name, _) = self.expect_ident()?;
 
-        // Parse optional supertrait bounds: `trait Ordered: Equal + Hash { ... }`.
+        // Parse optional trait-level parameters: `trait Foo(a, b) { ... }`
+        // on the declaration side, or `trait Foo(Int, String) for T { ... }`
+        // on the impl side. Both forms use the same `Name(...)` syntax;
+        // the downstream `for`/`fn`/`{` dispatch tells us which.
+        //
+        // For the declaration form, args must be lowercase idents (fresh
+        // type-var binders). For the impl form, args can be any type
+        // expression (concrete types, generics, or tyvars from a
+        // parameterized impl target).
+        let trait_args: Vec<TypeExpr> = if self.at(&Token::LParen) {
+            self.advance();
+            let mut args = Vec::new();
+            self.skip_nl();
+            while !self.at(&Token::RParen) {
+                args.push(self.parse_type_expr()?);
+                self.skip_nl();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                    self.skip_nl();
+                }
+            }
+            self.expect(&Token::RParen)?;
+            args
+        } else {
+            Vec::new()
+        };
+
+        // Parse optional supertrait bounds: `trait Ordered: Equal + Hash { ... }`
+        // or parameterized forms `trait Sub(a): Super(a) + Other(Int)`.
         // Disambiguation: `:` after the trait name is unambiguous because impls
         // use `for` and decls use `{` or `fn`.
-        let supertraits = if self.at(&Token::Colon) {
+        let supertraits: Vec<(Symbol, Vec<TypeExpr>)> = if self.at(&Token::Colon) {
             self.advance();
             let mut traits = Vec::new();
-            let (t, _) = self.expect_ident()?;
-            traits.push(t);
+            let (t, args) = self.parse_trait_ref()?;
+            traits.push((t, args));
             while self.at(&Token::Plus) {
                 self.advance();
-                let (t, _) = self.expect_ident()?;
-                traits.push(t);
+                let (t, args) = self.parse_trait_ref()?;
+                traits.push((t, args));
             }
             traits
         } else {
@@ -805,9 +897,48 @@ impl Parser {
 
         self.skip_nl();
         // `trait Display for User { ... }` is an impl
-        // `trait Display { ... }` is a declaration
-        if self.at(&Token::Fn) || self.at(&Token::LBrace) {
-            // trait declaration
+        // `trait Display { ... }` is a declaration. The disambiguation
+        // accepts `where` too, for the form
+        // `trait Foo(a) where a: Bound { ... }`.
+        if self.at(&Token::Fn) || self.at(&Token::LBrace) || self.at(&Token::Where) {
+            // Trait declaration. For the decl form, `trait_args` holds the
+            // trait's type parameters; they must be lowercase idents.
+            let mut params: Vec<Symbol> = Vec::new();
+            for arg in &trait_args {
+                let TypeExpr::Named(arg_sym) = arg else {
+                    return Err(ParseError {
+                        message:
+                            "trait declaration parameters must be lowercase type variables \
+                             (e.g. `trait TryInto(b) { ... }`)"
+                                .to_string(),
+                        span,
+                    });
+                };
+                let arg_str = intern::resolve(*arg_sym);
+                let first_char = arg_str.chars().next().unwrap_or('A');
+                if !first_char.is_lowercase() {
+                    return Err(ParseError {
+                        message: format!(
+                            "trait parameter '{arg_str}' must be a lowercase type variable"
+                        ),
+                        span,
+                    });
+                }
+                if params.contains(arg_sym) {
+                    return Err(ParseError {
+                        message: format!(
+                            "duplicate type variable '{arg_str}' in trait declaration"
+                        ),
+                        span,
+                    });
+                }
+                params.push(*arg_sym);
+            }
+            // Trait-level where bounds on trait params:
+            // `trait Foo(a) where a: Display { ... }`. Each impl must
+            // supply a concrete type arg satisfying the bounds.
+            let param_where_clauses = self.parse_where_clauses_opt()?;
+            self.skip_nl();
             if self.at(&Token::LBrace) {
                 self.advance();
             }
@@ -820,7 +951,9 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(Decl::Trait(TraitDecl {
                 name,
+                params,
                 supertraits,
+                param_where_clauses,
                 methods,
                 span,
             }))
@@ -913,6 +1046,7 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(Decl::TraitImpl(TraitImpl {
                 trait_name: name,
+                trait_args,
                 target_type: target,
                 target_type_args,
                 target_param_names,
@@ -1959,11 +2093,19 @@ impl Parser {
                 Token::LParen => {
                     // Destructuring pattern like (a, b)
                     let pattern = self.parse_pattern()?;
-                    params.push(Param { pattern, ty: None });
+                    params.push(Param {
+                        kind: ParamKind::Data,
+                        pattern,
+                        ty: None,
+                    });
                 }
                 Token::Ident(_) => {
                     let pattern = self.parse_pattern()?;
-                    params.push(Param { pattern, ty: None });
+                    params.push(Param {
+                        kind: ParamKind::Data,
+                        pattern,
+                        ty: None,
+                    });
                 }
                 _ => break,
             }
@@ -2809,10 +2951,11 @@ fn main() {
         "#,
         );
         if let Decl::Fn(f) = &prog.decls[0] {
-            assert_eq!(
-                f.where_clauses,
-                vec![(intern::intern("x"), intern::intern("Display"))]
-            );
+            assert_eq!(f.where_clauses.len(), 1);
+            let (var, trait_name, args) = &f.where_clauses[0];
+            assert_eq!(*var, intern::intern("x"));
+            assert_eq!(*trait_name, intern::intern("Display"));
+            assert!(args.is_empty());
         } else {
             panic!("expected fn decl");
         }
@@ -3694,10 +3837,10 @@ fn main() {
             assert_eq!(f.name, intern::intern("show"));
             assert!(f.return_type.is_some());
             assert_eq!(f.where_clauses.len(), 1);
-            assert_eq!(
-                f.where_clauses[0],
-                (intern::intern("x"), intern::intern("Display"))
-            );
+            let (var, trait_name, args) = &f.where_clauses[0];
+            assert_eq!(*var, intern::intern("x"));
+            assert_eq!(*trait_name, intern::intern("Display"));
+            assert!(args.is_empty());
         } else {
             panic!("expected fn decl");
         }

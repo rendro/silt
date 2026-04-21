@@ -2781,20 +2781,27 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         String::new()
     } else {
         // Group trait bounds by type param, preserving insertion order.
-        let mut grouped: Vec<(Symbol, Vec<Symbol>)> = Vec::new();
-        for (name, trait_name) in &f.where_clauses {
-            if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
-                entry.1.push(*trait_name);
+        // Each entry stores the rendered trait reference (with args if
+        // any): `Display` for a plain trait, `TryInto(Int)` for a
+        // parameterized one.
+        let mut grouped: Vec<(Symbol, Vec<String>)> = Vec::new();
+        for (name, trait_name, trait_args) in &f.where_clauses {
+            let rendered = if trait_args.is_empty() {
+                format!("{trait_name}")
             } else {
-                grouped.push((*name, vec![*trait_name]));
+                let args: Vec<String> =
+                    trait_args.iter().map(format_type_expr).collect();
+                format!("{trait_name}({})", args.join(", "))
+            };
+            if let Some(entry) = grouped.iter_mut().find(|(n, _)| n == name) {
+                entry.1.push(rendered);
+            } else {
+                grouped.push((*name, vec![rendered]));
             }
         }
         let clauses: Vec<String> = grouped
             .iter()
-            .map(|(name, traits)| {
-                let trait_strs: Vec<String> = traits.iter().map(|t| resolve(*t)).collect();
-                format!("{name}: {}", trait_strs.join(" + "))
-            })
+            .map(|(name, traits)| format!("{name}: {}", traits.join(" + ")))
             .collect();
         format!(" where {}", clauses.join(", "))
     };
@@ -2840,10 +2847,15 @@ fn is_simple_body(expr: &Expr) -> bool {
 
 fn format_param(p: &Param) -> String {
     let pat = format_pattern(&p.pattern);
-    if let Some(ty) = &p.ty {
-        format!("{pat}: {}", format_type_expr(ty))
-    } else {
-        pat
+    match p.kind {
+        ParamKind::Type => format!("type {pat}"),
+        ParamKind::Data => {
+            if let Some(ty) = &p.ty {
+                format!("{pat}: {}", format_type_expr(ty))
+            } else {
+                pat
+            }
+        }
     }
 }
 
@@ -3156,7 +3168,15 @@ fn format_trait_with_comments(t: &TraitDecl, depth: usize) -> String {
             ": {}",
             t.supertraits
                 .iter()
-                .map(|s| s.to_string())
+                .map(|(name, args)| {
+                    if args.is_empty() {
+                        name.to_string()
+                    } else {
+                        let rendered: Vec<String> =
+                            args.iter().map(format_type_expr).collect();
+                        format!("{name}({})", rendered.join(", "))
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" + ")
         )

@@ -3198,8 +3198,8 @@ let a = id(5)
         errors
             .iter()
             .any(|e| e.severity == silt::types::Severity::Error
-                && e.message.contains("could not fully determine the type")),
-        "expected 'could not fully determine the type' error, got: {:?}",
+                && e.message.contains("cannot infer the type")),
+        "expected 'cannot infer the type' error, got: {:?}",
         errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
@@ -3555,7 +3555,7 @@ fn test_json_parse_record() {
 import json
 type User { name: String, age: Int }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
+  match json.parse("\{\"name\": \"Alice\", \"age\": 30\}", User) {
     Ok(user) -> user.name
     Err(_) -> "fail"
   }
@@ -3570,7 +3570,7 @@ fn test_json_parse_record_int_field() {
 import json
 type User { name: String, age: Int }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"age\": 30\}") {
+  match json.parse("\{\"name\": \"Alice\", \"age\": 30\}", User) {
     Ok(user) -> user.age
     Err(_) -> 0
   }
@@ -3586,7 +3586,7 @@ import json
 type Address { city: String, zip: String }
 type User { name: String, address: Address }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}") {
+  match json.parse("\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}", User) {
     Ok(user) -> user.address.city
     Err(_) -> "fail"
   }
@@ -3602,7 +3602,7 @@ import json
 import list
 type User { name: String, skills: List(String) }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"skills\": [\"go\", \"rust\"]\}") {
+  match json.parse("\{\"name\": \"Alice\", \"skills\": [\"go\", \"rust\"]\}", User) {
     Ok(user) -> list.length(user.skills)
     Err(_) -> 0
   }
@@ -3617,7 +3617,7 @@ fn test_json_parse_option_field_present() {
 import json
 type User { name: String, email: Option(String) }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"email\": \"a@b.com\"\}") {
+  match json.parse("\{\"name\": \"Alice\", \"email\": \"a@b.com\"\}", User) {
     Ok(user) -> user.email
     Err(_) -> None
   }
@@ -3635,7 +3635,7 @@ fn test_json_parse_option_field_null() {
 import json
 type User { name: String, email: Option(String) }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\", \"email\": null\}") {
+  match json.parse("\{\"name\": \"Alice\", \"email\": null\}", User) {
     Ok(user) -> user.email
     Err(_) -> Some("fail")
   }
@@ -3650,7 +3650,7 @@ fn test_json_parse_option_field_missing() {
 import json
 type User { name: String, email: Option(String) }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\"\}") {
+  match json.parse("\{\"name\": \"Alice\"\}", User) {
     Ok(user) -> user.email
     Err(_) -> Some("fail")
   }
@@ -3665,7 +3665,7 @@ fn test_json_parse_missing_field_error() {
 import json
 type User { name: String, age: Int }
 fn main() {
-  match json.parse(User, "\{\"name\": \"Alice\"\}") {
+  match json.parse("\{\"name\": \"Alice\"\}", User) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -3683,7 +3683,7 @@ fn test_json_parse_wrong_type_error() {
 import json
 type User { name: String, age: Int }
 fn main() {
-  match json.parse(User, "\{\"name\": 42, \"age\": 30\}") {
+  match json.parse("\{\"name\": 42, \"age\": 30\}", User) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -3701,7 +3701,7 @@ fn test_json_parse_not_object_error() {
 import json
 type User { name: String }
 fn main() {
-  match json.parse(User, "[1,2,3]") {
+  match json.parse("[1,2,3]", User) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -3719,7 +3719,7 @@ fn test_json_parse_invalid_json_error() {
 import json
 type User { name: String }
 fn main() {
-  match json.parse(User, "not json") {
+  match json.parse("not json", User) {
     Ok(_) -> false
     Err(_) -> true
   }
@@ -3736,7 +3736,7 @@ import list
 type Employee { name: String, department: String, salary: Int }
 fn main() {
   let json_str = "[\{\"name\": \"Alice\", \"department\": \"Eng\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"department\": \"Sales\", \"salary\": 95000\}]"
-  match json.parse_list(Employee, json_str) {
+  match json.parse_list(json_str, Employee) {
     Ok(employees) -> list.length(employees)
     Err(_) -> 0
   }
@@ -3753,7 +3753,7 @@ import list
 type Employee { name: String, salary: Int }
 fn main() {
   let json_str = "[\{\"name\": \"Alice\", \"salary\": 120000\}, \{\"name\": \"Bob\", \"salary\": 95000\}]"
-  match json.parse_list(Employee, json_str) {
+  match json.parse_list(json_str, Employee) {
     Ok(employees) -> match list.get(employees, 0) {
       Some(e) -> e.name
       None -> "fail"
@@ -3772,7 +3772,7 @@ import json
 import list
 type Employee { name: String }
 fn main() {
-  match json.parse_list(Employee, "[]") {
+  match json.parse_list("[]", Employee) {
     Ok(employees) -> list.length(employees)
     Err(_) -> -1
   }
@@ -3787,7 +3787,7 @@ fn test_json_parse_list_not_array_error() {
 import json
 type Employee { name: String }
 fn main() {
-  match json.parse_list(Employee, "\{\"name\": \"Alice\"\}") {
+  match json.parse_list("\{\"name\": \"Alice\"\}", Employee) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -3805,7 +3805,7 @@ fn test_json_parse_list_invalid_field_error() {
 import json
 type Employee { name: String, salary: Int }
 fn main() {
-  match json.parse_list(Employee, "[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]") {
+  match json.parse_list("[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]", Employee) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -3823,7 +3823,7 @@ type Address { city: String, zip: String }
 type Person { name: String, address: Address }
 fn main() {
   let json_str = "[\{\"name\": \"Alice\", \"address\": \{\"city\": \"NYC\", \"zip\": \"10001\"\}\}, \{\"name\": \"Bob\", \"address\": \{\"city\": \"LA\", \"zip\": \"90001\"\}\}]"
-  match json.parse_list(Person, json_str) {
+  match json.parse_list(json_str, Person) {
     Ok(people) -> match list.get(people, 1) {
       Some(p) -> p.address.city
       None -> "fail"
@@ -3891,7 +3891,7 @@ type User { name: String, age: Int }
 fn main() {
   let u = User { name: "Carol", age: 25 }
   let text = json.stringify(u)
-  match json.parse(User, text) {
+  match json.parse(text, User) {
     Ok(parsed) -> (parsed.name, parsed.age)
     Err(_) -> ("fail", 0)
   }
@@ -3930,7 +3930,7 @@ import json
 import time
 type Event { name: String, date: Date }
 fn main() {
-  let e = json.parse(Event, "\{\"name\": \"launch\", \"date\": \"2024-03-15\"\}")?
+  let e = json.parse("\{\"name\": \"launch\", \"date\": \"2024-03-15\"\}", Event)?
   e.date
 }
     "#);
@@ -3944,7 +3944,7 @@ import json
 import time
 type Meeting { title: String, start: DateTime }
 fn main() {
-  let m = json.parse(Meeting, "\{\"title\": \"standup\", \"start\": \"2024-03-15T09:00:00\"\}")?
+  let m = json.parse("\{\"title\": \"standup\", \"start\": \"2024-03-15T09:00:00\"\}", Meeting)?
   m.start.time.hour
 }
     "#);
@@ -3958,7 +3958,7 @@ import json
 import time
 type Alarm { label: String, at: Time }
 fn main() {
-  let a = json.parse(Alarm, "\{\"label\": \"wake up\", \"at\": \"07:30:00\"\}")?
+  let a = json.parse("\{\"label\": \"wake up\", \"at\": \"07:30:00\"\}", Alarm)?
   (a.at.hour, a.at.minute)
 }
     "#);
@@ -3971,7 +3971,7 @@ fn test_json_parse_date_invalid_string() {
 import json
 import time
 type Event { name: String, date: Date }
-fn main() { json.parse(Event, "\{\"name\": \"x\", \"date\": \"not-a-date\"\}") }
+fn main() { json.parse("\{\"name\": \"x\", \"date\": \"not-a-date\"\}", Event) }
     "#);
     assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
 }
@@ -3983,7 +3983,7 @@ import json
 import time
 type Event { name: String, date: Date }
 fn main() {
-  let e = json.parse(Event, "\{\"name\": \"x\", \"date\": \"2024-03-15\"\}")?
+  let e = json.parse("\{\"name\": \"x\", \"date\": \"2024-03-15\"\}", Event)?
   e.date |> time.weekday
 }
     "#);
@@ -3997,7 +3997,7 @@ import json
 import time
 type Task { name: String, due: Option(Date) }
 fn main() {
-  let t = json.parse(Task, "\{\"name\": \"write tests\", \"due\": \"2024-06-01\"\}")?
+  let t = json.parse("\{\"name\": \"write tests\", \"due\": \"2024-06-01\"\}", Task)?
   match t.due {
     Some(d) -> d.year
     None -> 0
@@ -4014,7 +4014,7 @@ import json
 import time
 type Task { name: String, due: Option(Date) }
 fn main() {
-  let t = json.parse(Task, "\{\"name\": \"write tests\", \"due\": null\}")?
+  let t = json.parse("\{\"name\": \"write tests\", \"due\": null\}", Task)?
   match t.due {
     Some(d) -> d.year
     None -> 0
@@ -4032,7 +4032,7 @@ import list
 import time
 type Event { name: String, date: Date }
 fn main() {
-  let events = json.parse_list(Event, "[\{\"name\": \"a\", \"date\": \"2024-01-15\"\}, \{\"name\": \"b\", \"date\": \"2024-12-25\"\}]")?
+  let events = json.parse_list("[\{\"name\": \"a\", \"date\": \"2024-01-15\"\}, \{\"name\": \"b\", \"date\": \"2024-12-25\"\}]", Event)?
   events |> list.map { e -> e.date.month }
 }
     "#);
@@ -4049,7 +4049,7 @@ import json
 import time
 type Log { msg: String, ts: DateTime }
 fn main() {
-  let l = json.parse(Log, "\{\"msg\": \"ok\", \"ts\": \"2024-03-15 09:00:00\"\}")?
+  let l = json.parse("\{\"msg\": \"ok\", \"ts\": \"2024-03-15 09:00:00\"\}", Log)?
   l.ts.date.day
 }
     "#);
@@ -4063,7 +4063,7 @@ import json
 import time
 type Event { name: String, ts: DateTime }
 fn main() {
-  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T09:00:00Z\"\}")?
+  let e = json.parse("\{\"name\": \"x\", \"ts\": \"2024-03-15T09:00:00Z\"\}", Event)?
   e.ts.time.hour
 }
     "#);
@@ -4078,7 +4078,7 @@ import time
 type Event { name: String, ts: DateTime }
 fn main() {
   -- 18:00 in UTC+9 = 09:00 UTC
-  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T18:00:00+09:00\"\}")?
+  let e = json.parse("\{\"name\": \"x\", \"ts\": \"2024-03-15T18:00:00+09:00\"\}", Event)?
   e.ts.time.hour
 }
     "#);
@@ -4093,7 +4093,7 @@ import time
 type Event { name: String, ts: DateTime }
 fn main() {
   -- 05:00 in UTC-4 = 09:00 UTC
-  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T05:00:00-04:00\"\}")?
+  let e = json.parse("\{\"name\": \"x\", \"ts\": \"2024-03-15T05:00:00-04:00\"\}", Event)?
   e.ts.time.hour
 }
     "#);
@@ -4108,7 +4108,7 @@ import time
 type Event { name: String, ts: DateTime }
 fn main() {
   -- 14:30 in UTC+5:30 = 09:00 UTC
-  let e = json.parse(Event, "\{\"name\": \"x\", \"ts\": \"2024-03-15T14:30:00+05:30\"\}")?
+  let e = json.parse("\{\"name\": \"x\", \"ts\": \"2024-03-15T14:30:00+05:30\"\}", Event)?
   e.ts.time.hour
 }
     "#);
@@ -4123,7 +4123,7 @@ fn test_json_parse_map_string_values() {
 import json
 import map
 fn main() {
-  match json.parse_map(String, "\{\"name\": \"Alice\", \"city\": \"NYC\"\}") {
+  match json.parse_map("\{\"name\": \"Alice\", \"city\": \"NYC\"\}", String) {
     Ok(m) -> map.get(m, "name")
     Err(_) -> None
   }
@@ -4141,7 +4141,7 @@ fn test_json_parse_map_int_values() {
 import json
 import map
 fn main() {
-  match json.parse_map(Int, "\{\"x\": 10, \"y\": 20\}") {
+  match json.parse_map("\{\"x\": 10, \"y\": 20\}", Int) {
     Ok(m) -> map.get(m, "y")
     Err(_) -> None
   }
@@ -4155,7 +4155,7 @@ fn test_json_parse_map_invalid_json() {
     let result = run(r#"
 import json
 fn main() {
-  match json.parse_map(String, "not json at all") {
+  match json.parse_map("not json at all", String) {
     Ok(_) -> false
     Err(_) -> true
   }
@@ -4169,7 +4169,7 @@ fn test_json_parse_map_non_object_input() {
     let result = run(r#"
 import json
 fn main() {
-  match json.parse_map(String, "[1, 2, 3]") {
+  match json.parse_map("[1, 2, 3]", String) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -4186,7 +4186,7 @@ fn test_json_parse_map_value_type_mismatch() {
     let result = run(r#"
 import json
 fn main() {
-  match json.parse_map(Int, "\{\"a\": \"hello\", \"b\": \"world\"\}") {
+  match json.parse_map("\{\"a\": \"hello\", \"b\": \"world\"\}", Int) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }

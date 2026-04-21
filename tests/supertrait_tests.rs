@@ -341,7 +341,7 @@ fn test_formatter_roundtrip_preserves_supertraits() {
     let supertrait_names: Vec<String> = trait_decl
         .supertraits
         .iter()
-        .map(|s| s.to_string())
+        .map(|(name, _args)| name.to_string())
         .collect();
     assert_eq!(
         supertrait_names,

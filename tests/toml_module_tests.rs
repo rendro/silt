@@ -41,7 +41,7 @@ import toml
 type User { name: String, age: Int, active: Bool }
 fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> u.name
     Err(_) -> "fail"
   }
@@ -60,7 +60,7 @@ import toml
 type User { name: String, age: Int, active: Bool }
 fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> u.age
     Err(_) -> -1
   }
@@ -73,7 +73,7 @@ import toml
 type User { name: String, age: Int, active: Bool }
 fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> u.active
     Err(_) -> false
   }
@@ -91,7 +91,7 @@ import toml
 type User { name: String, age: Int }
 fn main() {
   let input = "name = \"Alice\"\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -113,7 +113,7 @@ type User { name: String, age: Int }
 fn main() {
   -- 'name' is provided as an integer instead of a string.
   let input = "name = 42\nage = 30\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(_) -> "unexpected"
     Err(e) -> e
   }
@@ -140,7 +140,7 @@ import list
 type Point { x: Int, y: Int }
 fn main() {
   let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
-  match toml.parse_list(Point, input) {
+  match toml.parse_list(input, Point) {
     Ok(pts) -> list.length(pts)
     Err(_) -> 0
   }
@@ -158,7 +158,7 @@ import toml
 import map
 fn main() {
   let input = "x = 10\ny = 20\n"
-  match toml.parse_map(Int, input) {
+  match toml.parse_map(input, Int) {
     Ok(m) -> map.length(m)
     Err(_) -> -1
   }
@@ -174,7 +174,7 @@ import toml
 import map
 fn main() {
   let input = "x = 10\ny = 20\n"
-  match toml.parse_map(Int, input) {
+  match toml.parse_map(input, Int) {
     Ok(m) -> match map.get(m, "x") {
       Some(v) -> v
       None -> -1
@@ -198,9 +198,9 @@ import toml
 type User { name: String, age: Int, active: Bool }
 fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u1) -> match toml.stringify(u1) {
-      Ok(s) -> match toml.parse(User, s) {
+      Ok(s) -> match toml.parse(s, User) {
         Ok(u2) -> u2.name
         Err(_) -> "parse2 failed"
       }
@@ -223,7 +223,7 @@ type Address { city: String, zip: String }
 type User { name: String, address: Address }
 fn main() {
   let input = "name = \"Alice\"\n\n[address]\ncity = \"NYC\"\nzip = \"10001\"\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> u.address.city
     Err(_) -> "fail"
   }
@@ -243,7 +243,7 @@ type Address { city: String, zip: String }
 type User { name: String, address: Address }
 fn main() {
   let input = "name = \"Alice\"\n\n[address]\ncity = \"NYC\"\nzip = \"10001\"\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> match toml.stringify(u) {
       Ok(s) -> s
       Err(_) -> "stringify failed"
@@ -272,7 +272,7 @@ import time
 type Event { name: String, date: Date }
 fn main() {
   let input = "name = \"launch\"\ndate = 1979-05-27\n"
-  match toml.parse(Event, input) {
+  match toml.parse(input, Event) {
     Ok(e) -> e.date.year
     Err(err) -> -1
   }
@@ -289,7 +289,7 @@ import time
 type Event { name: String, date: Date }
 fn main() {
   let input = "name = \"launch\"\ndate = 1979-05-27\n"
-  match toml.parse(Event, input) {
+  match toml.parse(input, Event) {
     Ok(e) -> e.date.month * 100 + e.date.day
     Err(_) -> -1
   }
@@ -307,7 +307,7 @@ import toml
 type User { name: String, nickname: Option(String) }
 fn main() {
   let input = "name = \"Alice\"\n"
-  match toml.parse(User, input) {
+  match toml.parse(input, User) {
     Ok(u) -> u.nickname
     Err(_) -> Some("fail")
   }
@@ -326,7 +326,7 @@ import map
 type Item { qty: Int, unit: String }
 fn main() {
   let input = "[apples]\nqty = 5\nunit = \"kg\"\n\n[bananas]\nqty = 7\nunit = \"each\"\n"
-  match toml.parse_map(Item, input) {
+  match toml.parse_map(input, Item) {
     Ok(m) -> map.length(m)
     Err(_) -> -1
   }
@@ -343,7 +343,7 @@ fn test_toml_parse_invalid_toml_surfaces_err() {
 import toml
 type User { name: String }
 fn main() {
-  match toml.parse(User, "not = = toml") {
+  match toml.parse("not = = toml", User) {
     Ok(_) -> false
     Err(_) -> true
   }

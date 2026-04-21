@@ -12,9 +12,9 @@ Parse JSON strings into typed silt values and serialize values to JSON.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(Type, String) -> Result(T, String)` | Parse JSON object into record |
-| `parse_list` | `(Type, String) -> Result(List(T), String)` | Parse JSON array into record list |
-| `parse_map` | `(Type, String) -> Result(Map(String, v), String)` | Parse JSON object into map |
+| `parse` | `(String, type a) -> Result(a, String)` | Parse JSON object into record |
+| `parse_list` | `(String, type a) -> Result(List(a), String)` | Parse JSON array into record list |
+| `parse_map` | `(String, type v) -> Result(Map(String, v), String)` | Parse JSON object into map |
 | `pretty` | `(a) -> String` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String` | Serialize value as compact JSON |
 
@@ -22,12 +22,12 @@ Parse JSON strings into typed silt values and serialize values to JSON.
 ## `json.parse`
 
 ```
-json.parse(T: Type, s: String) -> Result(T, String)
+json.parse(s: String, type a) -> Result(a, String)
 ```
 
-Parses a JSON string into a record of type `T`. The first argument is a record
-type name (not a string). Fields are matched by name; `Option` fields default to
-`None` if missing from the JSON.
+Parses a JSON string into a record of type `a`. The type is passed as a `type`
+parameter (see [Generics](../language/generics.md) — not a string). Fields are
+matched by name; `Option` fields default to `None` if missing from the JSON.
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) are
 automatically parsed from ISO 8601 strings. `DateTime` fields also accept
@@ -49,7 +49,7 @@ type User {
 
 fn main() {
     let input = """{"name": "Alice", "age": 30}"""
-    match json.parse(User, input) {
+    match json.parse(input, User) {
         Ok(user) -> println(user.name)
         Err(e) -> println("Error: {e}")
     }
@@ -68,7 +68,7 @@ type Event {
 }
 
 fn main() -> Result(Unit, String) {
-    let e = json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""")?
+    let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
     println(e.date |> time.weekday)  -- Friday
     Ok(())
 }
@@ -78,10 +78,10 @@ fn main() -> Result(Unit, String) {
 ## `json.parse_list`
 
 ```
-json.parse_list(T: Type, s: String) -> Result(List(T), String)
+json.parse_list(s: String, type a) -> Result(List(a), String)
 ```
 
-Parses a JSON array where each element is a record of type `T`.
+Parses a JSON array where each element is a record of type `a`.
 
 ```silt
 import json
@@ -93,7 +93,7 @@ type Point {
 
 fn main() {
     let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
-    match json.parse_list(Point, input) {
+    match json.parse_list(input, Point) {
         Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
         Err(e) -> println("Error: {e}")
     }
@@ -104,18 +104,18 @@ fn main() {
 ## `json.parse_map`
 
 ```
-json.parse_map(V: Type, s: String) -> Result(Map(String, V), String)
+json.parse_map(s: String, type v) -> Result(Map(String, v), String)
 ```
 
-Parses a JSON object into a `Map(String, V)`. The first argument is a type
-descriptor (`Int`, `Float`, `String`, `Bool`, or a record type).
+Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
+parameter (`Int`, `Float`, `String`, `Bool`, or a record type).
 
 ```silt
 import json
 import map
 fn main() {
     let input = """{"x": 10, "y": 20}"""
-    match json.parse_map(Int, input) {
+    match json.parse_map(input, Int) {
         Ok(m) -> println(map.get(m, "x"))  -- Some(10)
         Err(e) -> println("Error: {e}")
     }

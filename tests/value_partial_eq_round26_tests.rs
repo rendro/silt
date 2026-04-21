@@ -207,7 +207,7 @@ fn partial_eq_reflexivity_every_variant() {
         Value::BuiltinFn("println".into()),
         Value::VmClosure(closure_arc),
         Value::Handle(handle_arc),
-        Value::RecordDescriptor("Point".into()),
+        Value::TypeDescriptor("Point".into()),
         Value::PrimitiveDescriptor("Int".into()),
     ];
     for v in &values {

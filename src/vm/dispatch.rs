@@ -120,6 +120,16 @@ impl Vm {
         self.globals
             .insert("Bool".into(), Value::PrimitiveDescriptor("Bool".into()));
 
+        // Builtin container type descriptors — uppercase names so users
+        // can pass `List`, `Map`, etc. as `type a` arguments or invoke
+        // static-style trait methods (`List.empty()`). These don't
+        // collide with the lowercase module names (`list`, `map`) used
+        // for module calls.
+        for name in &["List", "Map", "Set", "Channel", "Tuple"] {
+            self.globals
+                .insert((*name).into(), Value::TypeDescriptor((*name).into()));
+        }
+
         // Math constants
         self.globals
             .insert("math.pi".into(), Value::Float(std::f64::consts::PI));

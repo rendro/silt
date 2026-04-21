@@ -197,7 +197,7 @@ impl Vm {
             Value::VmClosure(_) => 14,
             Value::BuiltinFn(_) => 15,
             Value::VariantConstructor(..) => 16,
-            Value::RecordDescriptor(_) => 17,
+            Value::TypeDescriptor(_) => 17,
             Value::PrimitiveDescriptor(_) => 18,
             Value::Bytes(_) => 19,
             Value::TcpListener(_) => 20,

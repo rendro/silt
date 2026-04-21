@@ -207,8 +207,19 @@ pub enum PatternKind {
 
 // ── Parameters & type expressions ────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParamKind {
+    /// Regular data parameter: `name: Type` or `name` (type inferred)
+    Data,
+    /// Type-as-value parameter: `type a` — the argument at this position is
+    /// a type, and the identifier is in scope as a type variable in the rest
+    /// of the signature and body.
+    Type,
+}
+
 #[derive(Debug, Clone)]
 pub struct Param {
+    pub kind: ParamKind,
     pub pattern: Pattern,
     pub ty: Option<TypeExpr>,
 }
@@ -245,12 +256,18 @@ pub enum Stmt {
 
 // ── Declarations ─────────────────────────────────────────────────────
 
+/// A where-clause constraint. `(type_var, trait_name, trait_args)` —
+/// `trait_args` is empty for parameter-less traits (`where a: Display`)
+/// and carries the supplied args for parameterized traits
+/// (`where a: TryInto(Int)` yields `[TypeExpr::Named("Int")]`).
+pub type WhereClause = (Symbol, Symbol, Vec<TypeExpr>);
+
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub name: Symbol,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
-    pub where_clauses: Vec<(Symbol, Symbol)>,
+    pub where_clauses: Vec<WhereClause>,
     pub body: Expr,
     pub is_pub: bool,
     pub span: Span,
@@ -301,12 +318,24 @@ pub struct TypeDecl {
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: Symbol,
-    /// Supertrait names (e.g. `trait Ordered: Equal + Hash` yields
-    /// `[Equal, Hash]`). Implementing this trait on a type requires
-    /// the type to also implement every supertrait. Inside a
+    /// Type parameters on the trait itself: `trait TryInto(b) { ... }`
+    /// yields `[b]`. Each lowercase ident binds a fresh type variable
+    /// that is in scope throughout the trait's method signatures.
+    /// Empty for parameter-less traits (the common case).
+    pub params: Vec<Symbol>,
+    /// Supertrait references (e.g. `trait Ordered: Equal + Hash` yields
+    /// `[(Equal, []), (Hash, [])]`). Implementing this trait on a type
+    /// requires the type to also implement every supertrait. Inside a
     /// `where a: Ordered` context, methods from supertraits are also
-    /// callable on `a`.
-    pub supertraits: Vec<Symbol>,
+    /// callable on `a`. Parameterized supertraits carry type
+    /// expressions that may reference the enclosing trait's own params:
+    /// `trait Sub(a): Super(a)` yields `[(Super, [TypeExpr::Named("a")])]`.
+    pub supertraits: Vec<(Symbol, Vec<TypeExpr>)>,
+    /// Where bounds on the trait's own type parameters, e.g.
+    /// `trait HashTable(k) where k: Hash + Equal { ... }`. Every impl
+    /// is required to supply type args that satisfy each bound;
+    /// verified at `register_trait_impl` time.
+    pub param_where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }
@@ -314,6 +343,10 @@ pub struct TraitDecl {
 #[derive(Debug, Clone)]
 pub struct TraitImpl {
     pub trait_name: Symbol,
+    /// Arguments supplied to the trait at impl time:
+    /// `trait TryInto(Int) for String { ... }` yields `[Int]`.
+    /// Empty for traits declared without parameters.
+    pub trait_args: Vec<TypeExpr>,
     /// Head symbol of the impl target. For `trait X for Box(a)` this is
     /// `Box`; for the bare-target form `trait X for Int` it is `Int`.
     /// Kept as a Symbol so method_table keys, qualified-name emission in
@@ -341,7 +374,7 @@ pub struct TraitImpl {
     /// appends them to each method's scheme during register_trait_impl.
     /// The `where` clause syntax matches fn-decl syntax exactly,
     /// including multi-trait bounds via `+`.
-    pub where_clauses: Vec<(Symbol, Symbol)>,
+    pub where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
     pub span: Span,
 }

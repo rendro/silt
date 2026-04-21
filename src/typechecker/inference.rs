@@ -227,6 +227,28 @@ impl TypeChecker {
     ) -> Type {
         self.last_field_access_was_method = true;
         let (instantiated_ty, constraints) = self.instantiate_method_entry(entry);
+        // Reject value-receiver calls on no-self trait methods (`empty`,
+        // `default`, etc.). The method has no slot for the receiver, so
+        // invoking it via `instance.method()` is meaningless. Point the
+        // user at the type-level form `TypeName.method()` and return
+        // `Type::Error` so the downstream Call arm doesn't pile an arity
+        // mismatch on top of the real diagnostic.
+        if let Type::Fun(params, _) = &instantiated_ty
+            && params.is_empty()
+        {
+            let suggestion = self
+                .type_name_for_impl(&self.apply(receiver_ty))
+                .map(|sym| format!("`{}.{method_name}()`", resolve(sym)))
+                .unwrap_or_else(|| format!("`SomeType.{method_name}()`"));
+            self.error(
+                format!(
+                    "method `{method_name}` takes no `self` — \
+                     call it on the type instead: {suggestion}"
+                ),
+                span,
+            );
+            return Type::Error;
+        }
         // Unify the receiver with the method's self param so concrete
         // receiver element types flow into the impl's tyvars before the
         // constraint check below.
@@ -264,6 +286,121 @@ impl TypeChecker {
             }
         }
         self.apply(&instantiated_ty)
+    }
+
+    /// Resolve a method on a type descriptor (`TypeOf(inner)`). The
+    /// descriptor is a type carrier — lookup uses `inner`'s effective type
+    /// name (for concrete inners) or the active trait constraints (for a
+    /// type variable inner). Returns the method's function type with all
+    /// `Self` references substituted to `inner`.
+    ///
+    /// Unlike value-receiver dispatch, the descriptor does NOT occupy an
+    /// argument slot of the method. Callers signal this by leaving
+    /// `last_field_access_was_method = false` after this returns, so the
+    /// downstream Call arm unifies args with params[0..] rather than
+    /// params[1..].
+    pub(super) fn resolve_type_descriptor_method(
+        &mut self,
+        inner: &Type,
+        field: Symbol,
+        span: Span,
+    ) -> Option<Type> {
+        let inner = self.apply(inner);
+        match &inner {
+            Type::Var(v) => {
+                // Look up trait methods via the constraints on `v`. The
+                // where-clause guarantees at least one impl exists at
+                // every call site; dispatch happens at runtime via the
+                // descriptor's carried type name.
+                let Some(trait_names) = self.active_constraints.get(v).cloned() else {
+                    self.error(
+                        format!(
+                            "no method '{field}' on `type {inner}` — \
+                             the type variable has no trait constraints. \
+                             Add a `where` clause such as `where {inner}: SomeTrait`."
+                        ),
+                        span,
+                    );
+                    return None;
+                };
+                let mut matches: Vec<(Symbol, Type)> = Vec::new();
+                for trait_name in &trait_names {
+                    if let Some(trait_info) = self.traits.get(trait_name).cloned()
+                        && let Some((_, method_ty)) =
+                            trait_info.methods.iter().find(|(n, _)| *n == field)
+                    {
+                        // Substitute trait-level parameters with the
+                        // concrete args supplied by the enclosing where
+                        // clause (`where v: Trait(X)`). Without this,
+                        // `a.try_into()` on `a: TryInto(Int)` would
+                        // return the trait's template `b` TyVar instead
+                        // of `Int`.
+                        let substituted = if let Some(bound_args) =
+                            self.trait_arg_bindings.get(&(*v, *trait_name))
+                            && bound_args.len() == trait_info.param_var_ids.len()
+                        {
+                            let mapping: HashMap<TyVar, Type> = trait_info
+                                .param_var_ids
+                                .iter()
+                                .zip(bound_args.iter())
+                                .map(|(&tv, arg)| (tv, arg.clone()))
+                                .collect();
+                            substitute_vars(&method_ty, &mapping)
+                        } else {
+                            method_ty.clone()
+                        };
+                        matches.push((*trait_name, substituted));
+                    }
+                }
+                if matches.is_empty() {
+                    let traits_str = trait_names
+                        .iter()
+                        .map(|s| format!("{s}"))
+                        .collect::<Vec<_>>()
+                        .join(" + ");
+                    self.error(
+                        format!(
+                            "no method '{field}' found on `type {inner}` \
+                             in trait constraints ({traits_str})"
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+                if matches.len() > 1 {
+                    let trait_list = matches
+                        .iter()
+                        .map(|(name, _)| format!("{name}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.error(
+                        format!(
+                            "ambiguous method '{field}' on `type {inner}`: \
+                             provided by multiple traits ({trait_list})"
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+                // Instantiate the trait-method template with fresh vars,
+                // then rebind `Self` to the descriptor's inner type.
+                // TraitInfo.methods stores bare Types whose TyVars were
+                // allocated once at register_trait_decl; instantiate so
+                // repeated call sites don't share bindings.
+                let instantiated = self.instantiate_method_type(&matches[0].1);
+                let resolved = self.apply(&instantiated);
+                Some(resolved)
+            }
+            _ => {
+                // Concrete inner — look up via the method table, keyed on
+                // the effective type name (same path as
+                // `type_name_for_impl`).
+                let name = self.type_name_for_impl(&inner)?;
+                let entry = self.method_table.get(&(name, field)).cloned()?;
+                let (instantiated, _constraints) = self.instantiate_method_entry(&entry);
+                Some(self.apply(&instantiated))
+            }
+        }
     }
 
     /// Expand a list of trait names to include all transitive supertraits.
@@ -316,7 +453,7 @@ impl TypeChecker {
         let mut local_env = env.child();
 
         // Validate where clauses
-        for (type_param, trait_name) in &f.where_clauses {
+        for (type_param, trait_name, _trait_args) in &f.where_clauses {
             if !self.traits.contains_key(trait_name) {
                 self.error(
                     format!(
@@ -346,12 +483,41 @@ impl TypeChecker {
         // constraint expands to include the transitive supertrait closure
         // — `where a: Ordered` with `trait Ordered: Equal` makes both
         // `Ordered`'s and `Equal`'s methods callable on `a`.
+        //
+        // For parameterized supertraits (`trait Sub(a): Super(a)`), the
+        // enclosing trait's args flow into the supertrait via the name
+        // mapping stored in `supertrait_args` / `params`. When we expand
+        // `v: Sub(Int)` to also register `v: Super`, we substitute the
+        // supertrait reference's arg-list through Sub's param → arg map
+        // and stash the result in `trait_arg_bindings` so later
+        // descriptor method resolution sees Super's concrete args.
         let prev_constraints = std::mem::take(&mut self.active_constraints);
         for (tv, trait_name) in &constraints {
             for expanded in self.expand_with_supertraits(&[*trait_name]) {
                 let entry = self.active_constraints.entry(*tv).or_default();
                 if !entry.contains(&expanded) {
                     entry.push(expanded);
+                }
+            }
+            // Propagate supertrait args from the enclosing trait's
+            // bindings to each named supertrait.
+            if let Some(info) = self.traits.get(trait_name).cloned() {
+                let base_args: Vec<Type> = self
+                    .trait_arg_bindings
+                    .get(&(*tv, *trait_name))
+                    .cloned()
+                    .unwrap_or_default();
+                for (i, super_name) in info.supertraits.iter().enumerate() {
+                    let arg_exprs = info.supertrait_args.get(i);
+                    let resolved_args: Vec<Type> = match arg_exprs {
+                        Some(exprs) if !exprs.is_empty() => exprs
+                            .iter()
+                            .map(|te| resolve_supertrait_arg(te, &info, &base_args))
+                            .collect(),
+                        _ => continue,
+                    };
+                    self.trait_arg_bindings
+                        .insert((*tv, *super_name), resolved_args);
                 }
             }
         }
@@ -364,8 +530,17 @@ impl TypeChecker {
         // not of interest here.
         let prev_fn_param_tyvars = std::mem::take(&mut self.current_fn_param_tyvars);
         for pt in &param_types {
-            if let Type::Var(v) = self.apply(pt) {
-                self.current_fn_param_tyvars.push(v);
+            let applied = self.apply(pt);
+            match &applied {
+                Type::Var(v) => self.current_fn_param_tyvars.push(*v),
+                Type::Generic(name, args)
+                    if resolve(*name) == "TypeOf" && args.len() == 1 =>
+                {
+                    if let Type::Var(v) = self.apply(&args[0]) {
+                        self.current_fn_param_tyvars.push(v);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1500,6 +1675,31 @@ impl TypeChecker {
                 let obj_ty = self.apply(&obj_ty);
 
                 // Field / method access
+                //
+                // `TypeOf(inner)` values (descriptors produced by `type a`
+                // parameters or bare type names like `Int`) dispatch to
+                // trait methods on `inner`'s type. The descriptor is a
+                // type carrier, not a value argument — the downstream
+                // Call arm therefore sees `is_method_call = false`, so
+                // arg unification runs with no offset and the fn body's
+                // parameter slots line up one-for-one with the user's
+                // explicit arguments.
+                if let Type::Generic(gname, gargs) = &obj_ty
+                    && resolve(*gname) == "TypeOf"
+                    && gargs.len() == 1
+                {
+                    let resolved = self.resolve_type_descriptor_method(
+                        &gargs[0], field, span,
+                    );
+                    if let Some(ty) = resolved {
+                        self.last_field_access_was_method = false;
+                        expr.ty = Some(ty.clone());
+                        return ty;
+                    }
+                    // Fall through to the generic "unknown field on type"
+                    // error below.
+                    return Type::Error;
+                }
                 match &obj_ty {
                     Type::Record(rec_name, fields) => {
                         // Direct field access first
@@ -1877,8 +2077,10 @@ impl TypeChecker {
                             | (Type::ExtFloat, Type::ExtFloat) => Type::ExtFloat,
                             (Type::String, _) | (_, Type::String) => {
                                 self.error(
-                                    "type mismatch: operator requires numeric types, got String"
-                                        .to_string(),
+                                    format!(
+                                        "operator {op_str} requires Int, Float, or ExtFloat — \
+                                         got String; use `string.concat` or `+` to join strings"
+                                    ),
                                     span,
                                 );
                                 lt
@@ -2345,10 +2547,24 @@ impl TypeChecker {
 
                 let result_ty = match &callee_ty {
                     Type::Fun(params, ret) => {
-                        // Unify argument types with parameter types
-                        let min_len = params.len().min(arg_types.len());
+                        // Unify argument types with parameter types. For a
+                        // method call the implicit `self` is already bound
+                        // by `dispatch_method_entry` against the receiver,
+                        // so the caller's arguments line up with
+                        // `params[1..]` rather than `params[0..]`. Without
+                        // this offset, `x.pick(Todo)` unifies Todo's type
+                        // against the self slot and produces confusing
+                        // diagnostics whenever self's type differs from
+                        // the first explicit parameter's type.
+                        let param_offset = if is_method_call { 1 } else { 0 };
+                        let remaining_params = params.len().saturating_sub(param_offset);
+                        let min_len = remaining_params.min(arg_types.len());
                         for i in 0..min_len {
-                            self.unify(&arg_types[i], &params[i], arg_spans[i]);
+                            self.unify(
+                                &arg_types[i],
+                                &params[i + param_offset],
+                                arg_spans[i],
+                            );
                         }
                         // Check arity:
                         // - method call (dispatch_method_entry set the flag):
@@ -2365,9 +2581,13 @@ impl TypeChecker {
                         };
                         if !arity_ok {
                             let expected = params.len();
+                            let what = match callee_fn_name {
+                                Some(name) => format!("`{name}`"),
+                                None => "function".to_string(),
+                            };
                             self.error(
                                 format!(
-                                    "function expects {} {}, got {}",
+                                    "{what} expects {} {}, got {}",
                                     expected,
                                     plural(expected, "argument", "arguments"),
                                     arg_types.len()
@@ -2387,7 +2607,15 @@ impl TypeChecker {
                     Type::Error => Type::Error,
                     Type::Never => Type::Never,
                     _ => {
-                        self.error(format!("type '{}' is not callable", callee_ty), span);
+                        // Short-circuit cascades when the callee is an
+                        // unresolved tyvar — the mismatch branch above
+                        // already turned it into a Fun; if we got here
+                        // with something else, report the concrete type.
+                        let rendered = match &callee_ty {
+                            Type::Var(_) => "an expression of unknown type".to_string(),
+                            t => format!("`{t}`"),
+                        };
+                        self.error(format!("{rendered} is not callable"), span);
                         self.fresh_var()
                     }
                 };
@@ -2850,7 +3078,12 @@ impl TypeChecker {
                         }
                     }
                 } else {
-                    self.error("recur outside of loop".to_string(), span);
+                    self.error(
+                        "`recur` can only appear inside a `loop(...)` body — it jumps \
+                         to the enclosing loop with new binding values"
+                            .to_string(),
+                        span,
+                    );
                 }
                 self.fresh_var()
             }
@@ -3298,6 +3531,58 @@ impl TypeChecker {
                 }
             }
         }
+    }
+}
+
+/// Resolve a supertrait reference's TypeExpr argument against the
+/// enclosing trait's params. `Named("a")` where `"a"` is in
+/// `trait_info.params` maps to the corresponding entry in `base_args`
+/// (the enclosing trait's supplied args at the call site). Nested forms
+/// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
+/// fall through to their `Type::…` counterparts.
+fn resolve_supertrait_arg(
+    te: &TypeExpr,
+    trait_info: &TraitInfo,
+    base_args: &[Type],
+) -> Type {
+    match te {
+        TypeExpr::Named(sym) => {
+            if let Some(idx) = trait_info.params.iter().position(|p| p == sym)
+                && let Some(ty) = base_args.get(idx)
+            {
+                return ty.clone();
+            }
+            // Bare type name that isn't a trait param — interpret as a
+            // concrete type reference (Int, String, or user type).
+            match resolve(*sym).as_str() {
+                "Int" => Type::Int,
+                "Float" => Type::Float,
+                "Bool" => Type::Bool,
+                "String" => Type::String,
+                _ => Type::Generic(*sym, Vec::new()),
+            }
+        }
+        TypeExpr::Generic(sym, args) => {
+            let resolved: Vec<Type> = args
+                .iter()
+                .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
+                .collect();
+            Type::Generic(*sym, resolved)
+        }
+        TypeExpr::Tuple(elems) => Type::Tuple(
+            elems
+                .iter()
+                .map(|e| resolve_supertrait_arg(e, trait_info, base_args))
+                .collect(),
+        ),
+        TypeExpr::Function(params, ret) => Type::Fun(
+            params
+                .iter()
+                .map(|p| resolve_supertrait_arg(p, trait_info, base_args))
+                .collect(),
+            Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
+        ),
+        TypeExpr::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
     }
 }
 
@@ -3752,7 +4037,7 @@ fn main() {
   "hello" - "world"
 }
         "#,
-            "operator requires numeric types",
+            "requires Int, Float, or ExtFloat",
         );
     }
 
@@ -3764,7 +4049,7 @@ fn main() {
   "hello" * "world"
 }
         "#,
-            "operator requires numeric types",
+            "requires Int, Float, or ExtFloat",
         );
     }
 
@@ -3776,7 +4061,7 @@ fn main() {
   "hello" % "world"
 }
         "#,
-            "operator requires numeric types",
+            "requires Int, Float, or ExtFloat",
         );
     }
 

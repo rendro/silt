@@ -660,10 +660,30 @@ impl Compiler {
                         // field access can be rewritten to a bare global
                         // lookup at codegen time.
                         let enum_name = resolve(type_decl.name);
-                        let variant_set = self.known_enum_variants.entry(enum_name).or_default();
+                        let variant_set = self.known_enum_variants.entry(enum_name.clone()).or_default();
                         for variant in variants {
                             variant_set.insert(resolve(variant.name));
                         }
+
+                        // Register the enum type name as a type descriptor
+                        // global so it can be passed as a `type a` argument
+                        // (mirrors records). Skipped when a variant shares
+                        // the enum's name — the variant constructor owns the
+                        // symbol in that case.
+                        let variant_shares_name =
+                            variants.iter().any(|v| v.name == type_decl.name);
+                        if !variant_shares_name {
+                            let val = Value::TypeDescriptor(enum_name.clone());
+                            let val_idx = self.add_constant(val, span)?;
+                            self.current_chunk().emit_op(Op::Constant, span);
+                            self.current_chunk().emit_u16(val_idx, span);
+                            let name_idx = self
+                                .add_constant(Value::String(enum_name.clone()), span)?;
+                            self.current_chunk().emit_op(Op::SetGlobal, span);
+                            self.current_chunk().emit_u16(name_idx, span);
+                            self.current_chunk().emit_op(Op::Pop, span);
+                        }
+
                         for variant in variants {
                             let vname = resolve(variant.name);
                             let arity = variant.fields.len();
@@ -698,8 +718,8 @@ impl Compiler {
                         }
                     }
                     crate::ast::TypeBody::Record(fields) => {
-                        // Register the record type name as a RecordDescriptor global.
-                        let val = Value::RecordDescriptor(resolve(type_decl.name));
+                        // Register the record type name as a TypeDescriptor global.
+                        let val = Value::TypeDescriptor(resolve(type_decl.name));
                         let val_idx = self.add_constant(val, span)?;
                         self.current_chunk().emit_op(Op::Constant, span);
                         self.current_chunk().emit_u16(val_idx, span);
