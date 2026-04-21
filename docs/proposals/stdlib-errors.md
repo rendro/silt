@@ -97,7 +97,7 @@ type IoError {
   Interrupted
   UnexpectedEof
   WriteZero
-  Other(String)             -- fallback, carries platform message
+  Unknown(String)           -- fallback, carries platform message
 }
 
 -- in json
@@ -205,7 +205,7 @@ type HttpError {
   InvalidResponse(String)
   ClosedEarly
   StatusCode(Int, String)    -- status, body preview
-  Other(String)
+  Unknown(String)
 }
 ```
 
@@ -271,19 +271,37 @@ nicer output, each module can define an explicit
 `trait Display for IoError` impl that formats like the current
 messages. Decide per-module.
 
-## Open questions
+## Decisions
 
-- **Do we keep `Other(String)` fallbacks indefinitely?** Yes, at least
-  for v1 — new platform errors appear faster than we can enumerate
-  them. `Other` is a pressure-release valve.
-- **Should `?` auto-wrap module errors into user enums?** Rust solves
-  this with the `From` trait. Silt has no such trait today. Until it
-  does, users write `result.map_err(Wrap)` explicitly. That's fine —
-  explicit over implicit.
-- **Backtrace support?** Out of scope. Possibly a VM feature later,
-  unrelated to this design.
-- **What about `panic`?** `panic` is fatal — no typed error. Unchanged
-  by this proposal.
+- **`Unknown(String)` fallback** (renamed from `Other`): kept on every
+  module enum for now. New platform errors appear faster than we can
+  enumerate them; `Unknown` is a pressure-release valve that lets the
+  stdlib surface messages it can't classify without forcing a library
+  version bump every time. Once each module's API stabilizes and the
+  catalog of real-world failure modes is well-known, individual
+  `Unknown(_)` payloads can be promoted to named variants; `Unknown`
+  itself stays as a catch-all.
+
+- **No auto-wrap on `?`.** Explicit-over-implicit. `?` only propagates
+  when the callee's error type already matches the caller's return
+  type. For cross-module composition, the user writes
+  `result.map_err(Wrap)?` — visible and typed.
+
+- **Explore a `From`-like trait for error conversion.** Tracked as a
+  separate language-level design question (not part of this proposal).
+  Goal would be an explicit `.into()` / `convert` call at the point
+  of conversion, reducing `map_err(Wrap)` boilerplate without the
+  implicit-propagation footgun `?` would introduce. Any such trait
+  should be an opt-in user-declared conversion, not a compiler-inserted
+  coercion.
+
+- **Backtrace support: out of scope.** Separate VM-level feature;
+  unrelated to the error-type design. May appear as a future debugger
+  capability but not as part of `Result(T, E)`.
+
+- **`panic` unchanged.** `panic` is fatal — no typed error. The typed
+  error design applies only to recoverable failures surfaced through
+  `Result`. Panics continue to abort with their string message.
 
 ## Cost estimate
 
