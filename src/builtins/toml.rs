@@ -155,13 +155,14 @@ fn value_to_toml(v: &Value) -> Result<::toml::Value, VmError> {
                             time_fields.get("hour"),
                             time_fields.get("minute"),
                             time_fields.get("second"),
-                        ) {
-                            let iso = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}");
-                            if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
-                                return Ok(::toml::Value::Datetime(dt));
-                            }
-                            return Ok(::toml::Value::String(iso));
+                        )
+                    {
+                        let iso = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}");
+                        if let Ok(dt) = iso.parse::<::toml::value::Datetime>() {
+                            return Ok(::toml::Value::Datetime(dt));
                         }
+                        return Ok(::toml::Value::String(iso));
+                    }
                 }
                 _ => {}
             }

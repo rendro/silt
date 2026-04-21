@@ -116,14 +116,12 @@ fn collect_decl_ranges(decl: &Decl, source: &str, cursor: usize, out: &mut Vec<S
                 }
             }
         }
-        Decl::Type(td)
-            if cursor >= td.span.offset => {
-                out.push(td.span);
-            }
-        Decl::Trait(t)
-            if cursor >= t.span.offset => {
-                out.push(t.span);
-            }
+        Decl::Type(td) if cursor >= td.span.offset => {
+            out.push(td.span);
+        }
+        Decl::Trait(t) if cursor >= t.span.offset => {
+            out.push(t.span);
+        }
         _ => {}
     }
 }
