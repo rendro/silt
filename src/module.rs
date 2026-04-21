@@ -22,8 +22,119 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
             Some("time")
         }
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Some("http"),
+        // Stdlib typed-error enums (Phase 0 of the stdlib error
+        // redesign; see `docs/proposals/stdlib-errors.md`). Each
+        // module's error variants require that module to be imported
+        // before they can be constructed.
+        "IoNotFound" | "IoPermissionDenied" | "IoAlreadyExists" | "IoInvalidInput"
+        | "IoInterrupted" | "IoUnexpectedEof" | "IoWriteZero" | "IoUnknown" => Some("io"),
+        "JsonSyntax" | "JsonTypeMismatch" | "JsonMissingField" | "JsonUnknown" => Some("json"),
+        "TomlSyntax" | "TomlTypeMismatch" | "TomlMissingField" | "TomlUnknown" => Some("toml"),
+        // ParseError is shared between int and float. Arbitrary
+        // routing pick: int. Users importing `float` can still
+        // destructure these variants in a match once constructed.
+        "ParseEmpty" | "ParseInvalidDigit" | "ParseOverflow" | "ParseUnderflow" => Some("int"),
+        "HttpConnect"
+        | "HttpTls"
+        | "HttpTimeout"
+        | "HttpInvalidUrl"
+        | "HttpInvalidResponse"
+        | "HttpClosedEarly"
+        | "HttpStatusCode"
+        | "HttpUnknown" => Some("http"),
+        "RegexInvalidPattern" | "RegexTooBig" => Some("regex"),
         _ => None,
     }
+}
+
+/// Returns the set of builtin enums known to the compiler as
+/// `(enum_name, variant_names)` pairs. Seeds the compiler's
+/// `known_enum_variants` map so `EnumName.Variant` qualifier syntax
+/// compiles to a bare `GetGlobal("Variant")`, matching how the same
+/// rewrite already works for user-declared enums.
+///
+/// Includes both prelude enums (Result, Option) and gated enums.
+/// Keep in sync with `src/typechecker/builtins.rs` enum registrations
+/// and `src/vm/dispatch.rs` variant globals.
+pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        ("Result", &["Ok", "Err"]),
+        ("Option", &["Some", "None"]),
+        ("Step", &["Stop", "Continue"]),
+        ("ChannelResult", &["Message", "Closed", "Empty", "Sent"]),
+        (
+            "Weekday",
+            &[
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ],
+        ),
+        (
+            "Method",
+            &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+        ),
+        // Stdlib typed-error enums (Phase 0 of the stdlib error
+        // redesign). See `docs/proposals/stdlib-errors.md`.
+        (
+            "IoError",
+            &[
+                "IoNotFound",
+                "IoPermissionDenied",
+                "IoAlreadyExists",
+                "IoInvalidInput",
+                "IoInterrupted",
+                "IoUnexpectedEof",
+                "IoWriteZero",
+                "IoUnknown",
+            ],
+        ),
+        (
+            "JsonError",
+            &[
+                "JsonSyntax",
+                "JsonTypeMismatch",
+                "JsonMissingField",
+                "JsonUnknown",
+            ],
+        ),
+        (
+            "TomlError",
+            &[
+                "TomlSyntax",
+                "TomlTypeMismatch",
+                "TomlMissingField",
+                "TomlUnknown",
+            ],
+        ),
+        (
+            "ParseError",
+            &[
+                "ParseEmpty",
+                "ParseInvalidDigit",
+                "ParseOverflow",
+                "ParseUnderflow",
+            ],
+        ),
+        (
+            "HttpError",
+            &[
+                "HttpConnect",
+                "HttpTls",
+                "HttpTimeout",
+                "HttpInvalidUrl",
+                "HttpInvalidResponse",
+                "HttpClosedEarly",
+                "HttpStatusCode",
+                "HttpUnknown",
+            ],
+        ),
+        ("RegexError", &["RegexInvalidPattern", "RegexTooBig"]),
+    ]
 }
 
 /// Returns the list of builtin function suffixes for a given builtin module.

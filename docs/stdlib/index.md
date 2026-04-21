@@ -35,3 +35,4 @@ Complete API reference for every built-in function in silt.
 | [tcp](tcp.md) | Raw TCP listeners and streams with cooperative I/O (optional TLS via `tcp-tls`) |
 | [stream](stream.md) | Channel-backed sources, transforms, and sinks with backpressure |
 | [postgres](postgres.md) | PostgreSQL pools, queries, transactions, streams, cursors, and LISTEN/NOTIFY (opt-in) |
+| [stdlib errors](errors.md) | Typed error enums for `io`, `json`, `toml`, `int`/`float` parse, `http`, `regex` |

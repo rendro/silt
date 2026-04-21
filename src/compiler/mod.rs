@@ -373,8 +373,24 @@ pub struct Compiler {
     /// Maps enum type name → set of variant names. Populated as `type`
     /// declarations are compiled. Used by `FieldAccess` codegen to
     /// rewrite `EnumName.Variant` into a bare `GetGlobal("Variant")`
-    /// since variants are registered globally by bare name.
+    /// since variants are registered globally by bare name. Also seeded
+    /// from `module::builtin_enum_variants()` at construction so builtin
+    /// enums (Result, Option, IoError, etc.) support the same qualifier
+    /// syntax as user-declared enums.
     known_enum_variants: HashMap<String, HashSet<String>>,
+}
+
+/// Seed `known_enum_variants` with the builtin enums. Called from
+/// `Compiler::new` and `with_package_roots` so every compiler instance
+/// recognises `ResultEnum.Ok`, `IoError.IoNotFound`, etc. without
+/// needing a `type` declaration in user code.
+fn initial_known_enum_variants() -> HashMap<String, HashSet<String>> {
+    let mut map = HashMap::new();
+    for (enum_name, variants) in module::builtin_enum_variants() {
+        let set: HashSet<String> = variants.iter().map(|v| (*v).to_string()).collect();
+        map.insert((*enum_name).to_string(), set);
+    }
+    map
 }
 
 impl Default for Compiler {
@@ -401,7 +417,7 @@ impl Compiler {
             module_public_fns: HashMap::new(),
             module_private_fns: HashMap::new(),
             repl_mode: false,
-            known_enum_variants: HashMap::new(),
+            known_enum_variants: initial_known_enum_variants(),
         }
     }
 
@@ -435,7 +451,7 @@ impl Compiler {
             module_public_fns: HashMap::new(),
             module_private_fns: HashMap::new(),
             repl_mode: false,
-            known_enum_variants: HashMap::new(),
+            known_enum_variants: initial_known_enum_variants(),
         }
     }
 

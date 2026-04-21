@@ -110,6 +110,89 @@ impl Vm {
                 .insert(method.into(), Value::Variant(method.into(), Vec::new()));
         }
 
+        // ── Stdlib error variants ──
+        // Phase 0 of the stdlib error redesign (see
+        // `docs/proposals/stdlib-errors.md`). Each variant is globally
+        // unique (module-prefixed) so we can register it as a bare
+        // global the same way other builtin variants are. N-ary variants
+        // land as `VariantConstructor`; nullary variants land as
+        // `Variant` values.
+
+        // IoError
+        for (name, arity) in [
+            ("IoNotFound", 1usize),
+            ("IoPermissionDenied", 1),
+            ("IoAlreadyExists", 1),
+            ("IoInvalidInput", 1),
+            ("IoUnknown", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+        for name in ["IoInterrupted", "IoUnexpectedEof", "IoWriteZero"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
+        // JsonError
+        for (name, arity) in [
+            ("JsonSyntax", 2usize),
+            ("JsonTypeMismatch", 2),
+            ("JsonMissingField", 1),
+            ("JsonUnknown", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+
+        // TomlError
+        for (name, arity) in [
+            ("TomlSyntax", 2usize),
+            ("TomlTypeMismatch", 2),
+            ("TomlMissingField", 1),
+            ("TomlUnknown", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+
+        // ParseError
+        self.globals.insert(
+            "ParseInvalidDigit".into(),
+            Value::VariantConstructor("ParseInvalidDigit".into(), 1),
+        );
+        for name in ["ParseEmpty", "ParseOverflow", "ParseUnderflow"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
+        // HttpError
+        for (name, arity) in [
+            ("HttpConnect", 1usize),
+            ("HttpTls", 1),
+            ("HttpInvalidUrl", 1),
+            ("HttpInvalidResponse", 1),
+            ("HttpStatusCode", 2),
+            ("HttpUnknown", 1),
+        ] {
+            self.globals
+                .insert(name.into(), Value::VariantConstructor(name.into(), arity));
+        }
+        for name in ["HttpTimeout", "HttpClosedEarly"] {
+            self.globals
+                .insert(name.into(), Value::Variant(name.into(), Vec::new()));
+        }
+
+        // RegexError
+        self.globals.insert(
+            "RegexInvalidPattern".into(),
+            Value::VariantConstructor("RegexInvalidPattern".into(), 2),
+        );
+        self.globals.insert(
+            "RegexTooBig".into(),
+            Value::Variant("RegexTooBig".into(), Vec::new()),
+        );
+
         // Primitive type descriptors
         self.globals
             .insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));

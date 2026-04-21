@@ -18,6 +18,7 @@ mod channel;
 mod crypto;
 mod encoding;
 mod env;
+mod errors;
 mod float;
 mod fs;
 mod http;
@@ -734,6 +735,7 @@ impl TypeChecker {
         self.register_tcp_builtins(env);
         self.register_stream_builtins(env);
         self.register_toml_builtins(env);
+        self.register_errors_builtins(env);
     }
 
     fn register_list_builtins(&mut self, env: &mut TypeEnv) {
@@ -831,6 +833,10 @@ impl TypeChecker {
 
     fn register_toml_builtins(&mut self, env: &mut TypeEnv) {
         toml::register(self, env);
+    }
+
+    fn register_errors_builtins(&mut self, env: &mut TypeEnv) {
+        errors::register(self, env);
     }
 }
 
