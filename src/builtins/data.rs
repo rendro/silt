@@ -2169,6 +2169,7 @@ fn http_completion() -> std::sync::Arc<crate::value::IoCompletion> {
     crate::value::IoCompletion::with_timeout_err(std::sync::Arc::new(http_timeout_err))
 }
 
+#[cfg(feature = "http")]
 fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
     let msg = redact_http_url_userinfo(raw_msg);
     let lower = msg.to_lowercase();
