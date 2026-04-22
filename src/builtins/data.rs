@@ -210,21 +210,21 @@ pub fn call_http_error_trait(name: &str, args: &[Value]) -> Result<Value, VmErro
             }
             let msg = match &args[0] {
                 Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("HttpConnect", [Value::String(m)]) => format!("connect failed: {m}"),
-                    ("HttpTls", [Value::String(m)]) => format!("TLS error: {m}"),
-                    ("HttpTimeout", []) => "request timed out".to_string(),
-                    ("HttpInvalidUrl", [Value::String(u)]) => format!("invalid url: {u}"),
+                    ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
+                    ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
+                    ("HttpTimeout", []) => "http request timed out".to_string(),
+                    ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
                     ("HttpInvalidResponse", [Value::String(m)]) => {
-                        format!("invalid response: {m}")
+                        format!("http invalid response: {m}")
                     }
                     ("HttpClosedEarly", []) => {
-                        "connection closed before response completed".to_string()
+                        "http connection closed before response completed".to_string()
                     }
                     ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
                         if body.is_empty() {
-                            format!("http {code}")
+                            format!("http status {code}")
                         } else {
-                            format!("http {code}: {body}")
+                            format!("http status {code}: {body}")
                         }
                     }
                     ("HttpUnknown", [Value::String(m)]) => m.clone(),
