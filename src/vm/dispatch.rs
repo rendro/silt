@@ -571,6 +571,7 @@ impl Vm {
                     "PgError",
                     AssertUnwindSafe(|| builtins::postgres::call_pg_error_trait(func, args)),
                 ),
+                #[cfg(feature = "tcp")]
                 "TcpError" => catch_builtin_panic(
                     "TcpError",
                     AssertUnwindSafe(|| builtins::tcp::call_tcp_error_trait(func, args)),
