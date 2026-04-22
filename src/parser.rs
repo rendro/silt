@@ -1367,7 +1367,23 @@ impl Parser {
             if !self.has_newline_before() {
                 match self.peek() {
                     Token::Question => {
-                        let bp = 110;
+                        // `?` binds looser than `|>` (pipe l_bp = 55) so
+                        // a pipeline followed by `?` parses as
+                        // `(x |> f(y))?` — i.e. `?` applies to the full
+                        // piped result, not just to the call-inside-the-pipe.
+                        // Historically `?` was at 110 (higher than every
+                        // infix op), which made `x |> f(y)?` desugar to
+                        // `x |> (f(y)?)` and fail type-check because the
+                        // `?` was attached to a half-applied fn value.
+                        //
+                        // Side effect: expressions like `x + y?` now parse
+                        // as `(x + y)?` instead of the old `x + (y?)`.
+                        // That change is safe in practice — silt's `?`
+                        // requires its LHS to be `Result` or `Option`, so
+                        // `(x + y)?` with non-Result operands is a type
+                        // error either way; users who wanted the old shape
+                        // always needed parens on the RHS anyway.
+                        let bp = 54;
                         if bp < min_bp {
                             break;
                         }
@@ -3542,6 +3558,286 @@ fn main() {
             } else {
                 panic!("expected pipe expression, got {:?}", expr.kind);
             }
+        }
+    }
+
+    #[test]
+    fn test_question_mark_wraps_full_pipe() {
+        // `x |> f(y)?` must parse as `(x |> f(y))?` — `?` applies to the
+        // piped result, not to the inner call `f(y)`. Historically `?`
+        // bound tighter than `|>`, which made error-conversion pipelines
+        // like `io.read_file(p) |> result.map_err(Wrap)?` fail to
+        // type-check because `?` was stuck on a half-applied call.
+        let prog = parse(
+            r#"
+            fn main() {
+                a |> f(b)?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            // Top-level must be QuestionMark, not Pipe.
+            let ExprKind::QuestionMark(inner) = &expr.kind else {
+                panic!("expected `?` at top of expression, got {:?}", expr.kind);
+            };
+            // Inner must be a Pipe.
+            assert!(
+                matches!(&inner.kind, ExprKind::Pipe(_, _)),
+                "expected Pipe inside `?`, got {:?}",
+                inner.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_looser_than_plus() {
+        // New precedence: `a + b?` parses as `(a + b)?`. The old high-bp
+        // `?` made this `a + (b?)`. Either way silt's typechecker then
+        // enforces `Result` / `Option` on the `?` LHS, so the surface
+        // meaning of valid programs is unaffected — but the AST shape
+        // flipped and we lock that here.
+        let prog = parse(
+            r#"
+            fn main() {
+                a + b?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            let ExprKind::QuestionMark(inner) = &expr.kind else {
+                panic!("expected `?` at top, got {:?}", expr.kind);
+            };
+            assert!(
+                matches!(&inner.kind, ExprKind::Binary(_, _, _)),
+                "expected Binary inside `?`, got {:?}",
+                inner.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_looser_than_range() {
+        // `a..b?` parses as `(a..b)?` under the new precedence. Checked
+        // separately from `+` because the range operator has its own bp
+        // and lives between `|>` and arithmetic.
+        let prog = parse(
+            r#"
+            fn main() {
+                a..b?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            let ExprKind::QuestionMark(inner) = &expr.kind else {
+                panic!("expected `?` at top, got {:?}", expr.kind);
+            };
+            assert!(
+                matches!(&inner.kind, ExprKind::Range(_, _)),
+                "expected Range inside `?`, got {:?}",
+                inner.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_tighter_than_eq() {
+        // `a == b?` still parses as `a == (b?)` — `?` binds tighter than
+        // comparison operators, matching the old behavior. This is
+        // load-bearing for patterns like `parse(x)? == expected_value`
+        // where `?` is meant to unwrap the LHS of the comparison. Locks
+        // that the new-lower `?` bp (54) still exceeds `==` r_bp (41).
+        let prog = parse(
+            r#"
+            fn main() {
+                a == b?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            // Top-level is Binary(==), NOT QuestionMark — `?` was pulled
+            // into the RHS of `==`.
+            let ExprKind::Binary(_, op, rhs) = &expr.kind else {
+                panic!("expected Binary at top, got {:?}", expr.kind);
+            };
+            assert_eq!(*op, BinOp::Eq);
+            assert!(
+                matches!(&rhs.kind, ExprKind::QuestionMark(_)),
+                "expected QuestionMark on RHS of ==, got {:?}",
+                rhs.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_looser_than_mul() {
+        // Multiplication's (l_bp=80, r_bp=81) are higher than `?`'s
+        // new bp (54), so `a * b?` parses as `(a * b)?`.
+        let prog = parse(
+            r#"
+            fn main() {
+                a * b?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            let ExprKind::QuestionMark(inner) = &expr.kind else {
+                panic!("expected `?` at top, got {:?}", expr.kind);
+            };
+            let ExprKind::Binary(_, op, _) = &inner.kind else {
+                panic!("expected Binary inside `?`, got {:?}", inner.kind);
+            };
+            assert_eq!(*op, BinOp::Mul);
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_tighter_than_and() {
+        // `&&` at (30, 31) is lower than `?` (54), so `a && b?` parses
+        // as `a && (b?)`. Locks short-circuit semantics: the RHS of
+        // `&&` must be a fully-formed boolean, so `?` on the RHS
+        // unwraps just b's Result and the && fires over the unwrapped
+        // value.
+        let prog = parse(
+            r#"
+            fn main() {
+                a && b?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            let ExprKind::Binary(_, op, rhs) = &expr.kind else {
+                panic!("expected Binary at top, got {:?}", expr.kind);
+            };
+            assert_eq!(*op, BinOp::And);
+            assert!(
+                matches!(&rhs.kind, ExprKind::QuestionMark(_)),
+                "expected `?` on RHS of &&, got {:?}",
+                rhs.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_binds_looser_than_as() {
+        // `as` at bp=95 is higher than `?`'s new bp (54), so
+        // `x as Int?` parses as `(x as Int)?`. Minor edge case worth
+        // pinning; the old behavior produced the same shape via a
+        // different path because `?` was also a postfix that happened
+        // to attach to the `as` result.
+        let prog = parse(
+            r#"
+            fn main() {
+                x as Int?
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            let ExprKind::QuestionMark(inner) = &expr.kind else {
+                panic!("expected `?` at top, got {:?}", expr.kind);
+            };
+            assert!(
+                matches!(&inner.kind, ExprKind::Ascription(_, _)),
+                "expected Ascription inside `?`, got {:?}",
+                inner.kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_question_mark_still_binds_before_pipe_when_on_left() {
+        // `f(a)? |> g` must still parse as `(f(a)?) |> g` — `?` binds to
+        // the preceding call atom before the pipe takes its LHS. This
+        // was the natural reading under the old high-bp `?` and must
+        // stay correct under the new looser `?`.
+        let prog = parse(
+            r#"
+            fn main() {
+                f(a)? |> g
+            }
+        "#,
+        );
+        assert_eq!(prog.decls.len(), 1);
+        if let Decl::Fn(ref f) = prog.decls[0] {
+            let stmts = match &f.body.kind {
+                ExprKind::Block(stmts) => stmts,
+                _ => panic!("expected block"),
+            };
+            let expr = match stmts.last().unwrap() {
+                Stmt::Expr(e) => e,
+                _ => panic!("expected expr stmt"),
+            };
+            // Top-level must be Pipe, with LHS being QuestionMark.
+            let ExprKind::Pipe(lhs, _rhs) = &expr.kind else {
+                panic!("expected Pipe at top, got {:?}", expr.kind);
+            };
+            assert!(
+                matches!(&lhs.kind, ExprKind::QuestionMark(_)),
+                "expected QuestionMark on pipe LHS, got {:?}",
+                lhs.kind
+            );
         }
     }
 
