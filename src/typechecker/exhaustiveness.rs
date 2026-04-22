@@ -806,11 +806,60 @@ impl TypeChecker {
     /// unknown, and inference artefacts — must be witness-split to avoid
     /// pretending a handful of specific-value rows cover the whole
     /// column.
+    ///
+    /// why: new Type variant → must decide here, this match is the
+    /// compile-time lock for round-36 LATENT finding. This function is
+    /// deliberately written as an exhaustive match with NO wildcard arm
+    /// so that adding a new `Type` variant in `src/types.rs` fails to
+    /// compile until the maintainer classifies it explicitly as either
+    /// enumerable (returns `false`, i.e. `constructors_for_query` can
+    /// faithfully enumerate all inhabitants) or non-enumerable (returns
+    /// `true`, i.e. the witness-split path is required). Without this
+    /// lock, a future variant like a `BigInt` scalar could silently
+    /// regress nested-tuple exhaustiveness by falling into a permissive
+    /// default.
     fn first_col_non_enumerable(ty: &Type, tc: &TypeChecker) -> bool {
         match ty {
+            // Enumerable: exactly two inhabitants, both materialised by
+            // `constructors_for_query`.
             Type::Bool => false,
+            // Enumerable iff `name` resolves to a registered enum whose
+            // variants `constructors_for_query` can emit; record-backed
+            // and parameter generics fall through to the non-enumerable
+            // path so the witness-split fires.
             Type::Generic(name, _) => !tc.enums.contains_key(name),
-            _ => true,
+            // Non-enumerable scalars with effectively infinite inhabitants —
+            // literal-row dedupe + synthetic "not-in-matrix" witness is
+            // the only sound approach.
+            Type::Int => true,
+            Type::Float => true,
+            Type::ExtFloat => true,
+            Type::String => true,
+            // Unit has a single inhabitant `()`. Treat as non-enumerable
+            // here because `constructors_for_query` does not materialise
+            // a `PatternKind::Unit` constructor for the wildcard query on
+            // a `Type::Unit` first column; the witness-split still yields
+            // the correct verdict (the `is_fully_covering_pattern` check
+            // in Pass 2 accepts wildcard/ident rows just fine).
+            Type::Unit => true,
+            // Product types: a single structural constructor, but
+            // `constructors_for_query` does not enumerate it. Specific-
+            // value rows otherwise mask uncovered inhabitants.
+            Type::Record(_, _) => true,
+            Type::Tuple(_) => true,
+            // Container types with effectively unbounded shapes.
+            Type::List(_) => true,
+            Type::Map(_, _) => true,
+            Type::Set(_) => true,
+            // Function / channel / inference-artefact / error / never
+            // values cannot be pattern-matched by literal constructors,
+            // so specific-value rows cannot cover the column; witness-
+            // split is the only sound fallback.
+            Type::Fun(_, _) => true,
+            Type::Channel(_) => true,
+            Type::Var(_) => true,
+            Type::Error => true,
+            Type::Never => true,
         }
     }
 

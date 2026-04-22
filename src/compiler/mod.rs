@@ -223,6 +223,26 @@ fn format_module_source_error(
     out
 }
 
+/// Render a module file path as CWD-relative when possible. Mirrors the
+/// `normalize_path` closure in `src/cli/run.rs` that does the same for
+/// runtime SourceError rendering. Keeps the inner `--> helper.silt:...`
+/// snippet consistent with the outer diagnostic's `-->` style, so a
+/// single stderr diagnostic doesn't mix absolute and relative paths.
+///
+/// We strip only the CWD prefix — if the module lives outside the CWD
+/// (e.g. a dependency under ~/.silt/deps) we fall back to the raw
+/// path, because any synthetic prefix-stripping there would lie about
+/// where the file actually lives. Lock:
+/// tests/compiler_module_path_norm_round36_tests.rs.
+fn normalize_module_path(p: &std::path::Path) -> String {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(rel) = p.strip_prefix(&cwd) {
+            return rel.display().to_string();
+        }
+    }
+    p.display().to_string()
+}
+
 /// Clamp a span pointing past the end of `source` back onto the last
 /// real line. Mirrors `errors::clamp_span_to_source`; duplicated here
 /// so `format_module_source_error` can render a snippet for EOF
@@ -1130,7 +1150,17 @@ impl Compiler {
             span,
         })?;
 
-        let file_display = file_path.display().to_string();
+        // Round-36 GAP: render the module file as a CWD-relative path when
+        // possible so the inner `--> helper.silt:...` snippet matches the
+        // outer `--> main.silt:...` style. Previously this used the raw
+        // (absolute, because `package_roots` canonicalize()s paths) file
+        // path, which produced mixed-style diagnostics: outer relative,
+        // inner absolute — the G3/G4 audit finding.
+        //
+        // Mirrors the `normalize_path` helper in `src/cli/run.rs` that does
+        // the same job for runtime SourceError rendering. Lock:
+        // tests/compiler_module_path_norm_round36_tests.rs.
+        let file_display = normalize_module_path(file_path);
 
         let tokens = Lexer::new(&source).tokenize().map_err(|e| CompileError {
             message: format_module_source_error(

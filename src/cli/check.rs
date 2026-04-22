@@ -156,11 +156,35 @@ fn print_json_errors(errors: &[&SourceError]) {
     let json_errors: Vec<serde_json::Value> = errors
         .iter()
         .map(|e| {
+            // Round-36 fix: the human renderer emits `= help:` / `= note:`
+            // continuation lines below the caret for any `\nhelp: ...` or
+            // `\nnote: ...` suffix a diagnostic tacks onto its message
+            // (see `src/typechecker/inference.rs` — did-you-mean hints are
+            // appended as `\nhelp: did you mean ...?`). The JSON emitter
+            // used to keep the first line as the `message` and drop the
+            // rest, which meant `--format json` consumers (editors,
+            // LSP front-ends, CI scripts) never saw the hints. We now
+            // preserve the first line as `message` (backward compat) and
+            // add a `hints` array extracted from the remaining lines,
+            // filtered to diagnostic hint prefixes (`help:`, `note:`).
+            let mut lines = e.message.lines();
+            let head = lines.next().unwrap_or(&e.message);
+            let hints: Vec<String> = lines
+                .filter_map(|ln| {
+                    let t = ln.trim_start();
+                    if t.starts_with("help:") || t.starts_with("note:") {
+                        Some(t.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             serde_json::json!({
                 "file": e.file.as_deref().unwrap_or("<unknown>"),
                 "line": e.span.line,
                 "col": e.span.col,
-                "message": e.message.lines().next().unwrap_or(&e.message),
+                "message": head,
+                "hints": hints,
                 "severity": if e.is_warning { "warning" } else { "error" },
                 "kind": e.kind.to_string(),
             })

@@ -496,10 +496,40 @@ version = "0.1.0"
 
 #[test]
 fn test_malformed_toml() {
+    // `[[broken` is an unterminated array-of-tables header — the TOML
+    // parser today surfaces: "invalid table header\nexpected `.`, `]]`".
+    // Lock the message shape so a future regression that swaps in a
+    // generic "parse failed" string (or an empty one) is caught.
     let err = load_err("[[broken");
     match err {
-        ManifestError::Parse { message, .. } => {
+        ManifestError::Parse { message, span, .. } => {
             assert!(!message.is_empty(), "expected non-empty parse message");
+            let lower = message.to_lowercase();
+            // The underlying TOML parser uses phrases like "invalid",
+            // "expected", "unexpected", or "parse" in its error text —
+            // require at least one of these so a blank/"error"/"oops"
+            // regression fails.
+            assert!(
+                ["invalid", "expected", "unexpected", "parse"]
+                    .iter()
+                    .any(|kw| lower.contains(kw)),
+                "expected TOML-parser-shaped message (invalid/expected/unexpected/parse), \
+                 got: {message:?}"
+            );
+            // `[[broken` is specifically a bad table header; today's
+            // toml crate includes the word "table" and/or "header" in
+            // its message. Lock on that more specific signal.
+            assert!(
+                lower.contains("table") || lower.contains("header") || lower.contains("]]"),
+                "expected table-header-specific diagnostic, got: {message:?}"
+            );
+            // The toml 0.8 parser populates a byte-span for the failure
+            // site; that's what downstream diagnostic rendering depends
+            // on, so make sure we don't regress to None.
+            assert!(
+                span.is_some(),
+                "expected toml parser to supply a byte span, got None"
+            );
         }
         other => panic!("expected Parse error, got {other:?}"),
     }

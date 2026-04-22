@@ -176,3 +176,67 @@ fn is_future_distinguishes_correctly() {
     assert!(!is_future((0, 9), current));
     assert!(!is_future((0, 7), current));
 }
+
+/// Stricter guard for stdlib and language reference docs: any bare
+/// `v0.X` or `vX.Y` reference in these reference-style docs must name
+/// the current minor or a newer one. Stale pins like "Existing v0.10
+/// silt programs will continue to…" get silently ossified otherwise
+/// — the future-phrase guard above misses them because the phrasing
+/// is past/present tense.
+///
+/// Legitimate historical references (changelogs, migration notes) can
+/// opt out by placing `<!-- drift-ok -->` on the same line.
+#[test]
+fn no_stale_bare_version_pins_in_reference_docs() {
+    let current = current_version();
+    let current_mm = (current.0, current.1);
+
+    let mut md_files = Vec::new();
+    collect_md_files(Path::new("docs/stdlib"), &mut md_files);
+    collect_md_files(Path::new("docs/language"), &mut md_files);
+
+    let mut offenders: Vec<String> = Vec::new();
+    for path in md_files {
+        // Skip anything that looks like a changelog — those are
+        // expected to reference every shipped version.
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if name.contains("changelog") || name.contains("history") {
+            continue;
+        }
+
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (line_idx, line) in text.lines().enumerate() {
+            if line.contains("<!-- drift-ok -->") {
+                continue;
+            }
+            for v in find_versions(line) {
+                if (v.0, v.1) < current_mm {
+                    offenders.push(format!(
+                        "{}:{}: \"{}\" references v{}.{} but current is v{}.{}.{} \
+                         (add `<!-- drift-ok -->` on the line to opt out)",
+                        path.display(),
+                        line_idx + 1,
+                        line.trim(),
+                        v.0,
+                        v.1,
+                        current.0,
+                        current.1,
+                        current.2,
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "stale bare version pins found in reference docs:\n  {}",
+        offenders.join("\n  ")
+    );
+}

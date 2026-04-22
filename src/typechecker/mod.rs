@@ -4300,7 +4300,17 @@ fn main() {
 
     #[test]
     fn test_type_error_has_error_severity() {
-        // A type mismatch should produce Severity::Error
+        // A type mismatch should produce Severity::Error.
+        //
+        // LATENT fix (audit round 36): previously this test only asserted that
+        // *some* error with Error severity existed — any unrelated diagnostic
+        // with Error severity would satisfy it. Narrow the lock to the specific
+        // Int/String mismatch under test: find the diagnostic whose message
+        // mentions both "Int" and "String" and assert IT has Error severity.
+        // Per the "test must fail on a mutated source" rule for weak-lock
+        // strengthenings: if the typechecker regressed to produce the Int/String
+        // mismatch as a Warning, this strengthened assertion would fail where
+        // the old `any()` check would still pass due to unrelated errors.
         let errors = check_errors(
             r#"
             fn main() {
@@ -4310,7 +4320,22 @@ fn main() {
         "#,
         );
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.severity == Severity::Error));
+        let mismatch = errors
+            .iter()
+            .find(|e| e.message.contains("Int") && e.message.contains("String"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected an error mentioning both Int and String, got: {:?}",
+                    errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            mismatch.severity,
+            Severity::Error,
+            "Int/String mismatch must be Error severity, got {:?} for message {:?}",
+            mismatch.severity,
+            mismatch.message
+        );
     }
 
     #[test]
@@ -5295,7 +5320,26 @@ fn main() {
 
     #[test]
     fn test_loop_recur_arity_mismatch() {
-        // loop has 2 bindings, recur has 1 argument
+        // loop has 2 bindings, recur has 1 argument.
+        //
+        // LATENT fix (audit round 36): previously the assertion was a 2-way
+        // substring OR — `contains("binding") || contains("argument")` — so
+        // many unrelated diagnostics could satisfy it (e.g. any diagnostic
+        // that says "unused binding" or "argument count"). The real message
+        // produced by typechecker/inference.rs is
+        // `loop has N binding(s), but recur supplies M argument(s)`.
+        //
+        // Strengthening:
+        //   - AND-chain specific phrases "loop has" && "recur supplies"
+        //   - require Severity::Error (GAP #163 established recur arity
+        //     mismatch is an Error, not a Warning)
+        //
+        // Per the "test must fail on a mutated source" rule for weak-lock
+        // strengthenings: if the message were reworded, or if the emitter
+        // regressed to `self.warning(...)` instead of `self.error(...)`,
+        // this strengthened check would fail where the old OR-substring
+        // check could still pass. The current code passes both — this is a
+        // correct-just-under-locked scenario, so the strengthening is valid.
         let errors = check_program(
             r#"
 fn main() {
@@ -5308,12 +5352,22 @@ fn main() {
 }
             "#,
         );
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("binding") || e.message.contains("argument")),
-            "expected recur arity warning, got: {:?}",
-            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        let recur_err = errors
+            .iter()
+            .find(|e| e.message.contains("loop has") && e.message.contains("recur supplies"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected a recur arity diagnostic containing both \"loop has\" and \
+                     \"recur supplies\", got: {:?}",
+                    errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            recur_err.severity,
+            Severity::Error,
+            "recur arity mismatch must be Error severity (GAP #163), got {:?} for message {:?}",
+            recur_err.severity,
+            recur_err.message
         );
     }
 

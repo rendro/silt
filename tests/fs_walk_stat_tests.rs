@@ -323,10 +323,23 @@ fn main() {{
 "#
     );
     let msg = err_msg(run(&input));
-    // The OS-level message varies but reliably mentions the missing
-    // path condition ("No such file or directory", "cannot find",
-    // "The system cannot find"). Just check it's non-empty.
+    // The OS-level message varies between Linux / macOS / Windows
+    // ("No such file or directory", "cannot find", "The system cannot
+    // find"), so we don't lock that. What we DO lock is the silt-side
+    // framing: `io_error_to_variant` maps NotFound to `IoNotFound(path)`,
+    // and `err_msg`/`IoError.message` render that as
+    // `"file not found: <path>"`. That prefix plus the missing path's
+    // final segment must appear — otherwise we'd be accepting a bare
+    // Rust panic message or a silently-swallowed "error" string.
     assert!(!msg.is_empty(), "expected a non-empty error message");
+    assert!(
+        msg.contains("file not found"),
+        "expected silt's NotFound framing 'file not found' in: {msg}"
+    );
+    assert!(
+        msg.contains("does_not_exist"),
+        "expected the missing path segment 'does_not_exist' in: {msg}"
+    );
 }
 
 // ── fs.walk ────────────────────────────────────────────────────────
@@ -416,7 +429,19 @@ fn main() {
 }
 "#;
     let msg = err_msg(run(input));
+    // The glob crate's `PatternError::Display` wording may drift
+    // ("Pattern syntax error near position 4: invalid range pattern"
+    // today, but we don't pin the exact phrasing). What we DO lock is
+    // the silt-side framing: a bad pattern routes through
+    // `IoInvalidInput(err.to_string())`, which `IoError.message`
+    // renders with the `"invalid input:"` prefix. Locking that prefix
+    // catches regressions where the error is silently swallowed to a
+    // generic "error" or raised as a bare VmError.
     assert!(!msg.is_empty());
+    assert!(
+        msg.contains("invalid input"),
+        "expected silt's InvalidInput framing 'invalid input' in: {msg}"
+    );
 }
 
 // ── fs.read_link / fs.is_symlink ───────────────────────────────────
@@ -494,7 +519,20 @@ fn main() {{
 "#
     );
     let msg = err_msg(run(&input));
+    // OS wording varies ("Invalid argument" on Linux, a different
+    // ENOTSUP-style phrasing on macOS, different again on Windows), so
+    // we do not lock the inner `err.to_string()` text. On unix the
+    // kernel returns EINVAL, which std classifies as `InvalidInput`,
+    // and silt's `IoError.message` renders that with the `"invalid
+    // input:"` prefix — lock that prefix under cfg(unix). Everywhere
+    // else we still pin non-empty, so a regression that swallows the
+    // error to "" or panics with a bare Rust message would fail.
     assert!(!msg.is_empty());
+    #[cfg(unix)]
+    assert!(
+        msg.contains("invalid input"),
+        "expected silt's InvalidInput framing 'invalid input' in: {msg}"
+    );
 }
 
 // ── fs.walk materialization cap (indirect) ─────────────────────────
@@ -521,5 +559,19 @@ fn main() {{
 "#
     );
     let msg = err_msg(run(&input));
+    // walkdir surfaces the underlying `std::io::Error` via
+    // `.io_error()`, which `fs.walk` pipes into `io_result_err(&e, root)`.
+    // That yields `IoNotFound(root)`, which `IoError.message` renders
+    // as `"file not found: <root>"`. OS-level message text varies
+    // across platforms and walkdir versions, so we anchor only on the
+    // silt-side wording plus the caller-supplied missing segment.
     assert!(!msg.is_empty());
+    assert!(
+        msg.contains("file not found"),
+        "expected silt's NotFound framing 'file not found' in: {msg}"
+    );
+    assert!(
+        msg.contains("nope"),
+        "expected the missing path segment 'nope' in: {msg}"
+    );
 }

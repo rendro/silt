@@ -775,8 +775,20 @@ fn main() {
 
 #[test]
 fn test_split_empty_sep_errors() {
-    // Empty separator is ambiguous; runtime must panic/error rather than
-    // silently infinite-loop.
+    // Empty separator is ambiguous; the original bug was an infinite loop
+    // inside the split loop. A regression would hang the whole test
+    // process rather than fail cleanly, so we run the VM on a worker
+    // thread and enforce a wall-clock deadline via mpsc::recv_timeout
+    // (mirrors the pattern in tests/vm_small_program_property_tests.rs).
+    //
+    // Anchor the assertion on the exact phrasing the bytes builtin
+    // produces today — "bytes.split: separator must be non-empty" — so
+    // that a silent message drift (e.g. swapping to a generic "invalid
+    // argument") also fails this test.
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
     let tokens = silt::lexer::Lexer::new(
         r#"
 import bytes
@@ -794,12 +806,31 @@ fn main() {
     let mut compiler = silt::compiler::Compiler::new();
     let functions = compiler.compile_program(&program).expect("compile error");
     let script = Arc::new(functions.into_iter().next().unwrap());
-    let mut vm = silt::vm::Vm::new();
-    let err = vm.run(script).expect_err("expected runtime error");
-    let msg = format!("{err}");
+
+    let (tx, rx) = mpsc::sync_channel::<Result<Value, String>>(1);
+    let _handle = thread::spawn(move || {
+        let mut vm = silt::vm::Vm::new();
+        let payload = match vm.run(script) {
+            Ok(v) => Ok(v),
+            Err(e) => Err(format!("{e}")),
+        };
+        let _ = tx.send(payload);
+    });
+
+    let outcome = rx.recv_timeout(Duration::from_secs(5));
+    let msg = match outcome {
+        Err(_) => panic!(
+            "timeout waiting for expected error: bytes.split on empty separator \
+             failed to terminate within 5s — likely an infinite-loop regression"
+        ),
+        Ok(Ok(v)) => panic!("expected runtime error, got value: {v:?}"),
+        Ok(Err(m)) => m,
+    };
+
+    // Exact phrasing lock — matches src/builtins/bytes.rs:480 today.
     assert!(
-        msg.contains("non-empty") || msg.contains("empty"),
-        "got: {msg}"
+        msg.contains("bytes.split") && msg.contains("separator") && msg.contains("non-empty"),
+        "expected error matching 'bytes.split: separator must be non-empty', got: {msg}"
     );
 }
 
@@ -815,4 +846,17 @@ fn main() {
 "#,
     );
     assert!(!errs.is_empty(), "expected a type error");
+    // Lock the error shape: the typechecker must name BOTH types so that
+    // a future refactor that silently swaps in a generic "bad argument"
+    // message (or elides the expected/actual names) breaks this test.
+    // Today's format is "type mismatch: expected Bytes, got String".
+    let joined = errs.join(" | ");
+    assert!(
+        joined.contains("Bytes") && joined.contains("String"),
+        "expected type error mentioning both Bytes and String, got: {errs:?}"
+    );
+    assert!(
+        joined.contains("type mismatch") || joined.contains("expected"),
+        "expected a type-mismatch-shaped error, got: {errs:?}"
+    );
 }

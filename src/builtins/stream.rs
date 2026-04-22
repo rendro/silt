@@ -14,8 +14,8 @@
 //!
 //! Forward-compat: the function names mirror what method-form dispatch
 //! (`s.map(f)`) would look like once silt grows a `Stream` trait. Existing
-//! v0.10 silt programs will continue to compile and behave identically
-//! when that trait lands.
+//! silt programs will continue to compile and behave identically when that
+//! trait lands.
 
 use std::sync::Arc;
 use std::time::Duration;

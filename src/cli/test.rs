@@ -13,6 +13,7 @@ use silt::parser::Parser;
 use silt::typechecker;
 use silt::vm::Vm;
 
+use crate::cli::help::test_usage_banner;
 use crate::cli::module_sources::collect_module_function_sources;
 use crate::cli::package::package_setup_for_file;
 use crate::cli::pipeline::is_unknown_module_warning;
@@ -32,7 +33,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 process::exit(1);
             }
         } else if args[i] == "--help" || args[i] == "-h" {
-            println!("Usage: silt test [--filter <pattern>] [--watch] [file]");
+            println!("Usage: {}", test_usage_banner());
             println!();
             println!("Options:");
             println!("  --filter <pat>   Only run tests whose name contains <pat>");
@@ -316,7 +317,19 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     }
                 }
             } else {
-                eprintln!("{path}: setup error: {e}");
+                // Span-less runtime error: avoid leaking the bare
+                // "VM error:" prefix from `VmError::Display`. Funnel
+                // through `SourceError::runtime_at` with a zero span so
+                // the output renders with the canonical `error[runtime]:`
+                // header, matching every other diagnostic.
+                let source_err = SourceError::runtime_at(
+                    &e.message,
+                    silt::lexer::Span::new(0, 0),
+                    &source,
+                    path.as_str(),
+                );
+                eprintln!("{path}: setup error:");
+                eprintln!("{source_err}");
             }
             file_errors += 1;
             continue;
@@ -413,7 +426,22 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                                     }
                                 }
                             } else {
-                                eprintln!("    Error: {e}");
+                                // Span-less runtime error: avoid leaking
+                                // the bare "VM error:" prefix from
+                                // `VmError::Display`. Render via
+                                // `SourceError::runtime_at` with a zero
+                                // span and indent to match the FAIL
+                                // header's alignment.
+                                let source_err = SourceError::runtime_at(
+                                    &e.message,
+                                    silt::lexer::Span::new(0, 0),
+                                    &source,
+                                    path.as_str(),
+                                );
+                                let formatted = format!("{source_err}");
+                                for line in formatted.lines() {
+                                    eprintln!("    {line}");
+                                }
                             }
                             failed += 1;
                         }

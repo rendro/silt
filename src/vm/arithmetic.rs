@@ -61,29 +61,18 @@ impl Vm {
                 }
                 _ => unreachable!(),
             },
-            (Value::ExtFloat(a), Value::ExtFloat(b)) => {
-                let (a, b) = (*a, *b);
-                match op {
-                    Op::Add => Value::ExtFloat(a + b),
-                    Op::Sub => Value::ExtFloat(a - b),
-                    Op::Mul => Value::ExtFloat(a * b),
-                    Op::Div => Value::ExtFloat(a / b),
-                    Op::Mod => Value::ExtFloat(a % b),
-                    _ => unreachable!(),
-                }
-            }
-            (Value::Float(a), Value::ExtFloat(b)) => {
-                let (a, b) = (*a, *b);
-                match op {
-                    Op::Add => Value::ExtFloat(a + b),
-                    Op::Sub => Value::ExtFloat(a - b),
-                    Op::Mul => Value::ExtFloat(a * b),
-                    Op::Div => Value::ExtFloat(a / b),
-                    Op::Mod => Value::ExtFloat(a % b),
-                    _ => unreachable!(),
-                }
-            }
-            (Value::ExtFloat(a), Value::Float(b)) => {
+            // Any pair touching `ExtFloat` widens to `ExtFloat` with IEEE-754
+            // semantics (no finite-ness check). Collapsed from three arms —
+            // `(ExtFloat, ExtFloat)`, `(Float, ExtFloat)`, `(ExtFloat, Float)`
+            // — that were byte-identical. The dedicated `(Float, Float)` arm
+            // above already handles the finite path, so top-down match order
+            // guarantees this or-pattern only runs when at least one operand
+            // is `ExtFloat`. Result is always `Value::ExtFloat(_)` regardless
+            // of which side was a plain `Float`.
+            (
+                Value::Float(a) | Value::ExtFloat(a),
+                Value::Float(b) | Value::ExtFloat(b),
+            ) => {
                 let (a, b) = (*a, *b);
                 match op {
                     Op::Add => Value::ExtFloat(a + b),
@@ -176,6 +165,12 @@ impl Vm {
     /// ordering without unifying them) and `List`/`Range` (a range has
     /// type `List(Int)`).
     pub(super) fn value_disc(val: &Value) -> u8 {
+        // These values are compared only for equality in `check_same_type`
+        // (never as `Ord`) and are not persisted anywhere — they are a
+        // compile-time-agreed label, not a stable serialization tag. So the
+        // numbers may be renumbered freely. A historical gap at `2` used to
+        // mark a now-removed variant; closed here since closing it is
+        // semantically invisible to all current callers.
         match val {
             Value::Int(_) => 0,
             // Float and ExtFloat share a discriminant so `check_same_type`
@@ -183,25 +178,25 @@ impl Vm {
             // falls through to `Value::eq`, which widens to f64 for both
             // variants.
             Value::Float(_) | Value::ExtFloat(_) => 1,
-            Value::Bool(_) => 3,
-            Value::String(_) => 4,
-            Value::List(_) | Value::Range(..) => 5,
-            Value::Map(_) => 6,
-            Value::Set(_) => 7,
-            Value::Tuple(_) => 8,
-            Value::Record(..) => 9,
-            Value::Variant(..) => 10,
-            Value::Unit => 11,
-            Value::Channel(_) => 12,
-            Value::Handle(_) => 13,
-            Value::VmClosure(_) => 14,
-            Value::BuiltinFn(_) => 15,
-            Value::VariantConstructor(..) => 16,
-            Value::TypeDescriptor(_) => 17,
-            Value::PrimitiveDescriptor(_) => 18,
-            Value::Bytes(_) => 19,
-            Value::TcpListener(_) => 20,
-            Value::TcpStream(_) => 21,
+            Value::Bool(_) => 2,
+            Value::String(_) => 3,
+            Value::List(_) | Value::Range(..) => 4,
+            Value::Map(_) => 5,
+            Value::Set(_) => 6,
+            Value::Tuple(_) => 7,
+            Value::Record(..) => 8,
+            Value::Variant(..) => 9,
+            Value::Unit => 10,
+            Value::Channel(_) => 11,
+            Value::Handle(_) => 12,
+            Value::VmClosure(_) => 13,
+            Value::BuiltinFn(_) => 14,
+            Value::VariantConstructor(..) => 15,
+            Value::TypeDescriptor(_) => 16,
+            Value::PrimitiveDescriptor(_) => 17,
+            Value::Bytes(_) => 18,
+            Value::TcpListener(_) => 19,
+            Value::TcpStream(_) => 20,
         }
     }
 

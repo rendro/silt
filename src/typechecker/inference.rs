@@ -854,6 +854,17 @@ impl TypeChecker {
     // first use of `n`. Walk the pattern and reject any Constructor
     // pattern whose parent enum has more than one variant. Match arms
     // do NOT call this check — refutable patterns are legal there.
+    //
+    // Round 36: also reject literal/range/pin patterns in `let`
+    // binding position. Prior to this round the typechecker only
+    // unified their types (so `let 5 = "hello"` became an error, but
+    // `let 5 = 10` silently passed and runtime fell through). These
+    // patterns are inherently refutable — they test a runtime value
+    // — so they're meaningless as bindings. The VM's compile-pattern
+    // code emits a zero check for these kinds which silently skips
+    // subsequent code when the match fails. Reject here so the
+    // user gets a clean "refutable pattern in `let`" error pointing
+    // at the pattern itself.
     pub(super) fn reject_refutable_constructor_in_let(&mut self, pattern: &Pattern, span: Span) {
         match &pattern.kind {
             PatternKind::Constructor(name, sub_pats) => {
@@ -881,6 +892,16 @@ impl TypeChecker {
                 }
             }
             PatternKind::List(elems, rest) => {
+                // A list pattern is refutable unless it's just `[...rest]`
+                // with no fixed elements (which is vacuously true for any
+                // list). Any fixed prefix means it can fail to match when
+                // the input list is shorter.
+                if !elems.is_empty() || rest.is_none() {
+                    self.error(
+                        "refutable pattern in `let`: list patterns can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                        pattern.span,
+                    );
+                }
                 for p in elems {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
@@ -900,13 +921,61 @@ impl TypeChecker {
                     self.reject_refutable_constructor_in_let(p, span);
                 }
             }
-            // Non-constructor patterns are out of scope for this
-            // B1 fix. Literal/map/pin patterns also happen to be
-            // refutable in `let`, but existing programs already
-            // reach them through the existing typechecker paths;
-            // leave them alone to avoid regressing unrelated
-            // tests.
-            _ => {}
+            PatternKind::Int(_) => {
+                self.error(
+                    "refutable pattern in `let`: integer literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::Float(_) => {
+                self.error(
+                    "refutable pattern in `let`: float literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::Bool(_) => {
+                self.error(
+                    "refutable pattern in `let`: boolean literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::StringLit(..) => {
+                self.error(
+                    "refutable pattern in `let`: string literal patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::Range(..) => {
+                self.error(
+                    "refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::FloatRange(..) => {
+                self.error(
+                    "refutable pattern in `let`: range patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::Pin(_) => {
+                self.error(
+                    "refutable pattern in `let`: pin patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+            }
+            PatternKind::Map(entries) => {
+                self.error(
+                    "refutable pattern in `let`: map patterns test a runtime value and can fail to match; use a `match` or `when let ... else` instead".to_string(),
+                    pattern.span,
+                );
+                for (_, p) in entries {
+                    self.reject_refutable_constructor_in_let(p, span);
+                }
+            }
+            // Wildcard and Ident are irrefutable — they always match and
+            // bind to whatever the scrutinee is. These remain legal in
+            // `let` position.
+            PatternKind::Wildcard | PatternKind::Ident(_) => {}
         }
     }
 

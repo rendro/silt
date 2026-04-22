@@ -48,10 +48,7 @@ pub(crate) fn usage_text() -> String {
         "silt check [--format json] [--watch] <file.silt>",
         "Type-check without running",
     ));
-    out.push_str(&line(
-        "silt test [--filter <pattern>] [--watch] [path]",
-        "Run test functions",
-    ));
+    out.push_str(&line(test_usage_banner(), "Run test functions"));
     out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
@@ -108,6 +105,21 @@ pub(crate) fn check_usage_banner() -> &'static str {
 /// optional-no-arg behavior is documented separately in the help text.
 pub(crate) fn run_usage_banner() -> &'static str {
     "silt run [--watch] [--disassemble] <file.silt>"
+}
+
+/// Single source of truth for the `silt test` usage banner line.
+///
+/// Two code paths print this — the top-level `silt --help` row and the
+/// subcommand's own `silt test --help` line. Previously the two literals
+/// had drifted apart (positional token was `[path]` vs `[file]`), so
+/// this helper pins one canonical form. We keep `[path]` because
+/// `silt test` accepts a directory too — the positional argument is
+/// semantically a path, not a single file.
+///
+/// The round-36 `cli_round36_tests.rs` suite locks the two banners so
+/// they can't drift apart again.
+pub(crate) fn test_usage_banner() -> &'static str {
+    "silt test [--filter <pattern>] [--watch] [path]"
 }
 
 /// Single source of truth for the `silt disasm` usage banner line.
