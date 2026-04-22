@@ -2131,6 +2131,24 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 /// ureq's error enum shape is minor-version-unstable; we match on
 /// the rendered message and fall back to `HttpUnknown`.
 #[cfg(feature = "http")]
+/// Factory: deadline-cancelled http op surfaces as `Err(HttpTimeout)`
+/// rather than the default `Err(IoUnknown(_))`. The watchdog calls
+/// this with the deadline message; we drop it because `HttpTimeout`
+/// is a nullary variant. Used by http.get / http.request submits.
+#[cfg(feature = "http")]
+fn http_timeout_err(_msg: &str) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant("HttpTimeout".into(), vec![])],
+    )
+}
+
+/// Build a fresh `IoCompletion` configured with `http_timeout_err`.
+#[cfg(feature = "http")]
+fn http_completion() -> std::sync::Arc<crate::value::IoCompletion> {
+    crate::value::IoCompletion::with_timeout_err(std::sync::Arc::new(http_timeout_err))
+}
+
 fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
     let msg = redact_http_url_userinfo(raw_msg);
     let lower = msg.to_lowercase();
@@ -2511,12 +2529,15 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.get requires a String url".into()));
                 };
 
-                if let Some(r) = vm.io_entry_guard(args)? {
+                if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
                     return Ok(r);
                 }
                 if vm.is_scheduled_task {
                     let url = url.clone();
-                    let completion = vm.runtime.io_pool.submit(move || do_http_get(&url));
+                    let completion = vm
+                        .runtime
+                        .io_pool
+                        .submit_with(http_completion(), move || do_http_get(&url));
                     vm.pending_io = Some(completion.clone());
                     vm.block_reason = Some(BlockReason::Io(completion));
                     for arg in args {
@@ -2560,7 +2581,7 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     return Err(VmError::new("http.request: headers must be a Map".into()));
                 };
 
-                if let Some(r) = vm.io_entry_guard(args)? {
+                if let Some(r) = vm.io_entry_guard_with(args, &http_timeout_err)? {
                     return Ok(r);
                 }
                 if vm.is_scheduled_task {
@@ -2577,10 +2598,9 @@ pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                             }
                         })
                         .collect();
-                    let completion = vm
-                        .runtime
-                        .io_pool
-                        .submit(move || do_http_request(&method_tag, &url, &body, &headers));
+                    let completion = vm.runtime.io_pool.submit_with(http_completion(), move || {
+                        do_http_request(&method_tag, &url, &body, &headers)
+                    });
                     vm.pending_io = Some(completion.clone());
                     vm.block_reason = Some(BlockReason::Io(completion));
                     for arg in args {

@@ -794,20 +794,64 @@ impl TaskHandle {
     }
 }
 
+/// Per-completion factory that builds the typed `Err` variant the
+/// scheduler watchdog (or an already-elapsed entry guard) should
+/// surface when the task's deadline cancels this I/O op. Each builtin
+/// provides its own factory so a timed-out `tcp.read` produces
+/// `Err(TcpTimeout)`, a timed-out `io.read_file` produces
+/// `Err(IoUnknown(msg))`, etc.
+///
+/// Stored on `IoCompletion` so the scheduler thread can construct the
+/// shape without knowing which module's submit it was built for.
+pub type TimeoutErrFactory = std::sync::Arc<dyn Fn(&str) -> Value + Send + Sync>;
+
+/// Default factory: wraps `msg` in `Err(IoUnknown(msg))`. Used by
+/// `IoCompletion::new()` and by builtins on the io/fs family, which
+/// still use `IoError` as their error type. Any builtin whose
+/// signature declares a different error enum MUST construct its own
+/// factory and pass it via `with_timeout_err` + `submit_with`.
+pub fn io_unknown_timeout_err(msg: &str) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "IoUnknown".into(),
+            vec![Value::String(msg.to_string())],
+        )],
+    )
+}
+
 /// Completion handle for async I/O operations.
 pub struct IoCompletion {
     result: Mutex<Option<Value>>,
     condvar: Condvar,
     wakers: Mutex<Vec<Waker>>,
+    timeout_err: TimeoutErrFactory,
 }
 
 impl IoCompletion {
+    /// Build a completion whose deadline-cancellation error is
+    /// `Err(IoUnknown(msg))`. Legacy entry point preserved for call
+    /// sites that haven't been migrated yet; new code should prefer
+    /// `with_timeout_err` to declare a module-specific factory.
     pub fn new() -> Arc<Self> {
+        Self::with_timeout_err(std::sync::Arc::new(io_unknown_timeout_err))
+    }
+
+    /// Build a completion with a caller-supplied timeout-error factory.
+    pub fn with_timeout_err(timeout_err: TimeoutErrFactory) -> Arc<Self> {
         Arc::new(Self {
             result: Mutex::new(None),
             condvar: Condvar::new(),
             wakers: Mutex::new(Vec::new()),
+            timeout_err,
         })
+    }
+
+    /// Construct the typed `Err` variant this completion should surface
+    /// when its task's deadline elapses. Called by the scheduler
+    /// watchdog and by `deadline_exceeded_err_value` at entry-guard.
+    pub fn build_timeout_err(&self, msg: &str) -> Value {
+        (self.timeout_err)(msg)
     }
 
     /// Store the I/O result and notify all waiters. First-writer-wins:

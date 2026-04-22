@@ -239,9 +239,25 @@ impl IoPool {
         }
     }
 
-    /// Submit a blocking I/O operation. Returns a completion handle.
+    /// Submit a blocking I/O operation. Defaults to an `IoError`-shaped
+    /// deadline-timeout factory on the returned completion. Legacy
+    /// entry point — new code should prefer [`submit_with`] so a
+    /// watchdog-fired timeout surfaces the right typed variant for
+    /// the caller's module (e.g. `Err(TcpTimeout)` for tcp ops rather
+    /// than the catch-all `Err(IoUnknown(msg))`).
     pub(crate) fn submit(&self, f: impl FnOnce() -> Value + Send + 'static) -> Arc<IoCompletion> {
-        let completion = IoCompletion::new();
+        self.submit_with(IoCompletion::new(), f)
+    }
+
+    /// Submit a blocking I/O operation using a caller-supplied
+    /// completion handle. The handle's `timeout_err` factory determines
+    /// the typed variant the scheduler watchdog surfaces when the
+    /// task's deadline cancels this op.
+    pub(crate) fn submit_with(
+        &self,
+        completion: Arc<IoCompletion>,
+        f: impl FnOnce() -> Value + Send + 'static,
+    ) -> Arc<IoCompletion> {
         let completion2 = completion.clone();
         let send_result = self.sender.lock().send(Box::new(move || {
             let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {

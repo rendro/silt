@@ -135,27 +135,23 @@ fn finite_float(f: f64, op_desc: &str) -> Result<Value, VmError> {
 /// so the outer `Err` payload has the typed `IoError` shape every io/fs
 /// signature now returns. Users can still substring-match on the
 /// message via `e.message()`.
-pub(crate) fn deadline_exceeded_err_value() -> Value {
-    Value::Variant(
-        "Err".into(),
-        vec![Value::Variant(
-            "IoUnknown".into(),
-            vec![Value::String(
-                crate::scheduler::DeadlineSource::Task.message().to_string(),
-            )],
-        )],
-    )
-}
-
 impl Vm {
-    /// If the current task.deadline has already elapsed, return the
-    /// standard `Err` Value; otherwise `None`. I/O builtins call this
-    /// at entry so a call made past the deadline short-circuits into
-    /// a clean `Err` without submitting to the I/O pool.
-    pub(crate) fn deadline_exceeded(&self) -> Option<Value> {
+    /// If the current task.deadline has already elapsed, build an `Err`
+    /// Value via the caller's factory; otherwise return `None`. I/O
+    /// builtins call this at entry so a call made past the deadline
+    /// short-circuits into a clean `Err` without submitting to the
+    /// I/O pool. The factory determines which typed error variant the
+    /// caller's signature expects (io uses `IoUnknown`, tcp uses
+    /// `TcpTimeout`, etc.).
+    pub(crate) fn deadline_exceeded_with(
+        &self,
+        timeout_err: &(dyn Fn(&str) -> Value + Sync),
+    ) -> Option<Value> {
         let deadline = self.current_deadline?;
         if Instant::now() >= deadline {
-            Some(deadline_exceeded_err_value())
+            Some(timeout_err(
+                crate::scheduler::DeadlineSource::Task.message(),
+            ))
         } else {
             None
         }
@@ -173,6 +169,19 @@ impl Vm {
     /// The `args` slice is pushed back onto the stack on re-park so the
     /// CallBuiltin opcode can re-read them when the task resumes.
     pub(crate) fn io_entry_guard(&mut self, args: &[Value]) -> Result<Option<Value>, VmError> {
+        self.io_entry_guard_with(args, &crate::value::io_unknown_timeout_err)
+    }
+
+    /// Variant of [`io_entry_guard`] that takes a caller-supplied factory
+    /// used when the current task's deadline has already elapsed at
+    /// entry. Modules with non-IoError error types (tcp, http, ...) call
+    /// this with their own factory so a deadline-at-entry surfaces the
+    /// right typed variant rather than the generic `Err(IoUnknown(_))`.
+    pub(crate) fn io_entry_guard_with(
+        &mut self,
+        args: &[Value],
+        timeout_err: &(dyn Fn(&str) -> Value + Sync),
+    ) -> Result<Option<Value>, VmError> {
         use crate::vm::runtime::BlockReason;
         if self.is_scheduled_task
             && let Some(completion) = self.pending_io.take()
@@ -187,7 +196,7 @@ impl Vm {
             }
             return Err(VmError::yield_signal());
         }
-        if let Some(err) = self.deadline_exceeded() {
+        if let Some(err) = self.deadline_exceeded_with(timeout_err) {
             return Ok(Some(err));
         }
         Ok(None)

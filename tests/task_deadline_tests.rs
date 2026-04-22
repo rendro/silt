@@ -258,8 +258,11 @@ fn main() {{
 fn test_task_deadline_covers_http_get_at_entry() {
     // task.deadline with an already-past deadline must short-circuit
     // http.get without submitting the request to the I/O pool. Same
-    // contract as io.read_file — the shared vm.io_entry_guard is what
-    // makes this work uniformly across every I/O builtin.
+    // contract as io.read_file — the shared entry guard is what makes
+    // this work uniformly across every I/O builtin. Since Phase 2+3
+    // of the stdlib error redesign, each module's entry guard uses a
+    // module-specific timeout factory so http surfaces `HttpTimeout`
+    // (not the generic `IoUnknown`).
     let (stdout, _stderr, code) = run_silt(
         r#"
 import http
@@ -271,16 +274,49 @@ fn main() {
     http.get("http://127.0.0.1:1/does-not-exist")
   })
   match outcome {
-    Ok(resp) -> println("unexpected ok")
-    Err(msg) -> println(msg)
+    Ok(_) -> println("unexpected ok")
+    Err(HttpTimeout) -> println("http-timeout")
+    Err(other) -> println("other: {other.message()}")
   }
 }
 "#,
     );
     assert_eq!(code, 0);
     assert!(
-        stdout.contains("I/O timeout (task.deadline exceeded)"),
-        "http.get must respect task.deadline at entry; got stdout={stdout:?}"
+        stdout.contains("http-timeout"),
+        "http.get must surface HttpTimeout on deadline-at-entry; got stdout={stdout:?}"
+    );
+}
+
+#[test]
+fn test_task_deadline_covers_tcp_connect_at_entry() {
+    // Parallel lock for tcp.*: a deadline-cancelled tcp op must
+    // surface a typed `TcpError` variant (TcpTimeout), not the
+    // `IoUnknown` default that would collide with tcp.connect's
+    // `Result(_, TcpError)` return shape and force users into a
+    // wildcard arm.
+    let (stdout, _stderr, code) = run_silt(
+        r#"
+import tcp
+import task
+import time
+
+fn main() {
+  let outcome = task.deadline(time.ms(0), fn() {
+    tcp.connect("127.0.0.1:1")
+  })
+  match outcome {
+    Ok(_) -> println("unexpected ok")
+    Err(TcpTimeout) -> println("tcp-timeout")
+    Err(other) -> println("other: {other.message()}")
+  }
+}
+"#,
+    );
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("tcp-timeout"),
+        "tcp.connect must surface TcpTimeout on deadline-at-entry; got stdout={stdout:?}"
     );
 }
 

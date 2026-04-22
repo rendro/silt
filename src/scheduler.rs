@@ -218,23 +218,15 @@ impl WatchdogRegistry {
         let mut fired = 0;
         for (weak_completion, msg) in to_fire {
             if let Some(completion) = weak_completion.upgrade() {
-                // Phase 1 of the stdlib error redesign: io/fs signatures
-                // now return `Result(T, IoError)`, so the watchdog must
-                // also surface a typed `IoError` variant. Timeouts map
-                // to `IoInterrupted` — the only nullary variant whose
-                // semantics match a forcibly aborted I/O — with the
-                // descriptive message mirrored onto `IoUnknown` when
-                // the test wants to inspect the text via `.message()`.
-                // We pick `IoUnknown(msg)` here so tests that substring-
-                // match on "task.deadline exceeded" / "SILT_IO_TIMEOUT
-                // exceeded" keep working against `e.message()`.
-                let err_value = Value::Variant(
-                    "Err".into(),
-                    vec![Value::Variant(
-                        "IoUnknown".into(),
-                        vec![Value::String(msg.to_string())],
-                    )],
-                );
+                // Phases 1-3 of the stdlib error redesign: each blocking
+                // builtin registers its own `timeout_err` factory on the
+                // `IoCompletion` so a deadline-cancelled op surfaces the
+                // typed variant the caller's signature declares (e.g.
+                // `Err(TcpTimeout)` for tcp.*, `Err(HttpTimeout)` for
+                // http.*, `Err(IoUnknown(msg))` for io/fs). The watchdog
+                // just calls the factory and stuffs the result into the
+                // completion — it remains module-agnostic.
+                let err_value = completion.build_timeout_err(msg);
                 if completion.complete(err_value) {
                     fired += 1;
                 }
