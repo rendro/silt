@@ -3666,7 +3666,13 @@ fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
         result.push('\n');
         result.push_str(&indent(depth));
         result.push_str("|> ");
-        result.push_str(&format_expr(stage, depth));
+        // Any stage whose top-level construct binds looser than the
+        // pipe's right-hand-side bp must be wrapped in parens or the
+        // re-parse will pull that outer construct above the pipe.
+        // Today this matters for `?` (bp=54): a `Pipe(a, QuestionMark(x))`
+        // written as `a |> (x?)` must emit with the parens intact,
+        // otherwise `a |> x?` re-parses as `(a |> x)?`.
+        result.push_str(&paren_wrap_if_needed(stage, bp::PIPE_R, depth));
         if let Some(tc) = take_trailing_for_line(stage_line) {
             result.push(' ');
             result.push_str(&tc);
@@ -4298,8 +4304,18 @@ mod bp {
     pub const FLOATELSE_R: u8 = 11;
     pub const RANGE_L: u8 = 60;
     pub const RANGE_R: u8 = 61;
+    pub const PIPE_L: u8 = 55;
+    pub const PIPE_R: u8 = 56;
     pub const ASCRIPTION: u8 = 95;
-    pub const QUESTIONMARK: u8 = 110;
+    // `?` bp matches the parser: it's postfix and binds LOOSER than
+    // `|>` (l_bp=55) so `x |> f(y)?` groups as `(x |> f(y))?` without
+    // needing parens. Children of `?` with top_l_bp >= 54 stay paren-
+    // free on re-emit; children below 54 (FloatElse, ||, &&, ==, <)
+    // need wrapping. `?(x)` embedded as a Pipe RHS (min_bp=56) also
+    // gets wrapped because 54 < 56 — matches the parser's grouping
+    // rules so `a |> (x?)` in the source stays `a |> (x?)` on emit
+    // rather than rewriting to the non-equivalent `a |> x?`.
+    pub const QUESTIONMARK: u8 = 54;
 }
 
 /// Left binding power at the TOP of `expr` — i.e. the lowest-bp operator
@@ -4313,7 +4329,7 @@ fn expr_top_l_bp(expr: &Expr) -> u8 {
     match &expr.kind {
         ExprKind::FloatElse(..) => bp::FLOATELSE_L,
         ExprKind::Range(..) => bp::RANGE_L,
-        ExprKind::Pipe(..) => 55,
+        ExprKind::Pipe(..) => bp::PIPE_L,
         ExprKind::Binary(_, op, _) => match op {
             BinOp::Or => 20,
             BinOp::And => 30,
@@ -6342,5 +6358,57 @@ import a
             first.contains("-- trailing-like"),
             "trailing comment must be preserved across passes, got: {first:?}"
         );
+    }
+
+    /// Regression: `pipe |> f()?` must not pick up unnecessary parens
+    /// around the pipe on re-format. The fix aligned
+    /// `bp::QUESTIONMARK` with the parser's current bp=54 (below `|>`
+    /// at 55) so children of `?` whose top is a pipe (bp=55) no
+    /// longer trigger `paren_wrap_if_needed`.
+    #[test]
+    fn test_pipe_then_question_emits_without_parens() {
+        let source = "\
+fn load(path: String) -> Result(String, E) {
+  io.read_file(path)
+  |> result.map_err(Wrap)?
+  |> json.parse(Data)
+}
+";
+        let formatted = format(source).unwrap();
+        assert!(
+            !formatted.contains("(io.read_file"),
+            "formatter added unexpected parens around pipe-then-?: {formatted}"
+        );
+        assert!(
+            formatted.contains("|> result.map_err(Wrap)?"),
+            "pipe-then-? must survive as-is, got: {formatted}"
+        );
+        // Idempotent end to end.
+        let twice = format(&formatted).unwrap();
+        assert_eq!(formatted, twice, "formatting must be idempotent");
+    }
+
+    /// Sibling check: `?` embedded as a Pipe RHS still needs parens
+    /// because `?`'s bp (54) is below `|>`'s r_bp (56). So
+    /// `a |> (x?)` must stay parenthesized — otherwise the `?` would
+    /// migrate outwards to apply to the whole pipe.
+    #[test]
+    fn test_question_as_pipe_rhs_keeps_parens() {
+        let source = "\
+fn f() {
+  let y = a |> (x?)
+  y
+}
+";
+        let formatted = format(source).unwrap();
+        // The parens around `(x?)` must survive — without them the
+        // re-parse would produce `(a |> x)?`, which has different
+        // meaning.
+        assert!(
+            formatted.contains("|> (x?)"),
+            "parens around `?` in pipe RHS must be preserved, got: {formatted}"
+        );
+        let twice = format(&formatted).unwrap();
+        assert_eq!(formatted, twice, "formatting must be idempotent");
     }
 }
