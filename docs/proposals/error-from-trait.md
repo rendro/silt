@@ -1,18 +1,53 @@
 ---
 title: "Proposal: `From` trait for error conversion"
 section: "Proposals"
-status: draft
+status: deferred
 ---
 
 # `From` trait for error conversion
 
-**Status:** proposal, not yet implemented.
-**Scope:** opt-in user-declared conversion between error enums. The
-goal is to centralize cross-module error conversions in a trait
-impl so call sites reference a single named conversion function
-instead of repeating inline closures. **No new sugar on `?`, no
-`.into()` auto-conversion.** Traits declare methods; they do not
-perform magic coercion.
+**Status:** deferred. Design direction validated, but blocked on silt
+compiler work whose scope exceeds what the ergonomic win justifies
+today.
+
+**Scope (aspirational):** opt-in user-declared conversion between
+error enums so call sites reference a single named conversion
+function instead of repeating inline closures. **No new sugar on
+`?`, no `.into()` auto-conversion.** Traits declare methods; they do
+not perform magic coercion.
+
+## Status summary
+
+The design described here matches silt's principles and the wider
+explicit-error community's consensus — see the Language Survey
+below. But when evaluated against silt's current compiler, two
+load-bearing assumptions are false:
+
+1. **Multiple `From(Src) for One` impls cannot be disambiguated.**
+   `src/compiler/mod.rs:793` registers every impl method as
+   `TargetType.method_name` with no trait argument in the qualified
+   name. Two impls — `From(IoError) for AppError` and
+   `From(JsonError) for AppError` — both register as `AppError.from`,
+   and the second overwrites the first. Reproduced end-to-end as of
+   the state at the time this proposal was evaluated.
+
+2. **Argument-type-directed trait resolution for static methods is
+   not a silt feature today.** Silt's static trait methods dispatch
+   off `Self` (the impl target), not off the argument's type. To
+   pick between `From(IoError) for AppError` and `From(JsonError)
+   for AppError`, the compiler would need trait-argument-directed
+   dispatch for static methods, plus let-binding / call-context
+   inference to resolve which impl fires when `AppError.from` is
+   used as a first-class value.
+
+Together these make the proposal a multi-week compiler change, not a
+drop-in design. Defer until either the cost is justified by real
+observed pain, or the dispatch machinery lands for independent
+reasons.
+
+Workarounds that are **implementable today without any compiler
+work** are described below — the "Available today" section is the
+practical guide for users who hit this now.
 
 ## Problem
 
@@ -45,42 +80,13 @@ pipeline of near-identical lines).
 - **No `.into()` sugar.** A trait declares methods on a type. It
   does not define "magic coercion" that the compiler inserts at
   call sites or that resolves via target-type inference. The
-  conversion function must be visible at the call site.
+  conversion function name must be visible at the call site.
 - **No auto-derive.** Each `From(Src)` impl is user-declared. The
   compiler never invents an impl that wasn't written.
 - **No trait objects / existentials.** Silt has none; this proposal
   doesn't introduce them.
 
-## Language survey (why this shape)
-
-Every statically-typed explicit-error language the silt community
-looked at rejected Rust's `.into()` + `?` approach when they
-considered it:
-
-- **Gleam**: unified error type proposals closed in favor of keeping
-  `result.map_error` explicit. A unified error exists only as a
-  library (`snag`) that adds context strings, not as a compiler
-  feature.
-- **OCaml**: `Result.map_error` is canonical. The more sophisticated
-  camp uses polymorphic variants so error types merge structurally
-  — no conversion ceremony, but also no conversion trait.
-- **Haskell**: `withExceptT :: (e -> e') -> ExceptT e m a -> ExceptT e' m a`.
-  The conversion is an explicit first-class function. No typeclass
-  resolves it implicitly despite Haskell having every piece of
-  machinery to do so.
-- **F#**: `|> Result.mapError f`. Boilerplate reduction comes from
-  computation expressions (`result { ... }`), which declare the
-  wrap at the block level — not from trait resolution.
-- **Elm**: `Result.mapError` + hand-written wrapper types. The
-  community explicitly rejected anything more magic.
-- **Zig**: error sets unify structurally at the type level. No user-
-  defined conversion.
-
-Common thread: **ergonomic wins come from structural unification or
-call-site pipeline sugar, not from type-directed resolution.** This
-proposal honors that — the wrap stays named at the call site.
-
-## Design
+## Design (aspirational)
 
 ### The trait
 
@@ -113,11 +119,7 @@ impl From(JsonError) for AppError {
 }
 ```
 
-### Call sites
-
-The trait method is referenced as a first-class value. Because
-`AppError.from` is a named function of type `SourceType -> AppError`,
-it passes directly to `result.map_err` without a closure wrapper:
+### Call sites (once the compiler supports this)
 
 ```silt
 fn load_config(path: String) -> Result(Config, AppError) {
@@ -127,95 +129,177 @@ fn load_config(path: String) -> Result(Config, AppError) {
 }
 ```
 
-Compared to the pre-proposal shape:
-- `{ e -> IoProblem(e) }` → `AppError.from`
-- The conversion is named; readers see exactly which function is
-  converting. They follow the trait impl to see what it does —
-  standard method lookup, same as any other method call.
-- The wrap variant (`IoProblem` vs `JsonProblem`) is resolved by
-  trait-method dispatch on the *argument type* of `AppError.from`,
-  i.e. which `impl From(X) for AppError` matches `X = IoError`.
-  This is ordinary method dispatch, not a special conversion pass.
+Compared to the pre-proposal shape, `{ e -> IoProblem(e) }` becomes
+`AppError.from`. The conversion is named; readers follow the trait
+impl to see what it does.
 
-### What the compiler resolves, and how
+### Honest note on "how magic is this?"
 
-The only compiler work specific to `From` is allowing
-`AppError.from` to be referenced as a first-class function whose
-concrete instantiation is picked by the *argument type* of the
-call that consumes it.
+Calling out the residual implicit-ness that an earlier draft of this
+proposal glossed over:
 
-Concretely, when the typechecker sees:
+Resolving `AppError.from` at a call site like
+`result.map_err(io.read_file(path), AppError.from)` requires the
+typechecker to:
+
+1. See `map_err`'s second arg expects `Fn(IoError) -> f`.
+2. Propagate that constraint to the resolution of `AppError.from`.
+3. Pick the `From(IoError) for AppError` impl.
+
+Steps 2-3 are **type-directed resolution** — the same mechanism
+that makes Rust's `.into()` feel like magic. The win over `.into()`
+is that the **constructor name is visible at the call site**, not
+that the dispatch mechanism is fundamentally more explicit. Be
+honest about what we're buying:
+
+- ✅ Grep-ability of the conversion (search for `AppError.from`).
+- ✅ One place to document each conversion (the impl block).
+- ✅ No `.into()` method synthesis on every type.
+- ❌ Still requires the reader to understand that `AppError.from`
+  resolves differently depending on call context.
+- ❌ Still needs the compiler to do argument-type-directed dispatch
+  to pick the right impl.
+
+## Language survey (why this shape)
+
+Every statically-typed explicit-error language the silt community
+looked at rejected Rust's `.into()` + `?` approach when they
+considered it:
+
+- **Gleam**: unified error type proposals closed in favor of keeping
+  `result.map_error` explicit. A unified error exists only as a
+  library (`snag`) that adds context strings, not as a compiler
+  feature.
+- **OCaml**: `Result.map_error` is canonical. The more sophisticated
+  camp uses polymorphic variants so error types merge structurally
+  — no conversion ceremony, but also no conversion trait.
+- **Haskell**: `withExceptT :: (e -> e') -> ExceptT e m a -> ExceptT e' m a`.
+  The conversion is an explicit first-class function. No typeclass
+  resolves it implicitly despite Haskell having every piece of
+  machinery to do so.
+- **F#**: `|> Result.mapError f`. Boilerplate reduction comes from
+  computation expressions (`result { ... }`), which declare the
+  wrap at the block level — not from trait resolution.
+- **Elm**: `Result.mapError` + hand-written wrapper types. The
+  community explicitly rejected anything more magic.
+- **Zig**: error sets unify structurally at the type level. No
+  user-defined conversion.
+
+Common thread: ergonomic wins come from structural unification or
+call-site pipeline sugar, not from type-directed resolution. This
+proposal partially honors that (wrap stays named at the call site)
+while still requiring inference under the hood. Worth knowing which
+bits are the real wins.
+
+## Available today (no compiler work)
+
+Users who hit `result.map_err` boilerplate *now* have two options
+that work on the current silt tree:
+
+### 1. Keep `result.map_err` with closures
 
 ```silt
-result.map_err(io.read_file(path), AppError.from)
+fn load_config(path: String) -> Result(Config, AppError) {
+  let raw    = result.map_err(io.read_file(path),      { e -> IoProblem(e) })?
+  let config = result.map_err(json.parse(raw, Config), { e -> JsonProblem(e) })?
+  Ok(config)
+}
 ```
 
-- `io.read_file(path)` has type `Result(String, IoError)`.
-- `result.map_err`'s second argument expects `(IoError) -> ?`.
-- `AppError.from` is a trait method keyed by `From(SourceType) for AppError`.
-- The compiler unifies `SourceType = IoError`, looks up
-  `impl From(IoError) for AppError`, and resolves the concrete
-  `from` body.
+Three extra characters per line (`{e->`). Works. Matches Gleam.
 
-This is **argument-type-directed resolution**, which silt already
-has to do for any generic trait method passed as a value. It is
-distinct from Rust's `.into()`, which does **return-type-directed
-resolution** — the thing that produces the "I have no idea which
-From impl fired" readability complaint.
-
-If the caller passes `AppError.from` somewhere the argument type is
-ambiguous (e.g. inside a generic helper with no fixed source type),
-the compiler emits a hard error asking for an explicit type
-ascription: `AppError.from::<IoError>` or equivalent.
-
-### Explicit override when resolution won't fit
-
-If at some point a caller needs the conversion and argument-type
-dispatch isn't enough (typically because silt's method-as-value
-feature has a limitation we haven't closed), the user can always
-fall back to an eta-abstracted closure:
+### 2. One trait per target AppError type
 
 ```silt
-let raw = result.map_err(io.read_file(path), { e -> AppError.from(e) })?
+trait IntoAppError {
+  fn into_app_error(self) -> AppError
+}
+
+impl IntoAppError for IoError {
+  fn into_app_error(self) -> AppError { IoProblem(self) }
+}
+
+impl IntoAppError for JsonError {
+  fn into_app_error(self) -> AppError { JsonProblem(self) }
+}
+
+fn load_config(path: String) -> Result(Config, AppError) {
+  let raw    = result.map_err(io.read_file(path),      IoError.into_app_error)?
+  -- OR using a closure to make the conversion name visible on the value side:
+  let cfg    = result.map_err(json.parse(raw, Config), { e -> e.into_app_error() })?
+  Ok(cfg)
+}
 ```
 
-Same behavior, one extra `{ e -> ... }` hop. The `AppError.from`
-identifier stays visible.
+This **works in silt today** because dispatch is by `Self` (each
+source type has one impl, no collision). Drawbacks:
 
-## Interaction with `?`
+- One `trait IntoX` per target AppError type — doesn't reuse.
+- First-class method reference form (`IoError.into_app_error`) hits
+  the same limits as `AppError.from` when passed as a value, so the
+  closure form may still be needed at some call sites.
 
-`?` keeps its current semantics exactly: propagate the Err unchanged
-if the caller's Err type matches, otherwise type-check fails. `From`
-impls do not hook into `?`. Any conversion is a separate explicit
-call:
+Still ugly. But it's the best pattern available without compiler
+work.
 
-```silt
-let raw = result.map_err(io.read_file(path), AppError.from)?
---                      ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^
---                      what to convert      converter     then propagate
-```
+## Compiler work the aspirational design needs
+
+For the `trait From(Src)` design to actually ship, the silt compiler
+needs:
+
+1. **Trait-param-aware qualified names.**
+   `src/compiler/mod.rs:793` must include the trait's argument in
+   the global key, or impls must be stored in a separate table keyed
+   by `(target_type, trait_name, trait_args, method_name)`. Current
+   single-flat-namespace registration blocks multi-impl.
+
+2. **Argument-type-directed dispatch for static trait methods.**
+   When the typechecker sees `AppError.from(e)` where
+   `e: IoError`, it must pick the `From(IoError) for AppError` impl
+   based on `e`'s type. This is new machinery: existing dispatch
+   picks by Self only.
+
+3. **Inference flow when `AppError.from` is a value.**
+   `let f = AppError.from` with no immediate call can't pick an
+   impl — either require an ascription (`let f: Fn(IoError) -> AppError = AppError.from`)
+   and teach the typechecker to use it, or defer monomorphization
+   to first use. Both are new capabilities.
+
+4. **Error messages.** Ambiguous `AppError.from` (e.g. passed to a
+   polymorphic helper with no disambiguation) needs a clear
+   diagnostic pointing at all the `From(X) for AppError` impls in
+   scope.
+
+5. **Test coverage for overlap edge cases.** What happens with
+   `From(a) for AppError` (a blanket impl) plus a specific
+   `From(IoError) for AppError`? Coherence rules, specialization
+   behavior, or a rejection. Silt's existing trait system doesn't
+   currently answer this.
+
+Realistic budget: **1-2 weeks of typechecker/compiler work**, and
+an unknown tail risk of adjacent generic-trait regressions.
+
+## Rejected alternatives
+
+| Approach | Why rejected |
+|----------|--------------|
+| `.into()` method with target-type inference | The magic this proposal explicitly rejects — and even with a visible name the mechanism is near-identical. |
+| `?` auto-conversion (Rust-style) | Compounds the above with a second inference layer. Explicitly ruled out in principles. |
+| Compiler-inserted coercion on assignment | Whole-program magic; refactors produce surprising conversions. |
+| `result.wrap_err(r, Constructor)` as the only mechanism | Fine as a helper, but doesn't centralize conversions — same variant may be passed at 20 call sites. |
+| Unified `SiltError` stdlib type | Loses the module-specific pattern-match granularity the typed errors just shipped. |
+| Polymorphic variants (OCaml-style) | Requires a structural-typing extension to silt's nominal type system. Out of scope. |
+| **One trait per source type** (`trait IntoAppError { fn into_app_error(self) -> AppError }`) | Implementable today. Rejected as the *proposal* design because it doesn't scale — one new trait per target AppError. But it's the right **available-today workaround** and is documented above. |
+| **Inverted `trait IntoErr(target) for Source`** | Dispatches by Self. Works today for multi-source → one-target IF silt supports trait-param inference from target-type ascription (unverified). Rejected because call site becomes `io_err.into_err()` with target inferred from context — i.e. Rust's `.into()` with a different name, the very thing the proposal exists to reject. |
 
 ## Non-goals clarified
 
 ### Why not `.into()`?
 
-`.into()` in Rust is a method that the compiler synthesizes on every
-type that has a `From` impl, and its behavior depends on the target
-type inferred from the surrounding context. That is:
-- The method has no declared body.
-- Its meaning changes based on the expected return type at the call
-  site.
-- The caller can't tell which `From` impl fired without checking
-  every `From for X` where X might be the inferred target.
-
-Silt's trait system declares methods that do something defined,
-bound to specific types. `.into()` would be the first silt method
-whose meaning is defined by inference, not by the trait impl that
-named it. That's a category difference — and it's the exact
-property this proposal exists to reject.
-
-A future `.into()` sugar can be added non-breakingly on top of this
-design if we ever want it. Start without.
+Covered above. The trait-based design still requires type-directed
+resolution under the hood, but keeps the conversion function name
+visible at the call site. That visibility is the improvement over
+`.into()` — not a difference in dispatch mechanism.
 
 ### Why not `?` auto-conversion?
 
@@ -231,8 +315,8 @@ handling readability. Not a road worth taking.
 
 Two reasons:
 1. Silt has no general `#[derive]` machinery for user-declared
-   traits. Auto-derive for `From` alone would be a bespoke
-   compiler feature that we'd have to justify on its own.
+   traits. Auto-derive for `From` alone would be a bespoke compiler
+   feature that we'd have to justify on its own.
 2. Even with a general derive system, auto-derived `From` impls
    hide the wrap variant from the impl site. If `AppError` has
    `IoProblem(IoError)`, a derived `impl From(IoError) for AppError`
@@ -245,45 +329,24 @@ If `#[derive]` lands and proves itself for less-ambiguous traits
 (Display, Equal, etc.), auto-derived `From` becomes a natural
 follow-up. Not part of v1.
 
-## Cost estimate
+## When to unblock this proposal
 
-- Parameterized trait declarations (`trait From(T) { ... }`) — unclear
-  whether silt already supports this. Needs confirmation. If not,
-  this proposal is blocked on a language change that's probably
-  scoped broadly enough to be its own proposal (type-parameterized
-  traits generally, not just for From).
-- First-class trait-method-as-value lookup for `AppError.from`. Silt
-  supports methods on concrete types; needs verification that
-  `TypeName.method_name` produces a callable value when
-  `method_name` is resolved via a trait impl.
-- Tests + documentation: ~0.5 days once the above are in place.
+Pause. Do not start compiler work until one of these triggers fires:
 
-Budget: **one day if both primitives exist; several days if the
-language work has to happen first.** Worth confirming the two
-primitives before committing to a delivery date.
+1. **A real silt program hits the pain.** If after six months of
+   Phase 2+3 stdlib errors in the wild, cross-module composition
+   complaints are the top ask, the cost becomes worth it.
+2. **The compiler grows trait-param-aware dispatch for other
+   reasons.** If a non-error feature (e.g. a proper `Serializer(T)`
+   trait with multiple impls) forces the same compiler work, `From`
+   rides on it.
+3. **The "one trait per target" workaround proves untenable.** If
+   teams end up with so many `IntoXError` traits that the workaround
+   itself becomes the boilerplate, that's signal to build the real
+   thing.
 
-## When to implement
-
-Not blocking. Users have `result.map_err` with closures and it works.
-Implement when:
-- Parameterized traits are confirmed working (or their absence is
-  confirmed and we accept the language work as the gating item).
-- A real silt program is observed with 4+ `result.map_err(r, { e ->
-  Wrap(e) })` lines in a single function and a measurable net
-  reduction in ceremony from this design.
-
-Track via a single follow-up task.
-
-## Rejected alternatives
-
-| Approach | Why rejected |
-|----------|--------------|
-| `.into()` method with target-type inference | The magic this proposal explicitly rejects. |
-| `?` auto-conversion (Rust-style) | Compounds the above with a second inference layer. |
-| Compiler-inserted coercion on assignment | Whole-program magic; refactors produce surprising conversions. |
-| `result.wrap_err(r, Constructor)` as the only mechanism | Fine as a helper, but doesn't centralize conversions — same variant may be passed at 20 call sites. `From` impl + `AppError.from` gives one canonical name. |
-| Unified `SiltError` stdlib type | Loses the module-specific pattern-match granularity the typed errors just shipped. |
-| Polymorphic variants (OCaml-style) | Requires a structural-typing extension to silt's nominal type system. Out of scope. |
+Until then, users write `result.map_err(r, { e -> Wrap(e) })` or
+the per-target-trait pattern above.
 
 ## Related work
 
@@ -291,5 +354,4 @@ Track via a single follow-up task.
   typed-error system this proposal layers on top of.
 - [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt) —
   canonical example of the current `result.map_err`-based idiom.
-  After this proposal lands, that example updates to use
-  `AppError.from` and shrinks to one meaningful line per conversion.
+  Unchanged by this proposal's deferred status.
