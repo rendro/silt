@@ -1343,6 +1343,13 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
             let mut block = String::new();
             let mut depth: i32 = 0;
             let mut found_end = false;
+            // If the closer is mid-line with real code after it, we
+            // still need to look for a `-- ...` trailing comment on
+            // that close line and attribute it to that line's number.
+            // `close_line_rest` holds the raw content after `-}` on
+            // the close line; `close_line_no` is its 1-based index.
+            let mut close_line_rest: Option<String> = None;
+            let mut close_line_no: usize = 0;
             while i < lines.len() {
                 if !block.is_empty() {
                     block.push('\n');
@@ -1365,6 +1372,8 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                             } else {
                                 // Not a standalone block comment — skip
                                 found_end = false;
+                                close_line_no = i + 1;
+                                close_line_rest = Some(rest);
                             }
                             break;
                         }
@@ -1392,6 +1401,27 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                     line: start_line,
                     text: block,
                 });
+            } else if let Some(rest) = close_line_rest {
+                // The block-comment closer `-}` sits mid-line with
+                // real code after it. That tail may carry a trailing
+                // `-- ...` or `{- ... -}` line comment that belongs
+                // to whatever AST node owns the close line. Without
+                // this, a formatter pass that emits the block
+                // comment collapsed onto the same line as an outer
+                // construct's `}` (plus its ` -- trailing`) will lose
+                // the trailing comment on the NEXT re-format pass:
+                // extract_comments' multi-line path consumes the
+                // close line and jumps past it, so the normal
+                // `extract_trailing_comment_from_line` call below
+                // never sees it. Scan the post-closer content
+                // directly and attribute any trailing comment to the
+                // close line.
+                if let Some(comment_text) = extract_trailing_comment_from_line(&rest) {
+                    trailing.push(TrailingComment {
+                        line: close_line_no,
+                        text: comment_text,
+                    });
+                }
             }
             continue;
         }
@@ -6357,6 +6387,65 @@ import a
         assert!(
             first.contains("-- trailing-like"),
             "trailing comment must be preserved across passes, got: {first:?}"
+        );
+    }
+
+    // ── BROKEN-N: Trailing `-- comment` on the line where a multi-line
+    // `{- ... -}` block comment's closer `-}` sits mid-line with real
+    // code after it (typically `}` closing an outer construct plus a
+    // trailing `-- comment`). Fuzz-found regression (bug3).
+    //
+    // Minimal repro (pass-1 shape):
+    //   fn f() {
+    //     { {- body
+    //     t -}} -- cmt
+    //   }
+    //
+    // On PASS 2, `extract_comments`' multi-line block-comment path
+    // consumed the close line (`  t -}} -- cmt`) and jumped past it
+    // WITHOUT calling `extract_trailing_comment_from_line` on the
+    // content after `-}`. So the trailing `-- cmt` on the same line as
+    // the block-comment closer was silently dropped, even though the
+    // outer block's `format_body` correctly queried
+    // `take_trailing_for_line(close_line)` — the trailing_map simply
+    // had no entry for that line.
+    //
+    // Pass 1 preserves `-- cmt` when the comment sat on a DIFFERENT
+    // source line than `-}` (e.g. raw has `  t -}\n}-- cmt`). Pass 1
+    // then emits the two lines collapsed (`  t -}} -- cmt`), and pass
+    // 2 re-extracting that output hit the bug above.
+    //
+    // Fix: in the multi-line block-comment path of `extract_comments`,
+    // when `found_end = false` (closer is mid-line with real code
+    // after), scan the post-closer content for a trailing `--` or
+    // `{- ... -}` line comment and attribute it to the close line.
+    #[test]
+    fn test_idempotent_bug3_trailing_on_block_comment_closer_line() {
+        // Direct pass-1-shape repro: the block-comment `-}` and outer
+        // `}` and trailing `-- cmt` all share one line.
+        let source = "fn f() {\n  { {- body\n  t -}} -- cmt\n}\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting must be idempotent");
+        assert!(
+            first.contains("-- cmt"),
+            "trailing comment must survive on the block-comment close line, got: {first:?}"
+        );
+        assert!(
+            second.contains("-- cmt"),
+            "trailing comment must survive pass 2, got: {second:?}"
+        );
+
+        // Split shape (raw pattern from the fuzz crash): trailing
+        // comment on a separate line from `-}`. Pass 1 collapses them
+        // onto one line, and the bug used to manifest on pass 2 only.
+        let split = "fn f() {\n  { {- body\n  t -}\n} -- cmt\n}\n";
+        let first = format(split).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting must be idempotent");
+        assert!(
+            first.contains("-- cmt") && second.contains("-- cmt"),
+            "trailing comment must survive both passes, got p1={first:?}, p2={second:?}"
         );
     }
 

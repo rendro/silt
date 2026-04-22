@@ -639,7 +639,12 @@ impl TypeChecker {
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
-                    self.error(format!("type mismatch: expected {n2}, got {n1}"), span);
+                    let mut msg = format!("type mismatch: expected {n2}, got {n1}");
+                    if let Some(hint) = Self::chain_hint(&t1, &t2) {
+                        msg.push('\n');
+                        msg.push_str(&hint);
+                    }
+                    self.error(msg, span);
                 } else if a1.len() != a2.len() {
                     self.error(
                         format!(
@@ -679,7 +684,12 @@ impl TypeChecker {
                         );
                     }
                     _ => {
-                        self.error(format!("type mismatch: expected {t2}, got {t1}"), span);
+                        let mut msg = format!("type mismatch: expected {t2}, got {t1}");
+                        if let Some(hint) = Self::chain_hint(&t1, &t2) {
+                            msg.push('\n');
+                            msg.push_str(&hint);
+                        }
+                        self.error(msg, span);
                     }
                 }
             }
@@ -930,6 +940,38 @@ impl TypeChecker {
     }
 
     // ── Error reporting ─────────────────────────────────────────────
+
+    /// If `got` is a `Result(_, _)` or `Option(_)` but `expected` is
+    /// not, append a `help:` continuation explaining how to thread
+    /// the monadic value through. The raw "expected String, got
+    /// Result(String, _)" message is correct but doesn't tell users
+    /// how to fix it; the hint points at `?` and `result.flat_map` /
+    /// `option.flat_map`.
+    fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
+        let is_wrapper = |t: &Type, name: &str| -> bool {
+            matches!(t, Type::Generic(n, _) if resolve(*n) == name)
+        };
+        if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
+            return None;
+        }
+        if is_wrapper(got, "Result") {
+            return Some(
+                "help: to chain through a `Result`, use `?` to propagate the \
+                 error, or `|> result.flat_map { x -> ... }` to continue the \
+                 pipeline on the Ok value"
+                    .to_string(),
+            );
+        }
+        if is_wrapper(got, "Option") {
+            return Some(
+                "help: to chain through an `Option`, use `?` to propagate \
+                 `None`, or `|> option.flat_map { x -> ... }` to continue the \
+                 pipeline on the Some value"
+                    .to_string(),
+            );
+        }
+        None
+    }
 
     pub(super) fn error(&mut self, message: std::string::String, span: Span) {
         self.errors.push(TypeError {

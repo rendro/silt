@@ -282,3 +282,103 @@ fn test_rendered_undefined_variable_emits_help_continuation_line() {
         "caret must come before = help:, got:\n{rendered}"
     );
 }
+
+// ── Chain hint when a Result or Option leaks into a non-wrapper slot ─
+
+/// `io.read_file(path)` returns `Result(String, IoError)`. Piping it
+/// into `json.parse(_, Data)` — whose first arg is `String` — produces
+/// a "type mismatch: expected String, got Result(...)" error. The
+/// hint should tell the user to chain via `?` or `result.flat_map`.
+/// Lock: a regression in `chain_hint` loses this guidance.
+#[test]
+fn test_result_in_non_wrapper_slot_emits_chain_hint() {
+    let src = r#"
+import io
+import json
+
+type Data { a: Int }
+
+fn load(path: String) {
+  io.read_file(path)
+  |> json.parse(Data)
+}
+
+fn main() { () }
+"#;
+    let errs = type_errors(src);
+    let mismatch =
+        first_error_containing(&errs, "type mismatch").expect("expected a type-mismatch error");
+    assert!(
+        mismatch.contains("Result"),
+        "mismatch should mention Result, got: {mismatch}"
+    );
+    assert!(
+        mismatch.contains("help: to chain through a `Result`"),
+        "expected `= help:` chain hint, got: {mismatch}"
+    );
+    assert!(
+        mismatch.contains("result.flat_map"),
+        "chain hint should name `result.flat_map`, got: {mismatch}"
+    );
+}
+
+/// The hint must NOT fire when the expected type is itself a Result —
+/// that's the normal pipeline-passing-through case and there's no
+/// error to hint about in practice (it would type-check). This test
+/// just confirms the guard works: constructing a true mismatch where
+/// both sides are Result-typed with different shapes doesn't trigger
+/// the chain hint (because the user is already dealing with a Result
+/// on both sides).
+#[test]
+fn test_result_to_result_mismatch_does_not_emit_chain_hint() {
+    let src = r#"
+import result
+
+fn takes_result_int(r: Result(Int, String)) -> Int {
+  result.unwrap_or(r, 0)
+}
+
+fn main() {
+  let r: Result(String, String) = Ok("s")
+  takes_result_int(r)
+}
+"#;
+    let errs = type_errors(src);
+    if let Some(mismatch) = first_error_containing(&errs, "type mismatch") {
+        assert!(
+            !mismatch.contains("help: to chain through"),
+            "chain hint should NOT fire when both sides are Result, got: {mismatch}"
+        );
+    }
+}
+
+/// Sibling of the Result test for `Option`. `list.head(xs)` returns
+/// `Option(Int)`; adding to it triggers "expected Int, got Option(Int)"
+/// at the `+` site, and the hint should fire.
+#[test]
+fn test_option_in_non_wrapper_slot_emits_chain_hint() {
+    let src = r#"
+import list
+
+fn main() {
+  let xs: List(Int) = [1, 2, 3]
+  let head = list.head(xs)
+  head + 1
+}
+"#;
+    let errs = type_errors(src);
+    let mismatch =
+        first_error_containing(&errs, "type mismatch").expect("expected a type-mismatch error");
+    assert!(
+        mismatch.contains("Option"),
+        "mismatch should mention Option, got: {mismatch}"
+    );
+    assert!(
+        mismatch.contains("help: to chain through an `Option`"),
+        "expected Option chain hint, got: {mismatch}"
+    );
+    assert!(
+        mismatch.contains("option.flat_map"),
+        "chain hint should name option.flat_map, got: {mismatch}"
+    );
+}
