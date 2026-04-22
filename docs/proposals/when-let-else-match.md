@@ -349,28 +349,61 @@ when:
 
 Track as a single follow-up task.
 
-## Open questions
+## Decisions
 
-**Should the else-match's scrutinee be required to match the
-when-let's scrutinee?** Two options:
+These two points were flagged for discussion during design review
+and have now been settled. Captured here so the implementation has
+a single source of truth.
 
-- **Strict:** `when let P = X else match X { ... }` — the `X`s must
-  be the same identifier. Enforces the "this is the complement of
-  the primary match" interpretation and lets the compiler use
-  parse-level reasoning for exhaustiveness pre-population.
-- **Relaxed:** allow any expression after `else match`. More
-  flexible but the exhaustiveness shortcut is lost when the two
-  scrutinees differ.
+**Strict scrutinee matching.** The `else match <scrutinee>`'s
+scrutinee MUST be the same identifier as the `when let`'s
+scrutinee:
 
-Recommend **strict** as the v1 rule. It matches the motivating use
-case and keeps the feature narrowly scoped. Relaxing later is easy;
-tightening later would break users.
+```silt
+when let Ok(data) = res else match res { ... }   -- OK
+when let Ok(data) = res else match other { ... } -- parse error
+when let Ok(data) = fallible() else match fallible() { ... } -- parse error
+```
 
-**Should the short form allow bindings in the arm pattern but not
-guards?** Keeping guards out of the short form keeps it terse.
-Users who need guards write the long form. Recommend: short form
-accepts arm patterns with bindings (`Err(e) -> ...`) but not `when`
-guards. Long form supports guards as in any other match.
+The primary form requires a BARE IDENTIFIER — not an arbitrary
+expression — so the two positions can be compared syntactically at
+parse time. Users who want to match on a call result first bind it:
+
+```silt
+let res = fallible()
+when let Ok(data) = res else match res { ... }
+```
+
+This keeps the "else handles the complement of the primary match"
+interpretation fully visible, avoids aliasing questions about
+expressions with side effects, and lets the exhaustiveness pass
+treat the two `res` positions as the same scrutinee without effort.
+Relaxing later to accept matching expressions is non-breaking;
+tightening later would not be.
+
+**Short form takes no guards.** The `else Pattern -> body` short
+form accepts arm patterns with bindings (`Err(e) -> ...`) but does
+NOT accept `when` guards. Users who need guards write the long
+form:
+
+```silt
+-- OK (short form)
+when let Ok(n) = res else Err(e) -> panic(e.message())
+
+-- Parse error: guards not allowed in short form
+when let Ok(n) = res else Err(e) when e == ParseEmpty -> handle_empty()
+
+-- OK (long form with guards)
+when let Ok(n) = res else match res {
+  Err(e) when e == ParseEmpty -> handle_empty()
+  Err(other) -> panic(other.message())
+}
+```
+
+The short form's raison d'être is terseness for the common
+single-arm case. Adding guards to it reintroduces match-arm
+complexity the short form exists to avoid; users who need that
+complexity already have the long form.
 
 ## Rejected alternatives (brief)
 
