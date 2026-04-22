@@ -74,7 +74,7 @@ fn main() {{
       let _ = tcp.connect("{addr}")
       task.join(server)
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#
@@ -115,11 +115,11 @@ fn main() {{
           Ok(cert) -> match bytes.from_hex("{key_hex}") {{
             Ok(key) -> match tcp.accept_tls(listener, cert, key) {{
               Ok(_) -> "ok"
-              Err(e) -> "handshake-failed:" + e
+              Err(e) -> "handshake-failed:" + e.message()
             }}
-            Err(e) -> "key-parse:" + e
+            Err(e) -> "key-parse:" + e.message()
           }}
-          Err(e) -> "cert-parse:" + e
+          Err(e) -> "cert-parse:" + e.message()
         }}
       }})
       time.sleep(time.ms(50))
@@ -133,7 +133,7 @@ fn main() {{
       }}
       task.join(server)
     }}
-    Err(e) -> e
+    Err(e) -> e.message()
   }}
 }}
 "#,

@@ -186,15 +186,15 @@ fn main() -> String {{
         Ok(key) -> match bytes.from_hex("{ca_hex}") {{
           Ok(ca) -> match tcp.accept_tls_mtls(listener, cert, key, ca) {{
             Ok(_) -> "ok"
-            Err(e) -> "err:" + e
+            Err(e) -> "err:" + e.message()
           }}
-          Err(e) -> "ca-parse:" + e
+          Err(e) -> "ca-parse:" + e.message()
         }}
-        Err(e) -> "key-parse:" + e
+        Err(e) -> "key-parse:" + e.message()
       }}
-      Err(e) -> "cert-parse:" + e
+      Err(e) -> "cert-parse:" + e.message()
     }}
-    Err(e) -> "listen:" + e
+    Err(e) -> "listen:" + e.message()
   }}
 }}
 "#,

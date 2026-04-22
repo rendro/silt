@@ -362,18 +362,13 @@ fn pg_error_to_variant(e: &postgres::Error) -> Value {
             // 57014: query_canceled (statement_timeout fires with this).
             "57014" => Value::Variant("PgTimeout".into(), vec![]),
             // 42703: undefined_column.
-            "42703" => Value::Variant(
-                "PgNoSuchColumn".into(),
-                vec![Value::String(message)],
-            ),
-            code if code.starts_with("28") => Value::Variant(
-                "PgAuthFailed".into(),
-                vec![Value::String(message)],
-            ),
-            code if code.starts_with("08") => Value::Variant(
-                "PgConnect".into(),
-                vec![Value::String(message)],
-            ),
+            "42703" => Value::Variant("PgNoSuchColumn".into(), vec![Value::String(message)]),
+            code if code.starts_with("28") => {
+                Value::Variant("PgAuthFailed".into(), vec![Value::String(message)])
+            }
+            code if code.starts_with("08") => {
+                Value::Variant("PgConnect".into(), vec![Value::String(message)])
+            }
             code => Value::Variant(
                 "PgQuery".into(),
                 vec![Value::String(message), Value::String(code.to_string())],
@@ -1164,12 +1159,10 @@ fn build_tls_connector(
     builder.danger_accept_invalid_hostnames(accept_invalid_hostnames);
 
     if let Some(path) = root_cert_path {
-        let pem = fs::read(path).map_err(|e| {
-            pg_tls(format!("postgres: failed to read sslrootcert {path}: {e}"))
-        })?;
-        let cert = native_tls::Certificate::from_pem(&pem).map_err(|e| {
-            pg_tls(format!("postgres: invalid sslrootcert PEM at {path}: {e}"))
-        })?;
+        let pem = fs::read(path)
+            .map_err(|e| pg_tls(format!("postgres: failed to read sslrootcert {path}: {e}")))?;
+        let cert = native_tls::Certificate::from_pem(&pem)
+            .map_err(|e| pg_tls(format!("postgres: invalid sslrootcert PEM at {path}: {e}")))?;
         builder.add_root_certificate(cert);
     }
 

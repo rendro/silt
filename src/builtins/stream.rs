@@ -123,8 +123,78 @@ fn require_callable<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a Value, VmE
 fn ok(v: Value) -> Value {
     Value::Variant("Ok".into(), vec![v])
 }
-fn err_v(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
+
+/// Wrap an `io::Error` into `Err(IoError)` — used by file-backed stream
+/// sources (`file_lines`, `file_chunks`, `write_to_file`).
+fn err_io(e: &std::io::Error) -> Value {
+    use std::io::ErrorKind;
+    let msg = e.to_string();
+    let inner = match e.kind() {
+        ErrorKind::NotFound => Value::Variant("IoNotFound".into(), vec![Value::String(msg)]),
+        ErrorKind::PermissionDenied => {
+            Value::Variant("IoPermissionDenied".into(), vec![Value::String(msg)])
+        }
+        ErrorKind::AlreadyExists => {
+            Value::Variant("IoAlreadyExists".into(), vec![Value::String(msg)])
+        }
+        ErrorKind::InvalidInput | ErrorKind::InvalidData => {
+            Value::Variant("IoInvalidInput".into(), vec![Value::String(msg)])
+        }
+        ErrorKind::Interrupted => Value::Variant("IoInterrupted".into(), vec![]),
+        ErrorKind::UnexpectedEof => Value::Variant("IoUnexpectedEof".into(), vec![]),
+        ErrorKind::WriteZero => Value::Variant("IoWriteZero".into(), vec![]),
+        _ => Value::Variant("IoUnknown".into(), vec![Value::String(msg)]),
+    };
+    Value::Variant("Err".into(), vec![inner])
+}
+
+/// Build an `Err(IoUnknown(msg))` for string-only failures.
+fn err_io_unknown(s: impl Into<String>) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "IoUnknown".into(),
+            vec![Value::String(s.into())],
+        )],
+    )
+}
+
+/// Build an `Err(TcpUnknown(msg))` for string-only failures in tcp
+/// write paths.
+#[cfg(feature = "tcp")]
+fn err_tcp_unknown(s: impl Into<String>) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "TcpUnknown".into(),
+            vec![Value::String(s.into())],
+        )],
+    )
+}
+
+/// Wrap an `io::Error` into `Err(TcpError)` — used by tcp-backed stream
+/// sources and `write_to_tcp`.
+#[cfg(feature = "tcp")]
+fn err_tcp(e: &std::io::Error) -> Value {
+    use std::io::ErrorKind;
+    let msg = e.to_string();
+    let inner = match e.kind() {
+        ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionReset
+        | ErrorKind::NotConnected
+        | ErrorKind::AddrInUse
+        | ErrorKind::AddrNotAvailable
+        | ErrorKind::HostUnreachable
+        | ErrorKind::NetworkUnreachable => {
+            Value::Variant("TcpConnect".into(), vec![Value::String(msg)])
+        }
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
+            Value::Variant("TcpClosed".into(), vec![])
+        }
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::Variant("TcpTimeout".into(), vec![]),
+        _ => Value::Variant("TcpUnknown".into(), vec![Value::String(msg)]),
+    };
+    Value::Variant("Err".into(), vec![inner])
 }
 
 // ── Sources ────────────────────────────────────────────────────────────
@@ -255,14 +325,14 @@ fn file_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                         Err(e) => {
-                            let _ = push(&out_clone, &err_v(e.to_string()));
+                            let _ = push(&out_clone, &err_io(&e));
                             break;
                         }
                     }
                 }
             }
             Err(e) => {
-                let _ = push(&out_clone, &err_v(format!("open {path}: {e}")));
+                let _ = push(&out_clone, &err_io(&e));
             }
         }
         out_clone.close();
@@ -290,14 +360,14 @@ fn file_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                             }
                         }
                         Err(e) => {
-                            let _ = push(&out_clone, &err_v(e.to_string()));
+                            let _ = push(&out_clone, &err_io(&e));
                             break;
                         }
                     }
                 }
             }
             Err(e) => {
-                let _ = push(&out_clone, &err_v(format!("open {path}: {e}")));
+                let _ = push(&out_clone, &err_io(&e));
             }
         }
         out_clone.close();
@@ -344,7 +414,7 @@ fn tcp_chunks(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 Err(e) => {
-                    let _ = push(&out_clone, &err_v(e.to_string()));
+                    let _ = push(&out_clone, &err_tcp(&e));
                     break;
                 }
             }
@@ -410,7 +480,7 @@ fn tcp_lines(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     }
                 }
                 Err(e) => {
-                    let _ = push(&out_clone, &err_v(e.to_string()));
+                    let _ = push(&out_clone, &err_tcp(&e));
                     break;
                 }
             }
@@ -1065,21 +1135,19 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                         match fields.into_iter().next().unwrap() {
                             Value::Bytes(b) => b,
                             other => {
-                                return Ok(err_v(format!(
+                                return Ok(err_tcp_unknown(format!(
                                     "stream.write_to_tcp: Ok(_) wrapper expected Bytes, got {}",
                                     type_name(&other)
                                 )));
                             }
                         }
                     }
-                    Value::Variant(name, fields) if name == "Err" && fields.len() == 1 => {
-                        if let Value::String(e) = &fields[0] {
-                            return Ok(err_v(e.clone()));
-                        }
-                        return Ok(err_v("stream error".to_string()));
+                    Value::Variant(name, mut fields) if name == "Err" && fields.len() == 1 => {
+                        // Upstream typed error — forward the variant as-is.
+                        return Ok(Value::Variant("Err".into(), vec![fields.pop().unwrap()]));
                     }
                     other => {
-                        return Ok(err_v(format!(
+                        return Ok(err_tcp_unknown(format!(
                             "stream.write_to_tcp expected Bytes, got {}",
                             type_name(&other)
                         )));
@@ -1087,10 +1155,10 @@ fn write_to_tcp(args: &[Value]) -> Result<Value, VmError> {
                 };
                 let mut guard = stream_handle.inner.lock();
                 if let Err(e) = guard.write_all(&bytes) {
-                    return Ok(err_v(e.to_string()));
+                    return Ok(err_tcp(&e));
                 }
                 if let Err(e) = guard.flush() {
-                    return Ok(err_v(e.to_string()));
+                    return Ok(err_tcp(&e));
                 }
             }
             TryReceiveResult::Closed => break,
@@ -1119,7 +1187,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
     let file_result = std::fs::File::create(path);
     let mut file = match file_result {
         Ok(f) => f,
-        Err(e) => return Ok(err_v(format!("create {path}: {e}"))),
+        Err(e) => return Ok(err_io(&e)),
     };
     loop {
         match ch.receive_blocking() {
@@ -1130,28 +1198,26 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
                         match fields.into_iter().next().unwrap() {
                             Value::Bytes(b) => b,
                             other => {
-                                return Ok(err_v(format!(
+                                return Ok(err_io_unknown(format!(
                                     "stream.write_to_file: Ok(_) wrapper expected Bytes, got {}",
                                     type_name(&other)
                                 )));
                             }
                         }
                     }
-                    Value::Variant(name, fields) if name == "Err" && fields.len() == 1 => {
-                        if let Value::String(e) = &fields[0] {
-                            return Ok(err_v(e.clone()));
-                        }
-                        return Ok(err_v("stream error".to_string()));
+                    Value::Variant(name, mut fields) if name == "Err" && fields.len() == 1 => {
+                        // Upstream typed error — forward the variant as-is.
+                        return Ok(Value::Variant("Err".into(), vec![fields.pop().unwrap()]));
                     }
                     other => {
-                        return Ok(err_v(format!(
+                        return Ok(err_io_unknown(format!(
                             "stream.write_to_file expected Bytes, got {}",
                             type_name(&other)
                         )));
                     }
                 };
                 if let Err(e) = file.write_all(&bytes) {
-                    return Ok(err_v(e.to_string()));
+                    return Ok(err_io(&e));
                 }
             }
             TryReceiveResult::Closed => break,
@@ -1159,7 +1225,7 @@ fn write_to_file(args: &[Value]) -> Result<Value, VmError> {
         }
     }
     if let Err(e) = file.flush() {
-        return Ok(err_v(e.to_string()));
+        return Ok(err_io(&e));
     }
     Ok(ok(Value::Unit))
 }

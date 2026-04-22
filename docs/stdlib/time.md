@@ -29,8 +29,8 @@ Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 |------|-----------|-------------|
 | `now` | `() -> Instant` | Current UTC time as nanosecond epoch |
 | `today` | `() -> Date` | Current local date |
-| `date` | `(Int, Int, Int) -> Result(Date, String)` | Validated date from year, month, day |
-| `time` | `(Int, Int, Int) -> Result(Time, String)` | Validated time from hour, min, sec (ns=0) |
+| `date` | `(Int, Int, Int) -> Result(Date, TimeError)` | Validated date from year, month, day |
+| `time` | `(Int, Int, Int) -> Result(Time, TimeError)` | Validated time from hour, min, sec (ns=0) |
 | `datetime` | `(Date, Time) -> DateTime` | Combine date and time (infallible) |
 | `to_datetime` | `(Instant, Int) -> DateTime` | Convert instant to local datetime with UTC offset in minutes |
 | `to_instant` | `(DateTime, Int) -> Instant` | Convert local datetime to instant with UTC offset in minutes |
@@ -38,8 +38,8 @@ Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 | `from_utc` | `(DateTime) -> Instant` | Convert UTC datetime to instant (shorthand for offset=0) |
 | `format` | `(DateTime, String) -> String` | Format datetime with strftime pattern |
 | `format_date` | `(Date, String) -> String` | Format date with strftime pattern |
-| `parse` | `(String, String) -> Result(DateTime, String)` | Parse string into datetime with strftime pattern |
-| `parse_date` | `(String, String) -> Result(Date, String)` | Parse string into date with strftime pattern |
+| `parse` | `(String, String) -> Result(DateTime, TimeError)` | Parse string into datetime with strftime pattern |
+| `parse_date` | `(String, String) -> Result(Date, TimeError)` | Parse string into date with strftime pattern |
 | `add_days` | `(Date, Int) -> Date` | Add/subtract days from a date |
 | `add_months` | `(Date, Int) -> Date` | Add/subtract months, clamping to end-of-month |
 | `add` | `(Instant, Duration) -> Instant` | Add duration to an instant |
@@ -93,7 +93,7 @@ fn main() {
 ## `time.date`
 
 ```
-time.date(year: Int, month: Int, day: Int) -> Result(Date, String)
+time.date(year: Int, month: Int, day: Int) -> Result(Date, TimeError)
 ```
 
 Creates a validated `Date`. Returns `Err` for invalid dates.
@@ -111,7 +111,7 @@ fn main() {
 ## `time.time`
 
 ```
-time.time(hour: Int, min: Int, sec: Int) -> Result(Time, String)
+time.time(hour: Int, min: Int, sec: Int) -> Result(Time, TimeError)
 ```
 
 Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
@@ -135,7 +135,7 @@ Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let d = time.date(2024, 6, 15)?
     let t = time.time(9, 30, 0)?
     println(time.datetime(d, t))  -- 2024-06-15T09:30:00
@@ -174,7 +174,7 @@ Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
     let instant = time.to_instant(dt, 0)
     println(instant.epoch_ns)
@@ -227,7 +227,7 @@ Formats a `DateTime` using strftime patterns. Supported: `%Y %m %d %H %M %S %f %
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
     println(dt |> time.format("%A, %B %d, %Y at %H:%M"))
     -- Wednesday, December 25, 2024 at 18:00
@@ -246,7 +246,7 @@ Formats a `Date` using strftime patterns.
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let d = time.date(2024, 6, 15)?
     println(d |> time.format_date("%d/%m/%Y"))  -- 15/06/2024
     Ok(())
@@ -257,7 +257,7 @@ fn main() -> Result(Unit, String) {
 ## `time.parse`
 
 ```
-time.parse(s: String, pattern: String) -> Result(DateTime, String)
+time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 ```
 
 Parses a string into a `DateTime` using a strftime pattern.
@@ -274,7 +274,7 @@ fn main() {
 ## `time.parse_date`
 
 ```
-time.parse_date(s: String, pattern: String) -> Result(Date, String)
+time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
 ```
 
 Parses a string into a `Date` using a strftime pattern.
@@ -298,7 +298,7 @@ Adds (or subtracts, if negative) days from a date.
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let d = time.date(2024, 1, 1)?
     println(d |> time.add_days(90))   -- 2024-03-31
     println(d |> time.add_days(-1))   -- 2023-12-31
@@ -317,7 +317,7 @@ Adds (or subtracts) months from a date. Clamps to the last valid day of the targ
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let d = time.date(2024, 1, 31)?
     println(d |> time.add_months(1))   -- 2024-02-29 (leap year, clamped)
     println(d |> time.add_months(2))   -- 2024-03-31
@@ -425,7 +425,7 @@ Returns the signed number of days between two dates.
 
 ```silt
 import time
-fn main() -> Result(Unit, String) {
+fn main() -> Result(Unit, TimeError) {
     let a = time.date(2024, 1, 1)?
     let b = time.date(2024, 12, 31)?
     println(time.days_between(a, b))  -- 365

@@ -101,7 +101,7 @@ mod tls {
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection};
 
     use super::{
-        BlockReason, ReadWrite, TcpStreamHandle, Value, Vm, VmError, err, ok, require_bytes,
+        BlockReason, ReadWrite, TcpStreamHandle, Value, Vm, VmError, err_tls, ok, require_bytes,
         require_listener, require_string,
     };
 
@@ -125,7 +125,10 @@ mod tls {
             let completion = vm.runtime.io_pool.submit(move || {
                 match do_connect_tls(&addr, &hostname, next_id) {
                     Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                    Err(e) => Value::Variant(
+                        "Err".into(),
+                        vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                    ),
                 }
             });
             vm.pending_io = Some(completion.clone());
@@ -138,7 +141,7 @@ mod tls {
         let next_id = vm.next_tcp_id();
         match do_connect_tls(&addr, &hostname, next_id) {
             Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err(e)),
+            Err(e) => Ok(err_tls(e)),
         }
     }
 
@@ -164,7 +167,10 @@ mod tls {
             let completion = vm.runtime.io_pool.submit(move || {
                 match do_accept_tls(&listener.listener, &cert_clone, &key_clone, next_id) {
                     Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                    Err(e) => Value::Variant(
+                        "Err".into(),
+                        vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                    ),
                 }
             });
             vm.pending_io = Some(completion.clone());
@@ -177,7 +183,7 @@ mod tls {
         let next_id = vm.next_tcp_id();
         match do_accept_tls(&listener.listener, &cert_pem, &key_pem, next_id) {
             Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err(e)),
+            Err(e) => Ok(err_tls(e)),
         }
     }
 
@@ -215,7 +221,10 @@ mod tls {
                     next_id,
                 ) {
                     Ok(handle) => Value::Variant("Ok".into(), vec![Value::TcpStream(handle)]),
-                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e)]),
+                    Err(e) => Value::Variant(
+                        "Err".into(),
+                        vec![Value::Variant("TcpTls".into(), vec![Value::String(e)])],
+                    ),
                 }
             });
             vm.pending_io = Some(completion.clone());
@@ -234,7 +243,7 @@ mod tls {
             next_id,
         ) {
             Ok(handle) => Ok(ok(Value::TcpStream(handle))),
-            Err(e) => Ok(err(e)),
+            Err(e) => Ok(err_tls(e)),
         }
     }
 
@@ -459,8 +468,64 @@ fn ok(v: Value) -> Value {
     Value::Variant("Ok".into(), vec![v])
 }
 
+/// Classify a `std::io::Error` into a `TcpError` variant.
+fn tcp_error_to_variant(err: &std::io::Error) -> Value {
+    use std::io::ErrorKind;
+    let msg = err.to_string();
+    match err.kind() {
+        ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionReset
+        | ErrorKind::NotConnected
+        | ErrorKind::AddrInUse
+        | ErrorKind::AddrNotAvailable
+        | ErrorKind::HostUnreachable
+        | ErrorKind::NetworkUnreachable => {
+            Value::Variant("TcpConnect".into(), vec![Value::String(msg)])
+        }
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
+            Value::Variant("TcpClosed".into(), vec![])
+        }
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::Variant("TcpTimeout".into(), vec![]),
+        _ => Value::Variant("TcpUnknown".into(), vec![Value::String(msg)]),
+    }
+}
+
+/// Build `Err(TcpError)` from a `std::io::Error`.
+fn tcp_io_err(err: &std::io::Error) -> Value {
+    Value::Variant("Err".into(), vec![tcp_error_to_variant(err)])
+}
+
+/// Build `Err(TcpUnknown(msg))` for string-form failures (TLS stringly
+/// errors from the rustls code path; ad-hoc arg/validation failures).
 fn err(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "TcpUnknown".into(),
+            vec![Value::String(s.into())],
+        )],
+    )
+}
+
+/// Build `Err(TcpTls(msg))` — rustls handshake / cert errors surface
+/// as `String` rather than `io::Error`, so they need their own helper.
+#[cfg(feature = "tcp-tls")]
+fn err_tls(s: impl Into<String>) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "TcpTls".into(),
+            vec![Value::String(s.into())],
+        )],
+    )
+}
+
+/// Build `Err(TcpClosed)`.
+fn err_closed() -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant("TcpClosed".into(), vec![])],
+    )
 }
 
 fn require_string<'a>(arg: &'a Value, fn_label: &str) -> Result<&'a str, VmError> {
@@ -561,7 +626,7 @@ fn listen(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                 listener,
             }))))
         }
-        Err(e) => Ok(err(format!("tcp.listen({addr}): {e}"))),
+        Err(e) => Ok(tcp_io_err(&e)),
     }
 }
 
@@ -715,7 +780,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                     });
                     Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                 }
-                Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                Err(e) => tcp_io_err(&e),
             });
         vm.pending_io = Some(completion.clone());
         vm.block_reason = Some(BlockReason::Io(completion));
@@ -727,7 +792,7 @@ fn accept(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     // Main thread: synchronous fallback.
     match listener.listener.accept() {
         Ok((stream, _)) => Ok(ok(make_stream(stream, vm))),
-        Err(e) => Ok(err(e.to_string())),
+        Err(e) => Ok(tcp_io_err(&e)),
     }
 }
 
@@ -758,7 +823,7 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
                         });
                         Value::Variant("Ok".into(), vec![Value::TcpStream(handle)])
                     }
-                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                    Err(e) => tcp_io_err(&e),
                 });
         vm.pending_io = Some(completion.clone());
         vm.block_reason = Some(BlockReason::Io(completion));
@@ -769,7 +834,7 @@ fn connect(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     }
     match TcpStream::connect(&addr) {
         Ok(stream) => Ok(ok(make_stream(stream, vm))),
-        Err(e) => Ok(err(e.to_string())),
+        Err(e) => Ok(tcp_io_err(&e)),
     }
 }
 
@@ -792,7 +857,7 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(r);
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.read: stream is closed"));
+        return Ok(err_closed());
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();
@@ -835,7 +900,7 @@ fn read(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             if stream.closed.load(Ordering::SeqCst) {
                 Ok(ok(Value::Bytes(Arc::new(Vec::new()))))
             } else {
-                Ok(err(e.to_string()))
+                Ok(tcp_io_err(&e))
             }
         }
     }
@@ -857,7 +922,7 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(r);
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.read_exact: stream is closed"));
+        return Ok(err_closed());
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();
@@ -866,7 +931,7 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             let mut guard = stream_clone.inner.lock();
             match guard.read_exact(&mut buf) {
                 Ok(()) => Value::Variant("Ok".into(), vec![Value::Bytes(Arc::new(buf))]),
-                Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                Err(e) => tcp_io_err(&e),
             }
         });
         vm.pending_io = Some(completion.clone());
@@ -880,7 +945,7 @@ fn read_exact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     let mut guard = stream.inner.lock();
     match guard.read_exact(&mut buf) {
         Ok(()) => Ok(ok(Value::Bytes(Arc::new(buf)))),
-        Err(e) => Ok(err(e.to_string())),
+        Err(e) => Ok(tcp_io_err(&e)),
     }
 }
 
@@ -899,7 +964,7 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
         return Ok(r);
     }
     if stream.closed.load(Ordering::SeqCst) {
-        return Ok(err("tcp.write: stream is closed"));
+        return Ok(err_closed());
     }
     if vm.is_scheduled_task {
         let stream_clone = stream.clone();
@@ -908,9 +973,9 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             match guard.write_all(&buf) {
                 Ok(()) => match guard.flush() {
                     Ok(()) => Value::Variant("Ok".into(), vec![Value::Unit]),
-                    Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                    Err(e) => tcp_io_err(&e),
                 },
-                Err(e) => Value::Variant("Err".into(), vec![Value::String(e.to_string())]),
+                Err(e) => tcp_io_err(&e),
             }
         });
         vm.pending_io = Some(completion.clone());
@@ -924,8 +989,8 @@ fn write(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
     match guard.write_all(&buf) {
         Ok(()) => match guard.flush() {
             Ok(()) => Ok(ok(Value::Unit)),
-            Err(e) => Ok(err(e.to_string())),
+            Err(e) => Ok(tcp_io_err(&e)),
         },
-        Err(e) => Ok(err(e.to_string())),
+        Err(e) => Ok(tcp_io_err(&e)),
     }
 }

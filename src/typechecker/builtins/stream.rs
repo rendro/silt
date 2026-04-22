@@ -6,8 +6,11 @@ use super::super::*;
 
 pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
+    let io_err_ty = Type::Generic(intern("IoError"), vec![]);
     #[cfg(feature = "tcp")]
     let tcp_stream_ty = Type::Generic(intern("TcpStream"), vec![]);
+    #[cfg(feature = "tcp")]
+    let tcp_err_ty = Type::Generic(intern("TcpError"), vec![]);
     let result = |ok_ty: Type, err_ty: Type| -> Type {
         Type::Generic(intern("Result"), vec![ok_ty, err_ty])
     };
@@ -66,44 +69,50 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
-    // stream.file_chunks: (String, Int) -> Channel(Result(Bytes, String))
+    // stream.file_chunks: (String, Int) -> Channel(Result(Bytes, IoError))
     env.define(
         intern("stream.file_chunks"),
         Scheme::mono(Type::Fun(
             vec![Type::String, Type::Int],
             Box::new(Type::Channel(Box::new(result(
                 bytes_ty.clone(),
-                Type::String,
+                io_err_ty.clone(),
             )))),
         )),
     );
-    // stream.file_lines: String -> Channel(Result(String, String))
+    // stream.file_lines: String -> Channel(Result(String, IoError))
     env.define(
         intern("stream.file_lines"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(Type::Channel(Box::new(result(Type::String, Type::String)))),
+            Box::new(Type::Channel(Box::new(result(
+                Type::String,
+                io_err_ty.clone(),
+            )))),
         )),
     );
     #[cfg(feature = "tcp")]
     {
-        // stream.tcp_chunks: (TcpStream, Int) -> Channel(Result(Bytes, String))
+        // stream.tcp_chunks: (TcpStream, Int) -> Channel(Result(Bytes, TcpError))
         env.define(
             intern("stream.tcp_chunks"),
             Scheme::mono(Type::Fun(
                 vec![tcp_stream_ty.clone(), Type::Int],
                 Box::new(Type::Channel(Box::new(result(
                     bytes_ty.clone(),
-                    Type::String,
+                    tcp_err_ty.clone(),
                 )))),
             )),
         );
-        // stream.tcp_lines: TcpStream -> Channel(Result(String, String))
+        // stream.tcp_lines: TcpStream -> Channel(Result(String, TcpError))
         env.define(
             intern("stream.tcp_lines"),
             Scheme::mono(Type::Fun(
                 vec![tcp_stream_ty.clone()],
-                Box::new(Type::Channel(Box::new(result(Type::String, Type::String)))),
+                Box::new(Type::Channel(Box::new(result(
+                    Type::String,
+                    tcp_err_ty.clone(),
+                )))),
             )),
         );
     }
@@ -419,22 +428,22 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
-    // stream.write_to_file: (Channel(Bytes), String) -> Result((), String)
+    // stream.write_to_file: (Channel(Bytes), String) -> Result((), IoError)
     env.define(
         intern("stream.write_to_file"),
         Scheme::mono(Type::Fun(
             vec![Type::Channel(Box::new(bytes_ty.clone())), Type::String],
-            Box::new(result(Type::Unit, Type::String)),
+            Box::new(result(Type::Unit, io_err_ty)),
         )),
     );
     #[cfg(feature = "tcp")]
     {
-        // stream.write_to_tcp: (Channel(Bytes), TcpStream) -> Result((), String)
+        // stream.write_to_tcp: (Channel(Bytes), TcpStream) -> Result((), TcpError)
         env.define(
             intern("stream.write_to_tcp"),
             Scheme::mono(Type::Fun(
                 vec![Type::Channel(Box::new(bytes_ty)), tcp_stream_ty],
-                Box::new(result(Type::Unit, Type::String)),
+                Box::new(result(Type::Unit, tcp_err_ty)),
             )),
         );
     }

@@ -8,6 +8,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     // The opaque Bytes type. Forward-compat: when promoted to a
     // language-level Type::Bytes, only this construction site changes.
     let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
+    let bytes_error_ty = Type::Generic(intern("BytesError"), vec![]);
     let result = |ok_ty: Type, err_ty: Type| -> Type {
         Type::Generic(intern("Result"), vec![ok_ty, err_ty])
     };
@@ -29,7 +30,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.to_string"),
         Scheme::mono(Type::Fun(
             vec![bytes_ty.clone()],
-            Box::new(result(Type::String, Type::String)),
+            Box::new(result(Type::String, bytes_error_ty.clone())),
         )),
     );
 
@@ -38,7 +39,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.from_hex"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), bytes_error_ty.clone())),
         )),
     );
 
@@ -53,7 +54,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.from_base64"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), bytes_error_ty.clone())),
         )),
     );
 
@@ -68,7 +69,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.from_list"),
         Scheme::mono(Type::Fun(
             vec![Type::List(Box::new(Type::Int))],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), bytes_error_ty.clone())),
         )),
     );
 
@@ -92,7 +93,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.slice"),
         Scheme::mono(Type::Fun(
             vec![bytes_ty.clone(), Type::Int, Type::Int],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), bytes_error_ty.clone())),
         )),
     );
 
@@ -119,7 +120,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("bytes.get"),
         Scheme::mono(Type::Fun(
             vec![bytes_ty.clone(), Type::Int],
-            Box::new(result(Type::Int, Type::String)),
+            Box::new(result(Type::Int, bytes_error_ty.clone())),
         )),
     );
 

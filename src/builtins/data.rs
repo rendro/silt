@@ -276,6 +276,32 @@ pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmErr
     }
 }
 
+/// Build `Err(TimeParseFormat(msg))` from a chrono `ParseError`. chrono's
+/// `Display` doesn't distinguish format-mismatch from field-out-of-range
+/// cleanly — both surface here; we fold "out of range" messages into
+/// `TimeOutOfRange` and treat everything else as `TimeParseFormat`.
+fn time_parse_err(err: chrono::ParseError) -> Value {
+    let msg = err.to_string();
+    let inner = if msg.contains("out of range") {
+        Value::Variant("TimeOutOfRange".into(), vec![Value::String(msg)])
+    } else {
+        Value::Variant("TimeParseFormat".into(), vec![Value::String(msg)])
+    };
+    Value::Variant("Err".into(), vec![inner])
+}
+
+/// Build `Err(TimeOutOfRange(msg))` for explicit range rejections from
+/// `time.date` / `time.time`.
+fn time_out_of_range_err(msg: String) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "TimeOutOfRange".into(),
+            vec![Value::String(msg)],
+        )],
+    )
+}
+
 /// Dispatch the builtin `trait Error for TimeError` method table.
 pub fn call_time_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
@@ -1369,10 +1395,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 .map_err(|_| VmError::new(format!("time.date: day {d} out of range for u32")))?;
             match NaiveDate::from_ymd_opt(y32, m32, d32) {
                 Some(date) => Ok(Value::Variant("Ok".into(), vec![make_date(date)])),
-                None => Ok(Value::Variant(
-                    "Err".into(),
-                    vec![Value::String(format!("invalid date: {y}-{m}-{d}"))],
-                )),
+                None => Ok(time_out_of_range_err(format!("invalid date: {y}-{m}-{d}"))),
             }
         }
 
@@ -1394,10 +1417,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 .map_err(|_| VmError::new(format!("time.time: second {s} out of range for u32")))?;
             match NaiveTime::from_hms_opt(h32, m32, s32) {
                 Some(t) => Ok(Value::Variant("Ok".into(), vec![make_time(t)])),
-                None => Ok(Value::Variant(
-                    "Err".into(),
-                    vec![Value::String(format!("invalid time: {h}:{m}:{s}"))],
-                )),
+                None => Ok(time_out_of_range_err(format!("invalid time: {h}:{m}:{s}"))),
             }
         }
 
@@ -1560,10 +1580,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
             };
             match NaiveDateTime::parse_from_str(s, pattern) {
                 Ok(dt) => Ok(Value::Variant("Ok".into(), vec![make_datetime(dt)])),
-                Err(e) => Ok(Value::Variant(
-                    "Err".into(),
-                    vec![Value::String(format!("parse error: {e}"))],
-                )),
+                Err(e) => Ok(time_parse_err(e)),
             }
         }
 
@@ -1587,10 +1604,7 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     // Fallback: try direct NaiveDate parse (works on native)
                     match NaiveDate::parse_from_str(s, pattern) {
                         Ok(d) => Ok(Value::Variant("Ok".into(), vec![make_date(d)])),
-                        Err(e) => Ok(Value::Variant(
-                            "Err".into(),
-                            vec![Value::String(format!("parse error: {e}"))],
-                        )),
+                        Err(e) => Ok(time_parse_err(e)),
                     }
                 }
             }
@@ -2112,6 +2126,62 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
     out
 }
 
+/// Classify a ureq error (or any transport-style error string) into a
+/// typed `HttpError` variant. The classifier is string-based because
+/// ureq's error enum shape is minor-version-unstable; we match on
+/// the rendered message and fall back to `HttpUnknown`.
+#[cfg(feature = "http")]
+fn http_error_to_variant(raw_msg: &str, url: &str) -> Value {
+    let msg = redact_http_url_userinfo(raw_msg);
+    let lower = msg.to_lowercase();
+    let url_redacted = redact_http_url_userinfo(url);
+    if lower.contains("timed out") || lower.contains("timeout") {
+        Value::Variant("HttpTimeout".into(), vec![])
+    } else if lower.contains("invalid url") || lower.contains("not a valid url") {
+        Value::Variant("HttpInvalidUrl".into(), vec![Value::String(url_redacted)])
+    } else if lower.contains("tls") || lower.contains("certificate") || lower.contains("handshake")
+    {
+        Value::Variant("HttpTls".into(), vec![Value::String(msg)])
+    } else if lower.contains("bad status")
+        || lower.contains("invalid response")
+        || lower.contains("bad header")
+    {
+        Value::Variant("HttpInvalidResponse".into(), vec![Value::String(msg)])
+    } else if lower.contains("connection closed")
+        || lower.contains("unexpected eof")
+        || lower.contains("closed before")
+    {
+        Value::Variant("HttpClosedEarly".into(), vec![])
+    } else if lower.contains("resolve")
+        || lower.contains("refused")
+        || lower.contains("no such host")
+        || lower.contains("network unreachable")
+        || lower.contains("connect")
+    {
+        Value::Variant("HttpConnect".into(), vec![Value::String(msg)])
+    } else {
+        Value::Variant("HttpUnknown".into(), vec![Value::String(msg)])
+    }
+}
+
+/// Wrap a ureq error in `Err(HttpError)`.
+#[cfg(feature = "http")]
+fn http_err(raw_msg: &str, url: &str) -> Value {
+    Value::Variant("Err".into(), vec![http_error_to_variant(raw_msg, url)])
+}
+
+/// Wrap a response-body decode failure as `Err(HttpInvalidResponse(msg))`.
+#[cfg(feature = "http")]
+fn http_response_decode_err(msg: String) -> Value {
+    Value::Variant(
+        "Err".into(),
+        vec![Value::Variant(
+            "HttpInvalidResponse".into(),
+            vec![Value::String(msg)],
+        )],
+    )
+}
+
 /// Perform a synchronous HTTP GET and return a `Value`.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
@@ -2128,12 +2198,9 @@ fn do_http_get(url: &str) -> Value {
     match agent.get(url).call() {
         Ok(response) => match ureq_response_to_value(response) {
             Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
-            Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
+            Err(e) => http_response_decode_err(e.message),
         },
-        Err(e) => Value::Variant(
-            "Err".into(),
-            vec![Value::String(redact_http_url_userinfo(&format!("{e}")))],
-        ),
+        Err(e) => http_err(&format!("{e}"), url),
     }
 }
 
@@ -2213,9 +2280,10 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
         other => {
             return Value::Variant(
                 "Err".into(),
-                vec![Value::String(format!(
-                    "http.request: unknown method: {other}"
-                ))],
+                vec![Value::Variant(
+                    "HttpInvalidUrl".into(),
+                    vec![Value::String(format!("unknown method: {other}"))],
+                )],
             );
         }
     };
@@ -2223,12 +2291,9 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
     match result {
         Ok(response) => match ureq_response_to_value(response) {
             Ok(resp) => Value::Variant("Ok".into(), vec![resp]),
-            Err(e) => Value::Variant("Err".into(), vec![Value::String(e.message)]),
+            Err(e) => http_response_decode_err(e.message),
         },
-        Err(e) => Value::Variant(
-            "Err".into(),
-            vec![Value::String(redact_http_url_userinfo(&format!("{e}")))],
-        ),
+        Err(e) => http_err(&format!("{e}"), url),
     }
 }
 

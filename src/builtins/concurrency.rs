@@ -319,7 +319,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
                 TryReceiveResult::Closed => {
                     return Ok(Value::Variant(
                         "Err".into(),
-                        vec![Value::String("closed".into())],
+                        vec![Value::Variant("ChannelClosed".into(), vec![])],
                     ));
                 }
                 TryReceiveResult::Empty => {}
@@ -328,7 +328,7 @@ pub fn call_channel(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, Vm
             if dur_ns == 0 {
                 return Ok(Value::Variant(
                     "Err".into(),
-                    vec![Value::String("timeout".into())],
+                    vec![Value::Variant("ChannelTimeout".into(), vec![])],
                 ));
             }
 
@@ -784,47 +784,48 @@ pub fn call_task(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
 // ── Select helpers ────────────────────────────────────────────────
 
 /// Translate a `try_select_sweep` result (a `(Channel, Variant)` tuple) into
-/// the `Result(a, String)` shape expected by `channel.recv_timeout`:
+/// the `Result(a, ChannelError)` shape expected by `channel.recv_timeout`:
 ///
-///   * (timer_ch, _) → `Err("timeout")` — the timer channel fired, regardless
-///     of whether as `Message` (never sent to) or `Closed` (timer expired).
+///   * (timer_ch, _) → `Err(ChannelTimeout)` — the timer channel fired,
+///     regardless of whether as `Message` (never sent to) or `Closed`.
 ///   * (user_ch, Message(v)) → `Ok(v)`.
-///   * (user_ch, Closed) → `Err("closed")`.
+///   * (user_ch, Closed) → `Err(ChannelClosed)`.
 ///
 /// `tuple` is expected to be `Value::Tuple(vec![Channel, Variant])` per the
 /// shape returned by `try_select_sweep`; anything else is a programming bug.
 fn map_recv_timeout_result(tuple: Value, timer_ch: &Arc<Channel>) -> Value {
+    let timeout_err = || {
+        Value::Variant(
+            "Err".into(),
+            vec![Value::Variant("ChannelTimeout".into(), vec![])],
+        )
+    };
+    let closed_err = || {
+        Value::Variant(
+            "Err".into(),
+            vec![Value::Variant("ChannelClosed".into(), vec![])],
+        )
+    };
     let Value::Tuple(parts) = tuple else {
         debug_assert!(false, "recv_timeout: select result not a tuple");
-        return Value::Variant(
-            "Err".into(),
-            vec![Value::String("recv_timeout: internal shape error".into())],
-        );
+        return closed_err();
     };
     let Some(Value::Channel(src)) = parts.first() else {
         debug_assert!(false, "recv_timeout: select result missing channel");
-        return Value::Variant(
-            "Err".into(),
-            vec![Value::String("recv_timeout: internal channel error".into())],
-        );
+        return closed_err();
     };
     if Arc::ptr_eq(src, timer_ch) {
-        return Value::Variant("Err".into(), vec![Value::String("timeout".into())]);
+        return timeout_err();
     }
     match parts.get(1) {
         Some(Value::Variant(name, fields)) if name.as_str() == "Message" => {
             let val = fields.first().cloned().unwrap_or(Value::Unit);
             Value::Variant("Ok".into(), vec![val])
         }
-        Some(Value::Variant(name, _)) if name.as_str() == "Closed" => {
-            Value::Variant("Err".into(), vec![Value::String("closed".into())])
-        }
+        Some(Value::Variant(name, _)) if name.as_str() == "Closed" => closed_err(),
         _ => {
             debug_assert!(false, "recv_timeout: unexpected select variant");
-            Value::Variant(
-                "Err".into(),
-                vec![Value::String("recv_timeout: internal variant error".into())],
-            )
+            closed_err()
         }
     }
 }

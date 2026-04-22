@@ -173,7 +173,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             vec![Type::Int, Type::Int, Type::Int],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![date_ty.clone(), Type::String],
+                vec![date_ty.clone(), Type::Generic(intern("TimeError"), vec![])],
             )),
         )),
     );
@@ -185,7 +185,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             vec![Type::Int, Type::Int, Type::Int],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![time_of_day_ty.clone(), Type::String],
+                vec![
+                    time_of_day_ty.clone(),
+                    Type::Generic(intern("TimeError"), vec![]),
+                ],
             )),
         )),
     );
@@ -260,7 +263,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             vec![Type::String, Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![datetime_ty.clone(), Type::String],
+                vec![
+                    datetime_ty.clone(),
+                    Type::Generic(intern("TimeError"), vec![]),
+                ],
             )),
         )),
     );
@@ -272,7 +278,7 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             vec![Type::String, Type::String],
             Box::new(Type::Generic(
                 intern("Result"),
-                vec![date_ty.clone(), Type::String],
+                vec![date_ty.clone(), Type::Generic(intern("TimeError"), vec![])],
             )),
         )),
     );

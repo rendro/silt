@@ -8,6 +8,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
     let listener_ty = Type::Generic(intern("TcpListener"), vec![]);
     let stream_ty = Type::Generic(intern("TcpStream"), vec![]);
     let bytes_ty = Type::Generic(intern("Bytes"), vec![]);
+    let tcp_err_ty = Type::Generic(intern("TcpError"), vec![]);
     let result = |ok_ty: Type, err_ty: Type| -> Type {
         Type::Generic(intern("Result"), vec![ok_ty, err_ty])
     };
@@ -17,7 +18,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.listen"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(result(listener_ty.clone(), Type::String)),
+            Box::new(result(listener_ty.clone(), tcp_err_ty.clone())),
         )),
     );
 
@@ -26,7 +27,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.accept"),
         Scheme::mono(Type::Fun(
             vec![listener_ty],
-            Box::new(result(stream_ty.clone(), Type::String)),
+            Box::new(result(stream_ty.clone(), tcp_err_ty.clone())),
         )),
     );
 
@@ -35,7 +36,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.connect"),
         Scheme::mono(Type::Fun(
             vec![Type::String],
-            Box::new(result(stream_ty.clone(), Type::String)),
+            Box::new(result(stream_ty.clone(), tcp_err_ty.clone())),
         )),
     );
 
@@ -44,7 +45,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.read"),
         Scheme::mono(Type::Fun(
             vec![stream_ty.clone(), Type::Int],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), tcp_err_ty.clone())),
         )),
     );
 
@@ -53,7 +54,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.read_exact"),
         Scheme::mono(Type::Fun(
             vec![stream_ty.clone(), Type::Int],
-            Box::new(result(bytes_ty.clone(), Type::String)),
+            Box::new(result(bytes_ty.clone(), tcp_err_ty.clone())),
         )),
     );
 
@@ -62,7 +63,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.write"),
         Scheme::mono(Type::Fun(
             vec![stream_ty.clone(), bytes_ty],
-            Box::new(result(Type::Unit, Type::String)),
+            Box::new(result(Type::Unit, tcp_err_ty.clone())),
         )),
     );
 
@@ -77,7 +78,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.peer_addr"),
         Scheme::mono(Type::Fun(
             vec![stream_ty.clone()],
-            Box::new(result(Type::String, Type::String)),
+            Box::new(result(Type::String, tcp_err_ty.clone())),
         )),
     );
 
@@ -86,7 +87,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
         intern("tcp.set_nodelay"),
         Scheme::mono(Type::Fun(
             vec![stream_ty.clone(), Type::Bool],
-            Box::new(result(Type::Unit, Type::String)),
+            Box::new(result(Type::Unit, tcp_err_ty.clone())),
         )),
     );
 
@@ -101,7 +102,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("tcp.connect_tls"),
             Scheme::mono(Type::Fun(
                 vec![Type::String, Type::String],
-                Box::new(result(stream_ty.clone(), Type::String)),
+                Box::new(result(stream_ty.clone(), tcp_err_ty.clone())),
             )),
         );
         // tcp.accept_tls: (TcpListener, Bytes, Bytes) -> Result(TcpStream, String)
@@ -109,7 +110,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
             intern("tcp.accept_tls"),
             Scheme::mono(Type::Fun(
                 vec![listener_ty_tls, bytes_ty_tls.clone(), bytes_ty_tls],
-                Box::new(result(stream_ty.clone(), Type::String)),
+                Box::new(result(stream_ty.clone(), tcp_err_ty.clone())),
             )),
         );
         // tcp.accept_tls_mtls: (TcpListener, Bytes, Bytes, Bytes)
@@ -125,7 +126,7 @@ pub(super) fn register(_checker: &mut TypeChecker, env: &mut TypeEnv) {
                     bytes_ty_mtls.clone(),
                     bytes_ty_mtls,
                 ],
-                Box::new(result(stream_ty, Type::String)),
+                Box::new(result(stream_ty, tcp_err_ty.clone())),
             )),
         );
     }

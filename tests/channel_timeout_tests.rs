@@ -45,9 +45,9 @@ fn main() {
     );
 }
 
-/// No sender, no close: the timer must fire and produce `Err("timeout")`.
-/// We also assert the elapsed wall-clock is bounded so a hang doesn't
-/// masquerade as success.
+/// No sender, no close: the timer must fire and produce
+/// `Err(ChannelTimeout)`. We also assert the elapsed wall-clock is
+/// bounded so a hang doesn't masquerade as success.
 #[test]
 fn recv_timeout_returns_err_timeout_when_no_sender() {
     let src = r#"
@@ -57,10 +57,11 @@ fn main() {
   let ch = channel.new(0)
   -- No task.spawn: nothing will ever send to `ch`. Without a live sender
   -- the scheduler would otherwise fire a main-thread deadlock diagnostic;
-  -- recv_timeout must instead surface the clean `Err("timeout")` shape.
+  -- recv_timeout must instead surface the clean `Err(ChannelTimeout)` shape.
   match channel.recv_timeout(ch, time.ms(50)) {
     Ok(_) -> "ok"
-    Err(reason) -> reason
+    Err(ChannelTimeout) -> "timeout"
+    Err(ChannelClosed) -> "closed"
   }
 }
 "#;
@@ -70,15 +71,15 @@ fn main() {
     assert_eq!(
         outcome.result,
         Some(Value::String("timeout".into())),
-        "expected Err(\"timeout\"), got {:?}",
+        "expected Err(ChannelTimeout), got {:?}",
         outcome.result,
     );
 }
 
-/// Closing the channel with no buffered values must surface `Err("closed")`.
-/// This exercises the try_receive fast path at entry (the channel is closed
-/// before recv_timeout is called) and the equivalent `Closed` branch of the
-/// internal select after a wake.
+/// Closing the channel with no buffered values must surface
+/// `Err(ChannelClosed)`. Exercises both the try_receive fast path at
+/// entry and the equivalent `Closed` branch of the internal select
+/// after a wake.
 #[test]
 fn recv_timeout_returns_err_closed_on_closed_empty_channel() {
     let src = r#"
@@ -89,7 +90,8 @@ fn main() {
   channel.close(ch)
   match channel.recv_timeout(ch, time.ms(500)) {
     Ok(_) -> "ok"
-    Err(reason) -> reason
+    Err(ChannelTimeout) -> "timeout"
+    Err(ChannelClosed) -> "closed"
   }
 }
 "#;
@@ -99,7 +101,7 @@ fn main() {
     assert_eq!(
         outcome.result,
         Some(Value::String("closed".into())),
-        "expected Err(\"closed\"), got {:?}",
+        "expected Err(ChannelClosed), got {:?}",
         outcome.result,
     );
 }
@@ -127,8 +129,9 @@ fn main() {
     assert_eq!(outcome.result, Some(Value::Int(7)));
 }
 
-/// Zero duration on an empty channel must return `Err("timeout")` without
-/// scheduling a timer (try-receive semantics). No hang, no spurious Ok.
+/// Zero duration on an empty channel must return `Err(ChannelTimeout)`
+/// without scheduling a timer (try-receive semantics). No hang, no
+/// spurious Ok.
 #[test]
 fn recv_timeout_zero_duration_empty_channel_returns_timeout() {
     let src = r#"
@@ -138,7 +141,8 @@ fn main() {
   let ch = channel.new(4)
   match channel.recv_timeout(ch, time.ms(0)) {
     Ok(_) -> "ok"
-    Err(reason) -> reason
+    Err(ChannelTimeout) -> "timeout"
+    Err(ChannelClosed) -> "closed"
   }
 }
 "#;

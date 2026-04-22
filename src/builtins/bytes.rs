@@ -89,8 +89,43 @@ fn ok(v: Value) -> Value {
     Value::Variant("Ok".into(), vec![v])
 }
 
-fn err(s: impl Into<String>) -> Value {
-    Value::Variant("Err".into(), vec![Value::String(s.into())])
+fn bytes_err(variant: Value) -> Value {
+    Value::Variant("Err".into(), vec![variant])
+}
+
+fn err_utf8(offset: usize) -> Value {
+    bytes_err(Value::Variant(
+        "BytesInvalidUtf8".into(),
+        vec![Value::Int(offset as i64)],
+    ))
+}
+
+fn err_hex(msg: impl Into<String>) -> Value {
+    bytes_err(Value::Variant(
+        "BytesInvalidHex".into(),
+        vec![Value::String(msg.into())],
+    ))
+}
+
+fn err_base64(msg: impl Into<String>) -> Value {
+    bytes_err(Value::Variant(
+        "BytesInvalidBase64".into(),
+        vec![Value::String(msg.into())],
+    ))
+}
+
+fn err_byte_range(value: i64) -> Value {
+    bytes_err(Value::Variant(
+        "BytesByteOutOfRange".into(),
+        vec![Value::Int(value)],
+    ))
+}
+
+fn err_oob(idx: i64) -> Value {
+    bytes_err(Value::Variant(
+        "BytesOutOfBounds".into(),
+        vec![Value::Int(idx)],
+    ))
 }
 
 fn require_bytes(arg: &Value, fn_label: &str) -> Result<Arc<Vec<u8>>, VmError> {
@@ -161,7 +196,7 @@ fn to_string(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "bytes.to_string")?;
     match std::str::from_utf8(&b) {
         Ok(s) => Ok(ok(Value::String(s.to_string()))),
-        Err(e) => Ok(err(format!("invalid utf-8: {e}"))),
+        Err(e) => Ok(err_utf8(e.valid_up_to())),
     }
 }
 
@@ -171,7 +206,7 @@ fn from_hex(args: &[Value]) -> Result<Value, VmError> {
     }
     let s = require_string(&args[0], "bytes.from_hex")?;
     if s.len() % 2 != 0 {
-        return Ok(err(format!(
+        return Ok(err_hex(format!(
             "hex string must have even length, got {} chars",
             s.len()
         )));
@@ -183,7 +218,7 @@ fn from_hex(args: &[Value]) -> Result<Value, VmError> {
         let hi = match hex_nibble(bytes[i]) {
             Some(n) => n,
             None => {
-                return Ok(err(format!(
+                return Ok(err_hex(format!(
                     "invalid hex character at position {i}: {:?}",
                     bytes[i] as char
                 )));
@@ -192,7 +227,7 @@ fn from_hex(args: &[Value]) -> Result<Value, VmError> {
         let lo = match hex_nibble(bytes[i + 1]) {
             Some(n) => n,
             None => {
-                return Ok(err(format!(
+                return Ok(err_hex(format!(
                     "invalid hex character at position {}: {:?}",
                     i + 1,
                     bytes[i + 1] as char
@@ -225,7 +260,7 @@ fn from_base64(args: &[Value]) -> Result<Value, VmError> {
     let s = require_string(&args[0], "bytes.from_base64")?;
     match base64::engine::general_purpose::STANDARD.decode(s.as_bytes()) {
         Ok(decoded) => Ok(ok(Value::Bytes(Arc::new(decoded)))),
-        Err(e) => Ok(err(format!("invalid base64: {e}"))),
+        Err(e) => Ok(err_base64(e.to_string())),
     }
 }
 
@@ -254,9 +289,7 @@ fn from_list(args: &[Value]) -> Result<Value, VmError> {
         match v {
             Value::Int(n) if *n >= 0 && *n <= 255 => out.push(*n as u8),
             Value::Int(n) => {
-                return Ok(err(format!(
-                    "byte at position {i} is out of range: {n} (must be 0..=255)"
-                )));
+                return Ok(err_byte_range(*n));
             }
             other => {
                 return Err(VmError::new(format!(
@@ -297,23 +330,21 @@ fn slice(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "bytes.slice")?;
     let start = require_int(&args[1], "bytes.slice")?;
     let end = require_int(&args[2], "bytes.slice")?;
-    if start < 0 || end < 0 {
-        return Ok(err(format!(
-            "slice bounds must be non-negative, got start={start}, end={end}"
-        )));
+    if start < 0 {
+        return Ok(err_oob(start));
     }
-    let start = start as usize;
-    let end = end as usize;
-    if start > end {
-        return Ok(err(format!("slice start {start} > end {end}")));
+    if end < 0 {
+        return Ok(err_oob(end));
     }
-    if end > b.len() {
-        return Ok(err(format!(
-            "slice end {end} out of bounds for bytes of length {}",
-            b.len()
-        )));
+    let start_u = start as usize;
+    let end_u = end as usize;
+    if start_u > end_u {
+        return Ok(err_oob(start));
     }
-    Ok(ok(Value::Bytes(Arc::new(b[start..end].to_vec()))))
+    if end_u > b.len() {
+        return Ok(err_oob(end));
+    }
+    Ok(ok(Value::Bytes(Arc::new(b[start_u..end_u].to_vec()))))
 }
 
 fn concat(args: &[Value]) -> Result<Value, VmError> {
@@ -366,16 +397,13 @@ fn get(args: &[Value]) -> Result<Value, VmError> {
     let b = require_bytes(&args[0], "bytes.get")?;
     let i = require_int(&args[1], "bytes.get")?;
     if i < 0 {
-        return Ok(err(format!("index must be non-negative, got {i}")));
+        return Ok(err_oob(i));
     }
-    let i = i as usize;
-    if i >= b.len() {
-        return Ok(err(format!(
-            "index {i} out of bounds for bytes of length {}",
-            b.len()
-        )));
+    let idx = i as usize;
+    if idx >= b.len() {
+        return Ok(err_oob(i));
     }
-    Ok(ok(Value::Int(b[i] as i64)))
+    Ok(ok(Value::Int(b[idx] as i64)))
 }
 
 fn eq(args: &[Value]) -> Result<Value, VmError> {

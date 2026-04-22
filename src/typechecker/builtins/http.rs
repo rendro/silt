@@ -109,7 +109,8 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
 
     // ── Function signatures ──────────────────────────────────────
 
-    let result_response = Type::Generic(intern("Result"), vec![response_ty.clone(), Type::String]);
+    let http_error_ty = Type::Generic(intern("HttpError"), vec![]);
+    let result_response = Type::Generic(intern("Result"), vec![response_ty.clone(), http_error_ty]);
 
     // http.get: (String) -> Result(Response, String)
     env.define(

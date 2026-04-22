@@ -60,7 +60,7 @@ import bytes
 fn main() {
   match bytes.to_string(bytes.from_string("hello")) {
     Ok(s) -> s
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -74,7 +74,7 @@ import bytes
 fn main() {
   match bytes.to_string(bytes.from_string("café 🎉")) {
     Ok(s) -> s
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -108,7 +108,7 @@ import bytes
 fn main() {
   match bytes.from_hex("48656c6c6f") {
     Ok(b) -> bytes.to_hex(b)
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -122,7 +122,7 @@ import bytes
 fn main() {
   match bytes.from_hex("DEADBEEF") {
     Ok(b) -> bytes.to_hex(b)
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -136,7 +136,7 @@ import bytes
 fn main() {
   match bytes.from_hex("abc") {
     Ok(_) -> "wrong: should error"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -153,7 +153,7 @@ import bytes
 fn main() {
   match bytes.from_hex("xyzz") {
     Ok(_) -> "wrong: should error"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -206,7 +206,7 @@ import bytes
 fn main() {
   match bytes.from_base64("!!!not base64!!!") {
     Ok(_) -> "wrong: should error"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -246,7 +246,7 @@ import bytes
 fn main() {
   match bytes.from_list([10, 256, 30]) {
     Ok(_) -> "wrong: should error"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -263,7 +263,7 @@ import bytes
 fn main() {
   match bytes.from_list([0, -1, 0]) {
     Ok(_) -> "wrong: should error"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -295,7 +295,7 @@ import bytes
 fn main() {
   match bytes.slice(bytes.from_string("hello world"), 6, 11) {
     Ok(s) -> match bytes.to_string(s) { Ok(t) -> t, Err(e) -> e }
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -323,14 +323,14 @@ import bytes
 fn main() {
   match bytes.slice(bytes.from_string("hello"), 4, 2) {
     Ok(_) -> "wrong"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
     let Value::String(s) = v else {
         panic!("expected String, got {v:?}")
     };
-    assert!(s.contains("start") && s.contains("> end"), "got: {s}");
+    assert!(s.contains("out of bounds"), "got: {s}");
 }
 
 #[test]
@@ -340,7 +340,7 @@ import bytes
 fn main() {
   match bytes.slice(bytes.from_string("hello"), 0, 99) {
     Ok(_) -> "wrong"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -371,7 +371,7 @@ import bytes
 fn main() {
   match bytes.get(bytes.from_string("hi"), 5) {
     Ok(_) -> "wrong"
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -392,7 +392,7 @@ fn main() {
   let b = bytes.from_string("world")
   match bytes.to_string(bytes.concat(a, b)) {
     Ok(s) -> s
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -433,7 +433,7 @@ fn main() {
   ]
   match bytes.to_string(bytes.concat_all(parts)) {
     Ok(s) -> s
-    Err(e) -> e
+    Err(e) -> e.message()
   }
 }
 "#);
@@ -700,7 +700,7 @@ fn main() {
   list.map(parts) { p ->
     match bytes.to_string(p) {
       Ok(s) -> s
-      Err(e) -> e
+      Err(e) -> e.message()
     }
   }
 }
