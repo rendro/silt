@@ -6,17 +6,12 @@ order: 20
 
 # Stdlib typed errors
 
-Phase 0 of the stdlib error redesign ships six typed error enums — one
-per fallible stdlib module — that user code can construct and pattern
-match today. See the design rationale in
-[stdlib-errors proposal](../proposals/stdlib-errors.md).
-
-Phase 1 of the redesign is migrating stdlib signatures from
-`Result(T, String)` to `Result(T, ModuleError)` module-by-module.
-Already landed: `io.*`, `fs.*`, `json.parse*`, `toml.*`, `int.parse`,
-`float.parse`. The remaining modules (`http`, `regex`) still return
-`Result(T, String)` today — users who want a typed handle wrap the
-string errors in their own code until the relevant phase lands.
+Every fallible stdlib module declares its own typed error enum. Silt's
+`Result(T, ModuleError)` return shape lets user code pattern-match the
+failure modes directly instead of substring-matching on a `String`
+payload. Each enum implements the built-in `Error` trait, which
+supertypes `Display` and provides a `message()` method so code that
+just wants a rendered error can fall back to `"{e.message()}"`.
 
 ## Variant naming
 
@@ -96,12 +91,81 @@ receive from the other.
 | `HttpStatusCode(Int, String)` | status, body preview | non-success status |
 | `HttpUnknown(String)` | message | unclassified transport error |
 
+### `TcpError` (requires `import tcp`)
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `TcpConnect(String)` | message | tcp/dns connect failure |
+| `TcpTls(String)` | message | TLS handshake failure |
+| `TcpClosed` | — | connection closed (broken pipe, peer reset) |
+| `TcpTimeout` | — | op exceeded its deadline |
+| `TcpUnknown(String)` | message | unclassified socket failure |
+
+### `PgError` (requires `import postgres`)
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `PgConnect(String)` | message | tcp / DNS / pool checkout failure |
+| `PgTls(String)` | message | TLS setup / handshake |
+| `PgAuthFailed(String)` | message | SQLSTATE class 28 |
+| `PgQuery(String, String)` | message, SQLSTATE | server-reported error |
+| `PgTypeMismatch(String, String, String)` | column, expected, actual | row decode |
+| `PgNoSuchColumn(String)` | column | row.get on missing column |
+| `PgClosed` | — | connection dropped mid-query |
+| `PgTimeout` | — | statement / pool timeout |
+| `PgTxnAborted` | — | SQLSTATE 25P02 — rollback required |
+| `PgUnknown(String)` | message | unclassified pg error |
+
+### `TimeError` (requires `import time`)
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `TimeParseFormat(String)` | message | pattern did not match input |
+| `TimeOutOfRange(String)` | message | field out of valid range (e.g. month=13) |
+
+### `BytesError` (requires `import bytes`)
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `BytesInvalidUtf8(Int)` | byte offset | decode failed at offset |
+| `BytesInvalidHex(String)` | message | bad hex string |
+| `BytesInvalidBase64(String)` | message | bad base64 string |
+| `BytesByteOutOfRange(Int)` | value | list element outside 0..=255 |
+| `BytesOutOfBounds(Int)` | index | slice or get index out of bounds |
+
+### `ChannelError` (requires `import channel`)
+
+Returned by `channel.recv_timeout`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `ChannelTimeout` | — | timer elapsed before a value arrived |
+| `ChannelClosed` | — | channel closed with no more values |
+
 ### `RegexError` (requires `import regex`)
+
+Constructible by user code. Stdlib `regex.*` functions do not yet
+return `Result(_, RegexError)` — invalid patterns surface as
+`VmError` at the call site because current signatures return `Bool` /
+`Option` / `List` / `String`, with no `Result` slot to carry an Err.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `RegexInvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
 | `RegexTooBig` | — | compiled pattern exceeded size budget |
+
+## Stdlib functions still on `Result(T, String)`
+
+Not every stdlib function has been migrated. These still surface their
+errors as bare strings:
+
+- `encoding.url_decode`, `encoding.form_decode` — two fallible fns
+- `crypto.random_bytes` — one fallible fn
+- `uuid.parse` — one fallible fn
+
+In every case the rationale is the same: the failure modes aren't
+diverse enough to benefit from a typed enum. If richer taxonomy lands
+for any of these modules, each will graduate to its own error enum.
 
 ## Example: user-side pattern matching
 
@@ -123,6 +187,26 @@ fn main() {
 }
 ```
 
-Cross-module composition follows the pattern from the proposal: wrap
-each module's error in an `AppError` enum and use `result.map_err`.
-The stdlib does not auto-convert between error types.
+## Cross-module composition
+
+Silt does not auto-convert between error types. A function that spans
+several stdlib modules wraps each module's error in a local `AppError`
+enum and lifts each call's Err into it with `result.map_err`:
+
+```silt
+type AppError {
+  IoProblem(IoError),
+  JsonProblem(JsonError),
+}
+
+fn load_config(path: String) -> Result(Config, AppError) {
+  let raw = result.map_err(io.read_file(path), { e -> IoProblem(e) })?
+  let cfg = result.map_err(json.parse(raw, Config), { e -> JsonProblem(e) })?
+  Ok(cfg)
+}
+```
+
+See `examples/cross_module_errors.silt` for a longer walkthrough. A
+separate proposal ([`error-from-trait.md`](../proposals/error-from-trait.md))
+tracks the design for a `.into()`-based ergonomics layer over this
+pattern.

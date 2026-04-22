@@ -1889,9 +1889,29 @@ pub fn call_time(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 return Ok(Value::Unit);
             }
             // Resume path: if we previously parked on a sleep completion,
-            // io_entry_guard returns the completion's Unit result.
-            if let Some(r) = vm.io_entry_guard(args)? {
-                return Ok(r);
+            // poll pending_io directly. We intentionally skip
+            // io_entry_guard's deadline-exceeded branch — time.sleep
+            // returns Unit, not Result, so an already-past deadline should
+            // simply skip the sleep rather than inject an Err(...) value.
+            if vm.is_scheduled_task
+                && let Some(completion) = vm.pending_io.take()
+            {
+                if let Some(_result) = completion.try_get() {
+                    return Ok(Value::Unit); // sleep completed
+                }
+                // Still pending — re-park.
+                vm.pending_io = Some(completion.clone());
+                vm.block_reason = Some(BlockReason::Io(completion));
+                for arg in args {
+                    vm.push(arg.clone());
+                }
+                return Err(VmError::yield_signal());
+            }
+            if vm
+                .current_deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+            {
+                return Ok(Value::Unit); // deadline already past; nothing to sleep for
             }
             // Fresh scheduled-task call: submit to the shared timer thread
             // (NOT the I/O pool — we don't want to burn a worker thread

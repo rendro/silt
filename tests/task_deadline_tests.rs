@@ -443,6 +443,157 @@ fn main() {
     );
 }
 
+#[cfg(feature = "tcp")]
+#[test]
+fn test_watchdog_fires_tcp_read_surfaces_tcp_timeout() {
+    // Regression lock for the watchdog-on-parked-tcp-op path: when a
+    // spawned task calls `tcp.read` on a stream that never receives
+    // data, it parks in the io_pool. The scheduler's watchdog (armed
+    // here via a scoped `task.spawn_until` deadline — `DeadlineSource::Task`)
+    // must fire and complete the pending IoCompletion using the tcp
+    // module's registered TimeoutErrFactory, surfacing `Err(TcpTimeout)`
+    // to the silt-side match. Before per-completion factory plumbing,
+    // the watchdog always wrote the generic `Err(IoUnknown(_))`, which
+    // collided with tcp.*'s `Result(_, TcpError)` return shape and
+    // forced callers into a wildcard arm.
+    //
+    // Complements `test_task_deadline_covers_tcp_connect_at_entry`
+    // (ENTRY-guard path, deadline already past at builtin entry) and
+    // `test_watchdog_env_var_fires_pending_io_surfaces_timeout_err`
+    // (watchdog path for `io.read_line`). Without this test, the
+    // watchdog path for tcp.* specifically is covered only by
+    // scheduler unit tests, never end-to-end.
+    //
+    // Hermetic: a plain `TcpListener` bound to a loopback port holds
+    // the connection open and never writes, so the silt-side
+    // `tcp.read` parks until the watchdog fires.
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+    let addr = listener.local_addr().expect("local_addr").to_string();
+
+    // Keep the accepted connection alive until the silt process exits.
+    // The listener thread accepts one connection and parks — never
+    // writes, never closes — so the client-side `tcp.read` in silt
+    // has nothing to receive and will wait indefinitely without the
+    // watchdog.
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_t = stop.clone();
+    let server = std::thread::spawn(move || {
+        listener
+            .set_nonblocking(true)
+            .expect("set_nonblocking on listener");
+        let mut held: Option<std::net::TcpStream> = None;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !stop_t.load(Ordering::SeqCst) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((conn, _peer)) => {
+                    // Hold the connection open; do not write, do not close.
+                    held = Some(conn);
+                    // Keep looping so we drain any extra connect attempts
+                    // without crashing, but we won't write on any of them.
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        drop(held);
+    });
+
+    let src = format!(
+        r#"
+import bytes
+import tcp
+import task
+import time
+
+fn main() {{
+  let outcome = task.spawn_until(time.ms(50), fn() {{
+    match tcp.connect("{addr}") {{
+      Ok(s) -> match tcp.read(s, 1024) {{
+        Ok(_) -> "unexpected-ok"
+        Err(TcpTimeout) -> "tcp-timeout"
+        Err(other) -> "other:" + other.message()
+      }}
+      Err(e) -> "connect-err:" + e.message()
+    }}
+  }})
+  println(task.join(outcome))
+}}
+"#
+    );
+
+    // Run silt with a bounded wall-clock wait so a regression in the
+    // watchdog path surfaces as a loud test failure, not a CI hang.
+    use std::sync::atomic::{AtomicU64, Ordering as Ord2};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ord2::SeqCst);
+    let tmp = std::env::temp_dir().join(format!("silt_td_tcpwd_{}_{n}.silt", std::process::id()));
+    std::fs::write(&tmp, &src).unwrap();
+
+    let mut child = Command::new(silt_bin())
+        .arg("run")
+        .arg(&tmp)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn silt");
+
+    let wait = Duration::from_secs(5);
+    let start = Instant::now();
+    let (stdout, stderr, code) = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut s) = child.stdout.take() {
+                    let _ = s.read_to_string(&mut stdout);
+                }
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut stderr);
+                }
+                break (stdout, stderr, status.code().unwrap_or(-1));
+            }
+            Ok(None) => {
+                if start.elapsed() >= wait {
+                    let _ = child.kill();
+                    stop.store(true, Ordering::SeqCst);
+                    let _ = server.join();
+                    let _ = std::fs::remove_file(&tmp);
+                    panic!(
+                        "silt run did not exit within {wait:?} — watchdog-on-parked-tcp.read regressed"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => {
+                stop.store(true, Ordering::SeqCst);
+                let _ = server.join();
+                let _ = std::fs::remove_file(&tmp);
+                panic!("try_wait failed: {e}");
+            }
+        }
+    };
+    let _ = std::fs::remove_file(&tmp);
+    stop.store(true, Ordering::SeqCst);
+    let _ = server.join();
+
+    assert_eq!(
+        code, 0,
+        "silt should exit 0 (timeout surfaces as a value, not a VM error); \
+         stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        stdout.contains("tcp-timeout"),
+        "watchdog-fired tcp.read must surface Err(TcpTimeout), not IoUnknown/IoInterrupted; \
+         got stdout={stdout:?} stderr={stderr:?}"
+    );
+}
+
 #[test]
 fn test_task_deadline_nested_synchronous_tightens() {
     // Outer deadline 60s; inner deadline 0ms. Inner's tighter deadline
