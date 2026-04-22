@@ -242,9 +242,18 @@ fn compute_block_end_line(span: Span) -> usize {
         // matching `}` of the enclosing block, the scan never reaches
         // depth == 0, and the fallback `span.line` is returned —
         // collapsing the close-line range so trailing comments inside
-        // the block get dropped on a later format pass.
+        // the block get dropped on a later format pass. Similarly,
+        // `{- ... -}` block comments must be tracked (via `block_depth`)
+        // because they may nest AND because their content can include
+        // literal `{` / `}` / `"""` bytes that would otherwise confuse
+        // the brace counter (e.g. pretty-printer output where a line
+        // comment `-- ... -}` from the source has been hoisted above a
+        // block-comment opener, followed by real code). Without this
+        // the scanner treats a `{` inside a block comment as a nested
+        // block-open and the top-level depth never returns to 0.
         let mut state_mode = ScanMode::Code;
         let mut interp_depths: Vec<i32> = Vec::new();
+        let mut block_depth: usize = 0;
         for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
             let chars: Vec<char> = line.chars().collect();
             let mut i = 0;
@@ -252,6 +261,23 @@ fn compute_block_end_line(span: Span) -> usize {
                 let ch = chars[i];
                 let nxt = chars.get(i + 1).copied();
                 let nxt2 = chars.get(i + 2).copied();
+                // Inside a block comment: only `{-` (deepen) and `-}`
+                // (close) matter. Strings, line comments, and braces
+                // are inert content.
+                if block_depth > 0 {
+                    if ch == '{' && nxt == Some('-') {
+                        block_depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '-' && nxt == Some('}') {
+                        block_depth -= 1;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
                 match state_mode {
                     ScanMode::InTriple => {
                         if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
@@ -288,6 +314,11 @@ fn compute_block_end_line(span: Span) -> usize {
                         }
                         if ch == '-' && nxt == Some('-') {
                             break; // line comment
+                        }
+                        if ch == '{' && nxt == Some('-') {
+                            block_depth = 1;
+                            i += 2;
+                            continue;
                         }
                         if ch == '{' {
                             if let Some(d) = interp_depths.last_mut() {
@@ -326,7 +357,7 @@ fn compute_block_end_line(span: Span) -> usize {
             // End-of-line fallback: only return if we're back to a
             // non-string mode at depth 0. (See sibling
             // `compute_bracket_end_line` for the rationale.)
-            if found_open && depth == 0 && interp_depths.is_empty() {
+            if found_open && depth == 0 && interp_depths.is_empty() && block_depth == 0 {
                 return line_idx + 1;
             }
         }
@@ -374,11 +405,16 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
         // confuse the bracket counter and prematurely terminate the
         // scan or absorb a real matching close on a later line. See
         // `compute_block_end_line` for the symmetric rationale.
+        // `block_depth` tracks nested `{- ... -}` block comments: their
+        // content is raw bytes and must not contribute to bracket
+        // counting (otherwise a `{` or `}` inside a block comment would
+        // prematurely open/close the bracket pair we're searching for).
         let mut state_mode = ScanMode::Code;
         // Track nesting depth of interpolation braces only when we're
         // scanning for brace brackets; other bracket kinds don't interact
         // with `{` inside strings.
         let mut interp_depths: Vec<i32> = Vec::new();
+        let mut block_depth: usize = 0;
         for (line_idx, line) in source_lines.iter().enumerate().skip(start_idx) {
             let chars: Vec<char> = line.chars().collect();
             let mut i = 0;
@@ -386,6 +422,23 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
                 let ch = chars[i];
                 let nxt = chars.get(i + 1).copied();
                 let nxt2 = chars.get(i + 2).copied();
+                // Inside a block comment: only `{-` (deepen) and `-}`
+                // (close) matter. Any bracket bytes here are raw
+                // comment content, not code.
+                if block_depth > 0 {
+                    if ch == '{' && nxt == Some('-') {
+                        block_depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '-' && nxt == Some('}') {
+                        block_depth -= 1;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
                 match state_mode {
                     ScanMode::InTriple => {
                         if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
@@ -421,6 +474,11 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
                         }
                         if ch == '-' && nxt == Some('-') {
                             break; // line comment
+                        }
+                        if ch == '{' && nxt == Some('-') {
+                            block_depth = 1;
+                            i += 2;
+                            continue;
                         }
                         if !interp_depths.is_empty() {
                             // Inside a string interpolation: `{` deepens, `}`
@@ -488,7 +546,7 @@ fn compute_bracket_end_line(start_line: usize, open: char, close: char) -> usize
             // `close == '}'`) where the close-counting happens in the
             // interp branch and never falls through to the early-
             // return path.
-            if found_open && depth == 0 && interp_depths.is_empty() {
+            if found_open && depth == 0 && interp_depths.is_empty() && block_depth == 0 {
                 return line_idx + 1;
             }
         }
@@ -3641,6 +3699,7 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
     else {
         unreachable!()
     };
+    let open_line = expr.span.line;
     let close_line = compute_block_end_line(expr.span);
     let header = match scrutinee {
         Some(s) => format!("match {} ", format_expr(s, depth)),
@@ -3671,7 +3730,30 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
         lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
     }
 
-    format!("{header}{{\n{}\n{}}}", lines.join("\n"), indent(depth))
+    // A multi-line match may carry a `-- trailing` comment on the line
+    // containing its closing `}` (extract_comments attributes such
+    // comments to the close line, not the match's start line). The
+    // statement-level emitter in `format_stmts_with_comments` only
+    // queries `take_trailing_for_line(stmt_start_line)`, so when the
+    // match spans multiple lines its close-line trailing would be
+    // silently dropped. Mirror `format_body`'s close-line handling and
+    // consume it here so pass 2 (whose extract sees the trailing on the
+    // `}` line) finds the comment exactly where pass 1 emitted it. Gated
+    // on `close_line > open_line` so single-line matches (if any) do
+    // not steal a trailing comment from the surrounding line.
+    let close_trailing = if close_line > open_line {
+        take_trailing_for_line(close_line)
+            .map(|c| format!(" {c}"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    format!(
+        "{header}{{\n{}\n{}}}{close_trailing}",
+        lines.join("\n"),
+        indent(depth)
+    )
 }
 
 fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
@@ -6176,5 +6258,89 @@ import a
         let result = format(source).unwrap();
         let expected = "fn main() {\n  let xs = [\n    -- before first\n    1,\n    -- between\n    2,\n  ]\n  println(xs)\n}\n";
         assert_eq!(result, expected);
+    }
+
+    // ── BROKEN-N: Line comment ending with `-}` followed by a `{-`
+    // block-comment opener on a later line. Fuzz-found regression.
+    //
+    // Minimal repro:
+    //   fn s() {
+    //     a
+    //     -- line one -}
+    //   {-
+    //     content
+    //     }
+    //     rest
+    //   -}
+    //     more
+    //   }
+    //
+    // On pass 2, `compute_block_end_line` scanned the fn body brace-
+    // counting without recognising `{- ... -}` block comments — so a
+    // literal `{` or `}` inside the block-comment content (or at the
+    // `{-` opener itself) perturbed the outer brace counter, the scan
+    // never found a matching `}` at depth 0, and the close-line
+    // fallback returned the block's start line. That collapsed the
+    // "inside body" range used by `take_comments_between` to drain
+    // standalone comments, dropping every `--` comment that sat
+    // BEFORE the block-comment opener on pass 2.
+    #[test]
+    fn test_idempotent_line_comment_before_block_comment() {
+        let source = "fn s() {\n  a\n  -- line one -}\n{-\n  content\n  }\n  rest\n-}\n  more\n}\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting must be idempotent");
+    }
+
+    // ── BROKEN-N: Trailing `-- comment` on the closing-`}` line of a
+    // multi-line `match` expression. Fuzz-found regression.
+    //
+    // Minimal repro:
+    //   fn main() {
+    //     let y = 1
+    //    !        -- trailing-like
+    //     match x {
+    //       _ -> 1
+    //     }
+    //   }
+    //
+    // Pass 1 correctly attaches the `-- trailing-like` comment (which
+    // lives on the `!` line = statement start line) to the match's
+    // closing `}`:
+    //   ...
+    //   !match x {
+    //     _ -> 1
+    //   } -- trailing-like
+    // Pass 2 extracts the trailing comment from the `}` line but
+    // `format_match_expr` never queried `take_trailing_for_line` for
+    // the close line, so the comment was silently dropped. Fixed by
+    // mirroring `format_body`'s close-line handling inside
+    // `format_match_expr`.
+    #[test]
+    fn test_idempotent_trailing_comment_on_match_close() {
+        // Direct shape (what pass 1 emits) — close-line trailing is
+        // now consumed by the match emitter.
+        let source = "fn main() {\n  !match x {\n    _ -> 1\n  } -- trailing\n}\n";
+        let first = format(source).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting must be idempotent");
+        // The trailing comment must survive both passes.
+        assert!(
+            first.contains("-- trailing"),
+            "trailing comment must be preserved on close-brace line, got: {first:?}"
+        );
+
+        // Also exercise the original shape (multi-line reduction) —
+        // `!` on a line of its own with a trailing line comment,
+        // then `match` on the next line. Pass 1 must rewrite to the
+        // shape above and pass 2 must be a no-op.
+        let reduced = "fn main() {\n  let y = 1\n !        -- trailing-like\n  match x {\n    _ -> 1\n  }\n}\n";
+        let first = format(reduced).unwrap();
+        let second = format(&first).unwrap();
+        assert_eq!(first, second, "formatting must be idempotent");
+        assert!(
+            first.contains("-- trailing-like"),
+            "trailing comment must be preserved across passes, got: {first:?}"
+        );
     }
 }
