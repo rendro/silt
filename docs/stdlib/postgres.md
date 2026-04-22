@@ -107,11 +107,12 @@ fn main() {
       })
       match result {
         Ok(rows) -> println("committed: {rows}")
-        Err(e) -> println("rolled back: {e}")
+        Err(PgTxnAborted) -> println("rolled back (txn aborted — retry)")
+        Err(e) -> println("rolled back: {e.message()}")
       }
       postgres.close(pool)
     }
-    Err(e) -> println("connect err: {e}")
+    Err(e) -> println("connect err: {e.message()}")
   }
 }
 ```

@@ -48,8 +48,9 @@ authoritative list of modules and their key functions.
   work correctly on all time types. Display shows ISO 8601 format.
 - The `http` module provides `Method` (enum: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`), `Request`, and `Response` record types. `http.get` and
-  `http.request` return `Result(Response, String)`. `http.serve` takes a port
-  and a handler function `Fn(Request) -> Response`. Pattern matching on
+  `http.request` return `Result(Response, HttpError)` (see
+  [stdlib errors](../stdlib/errors.md)). `http.serve` takes a port and a
+  handler function `Fn(Request) -> Response`. Pattern matching on
   `(req.method, segments)` replaces routing DSLs.
 
 Circular imports are detected and rejected with a clear error message.

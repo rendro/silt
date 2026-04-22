@@ -748,16 +748,24 @@ that blocks for too long.
 
 The `SILT_IO_TIMEOUT` environment variable enables this watchdog globally.
 Setting `SILT_IO_TIMEOUT=5000` (or `SILT_IO_TIMEOUT=5s`) makes every I/O
-builtin that blocks longer than that duration return
-`Err("I/O timeout (SILT_IO_TIMEOUT exceeded)")` instead of its normal value.
-The deadline is *invisible* -- no language-surface changes, no new
-syntax -- because all blocking I/O builtins already return `Result`.
+builtin that blocks longer than that duration return the module's own typed
+timeout variant instead of its normal value:
+
+- `io.*` and `fs.*` surface `Err(IoUnknown("I/O timeout (SILT_IO_TIMEOUT exceeded)"))`.
+- `tcp.*` surfaces `Err(TcpTimeout)`.
+- `http.*` surfaces `Err(HttpTimeout)`.
+
+The deadline is *invisible* at the language surface — no new syntax, no
+colored functions — because every I/O builtin already returns `Result` with
+the matching typed error enum. `time.sleep` is the one exception: it returns
+`Unit`, so when a task's deadline has already elapsed the sleep returns
+immediately with no error.
 
 Accepted formats: bare integer (milliseconds), or a suffixed duration
 `5s`, `500ms`, `2m`, `1h`.
 
 ```sh
-# Any I/O that stalls > 5s surfaces an Err(...) to the caller.
+# Any I/O that stalls > 5s surfaces the module's typed timeout variant.
 SILT_IO_TIMEOUT=5s silt run server.silt
 ```
 
@@ -765,16 +773,17 @@ For scoped, per-call deadlines rather than a process-wide cap, use
 [`task.deadline(dur, fn)`](stdlib/channel-task.md#taskdeadline) or
 [`task.spawn_until(dur, fn)`](stdlib/channel-task.md#taskspawn_until).
 Scoped deadlines nest with `SILT_IO_TIMEOUT`; whichever elapses first
-fires, and the error message identifies the source so silt code can
-distinguish them.
+fires, and the caller sees the same typed variant as the module's normal
+timeout path.
 
 #### Caveat: I/O threads continue after timeout
 
 The watchdog is cooperative on the task side only. When the deadline
-elapses, the scheduler writes `Err("I/O timeout (SILT_IO_TIMEOUT
-exceeded)")` into the pending completion and wakes the parked task so
-it resumes with the timeout error. The OS thread in the I/O pool that
-dispatched the blocking syscall (for example `io.read_file`,
+elapses, the scheduler writes the module's typed timeout variant (e.g.
+`Err(HttpTimeout)` for an `http.get`, `Err(IoUnknown(msg))` for an
+`io.read_file`) into the pending completion and wakes the parked task
+so it resumes with the timeout error. The OS thread in the I/O pool
+that dispatched the blocking syscall (for example `io.read_file`,
 `http.get`, or an `io.write_file`) is **not** interrupted -- it
 continues executing the syscall until the kernel returns, then
 discards the result.

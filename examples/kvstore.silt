@@ -103,7 +103,7 @@ fn handle_load() {
           loaded
         }
         Err(e) -> {
-          println("Error parsing JSON: {e}")
+          println("Error parsing JSON: {e.message()}")
           println("Starting with empty store.")
           #{}
         }

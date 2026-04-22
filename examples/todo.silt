@@ -78,7 +78,7 @@ fn load_todos(path) {
           todos
         }
         Err(e) -> {
-          println("  Error parsing: {e}")
+          println("  Error parsing: {e.message()}")
           []
         }
       }

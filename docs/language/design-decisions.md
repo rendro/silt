@@ -26,6 +26,14 @@ helpers. Keeps scoping simple -- no hoisting, no forward-reference confusion.
 Matches Elixir convention. Simpler than auto-currying. Trade-off: no partial
 application through pipes.
 
+## `?` Precedence vs. `|>` and Arithmetic
+
+`?` binds one step looser than `|>`, so `x |> f |> g?` parses as
+`(x |> f |> g)?` — a trailing `?` applies to the whole pipeline without
+parens. Infix arithmetic (`+`, `-`, `*`, `/`, `%`), `..`, and `as` all bind
+tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison, boolean,
+and `else` all bind looser, so `a == b?` is still `a == (b?)`.
+
 ## `fold_until` Same-Type Constraint
 
 `Stop(value)` and `Continue(value)` carry the same accumulator type. For

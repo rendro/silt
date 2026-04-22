@@ -8,6 +8,13 @@ order: 9
 
 Regular expression functions. Pattern strings use standard regex syntax.
 
+Stdlib signatures return `Bool`, `Option`, `List`, or `String` — there is
+no `Result` slot on any `regex.*` fn. A pattern that fails to compile
+surfaces as a runtime error at the call site, not as an `Err`. A
+`RegexError` enum (`RegexInvalidPattern(String, Int)`, `RegexTooBig`)
+exists for user code that wants to model regex failures in its own
+types, but no stdlib function produces it.
+
 ## Summary
 
 | Function | Signature | Description |
@@ -193,12 +200,13 @@ return a string.
 
 ```silt
 import int
+import regex
 import result
 
-import regex
 fn main() {
     let doubled = regex.replace_all_with("\\d+", "a1 b22 c333") { m ->
-        int.to_string(int.parse(m) |> result.unwrap_or(0) |> fn(n) { n * 2 })
+        let n = int.parse(m) |> result.unwrap_or(0)
+        int.to_string(n * 2)
     }
     println(doubled)  -- "a2 b44 c666"
 }

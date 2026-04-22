@@ -293,6 +293,86 @@ trait Peek for Cell(a) where a: Peek {
 }
 ```
 
+## Parameterized Traits
+
+A trait can take type parameters of its own, letting the same trait name
+represent a family of related interfaces:
+
+```silt
+trait From(a) {
+  fn from(source: a) -> Self
+}
+
+type Celsius { c: Float }
+type Fahrenheit { f: Float }
+
+trait From(Celsius) for Fahrenheit {
+  fn from(source: Celsius) -> Self {
+    Fahrenheit { f: source.c * 1.8 + 32.0 }
+  }
+}
+```
+
+Parameterized traits may have supertraits (`trait Child(a): Parent(a)`) and
+`where` clauses on both the trait declaration and its methods. The full
+specification — including how trait parameters flow through `where` clauses
+and how multiple impls with different arguments coexist — lives in
+[Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).
+
+## Static Trait Methods
+
+Some trait methods take no `self` and only return `Self` — constructors like
+`Default::default()` or `Monoid::empty()`. Invoke these by calling on a
+**type descriptor**: either a bare type name (`Int.empty()`) or a `type a`
+parameter inside a generic function (`a.empty()`):
+
+```silt
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+  fn combine(a: Self, b: Self) -> Self { a + b }
+}
+
+fn main() {
+  let zero = Int.empty()                 -- concrete dispatch
+  let five = Int.combine(2, 3)
+  println("{zero} {five}")
+}
+```
+
+Dispatch is by the descriptor's carried type name — `Int.empty()` resolves
+to the `Monoid` impl for `Int`. Inside a generic function with
+`type a` and `where a: Monoid`, `a.empty()` dispatches to whichever impl
+matches the concrete type passed in. See
+[Generics — Trait methods on types](generics.md#trait-methods-on-types) for
+the full rules.
+
+## Method References
+
+Trait method names are first-class callable values: `TypeName.method` produces
+a function you can pass directly to a higher-order combinator. This avoids
+writing a one-line closure around `x.method()`:
+
+```silt
+import list
+
+type Celsius { c: Float }
+
+trait Display for Celsius {
+  fn display(self) -> String { "{self.c}°C" }
+}
+
+fn main() {
+  let temps = [Celsius { c: 20.0 }, Celsius { c: 25.5 }]
+  let rendered = list.map(temps, Celsius.display)
+  list.each(rendered) { line -> println(line) }
+}
+```
+
 ## Built-in Traits
 
 | Trait     | Purpose                          |
@@ -305,6 +385,11 @@ trait Peek for Cell(a) where a: Peek {
 All four are **automatically derived** for every user-defined type. The
 auto-derived `Display` formats in constructor syntax (`Circle(5)`). Write
 your own `trait Display for T` to override.
+
+The built-in `Error` trait (supertraits `Display`; method
+`message(self) -> String`) is **not** auto-derived. Each stdlib error enum
+(`IoError`, `JsonError`, `HttpError`, …) implements it explicitly, and user
+code can implement it on its own error types.
 
 ## Where Clauses
 

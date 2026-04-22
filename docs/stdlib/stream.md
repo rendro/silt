@@ -29,10 +29,10 @@ regardless of scheduler state.
 | `from_range` | `(Int, Int) -> Channel(Int)` | Emit `lo..=hi` then close |
 | `repeat` | `(a) -> Channel(a)` | Infinite — pair with `take` |
 | `unfold` | `(a, (a) -> Option((b, a))) -> Channel(b)` | Generator (closes on `None`) |
-| `file_chunks` | `(String, Int) -> Channel(Result(Bytes, String))` | Read file in chunks |
-| `file_lines` | `(String) -> Channel(Result(String, String))` | Read file line-by-line |
-| `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, String))` | Read TCP in chunks |
-| `tcp_lines` | `(TcpStream) -> Channel(Result(String, String))` | Read TCP line-by-line |
+| `file_chunks` | `(String, Int) -> Channel(Result(Bytes, IoError))` | Read file in chunks |
+| `file_lines` | `(String) -> Channel(Result(String, IoError))` | Read file line-by-line |
+| `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
+| `tcp_lines` | `(TcpStream) -> Channel(Result(String, TcpError))` | Read TCP line-by-line |
 
 ### Transforms
 
@@ -70,8 +70,8 @@ regardless of scheduler state.
 | `count` | `(Channel(a)) -> Int` |
 | `first` | `(Channel(a)) -> Option(a)` |
 | `last` | `(Channel(a)) -> Option(a)` |
-| `write_to_file` | `(Channel(Bytes), String) -> Result((), String)` |
-| `write_to_tcp` | `(Channel(Bytes), TcpStream) -> Result((), String)` |
+| `write_to_file` | `(Channel(Bytes), String) -> Result((), IoError)` |
+| `write_to_tcp` | `(Channel(Bytes), TcpStream) -> Result((), TcpError)` |
 
 ## Examples
 
@@ -114,8 +114,9 @@ fn main() {
 - **Backpressure is automatic.** When the output channel of a transform
   fills up, the pump thread sleeps briefly and retries — back-pressuring
   into the input channel by not consuming further messages.
-- **Errors flow through the stream.** I/O sources emit
-  `Channel(Result(_, String))`. Each chunk can fail independently;
+- **Errors flow through the stream.** File sources emit
+  `Channel(Result(_, IoError))`; TCP sources emit
+  `Channel(Result(_, TcpError))`. Each chunk can fail independently;
   consumers pattern-match. Use `map_ok` / `filter_ok` to apply
   transformations only to `Ok` values, passing `Err(_)` through unchanged.
 - **No async/await.** Everything runs on OS threads or the silt scheduler

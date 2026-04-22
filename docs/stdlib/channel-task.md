@@ -17,7 +17,7 @@ communication between tasks spawned with `task.spawn`.
 | `each` | `(Channel, (a) -> b) -> ()` | Iterate until channel closes |
 | `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
-| `recv_timeout` | `(Channel(a), Duration) -> Result(a, String)` | Blocking receive with a timeout |
+| `recv_timeout` | `(Channel(a), Duration) -> Result(a, ChannelError)` | Blocking receive with a timeout |
 | `select` | `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels |
 | `send` | `(Channel, a) -> ()` | Blocking send |
 | `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
@@ -117,14 +117,14 @@ fn main() {
 ## `channel.recv_timeout`
 
 ```
-channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, String)
+channel.recv_timeout(ch: Channel(a), dur: Duration) -> Result(a, ChannelError)
 ```
 
 Blocking receive with a scoped timeout. Returns:
 
 - `Ok(value)` if a value is delivered within `dur`.
-- `Err("timeout")` if `dur` elapses with no value and no close.
-- `Err("closed")` if the channel is closed and has no more buffered values.
+- `Err(ChannelTimeout)` if `dur` elapses with no value and no close.
+- `Err(ChannelClosed)` if the channel is closed and has no more buffered values.
 
 A value already buffered, or a rendezvous sender already parked, wins over an
 expired timer: the non-blocking path is always tried first so readiness is not
@@ -136,6 +136,14 @@ always gets at least one timer tick of wait.
 This uses the shared timer thread that backs `channel.timeout` and `time.sleep`
 -- no per-call OS thread. Cancelling the surrounding `task.spawn` handle
 cleans up both the channel-side waker registration and the timer registration.
+
+`ChannelError` implements the built-in `Error` trait, so `e.message()`
+renders either variant as a string:
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `ChannelTimeout` | — | timer elapsed before a value arrived |
+| `ChannelClosed` | — | channel closed with no more values |
 
 ```silt
 import channel
@@ -149,8 +157,9 @@ fn main() {
         channel.send(ch, 42)
     })
     match channel.recv_timeout(ch, time.ms(500)) {
-        Ok(v) -> println(v)              -- 42
-        Err(reason) -> println(reason)   -- "timeout" or "closed"
+        Ok(v) -> println(v)                   -- 42
+        Err(ChannelTimeout) -> println("timed out")
+        Err(ChannelClosed) -> println("channel closed")
     }
 }
 ```

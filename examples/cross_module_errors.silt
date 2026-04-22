@@ -3,15 +3,12 @@
 -- uniform error type to its caller.
 --
 -- Silt does not auto-convert between error types — it's explicit-over-
--- implicit by design (see docs/proposals/stdlib-errors.md). The typed
--- errors from each module (IoError, JsonError, HttpError, ...) are
--- wrapped in a local `AppError` enum, and each fallible call runs
--- through `result.map_err(r, fn)` to lift its module-specific error
--- into the AppError type. `?` then propagates uniformly.
---
--- This is the pattern the typed-stdlib-errors proposal recommends for
--- any function that spans modules. The boilerplate is real but visible
--- and typed — the same shape Rust's `thiserror`-derived enums produce.
+-- implicit by design. The typed errors from each module (IoError,
+-- JsonError, HttpError, ...) are wrapped in a local `AppError` enum,
+-- and each fallible call runs through `result.map_err(r, Wrap)` to
+-- lift its module-specific error into the AppError type. `?` then
+-- propagates uniformly. Variant constructors are first-class
+-- `Fn(e) -> AppError`, so no closure wrapping is needed.
 
 import io
 import json
@@ -39,17 +36,18 @@ type AppError {
 
 -- Load a config file from disk, parse it, make an authenticated
 -- request using its fields, and parse the response body. Each step's
--- typed error is wrapped into AppError via result.map_err.
+-- typed error is wrapped into AppError by passing the variant
+-- constructor directly to result.map_err.
 fn load_and_fetch(path: String) -> Result(String, AppError) {
-  let contents = result.map_err(io.read_file(path), { e -> ConfigRead(e) })?
-  let config = result.map_err(json.parse(contents, Config), { e -> ConfigParse(e) })?
+  let contents = io.read_file(path) |> result.map_err(ConfigRead)?
+  let config = json.parse(contents, Config) |> result.map_err(ConfigParse)?
 
   match config.retries < 0 {
     true -> return Err(Custom("retries must be non-negative"))
     false -> ()
   }
 
-  let resp = result.map_err(http.get(config.api_url), { e -> ApiCall(e) })?
+  let resp = http.get(config.api_url) |> result.map_err(ApiCall)?
   Ok(resp.body)
 }
 

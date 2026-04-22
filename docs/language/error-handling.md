@@ -19,21 +19,117 @@ match parse_int(input) {
 }
 ```
 
-## The `?` Operator
+## Typed Stdlib Errors
 
-Propagates errors to the caller. Works on both `Result` and `Option`:
+Every fallible stdlib module except `crypto`, `encoding`, `uuid`, and `regex`
+returns a typed error enum — `IoError`, `JsonError`, `TomlError`,
+`ParseError`, `HttpError`, `TcpError`, `PgError`, `TimeError`, `BytesError`,
+and `ChannelError`. Each variant is module-prefixed so pattern names never
+collide: `IoNotFound`, `JsonSyntax`, `HttpTimeout`, and so on. The full
+catalog lives in [`stdlib/errors.md`](../stdlib/errors.md).
+
+You can either pattern-match on a specific variant, or fall back to
+`.message()` for a rendered string:
 
 ```silt
-fn process(input) {
-  let n = parse_int(input)?       -- returns Err early if parse fails
-  let result = validate(n)?
-  Ok(result * 2)
+import io
+import string
+
+fn main() {
+  match io.read_file("app.json") {
+    Ok(content) -> println("loaded {string.length(content)} bytes")
+    Err(IoNotFound(path)) -> println("file does not exist: {path}")
+    Err(IoPermissionDenied(path)) -> println("denied: {path}")
+    Err(e) -> println("error: {e.message()}")
+  }
 }
 ```
 
+Every stdlib error enum implements the built-in `Error` trait, which has
+`Display` as a supertrait and provides `message(self) -> String`. That means
+`"{e}"` string interpolation works too — `Display` gives you the same
+rendered message.
+
+## The `?` Operator
+
+`?` propagates errors to the caller unchanged. It works on both `Result` and
+`Option`, and it does **not** convert between error types — the inner `Err`
+type of the `?`-ed expression must match the enclosing function's `Err`
+type:
+
+```silt
+import io
+
+fn read_head(path: String) -> Result(String, IoError) {
+  let content = io.read_file(path)?     -- Err(IoError) propagates
+  Ok(content)
+}
+```
+
+### `?` and the pipe operator
+
+`?` binds one step looser than `|>`, so a trailing `?` applies to the whole
+pipeline — no parentheses needed:
+
+```silt
+import io
+import result
+
+type Wrap { Wrap(IoError) }
+
+fn main() -> Result(String, Wrap) {
+  let raw = io.read_file("config.toml") |> result.map_err({ e -> Wrap(e) })?
+  Ok(raw)
+}
+```
+
+`x |> f |> g?` parses as `(x |> f |> g)?`. On the other side, `produce()? |> double`
+still works too — the `?` on the left is already attached by the time the
+pipe sees the value.
+
+Arithmetic operators (`+`, `-`, `*`, `/`, `%`), `..` (range), and `as` bind
+tighter than `?`, so `x + y?` parses as `(x + y)?`. Comparison (`==`, `!=`,
+`<`, `>`, `<=`, `>=`), boolean (`&&`, `||`), and `else` bind looser, so
+`a == b?` is still `a == (b?)`.
+
+## Cross-Module Error Composition
+
+`?` does not convert between typed errors, so a function that calls several
+stdlib modules — each returning its own error enum — needs a local wrapper.
+The canonical pattern: declare an `AppError` enum, lift each call via
+`result.map_err`, and let `?` propagate uniformly:
+
+```silt
+import io
+import json
+import http
+import result
+
+type Config { api_url: String, api_key: String }
+
+type AppError {
+  ConfigRead(IoError),
+  ConfigParse(JsonError),
+  ApiCall(HttpError),
+}
+
+fn load_and_fetch(path: String) -> Result(String, AppError) {
+  let contents = result.map_err(io.read_file(path), { e -> ConfigRead(e) })?
+  let config = result.map_err(json.parse(contents, Config), { e -> ConfigParse(e) })?
+  let resp = result.map_err(http.get(config.api_url), { e -> ApiCall(e) })?
+  Ok(resp.body)
+}
+```
+
+Variant constructors like `Wrap` or `ConfigRead` are first-class `Fn` values,
+so `result.map_err(r, ConfigRead)` also works with no closure wrapping.
+
+See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
+for the full worked example.
+
 ## `when let`-`else` for Custom Errors
 
-When you need custom error messages or destructuring beyond `?`:
+When you need a custom error message or destructuring that goes beyond `?`:
 
 ```silt
 fn parse_config(text) {

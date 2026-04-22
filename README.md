@@ -77,12 +77,15 @@ fn main() {
   match io.read_file("settings.json") {
     Ok(content) -> match json.parse(content, Config) {
       Ok(cfg) -> println("loaded: {cfg.name}")
-      Err(msg) -> println("parse error: {msg}")
+      Err(e) -> println("parse error: {e.message()}")
     }
+    Err(IoNotFound(path)) -> println("no config at {path} — run `silt init` first")
     Err(e) -> println("read error: {e.message()}")
   }
 }
 ```
+
+Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `IoNotFound(path)` and still fall back to `.message()` for the long tail.
 
 ## HTTP
 

@@ -29,7 +29,7 @@ fn main() {
       }
       (POST, ["todos"]) -> match json.parse(req.body, Todo) {
         Ok(todo) -> json_response(201, todo)
-        Err(e) -> json_response(400, #{ "error": e })
+        Err(e) -> json_response(400, #{ "error": e.message() })
       }
       (GET, ["todos", id_str]) -> match int.parse(id_str) {
         Ok(id) -> json_response(200, Todo { id: id, title: "Todo {id}", done: false })

@@ -34,21 +34,44 @@ type Response {
 
 | Name | Signature | Description |
 |------|-----------|-------------|
-| `get` | `(String) -> Result(Response, String)` | HTTP GET request |
-| `request` | `(Method, String, String, Map(String, String)) -> Result(Response, String)` | HTTP request with method, URL, body, headers |
+| `get` | `(String) -> Result(Response, HttpError)` | HTTP GET request |
+| `request` | `(Method, String, String, Map(String, String)) -> Result(Response, HttpError)` | HTTP request with method, URL, body, headers |
 | `serve` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `127.0.0.1` (loopback only) |
 | `serve_all` | `(Int, Fn(Request) -> Response) -> ()` | Start a concurrent HTTP server bound to `0.0.0.0` (all interfaces) |
 | `segments` | `(String) -> List(String)` | Split URL path into segments |
 | `parse_query` | `(String) -> Map(String, List(String))` | Parse a URL query string into a multi-value map |
 
+## Errors
+
+`http.get` and `http.request` return `Result(Response, HttpError)`. Note
+that a 4xx or 5xx HTTP response is an `Ok(Response)` — only failures
+*before* a response lands (DNS, connection, TLS, protocol) become `Err`.
+Servers that explicitly want to short-circuit on a non-2xx code can
+construct `HttpStatusCode(status, body)` themselves; the stdlib does
+not do that conversion for you. `HttpError` implements the built-in
+`Error` trait, so `e.message()` always yields a rendered string.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `HttpConnect(msg)` | `String` | TCP / DNS connect failure |
+| `HttpTls(msg)` | `String` | TLS handshake / cert failure |
+| `HttpTimeout` | — | request exceeded its deadline |
+| `HttpInvalidUrl(url)` | `String` | URL did not parse |
+| `HttpInvalidResponse(msg)` | `String` | response violated protocol |
+| `HttpClosedEarly` | — | peer closed before response completed |
+| `HttpStatusCode(status, body)` | `Int, String` | user-constructed for non-success codes |
+| `HttpUnknown(msg)` | `String` | unclassified transport error |
+
 
 ## `http.get`
 
 ```
-http.get(url: String) -> Result(Response, String)
+http.get(url: String) -> Result(Response, HttpError)
 ```
 
-Makes an HTTP GET request. Returns `Ok(Response)` for any successful connection (including 4xx/5xx status codes). Returns `Err(message)` for network errors (DNS failure, connection refused, timeout).
+Makes an HTTP GET request. Returns `Ok(Response)` for any successful
+connection (including 4xx/5xx status codes). Returns `Err(HttpError)`
+for network errors (DNS failure, connection refused, timeout, TLS).
 
 When called from a spawned task, `http.get` transparently yields to the
 scheduler while the request is in flight. No API change is needed -- the
@@ -60,19 +83,33 @@ import string
 fn main() {
   match http.get("https://api.github.com/users/torvalds") {
     Ok(resp) -> println("Status: {resp.status}, body length: {string.length(resp.body)}")
-    Err(e) -> println("Network error: {e}")
+    Err(HttpTimeout) -> println("timed out; retry later")
+    Err(e) -> println("Network error: {e.message()}")
   }
 }
 ```
 
-Compose with `json.parse` and `?` for typed API responses:
+Compose with `json.parse` and `?` for typed API responses. Since
+`http.get` and `json.parse` return different error types, wrap each in
+a local enum using `result.map_err` with a variant constructor as a
+first-class `Fn`:
 
 ```silt
+import http
+import json
+import result
+
 type User { name: String, id: Int }
 
-fn fetch_user(name) {
-  let resp = http.get("https://api.example.com/users/{name}")?
-  json.parse(resp.body, User)
+type FetchError {
+  Network(HttpError),
+  Parse(JsonError),
+}
+
+fn fetch_user(name: String) -> Result(User, FetchError) {
+  let resp = http.get("https://api.example.com/users/{name}")
+    |> result.map_err(Network)?
+  json.parse(resp.body, User) |> result.map_err(Parse)
 }
 ```
 
@@ -80,7 +117,7 @@ fn fetch_user(name) {
 ## `http.request`
 
 ```
-http.request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, String)
+http.request(method: Method, url: String, body: String, headers: Map(String, String)) -> Result(Response, HttpError)
 ```
 
 Makes an HTTP request with full control over method, body, and headers. Use this for POST, PUT, DELETE, or any request that needs custom headers.

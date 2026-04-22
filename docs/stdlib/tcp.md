@@ -18,15 +18,32 @@ default features in your `Cargo.toml`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `accept` | `(TcpListener) -> Result(TcpStream, String)` | Wait for an incoming connection (cooperative I/O) |
+| `accept` | `(TcpListener) -> Result(TcpStream, TcpError)` | Wait for an incoming connection (cooperative I/O) |
 | `close` | `(TcpStream) -> ()` | Mark the stream as closed; future ops error |
-| `connect` | `(String) -> Result(TcpStream, String)` | Open a TCP connection to `host:port` (cooperative I/O) |
-| `listen` | `(String) -> Result(TcpListener, String)` | Bind a TCP listener to `host:port` |
-| `peer_addr` | `(TcpStream) -> Result(String, String)` | Remote socket address (not yet implemented for trait-object stream handles; returns Err) |
-| `read` | `(TcpStream, Int) -> Result(Bytes, String)` | Read up to `max` bytes (cooperative) |
-| `read_exact` | `(TcpStream, Int) -> Result(Bytes, String)` | Read exactly `n` bytes (cooperative; loops) |
-| `set_nodelay` | `(TcpStream, Bool) -> Result((), String)` | Disable Nagle (not yet implemented for trait-object stream handles; returns Err) |
-| `write` | `(TcpStream, Bytes) -> Result((), String)` | Write the entire buffer and flush (cooperative) |
+| `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
+| `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
+| `peer_addr` | `(TcpStream) -> Result(String, TcpError)` | Remote socket address (not yet implemented for trait-object stream handles; returns Err) |
+| `read` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read up to `max` bytes (cooperative) |
+| `read_exact` | `(TcpStream, Int) -> Result(Bytes, TcpError)` | Read exactly `n` bytes (cooperative; loops) |
+| `set_nodelay` | `(TcpStream, Bool) -> Result((), TcpError)` | Disable Nagle (not yet implemented for trait-object stream handles; returns Err) |
+| `write` | `(TcpStream, Bytes) -> Result((), TcpError)` | Write the entire buffer and flush (cooperative) |
+
+## Errors
+
+Every fallible `tcp.*` call returns `Result(T, TcpError)`. Variants are
+narrow by design — the socket failure space is small once you strip
+out the OS-specific noise:
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `TcpConnect(msg)` | `String` | TCP / DNS connect failure |
+| `TcpTls(msg)` | `String` | TLS handshake failure |
+| `TcpClosed` | — | connection closed (broken pipe, peer reset) |
+| `TcpTimeout` | — | op exceeded its deadline |
+| `TcpUnknown(msg)` | `String` | unclassified socket failure |
+
+`TcpError` implements the built-in `Error` trait, so `e.message()`
+renders any variant as a string when you don't want to branch on it.
 
 ## Echo server example
 
@@ -53,11 +70,11 @@ fn main() {
               }
             })
           }
-          Err(e) -> println("accept error: {e}")
+          Err(e) -> println("accept error: {e.message()}")
         }
       }
     }
-    Err(e) -> println("listen error: {e}")
+    Err(e) -> println("listen error: {e.message()}")
   }
 }
 ```
@@ -95,9 +112,9 @@ The `tcp-tls` Cargo feature adds TLS support via `rustls`. Build silt with
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `accept_tls` | `(TcpListener, Bytes, Bytes) -> Result(TcpStream, String)` | Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key |
-| `accept_tls_mtls` | `(TcpListener, Bytes, Bytes, Bytes) -> Result(TcpStream, String)` | Like `accept_tls`, but also requires the client to present a cert chaining to the supplied CA PEM bundle (mutual TLS) |
-| `connect_tls` | `(String, String) -> Result(TcpStream, String)` | Open a TCP connection then complete the TLS client handshake against `hostname` |
+| `accept_tls` | `(TcpListener, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Accept a connection and complete the TLS server handshake using the supplied PEM cert chain + key |
+| `accept_tls_mtls` | `(TcpListener, Bytes, Bytes, Bytes) -> Result(TcpStream, TcpError)` | Like `accept_tls`, but also requires the client to present a cert chaining to the supplied CA PEM bundle (mutual TLS) |
+| `connect_tls` | `(String, String) -> Result(TcpStream, TcpError)` | Open a TCP connection then complete the TLS client handshake against `hostname` |
 
 Returned `TcpStream` handles are interchangeable with plain TCP streams —
 `tcp.read`, `tcp.write`, and `tcp.close` work identically. Trust anchors
@@ -117,7 +134,7 @@ fn main() {
       let _ = tcp.write(conn, bytes.from_string("hello"))
       tcp.close(conn)
     }
-    Err(e) -> println("connect_tls err: {e}")
+    Err(e) -> println("connect_tls err: {e.message()}")
   }
 }
 ```
@@ -128,9 +145,9 @@ fn main() {
 `accept_tls`. The fourth argument is a PEM-encoded bundle of CA
 certificates — every connecting client must present a certificate that
 chains to one of those CAs, or the TLS handshake fails and the call
-returns `Err(msg)`. This is appropriate for service-to-service APIs,
-internal mesh traffic, and any flow where you want cryptographic client
-identity rather than bearer tokens.
+returns `Err(TcpTls(msg))`. This is appropriate for service-to-service
+APIs, internal mesh traffic, and any flow where you want cryptographic
+client identity rather than bearer tokens.
 
 Under the hood the server uses rustls'
 `WebPkiClientVerifier::builder(roots).build()`, which requires
@@ -154,15 +171,15 @@ fn main() {
               let _ = tcp.write(conn, bytes.from_string("hello, authenticated client"))
               tcp.close(conn)
             }
-            Err(e) -> println("mTLS handshake failed: {e}")
+            Err(e) -> println("mTLS handshake failed: {e.message()}")
           }
-          Err(e) -> println("listen err: {e}")
+          Err(e) -> println("listen err: {e.message()}")
         }
-        Err(e) -> println("ca load err: {e}")
+        Err(e) -> println("ca load err: {e.message()}")
       }
-      Err(e) -> println("key load err: {e}")
+      Err(e) -> println("key load err: {e.message()}")
     }
-    Err(e) -> println("cert load err: {e}")
+    Err(e) -> println("cert load err: {e.message()}")
   }
 }
 ```

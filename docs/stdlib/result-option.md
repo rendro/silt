@@ -111,6 +111,33 @@ fn main() {
 }
 ```
 
+Works well with a variant constructor as the mapping function. Silt
+treats a one-field variant constructor as a first-class `Fn(e) -> Wrap`,
+so `result.map_err(r, Wrap)` lifts a module-specific error into a
+caller-owned enum without a closure. `?` binds looser than `|>`, so
+a pipe followed by `?` composes without parentheses:
+
+```silt
+import io
+import result
+
+type AppError {
+  IoWrap(IoError),
+}
+
+fn load(path: String) -> Result(String, AppError) {
+    let raw = io.read_file(path) |> result.map_err(IoWrap)?
+    Ok(raw)
+}
+
+fn main() {
+    match load("missing.txt") {
+        Ok(s) -> println(s)
+        Err(IoWrap(e)) -> println(e.message())
+    }
+}
+```
+
 
 ## `result.map_ok`
 

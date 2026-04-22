@@ -23,6 +23,20 @@ type Weekday  { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
 `Duration` displays in human-readable form (`2h30m15s`, `500ms`, `42ns`).
 Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 
+## Errors
+
+`time.date`, `time.time`, `time.parse`, and `time.parse_date` return
+`Result(T, TimeError)`. The enum is intentionally small — calendar
+validation and format parsing are the only structural failure modes:
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `TimeParseFormat(msg)` | `String` | pattern did not match input |
+| `TimeOutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
+
+`TimeError` implements the built-in `Error` trait, so `e.message()`
+yields a rendered string when variant branching isn't needed.
+
 ## Summary
 
 | Name | Signature | Description |
@@ -103,7 +117,7 @@ import time
 fn main() {
     println(time.date(2024, 3, 15))   -- Ok(2024-03-15)
     println(time.date(2024, 2, 29))   -- Ok(2024-02-29) — leap year
-    println(time.date(2024, 13, 1))   -- Err(invalid date: 2024-13-1)
+    println(time.date(2024, 13, 1))   -- Err(TimeOutOfRange(invalid date: 2024-13-1))
 }
 ```
 
@@ -120,7 +134,7 @@ Creates a validated `Time` with `ns` set to 0. Returns `Err` for invalid times.
 import time
 fn main() {
     println(time.time(14, 30, 0))  -- Ok(14:30:00)
-    println(time.time(25, 0, 0))   -- Err(invalid time: 25:0:0)
+    println(time.time(25, 0, 0))   -- Err(TimeOutOfRange(invalid time: 25:0:0))
 }
 ```
 

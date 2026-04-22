@@ -144,28 +144,25 @@ Returned by `channel.recv_timeout`.
 
 ### `RegexError` (requires `import regex`)
 
-Constructible by user code. Stdlib `regex.*` functions do not yet
-return `Result(_, RegexError)` — invalid patterns surface as
-`VmError` at the call site because current signatures return `Bool` /
-`Option` / `List` / `String`, with no `Result` slot to carry an Err.
+Constructible by user code. Stdlib `regex.*` functions do not return
+`Result(_, RegexError)` — their signatures return `Bool` / `Option` /
+`List` / `String`, and an invalid pattern surfaces as a runtime error
+at the call site rather than through `Err`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `RegexInvalidPattern(String, Int)` | message, byte offset | pattern did not parse |
 | `RegexTooBig` | — | compiled pattern exceeded size budget |
 
-## Stdlib functions still on `Result(T, String)`
+## Stdlib functions that return `Result(T, String)`
 
-Not every stdlib function has been migrated. These still surface their
-errors as bare strings:
+A handful of fallible stdlib functions surface their error as a plain
+`String` rather than a typed enum — the failure modes are not diverse
+enough to benefit from a richer taxonomy:
 
-- `encoding.url_decode`, `encoding.form_decode` — two fallible fns
-- `crypto.random_bytes` — one fallible fn
-- `uuid.parse` — one fallible fn
-
-In every case the rationale is the same: the failure modes aren't
-diverse enough to benefit from a typed enum. If richer taxonomy lands
-for any of these modules, each will graduate to its own error enum.
+- `encoding.url_decode`, `encoding.form_decode`
+- `crypto.random_bytes`
+- `uuid.parse`
 
 ## Example: user-side pattern matching
 
@@ -191,22 +188,31 @@ fn main() {
 
 Silt does not auto-convert between error types. A function that spans
 several stdlib modules wraps each module's error in a local `AppError`
-enum and lifts each call's Err into it with `result.map_err`:
+enum and lifts each call's `Err` into it with `result.map_err`. Variant
+constructors are first-class `Fn(e) -> f` values, so the second argument
+is just the constructor name — no closure wrapper needed:
 
 ```silt
+import io
+import json
+import result
+
+type Config { host: String, port: Int }
+
 type AppError {
   IoProblem(IoError),
   JsonProblem(JsonError),
 }
 
 fn load_config(path: String) -> Result(Config, AppError) {
-  let raw = result.map_err(io.read_file(path), { e -> IoProblem(e) })?
-  let cfg = result.map_err(json.parse(raw, Config), { e -> JsonProblem(e) })?
+  let raw = io.read_file(path) |> result.map_err(IoProblem)?
+  let cfg = json.parse(raw, Config) |> result.map_err(JsonProblem)?
   Ok(cfg)
 }
 ```
 
-See `examples/cross_module_errors.silt` for a longer walkthrough. A
-separate proposal ([`error-from-trait.md`](../proposals/error-from-trait.md))
-tracks the design for a `.into()`-based ergonomics layer over this
-pattern.
+`?` binds looser than `|>`, so the whole pipeline is a single expression
+terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
+for a longer walkthrough. A separate proposal
+([`error-from-trait.md`](../proposals/error-from-trait.md)) tracks the
+design for a `.into()`-based ergonomics layer over this pattern.

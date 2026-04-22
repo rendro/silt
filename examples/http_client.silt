@@ -13,10 +13,9 @@ type Repo {
 }
 
 fn fetch_repos(user) {
-  -- Phase 2/3 of the stdlib error redesign: http.get and json.parse_list
-  -- return typed enums (HttpError and JsonError respectively). Fold both
-  -- into a single `String` channel via `e.message()` so fetch_repos
-  -- surfaces one uniform error type.
+  -- http.get returns HttpError and json.parse_list returns JsonError.
+  -- Fold both into a single `String` channel via `e.message()` so
+  -- fetch_repos surfaces one uniform error type to its caller.
   let resp = match http.get("https://api.github.com/users/{user}/repos") {
     Ok(r) -> r
     Err(e) -> return Err(e.message())
