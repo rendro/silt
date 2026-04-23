@@ -41,12 +41,10 @@ use crate::vm::VmError;
 /// lock-step — so the helper pins the canonical phrasings verbatim:
 ///
 ///   * wrong arity      → `"{enum}.message takes 1 argument (self), got {n}"`
-///                        where `n = args.len()` (the receiver counts as
-///                        arg 0, so a well-formed call has
-///                        `args.len() == 1`). We report the full
-///                        `args.len()` — INCLUDING the receiver — so
-///                        a user calling `e.message(extra)` sees
-///                        `got 2`, which matches how they wrote it.
+///     where `n = args.len()` (the receiver counts as arg 0, so a
+///     well-formed call has `args.len() == 1`). We report the full
+///     `args.len()` — INCLUDING the receiver — so a user calling
+///     `e.message(extra)` sees `got 2`, which matches how they wrote it.
 ///   * receiver-shape   → `"{enum}.message: expected {enum} variant, got {other}"`
 ///   * unknown method   → `"unknown {enum} trait method: {name}"`
 ///
