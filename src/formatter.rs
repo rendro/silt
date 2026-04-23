@@ -5902,7 +5902,7 @@ import a
     #[test]
     fn test_trailing_comment_on_enum_variant() {
         // F2 repro 1: trailing comment on an enum variant.
-        let source = "type Shape {\n  Circle(Float)  -- a round one\n  Square(Int)\n}\n";
+        let source = "type Shape {\n  Circle(Float),  -- a round one\n  Square(Int),\n}\n";
         let result = format(source).unwrap();
         let comment_pos = result
             .find("-- a round one")

@@ -202,14 +202,17 @@ fn formatter_invariants_reject_unparseable_output_when_original_parsed() {
 }
 
 #[test]
-fn formatter_invariants_allow_comma_canonicalization() {
-    // silt's parser accepts comma-less parameter and element lists, and
-    // the formatter canonicalizes by inserting explicit commas. The
-    // invariant must not flag this as a dropped/added token. Locks the
-    // deliberate exclusion of `Comma` from `significant_token_count` —
-    // if a future edit re-includes commas in the count, this test fails.
-    let original = "fn f(a b c) { [1 2 3] }\n";
-    let formatted = "fn f(a, b, c) { [1, 2, 3] }\n";
-    check_formatter_invariants(original, formatted)
-        .expect("comma canonicalization must be permitted");
+fn formatter_invariants_preserve_comma_count() {
+    // silt's parser requires explicit commas between list-construct
+    // elements, so the formatter has no comma-count latitude: every
+    // `Comma` in the input must survive to the output. This locks the
+    // inclusion of `Comma` in `significant_token_count`.
+    let original = "fn f(a, b, c) { [1, 2, 3] }\n";
+    // Same program with one comma dropped — would be a formatter bug.
+    let corrupted = "fn f(a, b c) { [1, 2, 3] }\n";
+    let err = check_formatter_invariants(original, corrupted).unwrap_err();
+    assert!(
+        err.contains("significant token count"),
+        "unexpected error: {err}"
+    );
 }

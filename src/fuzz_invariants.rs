@@ -88,19 +88,19 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
     Ok(())
 }
 
-/// Count "significant" tokens, skipping `Newline`, `Eof`, and `Comma`.
+/// Count "significant" tokens, skipping only `Newline` and `Eof`.
 ///
-/// The formatter is allowed to reshape whitespace AND to canonicalize
-/// optional punctuation. silt's parser accepts comma-less forms for fn
-/// params and for list/tuple/map/set literal elements
-/// (`fn f(a b c)` and `[1 2 3]` both parse), and the formatter
-/// consistently inserts commas on emit. So a Comma count change is
-/// legitimate — the real invariant is that every semantic token
-/// (identifier, keyword, literal, operator) is preserved.
+/// silt's parser requires explicit commas between elements in every
+/// list-style construct (fn params, list/tuple/map/set literals, call
+/// args, patterns, record fields, ...). Since comma-less forms no
+/// longer parse, the formatter cannot legitimately insert or drop
+/// commas — every `Comma` in the input must survive the round-trip.
+/// Including `Comma` in the significant count catches the class of
+/// formatter bugs that silently duplicate or elide commas.
 fn significant_token_count(tokens: &[SpannedToken]) -> usize {
     tokens
         .iter()
-        .filter(|(t, _)| !matches!(t, Token::Newline | Token::Eof | Token::Comma))
+        .filter(|(t, _)| !matches!(t, Token::Newline | Token::Eof))
         .count()
 }
 

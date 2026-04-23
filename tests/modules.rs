@@ -425,8 +425,8 @@ fn test_module_with_pub_type() {
             "shapes.silt",
             r#"
 pub type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 pub fn area(shape) {

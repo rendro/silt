@@ -963,11 +963,11 @@ fn test_line_comment_after_open_paren_idempotent() {
 #[test]
 fn test_fn_params_unresolved_lines_preserve_comments_idempotent() {
     // Minimal hand-crafted variant: 3 idents on separate source lines
-    // with no commas, plus a comment line between them. The parser
-    // lenient-parses the idents as 3 params; the comment line forces
+    // with explicit commas (required under the strict-comma rule) plus
+    // a standalone comment line between them. The comment line forces
     // multi-line layout; without the fix the comment is dropped on
     // pass 1.
-    let source = "fn man(a\nb\n-- C\nc\n) {}\n";
+    let source = "fn man(a,\nb,\n-- C\nc,\n) {}\n";
     assert_idempotent(source);
     let formatted = format(source).unwrap();
     assert!(

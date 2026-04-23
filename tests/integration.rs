@@ -240,8 +240,8 @@ fn test_enum_and_trait() {
         r#"
 import list
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 trait Display for Shape {
@@ -2908,7 +2908,7 @@ fn main() {
 #[test]
 fn test_where_clause_with_display() {
     let result = run(r#"
-type Shape { Circle(Float) Rect(Float, Float) }
+type Shape { Circle(Float), Rect(Float, Float) }
 
 trait Display for Shape {
   fn display(self) -> String {
@@ -2981,7 +2981,7 @@ fn main() {
 #[test]
 fn test_where_clause_multi_trait_bounds_mixed() {
     let result = run(r#"
-type Color { Red Blue }
+type Color { Red, Blue }
 
 trait Display for Color {
   fn display(self) -> String {

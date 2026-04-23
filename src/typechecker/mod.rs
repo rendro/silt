@@ -3748,8 +3748,8 @@ fn main() {
         assert_no_errors(
             r#"
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 fn area(shape) {
@@ -3816,8 +3816,8 @@ fn main() {
         assert_no_errors(
             r#"
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 fn describe(shape) {
@@ -3839,8 +3839,8 @@ fn main() {
         assert_no_errors(
             r#"
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 fn describe(shape) {
@@ -3862,9 +3862,9 @@ fn main() {
         assert_has_error(
             r#"
 type Color {
-  Red
-  Green
-  Blue
+  Red,
+  Green,
+  Blue,
 }
 
 fn name(c) {
@@ -4109,8 +4109,8 @@ fn main() {
         assert_no_errors(
             r#"
 type Shape {
-  Circle(Float)
-  Rect(Float, Float)
+  Circle(Float),
+  Rect(Float, Float),
 }
 
 trait Display for Shape {
@@ -5115,9 +5115,9 @@ fn main() {
         assert_has_error(
             r#"
 type Shape {
-  Circle(Float)
-  Square(Float)
-  Triangle(Float, Float)
+  Circle(Float),
+  Square(Float),
+  Triangle(Float, Float),
 }
 
 fn area(s) {
@@ -5647,10 +5647,10 @@ fn main() {
         assert_no_errors(
             r#"
 type Direction {
-  North
-  South
-  East
-  West
+  North,
+  South,
+  East,
+  West,
 }
 
 fn to_string(d) {

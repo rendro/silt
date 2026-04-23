@@ -186,6 +186,63 @@ impl Parser {
         self.parse_expr()
     }
 
+    /// After an element in a delimited list has been parsed, either
+    /// consume the inter-element comma (and any newlines) or verify
+    /// we're at the closing delimiter. Strict: absence of a comma
+    /// when we are not at the closer is an error.
+    ///
+    /// silt intentionally does NOT allow whitespace-only separation
+    /// between elements in any list-style construct; every fn param,
+    /// list/tuple/map/set element, call argument, record field,
+    /// pattern destructuring, import item, type parameter, and trait
+    /// argument must be comma-separated. Trailing commas remain
+    /// permitted — if `close_tok` is seen immediately after the
+    /// comma-advance, the enclosing while-loop exits cleanly.
+    fn expect_list_sep(
+        &mut self,
+        construct: &str,
+        closer: char,
+        close_tok: &Token,
+    ) -> Result<()> {
+        self.expect_list_sep_with_opener(construct, closer, close_tok, None)
+    }
+
+    /// Variant of `expect_list_sep` that carries the opener span so
+    /// unclosed-delimiter errors can point back at the construct's
+    /// opening bracket. Prefer this variant at call sites that
+    /// already tracked the opener.
+    fn expect_list_sep_with_opener(
+        &mut self,
+        construct: &str,
+        closer: char,
+        close_tok: &Token,
+        opener: Option<Span>,
+    ) -> Result<()> {
+        self.skip_nl();
+        if self.at(close_tok) {
+            return Ok(());
+        }
+        if self.at(&Token::Comma) {
+            self.advance();
+            self.skip_nl();
+            return Ok(());
+        }
+        // If the caller gave us an opener, emit the richer
+        // "starting at line N" form so the error points back at the
+        // opening delimiter — particularly valuable when the missing
+        // comma is really a missing closer.
+        if let Some(op) = opener {
+            return Err(self.delim_unclosed_err(construct, closer, op));
+        }
+        Err(ParseError {
+            message: format!(
+                "expected '{closer}' or ',' to continue {construct}, found {}",
+                self.peek()
+            ),
+            span: self.span(),
+        })
+    }
+
     fn save(&self) -> usize {
         self.pos
     }
@@ -637,11 +694,7 @@ impl Parser {
                     ty,
                 });
             }
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-            }
+            self.expect_list_sep("function parameter list", ')', &Token::RParen)?;
         }
         self.expect(&Token::RParen)?;
         Ok(params)
@@ -675,11 +728,7 @@ impl Parser {
             while !self.at(&Token::RParen) {
                 let (p, _) = self.expect_ident()?;
                 ps.push(p);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("type parameter list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             ps
@@ -737,11 +786,7 @@ impl Parser {
             self.expect(&Token::Colon)?;
             let ty = self.parse_type_expr()?;
             fields.push(RecordField { name, ty });
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-            }
-            self.skip_nl();
+            self.expect_list_sep("record type fields", '}', &Token::RBrace)?;
         }
         Ok(TypeBody::Record(fields))
     }
@@ -760,11 +805,7 @@ impl Parser {
                 self.skip_nl();
                 while !self.at(&Token::RParen) {
                     fs.push(self.parse_type_expr()?);
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                    }
+                    self.expect_list_sep("enum variant fields", ')', &Token::RParen)?;
                 }
                 self.expect(&Token::RParen)?;
                 fs
@@ -772,11 +813,7 @@ impl Parser {
                 Vec::new()
             };
             variants.push(EnumVariant { name, fields });
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-            }
-            self.skip_nl();
+            self.expect_list_sep("enum variant list", '}', &Token::RBrace)?;
         }
         Ok(TypeBody::Enum(variants))
     }
@@ -829,11 +866,7 @@ impl Parser {
             self.skip_nl();
             while !self.at(&Token::RParen) {
                 args.push(self.parse_type_expr()?);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("trait argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             args
@@ -863,11 +896,7 @@ impl Parser {
             self.skip_nl();
             while !self.at(&Token::RParen) {
                 args.push(self.parse_type_expr()?);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("trait argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             args
@@ -1068,11 +1097,7 @@ impl Parser {
             while !self.at(&Token::RBrace) {
                 let (item, _) = self.expect_ident()?;
                 items.push(item);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("selective import list", '}', &Token::RBrace)?;
             }
             self.expect(&Token::RBrace)?;
             Ok(Decl::Import(ImportTarget::Items(name, items), import_span))
@@ -1097,11 +1122,7 @@ impl Parser {
             self.skip_nl();
             while !self.at(&Token::RParen) {
                 params.push(self.parse_type_expr()?);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("function type parameter list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             self.expect(&Token::Arrow)?;
@@ -1115,11 +1136,7 @@ impl Parser {
             self.skip_nl();
             while !self.at(&Token::RParen) {
                 elems.push(self.parse_type_expr()?);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("tuple type", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             return Ok(TypeExpr::Tuple(elems));
@@ -1134,11 +1151,7 @@ impl Parser {
             self.skip_nl();
             while !self.at(&Token::RParen) {
                 args.push(self.parse_type_expr()?);
-                self.skip_nl();
-                if self.at(&Token::Comma) {
-                    self.advance();
-                    self.skip_nl();
-                }
+                self.expect_list_sep("generic type argument list", ')', &Token::RParen)?;
             }
             self.expect(&Token::RParen)?;
             Ok(TypeExpr::Generic(name, args))
@@ -1775,11 +1788,12 @@ impl Parser {
                             ')',
                             opener,
                         )?);
-                        self.skip_nl();
-                        if self.at(&Token::Comma) {
-                            self.advance();
-                            self.skip_nl();
-                        }
+                        self.expect_list_sep_with_opener(
+                            "tuple literal",
+                            ')',
+                            &Token::RParen,
+                            Some(opener),
+                        )?;
                     }
                     self.expect(&Token::RParen)?;
                     Ok(Expr::new(ExprKind::Tuple(elems), span))
@@ -1816,11 +1830,12 @@ impl Parser {
                             opener,
                         )?));
                     }
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                    }
+                    self.expect_list_sep_with_opener(
+                        "list literal",
+                        ']',
+                        &Token::RBracket,
+                        Some(opener),
+                    )?;
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::new(ExprKind::List(elems), span))
@@ -1841,11 +1856,12 @@ impl Parser {
                     let value =
                         self.parse_expr_in_delim("map literal", &Token::RBrace, '}', opener)?;
                     pairs.push((key, value));
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                    }
+                    self.expect_list_sep_with_opener(
+                        "map literal",
+                        '}',
+                        &Token::RBrace,
+                        Some(opener),
+                    )?;
                 }
                 self.expect(&Token::RBrace)?;
                 Ok(Expr::new(ExprKind::Map(pairs), span))
@@ -1865,11 +1881,12 @@ impl Parser {
                         ']',
                         opener,
                     )?);
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                    }
+                    self.expect_list_sep_with_opener(
+                        "set literal",
+                        ']',
+                        &Token::RBracket,
+                        Some(opener),
+                    )?;
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::new(ExprKind::SetLit(elems), span))
@@ -1970,11 +1987,12 @@ impl Parser {
                 ')',
                 opener,
             )?);
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-            }
+            self.expect_list_sep_with_opener(
+                "function call argument list",
+                ')',
+                &Token::RParen,
+                Some(opener),
+            )?;
         }
         self.expect(&Token::RParen)?;
         Ok(args)
@@ -2123,9 +2141,23 @@ impl Parser {
                 }
                 _ => break,
             }
+            // Closure params terminate at `->`, not a closing bracket; we
+            // reuse the list-sep helper with the arrow as the "closer".
             self.skip_nl();
+            if self.at(&Token::Arrow) {
+                break;
+            }
             if self.at(&Token::Comma) {
                 self.advance();
+                self.skip_nl();
+            } else {
+                return Err(ParseError {
+                    message: format!(
+                        "expected '->' or ',' to continue closure parameter list, found {}",
+                        self.peek()
+                    ),
+                    span: self.span(),
+                });
             }
         }
         Ok(params)
@@ -2334,11 +2366,7 @@ impl Parser {
             self.skip_nl();
             let value = self.parse_expr()?;
             fields.push((name, value));
-            self.skip_nl();
-            if self.at(&Token::Comma) {
-                self.advance();
-                self.skip_nl();
-            }
+            self.expect_list_sep("record literal fields", '}', &Token::RBrace)?;
         }
         Ok(fields)
     }
@@ -2418,11 +2446,7 @@ impl Parser {
                     self.skip_nl();
                     while !self.at(&Token::RParen) {
                         pats.push(self.parse_pattern()?);
-                        self.skip_nl();
-                        if self.at(&Token::Comma) {
-                            self.advance();
-                            self.skip_nl();
-                        }
+                        self.expect_list_sep("constructor pattern", ')', &Token::RParen)?;
                     }
                     self.expect(&Token::RParen)?;
                     Ok(mk(PatternKind::Constructor(name, pats)))
@@ -2449,11 +2473,7 @@ impl Parser {
                             None
                         };
                         fields.push((field_name, sub));
-                        self.skip_nl();
-                        if self.at(&Token::Comma) {
-                            self.advance();
-                            self.skip_nl();
-                        }
+                        self.expect_list_sep("record pattern fields", '}', &Token::RBrace)?;
                     }
                     self.expect(&Token::RBrace)?;
                     Ok(mk(PatternKind::Record {
@@ -2561,11 +2581,7 @@ impl Parser {
                     self.skip_nl();
                     while !self.at(&Token::RParen) {
                         pats.push(self.parse_pattern()?);
-                        self.skip_nl();
-                        if self.at(&Token::Comma) {
-                            self.advance();
-                            self.skip_nl();
-                        }
+                        self.expect_list_sep("tuple pattern", ')', &Token::RParen)?;
                     }
                     self.expect(&Token::RParen)?;
                     Ok(mk(PatternKind::Tuple(pats)))
@@ -2636,11 +2652,7 @@ impl Parser {
                     self.expect(&Token::Colon)?;
                     let pat = self.parse_pattern()?;
                     entries.push((key, pat));
-                    self.skip_nl();
-                    if self.at(&Token::Comma) {
-                        self.advance();
-                        self.skip_nl();
-                    }
+                    self.expect_list_sep("map pattern", '}', &Token::RBrace)?;
                 }
                 self.expect(&Token::RBrace)?;
                 Ok(mk(PatternKind::Map(entries)))
@@ -2825,8 +2837,8 @@ fn main() {
         let prog = parse(
             r#"
             type Shape {
-                Circle(Float)
-                Rect(Float, Float)
+                Circle(Float),
+                Rect(Float, Float),
             }
         "#,
         );
@@ -3984,9 +3996,9 @@ fn main() {
         let prog = parse(
             r#"
             pub type Color {
-                Red
-                Green
-                Blue
+                Red,
+                Green,
+                Blue,
             }
         "#,
         );

@@ -4143,8 +4143,8 @@ fn main() {
         assert_has_error(
             r#"
 type Maybe(T) {
-  None
-  Some(T)
+  None,
+  Some(T),
 }
 fn main() {
   let Some(x, y) = Some(42)
@@ -4160,11 +4160,11 @@ fn main() {
         assert_has_error(
             r#"
 type Maybe(T) {
-  None
-  Some(T)
+  None,
+  Some(T),
 }
 type Pair(A, B) {
-  P(A, B)
+  P(A, B),
 }
 fn main() {
   let P(Some(x, y), b) = P(Some(42), 1)
