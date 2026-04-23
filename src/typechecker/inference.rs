@@ -1066,8 +1066,7 @@ impl TypeChecker {
                     seen.insert(*name, pattern.span);
                 }
             }
-            PatternKind::Tuple(pats)
-            | PatternKind::Constructor(_, pats) => {
+            PatternKind::Tuple(pats) | PatternKind::Constructor(_, pats) => {
                 for p in pats {
                     Self::collect_pattern_binders_into(p, seen, on_dup);
                 }

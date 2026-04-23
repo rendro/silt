@@ -54,7 +54,9 @@ fn globals_sent_section_is_not_marked_reserved() {
     let section = &rest[..section_end];
 
     assert!(
-        !section.to_ascii_lowercase().contains("reserved for future use"),
+        !section
+            .to_ascii_lowercase()
+            .contains("reserved for future use"),
         "{}: the `Sent` section reintroduced the 'reserved for future use' \
          phrasing, but `channel.select` actively supports mixed send/receive \
          operations (see src/builtins/concurrency.rs `parse_select_ops`). \
