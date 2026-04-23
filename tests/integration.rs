@@ -736,7 +736,7 @@ fn main() {
 
   channel.send(ch2, "from ch2")
 
-  match channel.select([ch1, ch2]) {
+  match channel.select([Recv(ch1), Recv(ch2)]) {
     (^ch1, Message(msg)) -> "got from ch1"
     (^ch2, Message(msg)) -> msg
     _ -> "none"
@@ -760,7 +760,7 @@ fn main() {
   })
   task.join(p)
 
-  match channel.select([ch1, ch2]) {
+  match channel.select([Recv(ch1), Recv(ch2)]) {
     (^ch1, Message(msg)) -> msg
     (^ch2, Message(msg)) -> msg
     _ -> "none"
@@ -868,7 +868,7 @@ fn main() {
   let ch = channel.new(1)
   let timer = channel.timeout(50)
 
-  match channel.select([ch, timer]) {
+  match channel.select([Recv(ch), Recv(timer)]) {
     (_, Closed) -> "timeout"
     (_, Message(_)) -> "data"
     _ -> "other"
@@ -890,7 +890,7 @@ fn main() {
 
   channel.send(ch, "fast")
 
-  match channel.select([ch, timer]) {
+  match channel.select([Recv(ch), Recv(timer)]) {
     (_, Message(val)) -> val
     (_, Closed) -> "timeout"
     _ -> "other"
@@ -910,7 +910,7 @@ import channel
 fn main() {
   let ch = channel.new(1)
 
-  match channel.select([(ch, 42)]) {
+  match channel.select([Send(ch, 42)]) {
     (_, Sent) -> "sent"
     _ -> "other"
   }
@@ -933,7 +933,7 @@ fn main() {
 
   channel.send(inbox, "hello")
 
-  match channel.select([inbox, (outbox, "world")]) {
+  match channel.select([Recv(inbox), Send(outbox, "world")]) {
     (_, Message(val)) -> val
     (_, Sent) -> "sent"
     _ -> "other"
@@ -957,7 +957,7 @@ fn main() {
 
   let timer = channel.timeout(50)
 
-  match channel.select([(ch, "more"), timer]) {
+  match channel.select([Send(ch, "more"), Recv(timer)]) {
     (_, Closed) -> "timeout"
     (_, Sent) -> "sent"
     _ -> "other"
@@ -2296,7 +2296,7 @@ fn main() {
   let ch2 = channel.new(10)
   channel.send(ch2, "from ch2")
 
-  match channel.select([ch1, ch2]) {
+  match channel.select([Recv(ch1), Recv(ch2)]) {
     (^ch2, Message(msg)) -> msg
     _ -> "unexpected"
   }
@@ -2319,7 +2319,7 @@ fn main() {
   })
   task.join(p)
 
-  match channel.select([ch1, ch2]) {
+  match channel.select([Recv(ch1), Recv(ch2)]) {
     (^ch1, Message(msg)) -> msg
     (^ch2, Message(msg)) -> msg
     _ -> "none"
@@ -2337,7 +2337,7 @@ fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
 
-  let result = channel.select([ch])
+  let result = channel.select([Recv(ch)])
   match result {
     (_, Message(val)) -> val
     _ -> 0
@@ -6286,7 +6286,7 @@ fn main() {
     match i >= 3 {
       true -> total
       _ -> {
-        let (_, msg) = channel.select([ch1, ch2, ch3])
+        let (_, msg) = channel.select([Recv(ch1), Recv(ch2), Recv(ch3)])
         match msg {
           Message(val) -> loop(i + 1, total + val)
           _ -> total
@@ -7604,7 +7604,7 @@ fn main() {
   let short = channel.timeout(10)
   let long = channel.timeout(5000)
 
-  match channel.select([long, short]) {
+  match channel.select([Recv(long), Recv(short)]) {
     (ch, Closed) -> {
       -- The channel that fired should be 'short'
       -- We can verify by checking it's the second channel
@@ -7646,7 +7646,7 @@ fn main() {
   let ch1 = channel.new(1)
   let ch2 = channel.new(1)
 
-  match channel.select([(ch1, "a"), (ch2, "b")]) {
+  match channel.select([Send(ch1, "a"), Send(ch2, "b")]) {
     (_, Sent) -> "sent_ok"
     _ -> "unexpected"
   }
@@ -7665,7 +7665,7 @@ fn main() {
   let send_ch = channel.new(1)
 
   -- empty_ch has nothing to receive, but send_ch has room
-  match channel.select([empty_ch, (send_ch, 99)]) {
+  match channel.select([Recv(empty_ch), Send(send_ch, 99)]) {
     (_, Sent) -> "sent_first"
     (_, Message(_)) -> "received"
     _ -> "other"
@@ -7684,7 +7684,7 @@ fn main() {
   let ch = channel.new(1)
   channel.close(ch)
 
-  match channel.select([(ch, 42)]) {
+  match channel.select([Send(ch, 42)]) {
     (_, Closed) -> "closed"
     (_, Sent) -> "sent"
     _ -> "other"
@@ -7705,7 +7705,7 @@ fn main() {
   let ch = channel.new(5)
   channel.send(ch, 100)
 
-  match channel.select([ch, (ch, 200)]) {
+  match channel.select([Recv(ch), Send(ch, 200)]) {
     (_, Message(val)) -> val
     (_, Sent) -> -1
     _ -> -2
@@ -7734,7 +7734,7 @@ fn main() {
 
   -- Nobody sends to ch, but timer will fire
   let consumer = task.spawn(fn() {
-    match channel.select([ch, timer]) {
+    match channel.select([Recv(ch), Recv(timer)]) {
       (_, Closed) -> "timeout_broke_deadlock"
       (_, Message(v)) -> "got_message"
       _ -> "other"
@@ -8135,7 +8135,7 @@ fn main() {
   channel.send(ch3, 30)
 
   -- Select should pick one of the three
-  let (_, msg) = channel.select([ch1, ch2, ch3])
+  let (_, msg) = channel.select([Recv(ch1), Recv(ch2), Recv(ch3)])
   match msg {
     Message(val) -> val > 0
     _ -> false
@@ -8184,7 +8184,7 @@ fn main() {
   let ch3 = channel.new(1)
   let timer = channel.timeout(50)
 
-  match channel.select([ch1, ch2, ch3, timer]) {
+  match channel.select([Recv(ch1), Recv(ch2), Recv(ch3), Recv(timer)]) {
     (_, Closed) -> "timeout_won"
     (_, Message(_)) -> "got_data"
     _ -> "other"

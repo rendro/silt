@@ -475,7 +475,7 @@ fn emit_op(op: &genp::Op, indent: &str, worker_idx: Option<usize>) -> String {
         genp::Op::Select { chs } => {
             let list = chs
                 .iter()
-                .map(|c| format!("ch{c}"))
+                .map(|c| format!("Recv(ch{c})"))
                 .collect::<Vec<_>>()
                 .join(", ");
             let mut s = String::new();
@@ -565,7 +565,7 @@ fn emit_program(p: &genp::Program) -> String {
          \x20   match c >= {} {{\n\
          \x20     true -> c\n\
          \x20     _ -> {{\n\
-         \x20       match channel.select([done, timer]) {{\n\
+         \x20       match channel.select([Recv(done), Recv(timer)]) {{\n\
          \x20         (_, Message(_v)) -> loop(c + 1)\n\
          \x20         (_, Closed) -> c\n\
          \x20         (_, Empty) -> c\n\
@@ -756,7 +756,7 @@ fn main() {
     match collected >= 3 {
       true -> acc
       _ -> {
-        match channel.select([a, b, c, d]) {
+        match channel.select([Recv(a), Recv(b), Recv(c), Recv(d)]) {
           (_, Message(v)) -> loop(collected + 1, acc + v)
           (_, Closed) -> acc
           (_, Empty) -> acc
@@ -1080,7 +1080,7 @@ fn main() {
   let ch = channel.new(0)
   -- No sender on `ch`; only timer should fire.
   let timer = channel.timeout(50)
-  let outcome = match channel.select([ch, timer]) {
+  let outcome = match channel.select([Recv(ch), Recv(timer)]) {
     (_, Closed) -> "timed_out"
     (_, Message(_v)) -> "got_value"
     (_, Empty) -> "empty"

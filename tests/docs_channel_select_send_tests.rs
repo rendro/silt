@@ -1,13 +1,10 @@
-//! Regression tests for round 23 audit finding B1 (BROKEN — channel.select
-//! send ops undocumented).
+//! Regression tests for the `channel.select` send-arm surface.
 //!
-//! The runtime (`src/builtins/concurrency.rs`, `parse_select_ops` around
-//! line 816) accepts both bare `Channel(a)` values (receive arms) and
-//! `(Channel(a), value)` tuples (send arms) in `channel.select`, but the
-//! user-facing docs used to claim the send form was "reserved for future
-//! use". The fix updated `docs/stdlib/globals.md` (the `Sent` section) and
-//! `docs/stdlib/channel-task.md` (the `channel.select` section + summary
-//! table) to document the mixed send/receive form.
+//! History: round 51 documented the pre-existing send form; round 52
+//! then unified the op-list shape through the `ChannelOp(a)` tagged
+//! variant — `Recv(ch)` for receive arms, `Send(ch, value)` for send
+//! arms. The receive-only and `(channel, value)` tuple forms are gone;
+//! every list element is a `ChannelOp`. One way to do things.
 //!
 //! These tests pin three things so neither the docs nor the code can
 //! silently regress:
@@ -17,17 +14,18 @@
 //!      this fail.
 //!
 //!   2. `docs/stdlib/channel-task.md`'s `channel.select` section must
-//!      mention the send tuple form and the `Sent` result. Reverting the
-//!      doc fix makes this fail.
+//!      document the `ChannelOp` element shape and the `Sent` result
+//!      that a send arm produces.
 //!
-//!   3. A silt program that calls `channel.select([(ch, value)])` must
-//!      compile and run successfully, producing the `(ch, Sent)` arm.
-//!      Dropping the `SelectOpKind::Send` branch in
-//!      `src/builtins/concurrency.rs` makes this fail.
+//!   3. A silt program that calls `channel.select([Send(ch, value)])`
+//!      must compile and run, producing the `(ch, Sent)` arm. Dropping
+//!      the `SelectOpKind::Send` branch (or the `Send` constructor
+//!      registration in `src/typechecker/builtins.rs` /
+//!      `src/vm/dispatch.rs`) makes this fail.
 //!
 //! The third check executes a direct inline silt snippet — not just a
-//! doc-extracted block — so that a doc-only revert (removing the send
-//! example) still leaves a runtime-level lock.
+//! doc-extracted block — so that a doc-only revert still leaves a
+//! runtime-level lock.
 
 use std::path::Path;
 use std::time::Duration;
@@ -76,10 +74,10 @@ fn globals_sent_section_is_not_marked_reserved() {
     );
 }
 
-/// Round-23 B1: `docs/stdlib/channel-task.md`'s `channel.select` section
-/// must document the send tuple form. Reverting the signature to
-/// `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` or dropping
-/// the `Sent` result from the prose makes this fail.
+/// `docs/stdlib/channel-task.md`'s `channel.select` section must document
+/// the `ChannelOp` element form. Reverting to the pre-round-52 signature
+/// (`List(Channel(a))` with raw tuples for send) or dropping the `Sent`
+/// result from the prose makes this fail.
 #[test]
 fn channel_select_doc_documents_send_form() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -90,10 +88,8 @@ fn channel_select_doc_documents_send_form() {
     let body = std::fs::read_to_string(&doc_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
 
-    // (a) The summary table signature must allow tuples, not just
-    //     channels. A quick substring anchor: the old signature
-    //     `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` with no
-    //     tuple form must not be the row for `select`.
+    // (a) The summary-table signature must name `ChannelOp` — the
+    //     tagged element shape that unified the two pre-round-52 forms.
     let select_row_idx = body
         .find("| `select` |")
         .expect("docs/stdlib/channel-task.md summary table must have a `select` row");
@@ -103,16 +99,15 @@ fn channel_select_doc_documents_send_form() {
         .unwrap_or(body.len());
     let row = &body[select_row_idx..row_end];
     assert!(
-        row.contains("Channel(a), a") || row.contains("Channel(a),a"),
-        "{}: the `select` summary-table row must show the send tuple form \
-         `(Channel(a), a)` alongside the bare-channel receive form. Row \
-         was:\n{}",
+        row.contains("ChannelOp"),
+        "{}: the `select` summary-table row must reference `ChannelOp(a)` as \
+         the element shape (one-way-to-do-things unification). Row was:\n{}",
         doc_path.display(),
         row
     );
 
-    // (b) The descriptive section must name the `Sent` result — that's
-    //     the unique anchor that only shows up once the doc admits send
+    // (b) The descriptive section must name the `Sent` result — the
+    //     unique anchor that only shows up once the doc admits send
     //     arms exist.
     let section_idx = body
         .find("## `channel.select`")
@@ -127,15 +122,13 @@ fn channel_select_doc_documents_send_form() {
         doc_path.display(),
         section
     );
-    // (c) And it must mention the tuple form explicitly — either as the
-    //     `(Channel(a), value)` spec or as a `(channel, value)` tuple.
-    let mentions_tuple = section.contains("(Channel(a), value)")
-        || section.contains("(channel, value)")
-        || section.contains("(Channel(a), a)");
+    // (c) And it must show both `Recv` and `Send` constructors so
+    //     readers see the only two legal element shapes.
     assert!(
-        mentions_tuple,
-        "{}: the `channel.select` section must describe the `(channel, \
-         value)` send tuple form. Section contents:\n{}",
+        section.contains("Recv") && section.contains("Send"),
+        "{}: the `channel.select` section must show both `Recv(ch)` and \
+         `Send(ch, value)` as the ChannelOp constructors — these are the \
+         one-way legal element shapes. Section contents:\n{}",
         doc_path.display(),
         section
     );
@@ -158,7 +151,7 @@ fn channel_select_send_arm_runs_and_returns_sent() {
 import channel
 fn main() {
     let out = channel.new(1)
-    match channel.select([(out, 42)]) {
+    match channel.select([Send(out, 42)]) {
         (^out, Sent) -> 1
         _ -> 0
     }
@@ -191,7 +184,7 @@ fn main() {
     let out = channel.new(0)  -- rendezvous: send would park
     let inp = channel.new(1)  -- buffered: we pre-load it so receive is ready
     channel.send(inp, 7)
-    match channel.select([(out, 99), inp]) {
+    match channel.select([Send(out, 99), Recv(inp)]) {
         (^out, Sent) -> 1
         (^inp, Message(v)) -> v
         _ -> -1

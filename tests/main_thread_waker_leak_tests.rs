@@ -159,7 +159,7 @@ fn main() {
     channel.send(a, 1)
   }
 
-  match channel.select([a, b]) {
+  match channel.select([Recv(a), Recv(b)]) {
     (_, Message(_)) -> {
       task.join(feeder)
 

@@ -74,6 +74,7 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
         ("Option", &["Some", "None"]),
         ("Step", &["Stop", "Continue"]),
         ("ChannelResult", &["Message", "Closed", "Empty", "Sent"]),
+        ("ChannelOp", &["Recv", "Send"]),
         (
             "Weekday",
             &[

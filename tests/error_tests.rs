@@ -2479,10 +2479,11 @@ fn main() {
 // AUDIT REGRESSION: channel.select signature is tuple (commit e78d6d9)
 // ════════════════════════════════════════════════════════════════════
 //
-// `channel.select(List(Channel(a)))` must return a 2-tuple
+// `channel.select(List(ChannelOp(a)))` must return a 2-tuple
 // `(Channel(a), ChannelResult(a))`. If the signature regresses to
 // returning just `ChannelResult(a)` (or just `a`), the tuple destructure
-// below will no longer typecheck.
+// below will no longer typecheck. The element type is `ChannelOp(a)` since
+// round 52 — `Recv(ch)` / `Send(ch, v)` are the only legal list shapes.
 //
 // `test_channel_select_returns_tuple` in integration.rs uses `run()`
 // which silently swallows typecheck errors, so it cannot lock this
@@ -2496,7 +2497,7 @@ fn test_channel_select_signature_is_tuple_of_channel_and_result() {
 import channel
 fn main() {
   let ch: Channel(Int) = channel.new(1)
-  let (winner, result): (Channel(Int), ChannelResult(Int)) = channel.select([ch])
+  let (winner, result): (Channel(Int), ChannelResult(Int)) = channel.select([Recv(ch)])
   let _ = winner
   let _ = result
   println("ok")

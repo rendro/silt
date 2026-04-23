@@ -308,7 +308,7 @@ fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
   let h = task.spawn(fn() {
-    match channel.select([a, b]) {
+    match channel.select([Recv(a), Recv(b)]) {
       (_, Message(_v)) -> 0
       (_, Closed) -> 0
       _ -> 0

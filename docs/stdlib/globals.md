@@ -249,8 +249,8 @@ Sent : ChannelResult(a)
 ```
 
 Indicates a successful send operation inside `channel.select`. When a select
-arm is a `(channel, value)` tuple (the send form), the matching tuple result
-is `(channel, Sent)` once that send completes. Receive arms still produce
-`Message(v)` / `Closed` as usual; `Sent` is the send-side counterpart to
+arm is built with `Send(ch, value)` (a `ChannelOp(a)` value), the matching
+tuple result is `(ch, Sent)` once that send completes. `Recv(ch)` arms still
+produce `Message(v)` / `Closed`; `Sent` is the send-side counterpart to
 `Message`. See `channel.select` in [channel / task](./channel-task.md) for
 the mixed send/receive form.

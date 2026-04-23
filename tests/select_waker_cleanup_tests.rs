@@ -247,7 +247,7 @@ fn main() {
 
   -- Receiver 1 selects over a and b; expects to resolve via a.
   let r1 = task.spawn { ->
-    match channel.select([a, b]) {
+    match channel.select([Recv(a), Recv(b)]) {
       (_, Message(_)) -> "got_one"
       _ -> "other"
     }

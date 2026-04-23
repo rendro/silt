@@ -819,27 +819,35 @@ enum SelectOp {
     Send(Arc<Channel>, Value),
 }
 
-/// Parse the select operations list.
-/// - Bare `Channel` → receive
-/// - `(Channel, value)` tuple → send
+/// Parse the select operations list. Every element must be a
+/// `ChannelOp` variant:
+/// - `Recv(channel)` → receive
+/// - `Send(channel, value)` → send
 fn parse_select_ops(ops_list: &[Value]) -> Result<Vec<SelectOp>, VmError> {
     let mut ops = Vec::with_capacity(ops_list.len());
     for item in ops_list {
         match item {
-            Value::Channel(ch) => {
-                ops.push(SelectOp::Receive(ch.clone()));
-            }
-            Value::Tuple(pair) if pair.len() == 2 => {
-                let Value::Channel(ch) = &pair[0] else {
+            Value::Variant(name, fields) if name == "Recv" && fields.len() == 1 => {
+                let Value::Channel(ch) = &fields[0] else {
                     return Err(VmError::new(
-                        "channel.select send operation must be (channel, value)".into(),
+                        "channel.select Recv operation must wrap a Channel".into(),
                     ));
                 };
-                ops.push(SelectOp::Send(ch.clone(), pair[1].clone()));
+                ops.push(SelectOp::Receive(ch.clone()));
+            }
+            Value::Variant(name, fields) if name == "Send" && fields.len() == 2 => {
+                let Value::Channel(ch) = &fields[0] else {
+                    return Err(VmError::new(
+                        "channel.select Send operation must take (Channel, value)".into(),
+                    ));
+                };
+                ops.push(SelectOp::Send(ch.clone(), fields[1].clone()));
             }
             _ => {
                 return Err(VmError::new(
-                    "channel.select list items must be channels or (channel, value) tuples".into(),
+                    "channel.select list items must be `Recv(ch)` or `Send(ch, value)` \
+                     ChannelOp values"
+                        .into(),
                 ));
             }
         }

@@ -88,7 +88,7 @@ fn main() {
     match collected >= num_files {
       true -> (successes, failures)
       _ -> {
-        match channel.select([results_1, results_2]) {
+        match channel.select([Recv(results_1), Recv(results_2)]) {
           (_, Message(result)) -> {
             let (worker_id, outcome) = result
             match outcome {

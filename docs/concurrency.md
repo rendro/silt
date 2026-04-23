@@ -225,7 +225,7 @@ given number of milliseconds. It is useful for adding deadlines to
 let ch = channel.new(10)
 let timer = channel.timeout(5000)  -- closes after 5 seconds
 
-match channel.select([ch, timer]) {
+match channel.select([Recv(ch), Recv(timer)]) {
   (^ch, Message(val))  -> println("got: {val}")
   (^timer, Closed)     -> println("timed out after 5s")
   _                    -> ()
@@ -304,14 +304,20 @@ Returns `Unit`.
 
 ## 4. Select
 
-### `channel.select(channels)`
+### `channel.select(ops)`
 
-`channel.select` lets a task wait on multiple channels at once. It takes a list
-of channels and returns a tuple of `(channel, status)` for whichever channel
-has data first.
+`channel.select` lets a task wait on multiple channel operations at once. It
+takes a list of `ChannelOp(a)` values and returns a tuple of `(channel, status)`
+for whichever operation can make progress first. Each op is built with one of
+two constructors:
+
+- `Recv(ch)` — a receive arm that becomes ready when `ch` has data, has a
+  rendezvous sender parked on it, or is closed.
+- `Send(ch, value)` — a send arm that becomes ready when `ch` has buffer
+  capacity or a rendezvous receiver parked on it.
 
 ```silt
-match channel.select([ch1, ch2]) {
+match channel.select([Recv(ch1), Recv(ch2)]) {
   (^ch1, Message(val))  -> handle_input(val)
   (^ch2, Message(val))  -> handle_other(val)
   (_, Closed)           -> println("all done")
@@ -323,8 +329,9 @@ The return value is a 2-tuple:
 
 - **First element:** the channel that produced the result.
 - **Second element:** one of:
-  - `Message(value)` -- a value was received from that channel.
-  - `Closed` -- the channel is closed (and drained).
+  - `Message(value)` — a `Recv` arm received `value`.
+  - `Closed` — a `Recv` arm's channel is closed and drained.
+  - `Sent` — a `Send` arm completed (value was handed off).
 
 ### The pin operator `^`
 
@@ -339,7 +346,7 @@ let normal = channel.new(5)
 channel.send(urgent, "alert!")
 channel.send(normal, "status ok")
 
-match channel.select([urgent, normal]) {
+match channel.select([Recv(urgent), Recv(normal)]) {
   (^urgent, Message(msg)) -> println("URGENT: {msg}")
   (^normal, Message(msg)) -> println("normal: {msg}")
   (_, Closed)             -> println("all closed")
@@ -356,7 +363,7 @@ position, not just with `channel.select`.
 You do not always care which channel fired. Use `_` to match any channel:
 
 ```silt
-match channel.select([ch1, ch2]) {
+match channel.select([Recv(ch1), Recv(ch2)]) {
   (_, Message(val)) -> println("got {val} from somewhere")
   (_, Closed)       -> println("all done")
 }
@@ -367,7 +374,7 @@ match channel.select([ch1, ch2]) {
 You can also bind the channel to a new variable to inspect it later:
 
 ```silt
-match channel.select([ch1, ch2]) {
+match channel.select([Recv(ch1), Recv(ch2)]) {
   (source, Message(val)) -> println("got {val} from channel {source}")
   (_, Closed)            -> println("all done")
 }
@@ -564,7 +571,7 @@ fn main() {
   -- Merge both streams into a single handler. Over many runs, messages from
   -- `alerts` and `logs` interleave fairly -- neither channel starves the other.
   loop {
-    match channel.select([alerts, logs]) {
+    match channel.select([Recv(alerts), Recv(logs)]) {
       (^alerts, Message(msg)) -> println("alert: {msg}")
       (^logs,   Message(msg)) -> println("log: {msg}")
       (_, Closed) -> {
@@ -903,7 +910,7 @@ Mitigations:
 | `channel.send(ch, val)` | Buffer is full -- resumes when space opens |
 | `channel.receive(ch)` | Buffer is empty -- resumes when a value arrives or the channel closes |
 | `task.join(handle)` | Task not yet complete -- resumes when the task finishes |
-| `channel.select([...])` | No channel has data -- resumes when any channel becomes ready |
+| `channel.select([...ops])` | No `Recv`/`Send` op is ready -- resumes when any becomes ready |
 | `time.sleep(duration)` | Always -- parks the task for the given duration, then resumes |
 | `io.read_file(path)` | Always (file I/O) |
 | `io.write_file(path, content)` | Always (file I/O) |
@@ -955,7 +962,7 @@ operations block synchronously, just like channel operations.
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
 | Try receive | `channel.try_receive(ch)` | `Message(val)`, `Empty`, or `Closed` |
 | Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
-| Select | `channel.select([ch1, ch2])` | `(channel, Message(val))`, `(channel, Closed)` |
+| Select | `channel.select([Recv(ch1), Send(ch2, v)])` | `(channel, Message(val))`, `(channel, Closed)`, `(channel, Sent)` |
 | Timeout channel | `channel.timeout(ms)` | `Channel` (closes after `ms` milliseconds) |
 | Spawn task | `task.spawn(fn() { ... })` | `Handle` |
 | Join task | `task.join(handle)` | Task's return value |

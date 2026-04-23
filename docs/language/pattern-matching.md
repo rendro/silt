@@ -179,7 +179,7 @@ match input {
 Works in any pattern position. Common with `channel.select`:
 
 ```silt
-match channel.select([ch1, ch2]) {
+match channel.select([Recv(ch1), Recv(ch2)]) {
   (^ch1, Message(msg)) -> handle_first(msg)
   (^ch2, Message(msg)) -> handle_second(msg)
   _ -> panic("unexpected")

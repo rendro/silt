@@ -481,7 +481,7 @@ fn main() {
     match done {
       2 -> acc
       _ -> {
-        let result = channel.select([ch1, ch2])
+        let result = channel.select([Recv(ch1), Recv(ch2)])
         match result {
           (_, Message(n)) -> loop(acc + n, done)
           (_, Closed) -> loop(acc, done + 1)

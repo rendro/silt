@@ -93,6 +93,13 @@ impl Vm {
             .insert("Empty".into(), Value::Variant("Empty".into(), Vec::new()));
         self.globals
             .insert("Sent".into(), Value::Variant("Sent".into(), Vec::new()));
+        // ChannelOp constructors for `channel.select`. `Recv(ch)` and
+        // `Send(ch, value)` are the one-and-only shapes accepted by the
+        // select op list.
+        self.globals
+            .insert("Recv".into(), Value::VariantConstructor("Recv".into(), 1));
+        self.globals
+            .insert("Send".into(), Value::VariantConstructor("Send".into(), 2));
         for day in [
             "Monday",
             "Tuesday",

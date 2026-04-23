@@ -339,6 +339,64 @@ impl TypeChecker {
             );
         }
 
+        // ChannelOp enum: Recv(Channel(a)) / Send(Channel(a), a) — argument
+        // shape for `channel.select`. A list of these is how the caller
+        // tells `select` whether each arm is a receive or a send. Keeps
+        // the single-way principle: one function, one element shape.
+        {
+            let (co_a, co_av) = self.fresh_tv();
+            let ch_a = Type::Channel(Box::new(co_a.clone()));
+            self.enums.insert(
+                intern("ChannelOp"),
+                EnumInfo {
+                    params: vec![intern("a")],
+                    param_var_ids: vec![co_av],
+                    variants: vec![
+                        VariantInfo {
+                            name: intern("Recv"),
+                            field_types: vec![ch_a.clone()],
+                        },
+                        VariantInfo {
+                            name: intern("Send"),
+                            field_types: vec![ch_a, co_a],
+                        },
+                    ],
+                },
+            );
+        }
+        self.variant_to_enum
+            .insert(intern("Recv"), intern("ChannelOp"));
+        self.variant_to_enum
+            .insert(intern("Send"), intern("ChannelOp"));
+        {
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("Recv"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Channel(Box::new(a.clone()))],
+                        Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+        {
+            let (a, av) = self.fresh_tv();
+            env.define(
+                intern("Send"),
+                Scheme {
+                    vars: vec![av],
+                    ty: Type::Fun(
+                        vec![Type::Channel(Box::new(a.clone())), a.clone()],
+                        Box::new(Type::Generic(intern("ChannelOp"), vec![a])),
+                    ),
+                    constraints: vec![],
+                },
+            );
+        }
+
         // ── task module ────────────────────────────────────────────────
 
         // task.spawn: (() -> a) -> Handle(a)

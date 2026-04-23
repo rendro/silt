@@ -18,7 +18,7 @@ communication between tasks spawned with `task.spawn`.
 | `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
 | `recv_timeout` | `(Channel(a), Duration) -> Result(a, ChannelError)` | Blocking receive with a timeout |
-| `select` | `(List(Channel(a) \| (Channel(a), a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (receive and/or send arms) |
+| `select` | `(List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (each op is `Recv(ch)` or `Send(ch, v)`) |
 | `send` | `(Channel, a) -> ()` | Blocking send |
 | `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
 | `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
@@ -168,23 +168,23 @@ fn main() {
 ## `channel.select`
 
 ```
-channel.select(ops: List(Channel(a) | (Channel(a), a))) -> (Channel(a), ChannelResult(a))
+channel.select(ops: List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))
 ```
 
-Waits until one of the operations in `ops` can make progress. Each element of
-the list is either:
+Waits until one of the operations in `ops` can make progress. Every element
+is a `ChannelOp(a)` value built with one of two constructors:
 
-- a bare `Channel(a)` — a **receive** arm that becomes ready when the channel
-  has a buffered value, a rendezvous sender parked on it, or has been closed;
-- a `(Channel(a), value)` tuple — a **send** arm that becomes ready when the
-  channel has buffer capacity or a rendezvous receiver parked on it.
+- `Recv(ch)` — a **receive** arm that becomes ready when `ch` has a buffered
+  value, has a rendezvous sender parked on it, or is closed;
+- `Send(ch, value)` — a **send** arm that becomes ready when `ch` has buffer
+  capacity or a rendezvous receiver parked on it.
 
 The call returns a 2-tuple of `(channel, result)` identifying the arm that
 won and the outcome:
 
-- `(ch, Message(val))` — a receive arm completed with `val`.
-- `(ch, Closed)` — a receive arm's channel is closed and drained.
-- `(ch, Sent)` — a send arm completed (the value was handed off).
+- `(ch, Message(val))` — a `Recv` arm completed with `val`.
+- `(ch, Closed)` — a `Recv` arm's channel is closed and drained.
+- `(ch, Sent)` — a `Send` arm completed (the value was handed off).
 
 Receive and send arms can be mixed freely in the same call.
 
@@ -197,7 +197,7 @@ fn main() {
     let ch1 = channel.new(1)
     let ch2 = channel.new(1)
     task.spawn(fn() { channel.send(ch2, "hello") })
-    match channel.select([ch1, ch2]) {
+    match channel.select([Recv(ch1), Recv(ch2)]) {
         (^ch2, Message(val)) -> println(val)  -- "hello"
         (_, Closed) -> println("closed")
         _ -> ()
@@ -205,18 +205,21 @@ fn main() {
 }
 ```
 
-Send-form sketch — the list element `(out, 42)` is a send arm; when the
-arm fires, the match result is `(^out, Sent)`:
+Mixed send and receive — race a pending send against an incoming receive:
 
-```
-match channel.select([(out, 42)]) {
-    (^out, Sent)        -> ...  -- the send landed
-    _                   -> ...
+```silt
+import channel
+fn main() {
+    let inbox = channel.new(1)
+    let outbox = channel.new(1)
+    channel.send(inbox, 7)
+    match channel.select([Recv(inbox), Send(outbox, 99)]) {
+        (^inbox, Message(v)) -> println(v)
+        (^outbox, Sent) -> println("sent")
+        _ -> ()
+    }
 }
 ```
-
-Send and receive arms can be mixed in the same list so a task can race a
-send against a receive and commit to whichever becomes ready first.
 
 
 ## `channel.send`
@@ -252,7 +255,7 @@ import channel
 fn main() {
     let ch = channel.new(10)
     let timer = channel.timeout(1000)  -- closes after 1 second
-    match channel.select([ch, timer]) {
+    match channel.select([Recv(ch), Recv(timer)]) {
         (^ch, Message(val)) -> println("got: {val}")
         (^timer, Closed) -> println("timed out")
         _ -> ()

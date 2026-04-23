@@ -95,7 +95,12 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
         );
     }
 
-    // channel.select: (List(Channel(a))) -> (Channel(a), ChannelResult(a))
+    // channel.select: (List(ChannelOp(a))) -> (Channel(a), ChannelResult(a))
+    //
+    // Every list element is a `ChannelOp(a)` built with either `Recv(ch)`
+    // or `Send(ch, value)`. This collapses what used to be two call
+    // shapes (bare channels for receive, `(channel, value)` tuples for
+    // send) into one tagged form — one way to do things.
     {
         let (a, av) = checker.fresh_tv();
         let ch_a = Type::Channel(Box::new(a.clone()));
@@ -104,7 +109,10 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
             Scheme {
                 vars: vec![av],
                 ty: Type::Fun(
-                    vec![Type::List(Box::new(ch_a.clone()))],
+                    vec![Type::List(Box::new(Type::Generic(
+                        intern("ChannelOp"),
+                        vec![a.clone()],
+                    )))],
                     Box::new(Type::Tuple(vec![
                         ch_a,
                         Type::Generic(intern("ChannelResult"), vec![a]),
