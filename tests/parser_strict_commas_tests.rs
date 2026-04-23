@@ -35,9 +35,9 @@ fn parse(src: &str) -> Result<(), String> {
 /// the construct (e.g. "list literal", "function parameter list").
 fn assert_missing_comma(src: &str, construct_hint: &str) {
     match parse(src) {
-        Ok(()) => panic!(
-            "expected parse error for {src:?}, got Ok (construct hint: {construct_hint:?})"
-        ),
+        Ok(()) => {
+            panic!("expected parse error for {src:?}, got Ok (construct hint: {construct_hint:?})")
+        }
         Err(msg) => {
             assert!(
                 msg.contains("','"),
@@ -101,10 +101,7 @@ fn tuple_literal_with_commas_parses() {
 
 #[test]
 fn map_literal_requires_commas() {
-    assert_missing_comma(
-        "fn main() { #{\"a\": 1 \"b\": 2} }\n",
-        "map literal",
-    );
+    assert_missing_comma("fn main() { #{\"a\": 1 \"b\": 2} }\n", "map literal");
 }
 
 #[test]
@@ -140,8 +137,7 @@ fn call_args_require_commas() {
 
 #[test]
 fn call_args_with_commas_parse() {
-    parse("fn foo(a, b, c) {}\nfn main() { foo(1, 2, 3) }\n")
-        .expect("valid call args must parse");
+    parse("fn foo(a, b, c) {}\nfn main() { foo(1, 2, 3) }\n").expect("valid call args must parse");
 }
 
 // --------------------------------------------------------------------
@@ -215,13 +211,9 @@ fn trailing_commas_are_allowed() {
     parse("fn main() { (1, 2, 3,) }\n").expect("tuple trailing comma must parse");
     parse("fn main() { #{\"a\": 1,} }\n").expect("map trailing comma must parse");
     parse("fn main() { #[1, 2, 3,] }\n").expect("set trailing comma must parse");
-    parse(
-        "fn foo(a, b, c) {}\nfn main() { foo(1, 2, 3,) }\n",
-    )
-    .expect("call-args trailing comma must parse");
+    parse("fn foo(a, b, c) {}\nfn main() { foo(1, 2, 3,) }\n")
+        .expect("call-args trailing comma must parse");
     parse("type P { x: Int, y: Int, }\n").expect("record-type trailing comma must parse");
-    parse("type S { Foo(Int, Int,), Bar, }\n")
-        .expect("enum-variant trailing comma must parse");
-    parse("import list.{ map, filter, }\n")
-        .expect("selective-import trailing comma must parse");
+    parse("type S { Foo(Int, Int,), Bar, }\n").expect("enum-variant trailing comma must parse");
+    parse("import list.{ map, filter, }\n").expect("selective-import trailing comma must parse");
 }

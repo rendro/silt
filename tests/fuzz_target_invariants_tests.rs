@@ -216,3 +216,18 @@ fn formatter_invariants_preserve_comma_count() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn formatter_invariants_allow_disambiguation_parens() {
+    // The formatter is allowed to insert paren pairs around sub-
+    // expressions whose precedence is non-obvious. Example: `B?-F`
+    // parses as `(B?) - F` and the formatter emits the explicit
+    // parens to expose precedence. Locks the exclusion of LParen /
+    // RParen from `significant_token_count`. Dropping a paren is
+    // still caught by the delimiter-balance check — see
+    // `formatter_invariants_reject_dropped_rparen`.
+    let original = "fn f() { B?-F }\n";
+    let formatted = "fn f() { (B?) - F }\n";
+    check_formatter_invariants(original, formatted)
+        .expect("balanced paren insertion must be permitted");
+}

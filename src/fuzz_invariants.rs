@@ -88,19 +88,30 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
     Ok(())
 }
 
-/// Count "significant" tokens, skipping only `Newline` and `Eof`.
+/// Count "significant" tokens, skipping `Newline`, `Eof`, and the
+/// round-paren delimiters `(` and `)`.
 ///
 /// silt's parser requires explicit commas between elements in every
-/// list-style construct (fn params, list/tuple/map/set literals, call
-/// args, patterns, record fields, ...). Since comma-less forms no
-/// longer parse, the formatter cannot legitimately insert or drop
-/// commas — every `Comma` in the input must survive the round-trip.
-/// Including `Comma` in the significant count catches the class of
-/// formatter bugs that silently duplicate or elide commas.
+/// list-style construct, so commas stay strict. But the formatter
+/// legitimately inserts disambiguation parens around sub-expressions
+/// whose precedence is non-obvious (e.g. `B?-F` → `(B?) - F`). Those
+/// paren pairs are balanced and harmless — they are verified
+/// separately by `delimiter_balance`, which asserts that net open and
+/// close counts match exactly — so excluding them from the "every
+/// token must survive" count avoids false positives without losing
+/// coverage of dropped parens (those still break the balance check).
+///
+/// Braces and brackets remain counted: the formatter never inserts
+/// `{`, `}`, `[`, or `]` tokens the source didn't already have.
 fn significant_token_count(tokens: &[SpannedToken]) -> usize {
     tokens
         .iter()
-        .filter(|(t, _)| !matches!(t, Token::Newline | Token::Eof))
+        .filter(|(t, _)| {
+            !matches!(
+                t,
+                Token::Newline | Token::Eof | Token::LParen | Token::RParen
+            )
+        })
         .count()
 }
 

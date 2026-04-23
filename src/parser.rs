@@ -198,12 +198,7 @@ impl Parser {
     /// argument must be comma-separated. Trailing commas remain
     /// permitted — if `close_tok` is seen immediately after the
     /// comma-advance, the enclosing while-loop exits cleanly.
-    fn expect_list_sep(
-        &mut self,
-        construct: &str,
-        closer: char,
-        close_tok: &Token,
-    ) -> Result<()> {
+    fn expect_list_sep(&mut self, construct: &str, closer: char, close_tok: &Token) -> Result<()> {
         self.expect_list_sep_with_opener(construct, closer, close_tok, None)
     }
 
