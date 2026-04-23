@@ -236,11 +236,34 @@ fn format_module_source_error(
 /// tests/compiler_module_path_norm_round36_tests.rs.
 fn normalize_module_path(p: &std::path::Path) -> String {
     if let Ok(cwd) = std::env::current_dir() {
+        // First try a literal strip — cheap, no I/O.
         if let Ok(rel) = p.strip_prefix(&cwd) {
             return rel.display().to_string();
         }
+        // Fall back to canonicalizing both sides. On Windows, upstream
+        // module resolution may have canonicalized `p` into extended-
+        // length form (`\\?\C:\...`) while `cwd` is still `C:\...`, so a
+        // literal strip misses. Canonicalizing both makes the forms
+        // comparable. `canonicalize` can fail (e.g. no filesystem access
+        // in some sandboxes); any failure falls through to the raw
+        // display.
+        if let (Ok(p_canon), Ok(cwd_canon)) =
+            (std::fs::canonicalize(p), std::fs::canonicalize(&cwd))
+            && let Ok(rel) = p_canon.strip_prefix(&cwd_canon)
+        {
+            return rel.display().to_string();
+        }
     }
-    p.display().to_string()
+    // Last resort: strip the Windows `\\?\` verbatim prefix for display
+    // so an out-of-CWD module path at least renders cleanly.
+    let s = p.display().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+    }
+    s
 }
 
 /// Clamp a span pointing past the end of `source` back onto the last
