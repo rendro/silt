@@ -789,6 +789,25 @@ enum LineKind {
     },
     InsideRegular,
     RegularEnds,
+    /// The line STARTS inside a `{- ... -}` block comment (possibly
+    /// nested) and never leaves it on this line. The entire line — even
+    /// if it visually begins with `--` — is block-comment body, not a
+    /// line comment, and must be skipped by the per-line comment
+    /// extractor. Without this tag, a line like `--: -} pcccc` inside
+    /// a multi-line block comment gets mis-identified as a standalone
+    /// line comment and duplicated on every formatter pass (see audit
+    /// round 50 fuzz repro).
+    InsideBlockComment,
+    /// The line STARTS inside a `{- ... -}` block comment but the block
+    /// comment's `-}` closer appears mid-line. The portion up to and
+    /// including `-}` is block-comment body (so a leading `--` there
+    /// is NOT a line comment), but content AFTER the close is normal
+    /// code and may carry a trailing `-- cmt`. The per-line comment
+    /// extractor must skip the standalone-line-comment path for this
+    /// line (so we don't misread block-comment-body `--` as a line
+    /// comment) but must still let trailing-comment extraction run on
+    /// the post-closer suffix.
+    BlockCommentEnds,
 }
 
 /// Walk the source once and classify each line by string state.
@@ -893,7 +912,17 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                     result[idx] = LineKind::InsideTriple;
                 }
             }
-            Mode::Code | Mode::BlockComment => {}
+            Mode::BlockComment => {
+                // A line that STARTS inside a nested `{- ... -}` must
+                // not be scanned for line comments — its leading `--`
+                // characters are block-comment body, not a line comment
+                // marker. Upgrade `Code` to `InsideBlockComment` so
+                // `extract_comments` skips the line entirely.
+                if matches!(result[idx], LineKind::Code) {
+                    result[idx] = LineKind::InsideBlockComment;
+                }
+            }
+            Mode::Code => {}
         }
     };
 
@@ -1076,6 +1105,19 @@ fn classify_lines(source: &str) -> Vec<LineKind> {
                     pos += 2;
                     if block_depth == 0 {
                         stack.pop();
+                        // The block comment closed mid-line. The suffix
+                        // after `-}` is normal code (possibly with a
+                        // trailing `-- cmt`). Tag the line as
+                        // `BlockCommentEnds` so `extract_comments` knows
+                        // to skip the standalone-line-comment path
+                        // (leading `--` chars are block-comment body,
+                        // not a line comment) but still extract any
+                        // trailing comment from the post-close suffix.
+                        if line_idx < result.len()
+                            && matches!(result[line_idx], LineKind::InsideBlockComment)
+                        {
+                            result[line_idx] = LineKind::BlockCommentEnds;
+                        }
                     }
                     continue;
                 }
@@ -1149,7 +1191,7 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
         // comment that breaks formatter idempotency.
         if matches!(
             line_kinds[i],
-            LineKind::InsideTriple | LineKind::InsideRegular
+            LineKind::InsideTriple | LineKind::InsideRegular | LineKind::InsideBlockComment
         ) {
             i += 1;
             continue;
@@ -1220,6 +1262,53 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
         // does, breaking idempotency. Skip the entire continuation line;
         // comment scanning resumes on the next line.
         if matches!(line_kinds[i], LineKind::RegularEnds) {
+            i += 1;
+            continue;
+        }
+
+        // A line that STARTS inside a `{- ... -}` block comment and
+        // closes the block comment mid-line. The leading portion up to
+        // `-}` is block-comment body (leading `--` chars are NOT a line
+        // comment marker), and the suffix after `-}` is normal code
+        // that may carry a trailing `-- cmt`. Find the first `-}` that
+        // drains block-comment depth and run trailing-comment extraction
+        // on the suffix only.
+        if matches!(line_kinds[i], LineKind::BlockCommentEnds) {
+            let bytes = line.as_bytes();
+            // Walk the line, tracking block-comment depth starting at 1
+            // (we entered the line already inside one level of
+            // `{- ... -}`). We do NOT recognise `--` or strings here:
+            // we're inside a block comment so only `{-` (deepen) and
+            // `-}` (shallower) are meaningful.
+            let mut depth: usize = 1;
+            let mut close_end: Option<usize> = None;
+            let mut j = 0usize;
+            while j + 1 < bytes.len() {
+                if bytes[j] == b'{' && bytes[j + 1] == b'-' {
+                    depth += 1;
+                    j += 2;
+                    continue;
+                }
+                if bytes[j] == b'-' && bytes[j + 1] == b'}' {
+                    depth -= 1;
+                    j += 2;
+                    if depth == 0 {
+                        close_end = Some(j);
+                        break;
+                    }
+                    continue;
+                }
+                j += 1;
+            }
+            if let Some(end) = close_end {
+                let suffix = &line[end..];
+                if let Some(comment_text) = extract_trailing_comment_from_line(suffix) {
+                    trailing.push(TrailingComment {
+                        line: i + 1, // 1-based
+                        text: comment_text,
+                    });
+                }
+            }
             i += 1;
             continue;
         }

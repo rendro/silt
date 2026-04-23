@@ -13,7 +13,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.enums.insert(
         intern("Method"),
         EnumInfo {
-            _name: intern("Method"),
             params: vec![],
             param_var_ids: vec![],
             variants: vec![
@@ -70,8 +69,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("Response"),
         RecordInfo {
-            _name: intern("Response"),
-            _params: vec![],
             fields: vec![
                 (intern("status"), Type::Int),
                 (intern("body"), Type::String),
@@ -95,8 +92,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("Request"),
         RecordInfo {
-            _name: intern("Request"),
-            _params: vec![],
             fields: vec![
                 (intern("method"), method_ty.clone()),
                 (intern("path"), Type::String),

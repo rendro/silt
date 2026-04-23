@@ -155,7 +155,6 @@ impl TypeChecker {
             self.enums.insert(
                 intern("Option"),
                 EnumInfo {
-                    _name: intern("Option"),
                     params: vec![intern("a")],
                     param_var_ids: vec![opt_av],
                     variants: vec![
@@ -183,7 +182,6 @@ impl TypeChecker {
             self.enums.insert(
                 intern("Result"),
                 EnumInfo {
-                    _name: intern("Result"),
                     params: vec![intern("a"), intern("e")],
                     param_var_ids: vec![res_av, res_ev],
                     variants: vec![
@@ -208,7 +206,6 @@ impl TypeChecker {
             self.enums.insert(
                 intern("Step"),
                 EnumInfo {
-                    _name: intern("Step"),
                     params: vec![intern("a")],
                     param_var_ids: vec![step_av],
                     variants: vec![
@@ -262,7 +259,6 @@ impl TypeChecker {
             self.enums.insert(
                 intern("ChannelResult"),
                 EnumInfo {
-                    _name: intern("ChannelResult"),
                     params: vec![intern("a")],
                     param_var_ids: vec![cr_av],
                     variants: vec![

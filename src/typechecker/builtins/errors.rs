@@ -230,7 +230,6 @@ fn register_enum(
     checker.enums.insert(
         enum_sym,
         EnumInfo {
-            _name: enum_sym,
             params: vec![],
             param_var_ids: vec![],
             variants: variants

@@ -118,7 +118,6 @@ impl TypeEnv {
 /// Information about a declared enum type.
 #[derive(Debug, Clone)]
 pub(super) struct EnumInfo {
-    pub(super) _name: Symbol,
     pub(super) params: Vec<Symbol>,
     /// The actual TyVar ids assigned to each type parameter (same order as `params`).
     pub(super) param_var_ids: Vec<TyVar>,
@@ -134,15 +133,12 @@ pub(super) struct VariantInfo {
 /// Information about a declared record type.
 #[derive(Debug, Clone)]
 pub(super) struct RecordInfo {
-    pub(super) _name: Symbol,
-    pub(super) _params: Vec<Symbol>,
     pub(super) fields: Vec<(Symbol, Type)>,
 }
 
 /// Information about a declared trait.
 #[derive(Debug, Clone)]
 pub(super) struct TraitInfo {
-    pub(super) _name: Symbol,
     /// Type-parameter names on the trait itself (e.g.
     /// `trait TryInto(b)` yields `[b]`). Empty for parameter-less
     /// traits — the common case.
@@ -1652,7 +1648,6 @@ impl TypeChecker {
                 self.enums.insert(
                     td.name,
                     EnumInfo {
-                        _name: td.name,
                         params: td.params.clone(),
                         param_var_ids: var_ids,
                         variants: variant_infos,
@@ -1698,8 +1693,6 @@ impl TypeChecker {
                 self.records.insert(
                     td.name,
                     RecordInfo {
-                        _name: td.name,
-                        _params: td.params.clone(),
                         fields: field_types.clone(),
                     },
                 );
@@ -2233,7 +2226,6 @@ impl TypeChecker {
         self.traits.insert(
             t.name,
             TraitInfo {
-                _name: t.name,
                 params: t.params.clone(),
                 param_var_ids,
                 supertraits: supertrait_names,
@@ -2933,7 +2925,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker.traits.insert(
             intern("Display"),
             TraitInfo {
-                _name: intern("Display"),
                 params: Vec::new(),
                 param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
@@ -2954,7 +2945,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker.traits.insert(
             intern("Compare"),
             TraitInfo {
-                _name: intern("Compare"),
                 params: Vec::new(),
                 param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
@@ -2975,7 +2965,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker.traits.insert(
             intern("Equal"),
             TraitInfo {
-                _name: intern("Equal"),
                 params: Vec::new(),
                 param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
@@ -2995,7 +2984,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker.traits.insert(
             intern("Hash"),
             TraitInfo {
-                _name: intern("Hash"),
                 params: Vec::new(),
                 param_var_ids: Vec::new(),
                 supertraits: Vec::new(),
@@ -3056,7 +3044,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         checker.traits.insert(
             intern("Error"),
             TraitInfo {
-                _name: intern("Error"),
                 params: Vec::new(),
                 param_var_ids: Vec::new(),
                 supertraits: vec![intern("Display")],
@@ -3543,6 +3530,50 @@ pub(super) mod test_helpers {
             errors.iter().any(|e| e.message.contains(expected)),
             "expected error containing '{expected}', got: {:?}",
             errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[cfg(test)]
+mod size_locks {
+    //! Round 50 audit: after removing the never-read informational
+    //! fields (`_name`, `_params`) from `EnumInfo`, `RecordInfo`, and
+    //! `TraitInfo`, these assertions lock the struct sizes so that
+    //! accidentally re-adding a purely informational field (which
+    //! would bloat the typechecker HashMaps storing thousands of
+    //! these per compilation) fails fast at test time.
+    //!
+    //! If you INTENTIONALLY add a field, update the expected size
+    //! below. If the size changed because the underlying Vec/HashMap
+    //! layout changed in a Rust release, that's also fine — bump the
+    //! numbers once, and the lock continues to protect against
+    //! accidental re-introduction of dead fields.
+    use super::{EnumInfo, RecordInfo, TraitInfo};
+
+    #[test]
+    fn enum_info_size_locked() {
+        assert_eq!(
+            std::mem::size_of::<EnumInfo>(),
+            72,
+            "EnumInfo size changed — see module doc"
+        );
+    }
+
+    #[test]
+    fn record_info_size_locked() {
+        assert_eq!(
+            std::mem::size_of::<RecordInfo>(),
+            24,
+            "RecordInfo size changed — see module doc"
+        );
+    }
+
+    #[test]
+    fn trait_info_size_locked() {
+        assert_eq!(
+            std::mem::size_of::<TraitInfo>(),
+            216,
+            "TraitInfo size changed — see module doc"
         );
     }
 }

@@ -1380,7 +1380,6 @@ fn main() { area(Circle(1.0)) }
         tc.enums.insert(
             expr_name,
             EnumInfo {
-                _name: expr_name,
                 params: vec![],
                 param_var_ids: vec![],
                 variants: vec![

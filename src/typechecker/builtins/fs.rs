@@ -102,8 +102,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("FileStat"),
         RecordInfo {
-            _name: intern("FileStat"),
-            _params: vec![],
             fields: file_stat_fields,
         },
     );

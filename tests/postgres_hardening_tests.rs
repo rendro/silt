@@ -117,24 +117,44 @@ fn connect_with_max_pool_size_parses() {
 /// hang every `get()` forever, and negative makes no sense.
 #[test]
 fn connect_with_zero_max_pool_size_rejected() {
+    // Lock the exact phrasing emitted by `parse_connect_opts` in
+    // `src/builtins/postgres.rs`:
+    //   "postgres.connect_with: max_pool_size must be > 0, got {n}"
+    // A prior `"> 0" || "greater"` OR-chain would silently pass if the
+    // message drifted to either "greater" without the `> 0` form or
+    // (more likely) something entirely different that happened to
+    // contain "greater". Anchor on the full unique substring.
     let opts = map_with(&[("max_pool_size", Value::Int(0))]);
     let err = read_max_pool_size_for_tests(&opts).expect_err("zero rejected");
-    assert!(err.contains("max_pool_size"), "err: {err}");
-    assert!(err.contains("> 0") || err.contains("greater"), "err: {err}");
+    assert!(
+        err.contains("postgres.connect_with: max_pool_size must be > 0, got 0"),
+        "err: {err}",
+    );
 
     let opts = map_with(&[("max_pool_size", Value::Int(-1))]);
     let err = read_max_pool_size_for_tests(&opts).expect_err("neg rejected");
-    assert!(err.contains("max_pool_size"), "err: {err}");
+    assert!(
+        err.contains("postgres.connect_with: max_pool_size must be > 0, got -1"),
+        "err: {err}",
+    );
 }
 
 /// Wrong shape — passing a String for `max_pool_size` — yields an
 /// error that mentions the field name and that it must be an Int.
 #[test]
 fn connect_with_wrong_type_rejected() {
+    // Lock the exact phrasing emitted by `parse_connect_opts` in
+    // `src/builtins/postgres.rs`:
+    //   "postgres.connect_with: max_pool_size must be an Int"
+    // The previous pair of disjoint `contains("max_pool_size")` +
+    // `contains("Int")` checks would silently pass even if the message
+    // drifted into two unrelated substrings.
     let opts = map_with(&[("max_pool_size", Value::String("lots".to_string()))]);
     let err = read_max_pool_size_for_tests(&opts).expect_err("wrong type rejected");
-    assert!(err.contains("max_pool_size"), "err: {err}");
-    assert!(err.contains("Int"), "err: {err}");
+    assert!(
+        err.contains("postgres.connect_with: max_pool_size must be an Int"),
+        "err: {err}",
+    );
 }
 
 /// Unknown keys in the opts map are silently ignored so future

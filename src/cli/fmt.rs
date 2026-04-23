@@ -87,11 +87,26 @@ pub(crate) fn dispatch(args: &[String]) {
         }
     }
     if check_mode {
+        // Exit-code taxonomy for `silt fmt --check`:
+        //   0 — every file is already formatted.
+        //   1 — at least one file would be reformatted (the intended
+        //       `--check` signal CI tooling keys off of).
+        //   2 — at least one file failed to read or parse (infra failure);
+        //       CI should distinguish this from "diff would be produced".
+        // An infra failure on any file is the dominant outcome — if we
+        // hit a parse error we can't *know* whether the file is
+        // formatted, so we must not collapse that into exit 1.
         let mut any_unformatted = false;
+        let mut any_infra_error = false;
         for file in &files {
-            if !check_format(file) {
-                any_unformatted = true;
+            match check_format(file) {
+                CheckOutcome::Formatted => {}
+                CheckOutcome::Unformatted => any_unformatted = true,
+                CheckOutcome::InfraError => any_infra_error = true,
             }
+        }
+        if any_infra_error {
+            process::exit(2);
         }
         if any_unformatted {
             process::exit(1);
@@ -134,28 +149,47 @@ fn render_fmt_error(err: &silt::formatter::FmtError, source: &str, path: &str) -
     }
 }
 
-/// Check if a file is already formatted. Returns true if it is, false otherwise.
-/// Prints a message for files that would be changed.
-fn check_format(path: &str) -> bool {
+/// Three-way result for `silt fmt --check` on a single file. Previously
+/// the checker returned `bool`, which collapsed "file needs formatting"
+/// (the intended `--check` signal) with "couldn't read the file" and
+/// "file didn't parse" (infra failures). CI callers had no way to
+/// distinguish a format drift from a broken file — both manifested as
+/// exit 1. The enum lets the dispatcher escalate infra failures to
+/// exit 2 while keeping drift on exit 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckOutcome {
+    /// File exists, parsed cleanly, and is already formatted.
+    Formatted,
+    /// File exists and parsed cleanly, but formatting would change it.
+    Unformatted,
+    /// File could not be read, or the formatter rejected the source
+    /// (lex/parse error). The check is inconclusive — we cannot assert
+    /// the file is formatted, so this must not be mistaken for drift.
+    InfraError,
+}
+
+/// Check if a file is already formatted. Prints a diagnostic on any
+/// non-`Formatted` outcome (same stderr messages as before).
+fn check_format(path: &str) -> CheckOutcome {
     let source = match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error reading {path}: {e}");
-            return false;
+            return CheckOutcome::InfraError;
         }
     };
     match silt::formatter::format(&source) {
         Ok(formatted) => {
             if source == formatted {
-                true
+                CheckOutcome::Formatted
             } else {
                 eprintln!("{path}: not formatted");
-                false
+                CheckOutcome::Unformatted
             }
         }
         Err(e) => {
             eprintln!("{}", render_fmt_error(&e, &source, path));
-            false
+            CheckOutcome::InfraError
         }
     }
 }

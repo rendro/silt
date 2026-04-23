@@ -39,16 +39,12 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("Instant"),
         RecordInfo {
-            _name: intern("Instant"),
-            _params: vec![],
             fields: vec![(intern("epoch_ns"), Type::Int)],
         },
     );
     checker.records.insert(
         intern("Date"),
         RecordInfo {
-            _name: intern("Date"),
-            _params: vec![],
             fields: vec![
                 (intern("year"), Type::Int),
                 (intern("month"), Type::Int),
@@ -59,8 +55,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("Time"),
         RecordInfo {
-            _name: intern("Time"),
-            _params: vec![],
             fields: vec![
                 (intern("hour"), Type::Int),
                 (intern("minute"), Type::Int),
@@ -72,8 +66,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("DateTime"),
         RecordInfo {
-            _name: intern("DateTime"),
-            _params: vec![],
             fields: vec![
                 (intern("date"), date_ty.clone()),
                 (intern("time"), time_of_day_ty.clone()),
@@ -83,8 +75,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.records.insert(
         intern("Duration"),
         RecordInfo {
-            _name: intern("Duration"),
-            _params: vec![],
             fields: vec![(intern("ns"), Type::Int)],
         },
     );
@@ -93,7 +83,6 @@ pub(super) fn register(checker: &mut TypeChecker, env: &mut TypeEnv) {
     checker.enums.insert(
         intern("Weekday"),
         EnumInfo {
-            _name: intern("Weekday"),
             params: vec![],
             param_var_ids: vec![],
             variants: vec![

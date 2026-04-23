@@ -273,12 +273,24 @@ fn main() {{
 "#
     );
     let result = run(&input);
-    // Either we got an Int year >= 1970 (accessed present) or 0 (noatime).
-    // -1 would indicate fs.stat returned Err, which shouldn't happen for
-    // a file we just wrote.
+    // `accessed` must be populated on every common filesystem for a file
+    // we just wrote and then stat'd: ext4/xfs/btrfs/apfs/ntfs all return
+    // an atime, and `std::env::temp_dir()` (where TempDir lives) points
+    // at a normally-mounted temp location on every platform our CI
+    // exercises. A `y == 0` result here would mean either
+    // `fs.stat.accessed` silently regressed to always-None (the pattern
+    // match falls through to the `None -> 0` arm), or the accessed
+    // DateTime's year field returned 0 — both are regressions we want
+    // to catch rather than paper over. `-1` would mean fs.stat returned
+    // Err, which also shouldn't happen for a file we just wrote.
+    //
+    // The historical `y == 0` escape hatch was defensive against
+    // noatime mounts, but no stock temp-dir setup uses noatime; if a
+    // future platform needs it, add a targeted cfg-gated test rather
+    // than reintroducing the silent-pass branch.
     match result {
         Value::Int(y) => {
-            assert!(y == 0 || y >= 1970, "unexpected year value {y}");
+            assert!(y >= 1970, "unexpected year value {y}");
         }
         other => panic!("expected Int, got {other:?}"),
     }
