@@ -359,8 +359,8 @@ bar = { git = "https://example.com/bar.git", rev = "abc123", branch = "main" }
     );
     let msg = err.to_string().to_lowercase();
     assert!(
-        msg.contains("exactly one") || msg.contains("only one"),
-        "expected exactly-one wording, got: {msg}"
+        msg.contains("exactly one"),
+        "expected the 'exactly one' phrase (locked to the emission site in src/manifest.rs), got: {msg}"
     );
     assert!(msg.contains("rev"), "expected `rev` in message, got: {msg}");
     assert!(

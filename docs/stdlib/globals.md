@@ -248,7 +248,9 @@ Indicates the channel buffer is currently empty but not closed. Only returned by
 Sent : ChannelResult(a)
 ```
 
-Reserved for future use. `Sent` is defined as a `ChannelResult` variant and
-will indicate a successful send operation once `channel.select` supports
-mixed send/receive operations. Currently, `channel.select` only accepts a
-list of channels for receiving.
+Indicates a successful send operation inside `channel.select`. When a select
+arm is a `(channel, value)` tuple (the send form), the matching tuple result
+is `(channel, Sent)` once that send completes. Receive arms still produce
+`Message(v)` / `Closed` as usual; `Sent` is the send-side counterpart to
+`Message`. See `channel.select` in [channel / task](./channel-task.md) for
+the mixed send/receive form.

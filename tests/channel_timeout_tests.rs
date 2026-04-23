@@ -273,7 +273,7 @@ fn main() {
     );
     let msg = outcome.error_message.as_deref().unwrap_or("");
     assert!(
-        msg.contains("non-negative") || msg.contains("recv_timeout"),
-        "expected negative-duration diagnostic; got: {msg}",
+        msg.contains("channel.recv_timeout: duration must be non-negative"),
+        "expected exact negative-duration diagnostic from src/builtins/concurrency.rs:292; got: {msg}",
     );
 }

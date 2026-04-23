@@ -543,6 +543,11 @@ impl TypeChecker {
         }
 
         // Bind parameters
+        // Soundness: reject duplicate binding names across the whole fn
+        // param list before we start defining them in the env. Without
+        // this, `fn f(a: Int, a: Int)` typechecks and the second param
+        // silently shadows the first. See `check_fn_params_duplicate_bindings`.
+        self.check_fn_params_duplicate_bindings(&f.params);
         for (i, param) in f.params.iter().enumerate() {
             if let Some(ty) = param_types.get(i) {
                 self.bind_pattern(&param.pattern, ty, &mut local_env, f.span);
@@ -980,6 +985,149 @@ impl TypeChecker {
     }
 
     // ── Pattern type binding ────────────────────────────────────────
+
+    /// BROKEN (soundness): duplicate bindings within a single conjunctive
+    /// pattern scope (tuple elements, constructor args, record fields,
+    /// list elements, fn param list) used to silently shadow each other
+    /// — `let (a, a) = (1, 2)` typechecked and bound `a = 2` at runtime;
+    /// `fn f(a: Int, a: Int)` typechecked with no error; `match (1, 2) {
+    /// (x, x) -> x }` typechecked. Walk the pattern once before type
+    /// binding and emit a diagnostic for every duplicate.
+    ///
+    /// Or-patterns (`p1 | p2`) are intentionally exempted: the same name
+    /// appearing in both alternatives is how `|` works. We descend into
+    /// each alternative with a fresh duplicate map so a name may appear
+    /// once per alternative, then merge the union of binder sets back up
+    /// into the outer conjunctive scope (all alternatives must bind the
+    /// same set of vars — that invariant is enforced separately in the
+    /// `Or` arms of `bind_pattern` / `check_pattern`).
+    pub(super) fn check_pattern_duplicate_bindings(&mut self, pattern: &Pattern) {
+        let mut seen: HashMap<Symbol, Span> = HashMap::new();
+        let mut dups: Vec<(Symbol, Span)> = Vec::new();
+        Self::collect_pattern_binders_into(pattern, &mut seen, &mut |name, dup_span| {
+            dups.push((name, dup_span));
+        });
+        for (name, dup_span) in dups {
+            self.error(
+                format!("duplicate binding '{}' in pattern", resolve(name)),
+                dup_span,
+            );
+        }
+    }
+
+    /// Fn-parameter variant of `check_pattern_duplicate_bindings`. A fn's
+    /// parameter list is a single conjunctive scope — all binders across
+    /// every param pattern must be unique. `fn f(a: Int, a: Int)` is the
+    /// canonical repro: each `a` is its own pattern so the per-pattern
+    /// check can't see the collision, we must thread one `seen` across
+    /// the whole param list.
+    pub(super) fn check_fn_params_duplicate_bindings(&mut self, params: &[Param]) {
+        let mut seen: HashMap<Symbol, Span> = HashMap::new();
+        let mut dups: Vec<(Symbol, Span)> = Vec::new();
+        for param in params {
+            Self::collect_pattern_binders_into(&param.pattern, &mut seen, &mut |name, dup_span| {
+                dups.push((name, dup_span));
+            });
+        }
+        for (name, dup_span) in dups {
+            self.error(
+                format!("duplicate binding '{}' in pattern", resolve(name)),
+                dup_span,
+            );
+        }
+    }
+
+    /// Walk `pattern` in conjunctive-scope order, accumulating binder
+    /// symbols into `seen`. When a name is seen twice in the same
+    /// conjunctive scope, call `on_dup` with the name and the span of the
+    /// second occurrence. Or-patterns open a sub-scope per alternative:
+    /// each alternative is walked with a cloned `seen` (so duplicates
+    /// inside an alternative are still caught), and the union of binders
+    /// from all alternatives is merged back into the caller's `seen`
+    /// (since any of them would bind that name at runtime).
+    fn collect_pattern_binders_into(
+        pattern: &Pattern,
+        seen: &mut HashMap<Symbol, Span>,
+        on_dup: &mut dyn FnMut(Symbol, Span),
+    ) {
+        match &pattern.kind {
+            PatternKind::Wildcard
+            | PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Range(_, _)
+            | PatternKind::FloatRange(_, _)
+            | PatternKind::Pin(_) => {}
+            PatternKind::Ident(name) => {
+                if seen.contains_key(name) {
+                    on_dup(*name, pattern.span);
+                } else {
+                    seen.insert(*name, pattern.span);
+                }
+            }
+            PatternKind::Tuple(pats)
+            | PatternKind::Constructor(_, pats) => {
+                for p in pats {
+                    Self::collect_pattern_binders_into(p, seen, on_dup);
+                }
+            }
+            PatternKind::List(pats, rest) => {
+                for p in pats {
+                    Self::collect_pattern_binders_into(p, seen, on_dup);
+                }
+                if let Some(rest_pat) = rest {
+                    Self::collect_pattern_binders_into(rest_pat, seen, on_dup);
+                }
+            }
+            PatternKind::Record { fields, .. } => {
+                for (field_name, sub_pat) in fields {
+                    match sub_pat {
+                        Some(sp) => {
+                            Self::collect_pattern_binders_into(sp, seen, on_dup);
+                        }
+                        None => {
+                            // Shorthand `{ x }` binds `x` itself.
+                            if seen.contains_key(field_name) {
+                                on_dup(*field_name, pattern.span);
+                            } else {
+                                seen.insert(*field_name, pattern.span);
+                            }
+                        }
+                    }
+                }
+            }
+            PatternKind::Map(entries) => {
+                for (_, p) in entries {
+                    Self::collect_pattern_binders_into(p, seen, on_dup);
+                }
+            }
+            PatternKind::Or(alts) => {
+                // Each alternative is its own conjunctive scope (so a
+                // duplicate inside a single alternative still fires), but
+                // all alternatives at runtime bind the same name into the
+                // outer scope — so the union of each alternative's binders
+                // merges into `seen` before we continue. The or-pattern-
+                // validation logic elsewhere guarantees the alternatives
+                // bind the same set of names when well-formed, but we do
+                // not rely on that here — we take the union defensively.
+                let mut union_binders: HashMap<Symbol, Span> = HashMap::new();
+                for alt in alts {
+                    let mut alt_seen = seen.clone();
+                    Self::collect_pattern_binders_into(alt, &mut alt_seen, on_dup);
+                    // Take only the names added by this alternative.
+                    for (name, sp) in alt_seen.iter() {
+                        if !seen.contains_key(name) {
+                            union_binders.entry(*name).or_insert(*sp);
+                        }
+                    }
+                }
+                for (name, sp) in union_binders {
+                    seen.insert(name, sp);
+                }
+            }
+        }
+    }
 
     /// Bind names in a pattern to their types in the environment.
     pub(super) fn bind_pattern(
@@ -2713,6 +2861,10 @@ impl TypeChecker {
 
             ExprKind::Lambda { params, body } => {
                 let mut local_env = env.child();
+                // Soundness: lambda param lists are a single conjunctive
+                // scope too — `|a, a| ...` must be rejected the same way
+                // `fn f(a, a)` is.
+                self.check_fn_params_duplicate_bindings(params);
                 let param_types: Vec<Type> = params
                     .iter()
                     .map(|p| {
@@ -3022,6 +3174,12 @@ impl TypeChecker {
 
                         for arm in arms.iter_mut() {
                             let mut arm_env = env.child();
+                            // Soundness: `match e { (x, x) -> x }` used to
+                            // typecheck silently, binding the second `x` on
+                            // top of the first. Reject duplicate binders
+                            // in the arm pattern before check_pattern walks
+                            // it and defines them in `arm_env`.
+                            self.check_pattern_duplicate_bindings(&arm.pattern);
                             self.check_pattern(
                                 &arm.pattern,
                                 &scrutinee_ty,
@@ -3197,6 +3355,10 @@ impl TypeChecker {
                         // typecheck error instead of silent runtime
                         // payload corruption from a tag mismatch.
                         self.reject_refutable_constructor_in_let(pattern, value_span);
+                        // Soundness: reject duplicate binding names within
+                        // the let pattern. `let (a, a) = (1, 2)` used to
+                        // silently shadow the first `a`.
+                        self.check_pattern_duplicate_bindings(pattern);
                         self.bind_pattern(pattern, &val_ty, env, value_span);
                     }
                 }
@@ -3225,6 +3387,10 @@ impl TypeChecker {
                 // Bind the pattern in the current scope (type narrowing).
                 // bind_pattern handles all pattern kinds including constructors
                 // (enum lookup, param substitution, recursive sub-pattern binding).
+                //
+                // Soundness: reject duplicate binders before defining so
+                // `when let (a, a) = expr` doesn't silently shadow.
+                self.check_pattern_duplicate_bindings(pattern);
                 self.bind_pattern(pattern, &expr_ty, env, expr_span);
 
                 Type::Unit

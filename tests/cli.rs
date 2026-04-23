@@ -1626,7 +1626,7 @@ fn test_json_error_message_field_has_no_embedded_newlines() {
     let module_err = arr.iter().find(|e| {
         e["message"]
             .as_str()
-            .is_some_and(|m| m.contains("module") || m.contains("expected parameter name"))
+            .is_some_and(|m| m.contains("module 'broken'"))
     });
     assert!(
         module_err.is_some(),
@@ -1641,10 +1641,11 @@ fn test_json_error_message_field_has_no_embedded_newlines() {
         "JSON message field must not contain embedded newlines, got: {msg:?}"
     );
 
-    // The message field should still contain the key error phrase so
-    // callers can programmatically identify what went wrong.
+    // The message field should still contain the key error phrase
+    // including the single-quoted module name so callers can
+    // programmatically identify what went wrong.
     assert!(
-        msg.contains("module") || msg.contains("expected parameter name"),
+        msg.contains("module 'broken'") && msg.contains("expected parameter name"),
         "expected key error phrase in message, got: {msg:?}"
     );
 }

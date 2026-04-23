@@ -287,6 +287,27 @@ fn typechecker_check_errors_helper_is_defined_once() {
 }
 
 #[test]
+fn trait_info_params_has_no_allow_dead_code() {
+    // `TraitInfo::params` is used at 5 call sites (3 in
+    // src/typechecker/mod.rs, 2 in src/typechecker/inference.rs).
+    // A stale `#[allow(dead_code)]` was removed; this lock
+    // catches any reintroduction.
+    let struct_start = TYPECHECKER_MOD_RS
+        .find("pub(super) struct TraitInfo {")
+        .expect("pub(super) struct TraitInfo { exists in src/typechecker/mod.rs");
+    let params_offset = TYPECHECKER_MOD_RS[struct_start..]
+        .find("pub(super) params:")
+        .expect("`pub(super) params:` field exists inside TraitInfo");
+    let region = &TYPECHECKER_MOD_RS[struct_start..struct_start + params_offset];
+    assert!(
+        !region.contains("#[allow(dead_code)]"),
+        "`TraitInfo::params` is used at 5 call sites and must not carry \
+         `#[allow(dead_code)]` — if the field genuinely becomes dead, \
+         delete it, don't mask it."
+    );
+}
+
+#[test]
 fn typechecker_test_helpers_submodule_exists() {
     // Positive lock: the shared module must actually exist in
     // mod.rs so the `use super::super::test_helpers::*;` lines in

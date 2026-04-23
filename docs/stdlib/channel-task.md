@@ -18,7 +18,7 @@ communication between tasks spawned with `task.spawn`.
 | `new` | `(Int?) -> Channel` | Create a channel (0 = rendezvous, N = buffered) |
 | `receive` | `(Channel) -> ChannelResult(a)` | Blocking receive |
 | `recv_timeout` | `(Channel(a), Duration) -> Result(a, ChannelError)` | Blocking receive with a timeout |
-| `select` | `(List(Channel(a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels |
+| `select` | `(List(Channel(a) \| (Channel(a), a))) -> (Channel(a), ChannelResult(a))` | Wait on multiple channels (receive and/or send arms) |
 | `send` | `(Channel, a) -> ()` | Blocking send |
 | `timeout` | `(Int) -> Channel` | Create a channel that closes after N ms |
 | `try_receive` | `(Channel) -> ChannelResult(a)` | Non-blocking receive |
@@ -168,12 +168,27 @@ fn main() {
 ## `channel.select`
 
 ```
-channel.select(ops: List(Channel(a))) -> (Channel(a), ChannelResult(a))
+channel.select(ops: List(Channel(a) | (Channel(a), a))) -> (Channel(a), ChannelResult(a))
 ```
 
-Waits until one of the channels has data or is closed. Takes a list of channels
-and returns a 2-tuple of `(channel, result)` where `result` is `Message(val)`
-for a successful receive or `Closed` if the channel is closed.
+Waits until one of the operations in `ops` can make progress. Each element of
+the list is either:
+
+- a bare `Channel(a)` — a **receive** arm that becomes ready when the channel
+  has a buffered value, a rendezvous sender parked on it, or has been closed;
+- a `(Channel(a), value)` tuple — a **send** arm that becomes ready when the
+  channel has buffer capacity or a rendezvous receiver parked on it.
+
+The call returns a 2-tuple of `(channel, result)` identifying the arm that
+won and the outcome:
+
+- `(ch, Message(val))` — a receive arm completed with `val`.
+- `(ch, Closed)` — a receive arm's channel is closed and drained.
+- `(ch, Sent)` — a send arm completed (the value was handed off).
+
+Receive and send arms can be mixed freely in the same call.
+
+Receive-only form:
 
 ```silt
 import channel
@@ -189,6 +204,19 @@ fn main() {
     }
 }
 ```
+
+Send-form sketch — the list element `(out, 42)` is a send arm; when the
+arm fires, the match result is `(^out, Sent)`:
+
+```
+match channel.select([(out, 42)]) {
+    (^out, Sent)        -> ...  -- the send landed
+    _                   -> ...
+}
+```
+
+Send and receive arms can be mixed in the same list so a task can race a
+send against a receive and commit to whichever becomes ready first.
 
 
 ## `channel.send`

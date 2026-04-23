@@ -142,7 +142,6 @@ pub(super) struct TraitInfo {
     /// Type-parameter names on the trait itself (e.g.
     /// `trait TryInto(b)` yields `[b]`). Empty for parameter-less
     /// traits — the common case.
-    #[allow(dead_code)]
     pub(super) params: Vec<Symbol>,
     /// Fresh TyVars allocated for each trait parameter at
     /// `register_trait_decl`. Stored so impls (and where clauses with

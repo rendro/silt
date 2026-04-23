@@ -856,7 +856,7 @@ fn main() {
         "expected type error mentioning both Bytes and String, got: {errs:?}"
     );
     assert!(
-        joined.contains("type mismatch") || joined.contains("expected"),
-        "expected a type-mismatch-shaped error, got: {errs:?}"
+        joined.contains("type mismatch"),
+        "expected a type-mismatch-shaped error with the 'type mismatch' header phrase, got: {errs:?}"
     );
 }
