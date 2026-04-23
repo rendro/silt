@@ -334,8 +334,17 @@ fn test_gated_variant_without_import_fails_compile() {
         "expected compile error for bare IoNotFound without import io"
     );
     let err = format!("{:?}", result.unwrap_err());
+    // Narrow lock: the gating diagnostic emitted at src/compiler/mod.rs
+    // (ExprKind::Ident arm) is the format string
+    //     "'{name}' requires `import {required}`"
+    // For IoNotFound without `import io`, this renders as:
+    //     'IoNotFound' requires `import io`
+    // The previous OR (`import io` || `IoNotFound`) let `IoNotFound`
+    // trivially match any "unknown identifier" regression. Pin the
+    // exact gate-message fragment that proves the gate (not some
+    // unrelated error path) is what fired.
     assert!(
-        err.contains("import io") || err.contains("IoNotFound"),
-        "error should mention the missing import or the variant; got {err}"
+        err.contains("requires `import io`"),
+        "error should be the gating diagnostic ``requires `import io```; got {err}"
     );
 }

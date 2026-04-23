@@ -47,9 +47,16 @@ fn json_parse_old_order_rejected() {
         }
     "#;
     let errs = type_errors(src);
+    // Narrow lock: the diagnostic that fires is a `type mismatch:
+    // expected String, got TypeOf(...)` on the first argument (Todo
+    // is a type descriptor, but `json.parse` now expects the string
+    // body first). A bare `!is_empty()` accepts any error, including
+    // unrelated regressions (e.g. accidental parse error in the
+    // fixture). Locking on the unify substring pins the arg-order
+    // rejection specifically.
     assert!(
-        !errs.is_empty(),
-        "old `json.parse(Todo, body)` order should fail typecheck now"
+        errs.iter().any(|m| m.contains("type mismatch: expected String")),
+        "old `json.parse(Todo, body)` should produce `type mismatch: expected String, got ...`; got: {errs:?}"
     );
 }
 

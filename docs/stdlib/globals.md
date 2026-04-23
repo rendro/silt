@@ -42,7 +42,9 @@ No module qualification is needed once imported.
 | `Message` | `(a) -> ChannelResult(a)` | `import channel` | Wraps a received channel value |
 | `Closed` | `ChannelResult(a)` | `import channel` | Channel is closed |
 | `Empty` | `ChannelResult(a)` | `import channel` | Channel buffer empty (non-blocking receive) |
-| `Sent` | `ChannelResult(a)` | `import channel` | Reserved for future select-send support |
+| `Sent` | `ChannelResult(a)` | `import channel` | Result variant for a completed `channel.select` send arm |
+| `Recv` | `(Channel(a)) -> ChannelOp(a)` | `import channel` | Build a receive arm for `channel.select` |
+| `Send` | `(Channel(a), a) -> ChannelOp(a)` | `import channel` | Build a send arm for `channel.select` |
 | `Monday`..`Sunday` | `Weekday` | `import time` | Day-of-week constructors |
 | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` | `Method` | `import http` | HTTP method constructors |
 

@@ -124,7 +124,7 @@
     },
     "modules": {
       "name": "entity.name.namespace.silt",
-      "match": "\\b(list|string|int|float|map|set|result|option|io|math|channel|task|regex|json|test|fs|env|http|time)\\b(?=\\.)"
+      "match": "\\b(list|string|int|float|map|set|result|option|io|math|channel|task|regex|json|test|fs|env|http|time|toml|postgres|bytes|crypto|encoding|tcp|stream|uuid)\\b(?=\\.)"
     },
     "function-def": {
       "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",

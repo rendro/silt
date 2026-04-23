@@ -3067,9 +3067,14 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
 
     // Primitives + List: all four auto-derived traits.
+    // `ExtFloat` is the widened-float result of `Float / Float` (see
+    // `src/typechecker/inference.rs:2326-2333`); it must auto-derive all
+    // four built-in traits so that a divided Float can flow through a
+    // `Display`/`Equal`/`Compare`/`Hash` trait bound without a spurious
+    // "type 'ExtFloat' does not implement trait ..." rejection.
     register_auto_derived_impls_for(
         checker,
-        &["Int", "Float", "Bool", "String", "()"],
+        &["Int", "Float", "ExtFloat", "Bool", "String", "()"],
         all_auto_traits,
     );
     register_auto_derived_impls_for(checker, &["List"], all_auto_traits);

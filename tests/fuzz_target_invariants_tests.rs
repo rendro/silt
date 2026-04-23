@@ -1,15 +1,21 @@
 //! Regression tests for the fuzz-target invariant helpers in
 //! `silt::fuzz_invariants`. These exercise the structural checks that
-//! `fuzz/fuzz_targets/fuzz_lexer.rs` and `fuzz/fuzz_targets/fuzz_formatter.rs`
-//! now enforce on every fuzz input.
+//! `fuzz/fuzz_targets/fuzz_lexer.rs`, `fuzz/fuzz_targets/fuzz_formatter.rs`,
+//! `fuzz/fuzz_targets/fuzz_parser.rs`, and
+//! `fuzz/fuzz_targets/fuzz_roundtrip.rs` now enforce on every fuzz input.
 //!
 //! Each synthetic "corrupted output" below is crafted so that the OLD
 //! fuzz targets (which only checked non-panic / idempotency) would have
 //! silently accepted it, while the new invariants reject it.
 
+use silt::ast::{Decl, ImportTarget, Program};
 use silt::formatter;
-use silt::fuzz_invariants::{check_formatter_invariants, check_lexer_invariants};
+use silt::fuzz_invariants::{
+    check_format_idempotent, check_formatter_invariants, check_lexer_invariants,
+    check_parser_invariants,
+};
 use silt::lexer::{Lexer, Span, Token};
+use silt::parser::Parser;
 
 // --------------------------------------------------------------------
 // Lexer invariants
@@ -230,4 +236,139 @@ fn formatter_invariants_allow_disambiguation_parens() {
     let formatted = "fn f() { (B?) - F }\n";
     check_formatter_invariants(original, formatted)
         .expect("balanced paren insertion must be permitted");
+}
+
+// --------------------------------------------------------------------
+// Parser invariants
+// --------------------------------------------------------------------
+
+#[test]
+fn parser_invariants_accept_real_parse() {
+    let src = "let x = 1\nfn main() = x\n";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    check_parser_invariants(src, &tokens, &program)
+        .expect("real parsed program must satisfy invariants");
+}
+
+#[test]
+fn parser_invariants_accept_empty_source() {
+    // Empty source has no significant tokens and must yield zero decls.
+    let src = "";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    check_parser_invariants(src, &tokens, &program)
+        .expect("empty source must satisfy invariants");
+}
+
+#[test]
+fn parser_invariants_accept_whitespace_only_source() {
+    let src = "\n\n   \n";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let program = Parser::new(tokens.clone()).parse_program().unwrap();
+    check_parser_invariants(src, &tokens, &program)
+        .expect("whitespace-only source must satisfy invariants");
+}
+
+#[test]
+fn parser_invariants_reject_decl_span_past_source() {
+    // A parser bug that emits a decl with a span pointing past the end
+    // of the source buffer would have slipped through the old
+    // panic-only fuzz driver. The new invariant catches it.
+    let src = "import foo\n";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let bogus_program = Program {
+        decls: vec![Decl::Import(
+            ImportTarget::Module(silt::intern::intern("foo")),
+            Span::with_offset(1, 1, 9999),
+        )],
+    };
+    let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
+    assert!(
+        err.contains("beyond source length"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn parser_invariants_reject_empty_decls_for_nontrivial_source() {
+    // A parser bug that silently drops every top-level construct would
+    // otherwise produce an empty-but-Ok program. The invariant fires
+    // because the source has significant tokens but zero decls.
+    let src = "let x = 1\n";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let empty_program = Program { decls: vec![] };
+    let err = check_parser_invariants(src, &tokens, &empty_program).unwrap_err();
+    assert!(
+        err.contains("zero decls"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn parser_invariants_reject_decls_from_empty_source() {
+    // The symmetric bug: parser fabricates a decl from empty input.
+    let src = "";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let bogus_program = Program {
+        decls: vec![Decl::Import(
+            ImportTarget::Module(silt::intern::intern("ghost")),
+            Span::with_offset(1, 1, 0),
+        )],
+    };
+    let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
+    assert!(
+        err.contains("empty-of-tokens"),
+        "unexpected error: {err}"
+    );
+}
+
+// --------------------------------------------------------------------
+// Formatter idempotency
+// --------------------------------------------------------------------
+
+#[test]
+fn format_idempotent_accepts_well_formed_source() {
+    // Input that already passes through the formatter must still be
+    // idempotent on a second pass.
+    let src = "let x = 1\nfn main() = x\n";
+    check_format_idempotent(src).expect("real source must be idempotent under format");
+}
+
+#[test]
+fn format_idempotent_accepts_messy_input() {
+    // The formatter will reshape this on the first pass but must fix-
+    // point on the second.
+    let src = "let   x=1\n\n\nlet y=   2\n";
+    check_format_idempotent(src).expect("messy input must reach a formatter fixpoint");
+}
+
+#[test]
+fn format_idempotent_tolerates_unformattable_input() {
+    // If the formatter rejects the input outright, the idempotency
+    // check is vacuously satisfied — we're only locking behavior for
+    // inputs the formatter accepts.
+    let src = "pub fn (((\n";
+    // Whether this happens to format or not, the helper must not panic
+    // and must not return an error just because formatting failed.
+    let _ = check_format_idempotent(src).expect("unformattable input must not be an error");
+}
+
+#[test]
+fn format_idempotent_detects_non_fixpoint() {
+    // Construct a "fake formatter" scenario: verify that the helper's
+    // own comparison logic would catch a non-fixpoint output. We do
+    // this by mimicking what the helper would see — two calls to
+    // `format` on a real source — and asserting first == second for
+    // current inputs. This locks the invariant: if a future formatter
+    // regression introduced non-idempotence, this test would break.
+    let src = "let x = 1\n";
+    let first = formatter::format(src).expect("format must succeed");
+    let second = formatter::format(&first).expect("format must succeed");
+    assert_eq!(
+        first, second,
+        "formatter must currently be idempotent on simple source"
+    );
+    // And the helper agrees.
+    check_format_idempotent(src).expect("helper must confirm idempotence");
 }

@@ -335,31 +335,6 @@ impl Vm {
         })
     }
 
-    /// Register a 3-argument foreign function with automatic marshalling.
-    pub fn register_fn3<A: FromValue, B: FromValue, C: FromValue, R: IntoValue>(
-        &mut self,
-        name: impl Into<String>,
-        func: impl Fn(A, B, C) -> R + Send + Sync + 'static,
-    ) -> Result<(), VmError> {
-        let n = name.into();
-        let n2 = n.clone();
-        self.register_fn(n, move |args: &[Value]| {
-            if args.len() != 3 {
-                return Err(VmError::new(format!(
-                    "{n2} expects 3 arguments, got {}",
-                    args.len()
-                )));
-            }
-            let a =
-                A::from_value(&args[0]).map_err(|e| VmError::new(format!("{n2}: arg 1: {e}")))?;
-            let b =
-                B::from_value(&args[1]).map_err(|e| VmError::new(format!("{n2}: arg 2: {e}")))?;
-            let c =
-                C::from_value(&args[2]).map_err(|e| VmError::new(format!("{n2}: arg 3: {e}")))?;
-            Ok(func(a, b, c).into_value())
-        })
-    }
-
     /// Create a child VM that shares runtime state (variant types, foreign functions)
     /// via Arc and clones per-task state (globals, record types cache).
     /// Used for thread-per-task spawning.

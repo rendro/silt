@@ -1037,6 +1037,41 @@ impl TypeChecker {
         }
     }
 
+    /// BROKEN (round 52): duplicate explicit-sub field names in a record
+    /// pattern (e.g. `Point { x: a, x: b }`) slipped past the round-51
+    /// binder-dedup guard because the shorthand form `{ x, x }` binds the
+    /// same name twice (caught by `check_pattern_duplicate_bindings`) but
+    /// the explicit-sub form binds distinct names (`a` and `b`). The
+    /// field-name duplicate itself was never checked. Record literals and
+    /// record type declarations already enforce this rule; the
+    /// record-pattern arm is the missing sibling. Walk `fields` once and
+    /// emit one diagnostic per duplicate field name, anchored at the
+    /// second occurrence.
+    pub(super) fn check_record_pattern_duplicate_fields(
+        &mut self,
+        fields: &[(Symbol, Option<Pattern>)],
+        outer_span: Span,
+    ) {
+        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+        for (field_name, sub_pat) in fields.iter() {
+            if !seen.insert(*field_name) {
+                // Best-effort span: the field-name span isn't preserved
+                // in the AST (`fields: Vec<(Symbol, Option<Pattern>)>`),
+                // so point at the sub-pattern's span when present —
+                // that's adjacent to the offending field name. Fall back
+                // to the outer record-pattern span otherwise.
+                let dup_span = sub_pat.as_ref().map(|p| p.span).unwrap_or(outer_span);
+                self.error(
+                    format!(
+                        "duplicate field '{}' in record pattern",
+                        resolve(*field_name)
+                    ),
+                    dup_span,
+                );
+            }
+        }
+    }
+
     /// Walk `pattern` in conjunctive-scope order, accumulating binder
     /// symbols into `seen`. When a name is seen twice in the same
     /// conjunctive scope, call `on_dup` with the name and the span of the
@@ -1326,6 +1361,12 @@ impl TypeChecker {
                 }
             }
             PatternKind::Record { name, fields, .. } => {
+                // BROKEN (round 52): duplicate field names in record
+                // patterns slipped through — both the explicit-sub form
+                // (`Point { x: a, x: b }` — distinct binders, so the
+                // round-51 binder-dedup walk can't see the collision) and
+                // any latent shorthand case. See the helper's rustdoc.
+                self.check_record_pattern_duplicate_fields(fields, pattern.span);
                 // BROKEN-4: `let Name { f } = v` used to silently bind `f`
                 // to a fresh TyVar when the base wasn't a record, or when
                 // the field didn't exist. Both were deferred to VM runtime
@@ -3559,6 +3600,11 @@ impl TypeChecker {
                 }
             }
             PatternKind::Record { name, fields, .. } => {
+                // BROKEN (round 52): same duplicate-field guard as in
+                // `bind_pattern`'s Record arm — match-arm record patterns
+                // flow through `check_pattern`, so the check has to fire
+                // on both paths.
+                self.check_record_pattern_duplicate_fields(fields, pattern.span);
                 if let Some(rec_name) = name {
                     if let Some(rec_info) = self.records.get(rec_name).cloned() {
                         let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =

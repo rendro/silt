@@ -173,6 +173,100 @@ fn main() {
     );
 }
 
+/// Round-52 audit G2/G3: lock the `Available After Import` summary table
+/// in `docs/stdlib/globals.md`. This is a separate regression surface
+/// from the per-variant `## `Sent`` prose section (already locked by
+/// `globals_sent_section_is_not_marked_reserved`). Prior to round-52 the
+/// table row for `Sent` still read "Reserved for future select-send
+/// support", and the `Recv` / `Send` `ChannelOp` constructors — registered
+/// globally by `src/typechecker/builtins.rs` and dispatched by
+/// `src/vm/dispatch.rs` — were missing from the table entirely.
+///
+/// This test pins only the summary table (between the `## Available After
+/// Import` heading and the next `## ` heading) so that a reader skimming
+/// top-down still discovers all `import channel` globals, and so that the
+/// stale "reserved for future" wording cannot sneak back into the row.
+#[test]
+fn globals_available_after_import_table_covers_select_ops() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc_path = manifest_dir.join("docs").join("stdlib").join("globals.md");
+    let body = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
+
+    // Narrow to just the `## Available After Import` section — this is
+    // the summary table, not the per-variant prose further down.
+    let heading_idx = body
+        .find("## Available After Import")
+        .expect("docs/stdlib/globals.md must have a `## Available After Import` section");
+    let rest = &body[heading_idx..];
+    // Stop at the next `## ` heading (which begins the per-variant
+    // prose, e.g. `## `print``).
+    let section_end = rest[3..].find("\n## ").map(|i| i + 3).unwrap_or(rest.len());
+    let table = &rest[..section_end];
+
+    // (a) The `Sent` row must not still be marked as reserved — the
+    //     per-variant `## `Sent`` section was updated in round 51/52 but
+    //     the table row lagged behind until round-52 audit G2.
+    let lower = table.to_ascii_lowercase();
+    assert!(
+        !lower.contains("reserved for future"),
+        "{}: the `Available After Import` table still contains \
+         'Reserved for future' phrasing. The `Sent` row must describe the \
+         current behavior (result variant produced by a completed \
+         `channel.select` send arm). Table contents:\n{}",
+        doc_path.display(),
+        table
+    );
+
+    // (b) The table must have a row for each of `Sent`, `Recv`, and
+    //     `Send`. The `| `Name` |` prefix is how every existing row in
+    //     this table starts, so matching that form keeps the assertion
+    //     tight against the table grammar rather than matching stray
+    //     references elsewhere in the file.
+    for name in &["Sent", "Recv", "Send"] {
+        let needle = format!("| `{name}` |");
+        assert!(
+            table.contains(&needle),
+            "{}: the `Available After Import` table is missing a row for \
+             `{name}`. These constructors are globally callable after \
+             `import channel` (registered in `src/typechecker/builtins.rs` \
+             and dispatched by `src/vm/dispatch.rs`). Table contents:\n{}",
+            doc_path.display(),
+            table
+        );
+    }
+
+    // (c) The `Recv` and `Send` rows must describe their role in
+    //     `channel.select` — the one and only legal use site. Matching
+    //     the row substring (from the row-start marker up to the next
+    //     newline) keeps the assertion scoped to the row.
+    for name in &["Recv", "Send"] {
+        let row_start = table
+            .find(&format!("| `{name}` |"))
+            .expect("row presence already asserted above");
+        let row_end = table[row_start..]
+            .find('\n')
+            .map(|i| row_start + i)
+            .unwrap_or(table.len());
+        let row = &table[row_start..row_end];
+        assert!(
+            row.contains("ChannelOp"),
+            "{}: the `{name}` row must name the `ChannelOp(a)` result \
+             type — that is the unified `channel.select` element shape. \
+             Row was:\n{}",
+            doc_path.display(),
+            row
+        );
+        assert!(
+            row.contains("channel.select") || row.contains("select"),
+            "{}: the `{name}` row must mention `channel.select` so \
+             readers can find the use site. Row was:\n{}",
+            doc_path.display(),
+            row
+        );
+    }
+}
+
 /// Round-23 B1: mixed send/receive arms must also work. This exercises
 /// the same `SelectOpKind` dispatch but makes the receive arm the one
 /// that wins — guarding against a regression that special-cases only

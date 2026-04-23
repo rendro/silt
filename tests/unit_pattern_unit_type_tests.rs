@@ -95,11 +95,22 @@ fn main() {
         !errs.is_empty(),
         "expected a type error for `let (a, b) = ()`, got none"
     );
-    let hit_mismatch = errs
-        .iter()
-        .any(|m| m.contains("type mismatch") || m.contains("tuple length mismatch"));
+    // Narrow lock: for `let (a, b) = ()`, the scrutinee type `()`
+    // resolves to `Type::Unit`, which is NOT a `Type::Tuple`, so the
+    // non-tuple branch in src/typechecker/inference.rs
+    // (PatternKind::Tuple) unifies Unit against a fresh tuple shape
+    // `(_, _)`. That triggers the general unify diagnostic, which
+    // renders as "type mismatch: expected (_, _), got ()". The old
+    // OR included "tuple length mismatch" — but that message is only
+    // emitted when the scrutinee is already a Tuple with a differing
+    // arity (e.g. `let (a, b) = (1, 2, 3)`); against Unit the arity
+    // branch never fires, so that arm was dead. Pin the pattern-shape
+    // fragment `expected (_, _)` so a regression that silently
+    // accepts a non-tuple scrutinee (the round-15 BROKEN behavior)
+    // would fail this assertion.
+    let hit_mismatch = errs.iter().any(|m| m.contains("expected (_, _)"));
     assert!(
         hit_mismatch,
-        "expected a tuple mismatch diagnostic, got: {errs:?}"
+        "expected `type mismatch: expected (_, _), got ()` diagnostic, got: {errs:?}"
     );
 }

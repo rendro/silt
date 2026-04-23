@@ -156,7 +156,8 @@ impl TypeChecker {
             ExprKind::Unary(_, e)
             | ExprKind::QuestionMark(e)
             | ExprKind::Return(Some(e))
-            | ExprKind::FieldAccess(e, _) => {
+            | ExprKind::FieldAccess(e, _)
+            | ExprKind::Ascription(e, _) => {
                 self.check_unresolved_in_expr(e);
             }
             ExprKind::Loop { bindings, body } => {

@@ -329,3 +329,119 @@ fn main() { println(add(1, 2)) }
         "`fn add(a, b)` must remain legal, got: {errs:?}"
     );
 }
+
+// ── Round 52: duplicate FIELD names in record patterns ──────────────
+//
+// BROKEN (round 52): explicit-sub record-pattern fields
+// `Point { x: a, x: b }` slipped past round-51's binder-dedup walk
+// because each sub-pattern binds a *distinct* name (`a` and `b`), so
+// the binder map never sees a collision. The field-name duplicate
+// itself was never checked. Record literals and record type
+// declarations already enforce this rule — the record-pattern arm
+// was the missing sibling.
+//
+// Fix: `check_record_pattern_duplicate_fields` in
+// `src/typechecker/inference.rs`, called from both the `bind_pattern`
+// and `check_pattern` Record arms. Error wording anchored verbatim
+// below to pin the diagnostic.
+
+/// Verbatim phrase emitted by `check_record_pattern_duplicate_fields`.
+const FIELD_ANCHOR: &str = "duplicate field";
+
+#[test]
+fn match_record_pattern_duplicate_field_explicit_sub_rejected() {
+    // Primary round-52 repro: `match p { Point { x: a, x: b } -> ... }`
+    // used to silently typecheck and runtime-evaluate to `a + b`
+    // (printing `2`). The binders `a` and `b` are distinct so the
+    // round-51 guard never saw this as a duplicate.
+    let errs = type_errors(
+        r#"
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let r = match p {
+    Point { x: a, x: b } -> a + b
+  }
+  println(r)
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains(FIELD_ANCHOR) && e.contains("'x'")),
+        "expected \"duplicate field 'x' in record pattern\" for `Point {{ x: a, x: b }}` in match, got: {errs:?}"
+    );
+}
+
+#[test]
+fn let_record_pattern_duplicate_field_explicit_sub_rejected() {
+    // Round-52 bind_pattern variant: `let Point { x: a, x: b } = p`.
+    // The match-arm path goes through `check_pattern`; the `let`-binding
+    // path goes through `bind_pattern`. Both arms must enforce the
+    // dedup — this test locks the `bind_pattern` side.
+    let errs = type_errors(
+        r#"
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let Point { x: a, x: b } = p
+  println(a + b)
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains(FIELD_ANCHOR) && e.contains("'x'")),
+        "expected \"duplicate field 'x' in record pattern\" for `let Point {{ x: a, x: b }} = p`, got: {errs:?}"
+    );
+}
+
+#[test]
+fn match_record_pattern_field_repeated_three_times_rejected() {
+    // Edge case: field `x` appears three times. The walk inserts into
+    // a HashSet and reports each non-first occurrence — so we should
+    // see the anchor at least once (the second occurrence). The test
+    // doesn't pin the count, only that the offending field is flagged.
+    let errs = type_errors(
+        r#"
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let r = match p {
+    Point { x: a, x: b, x: c } -> a + b + c
+  }
+  println(r)
+}
+"#,
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains(FIELD_ANCHOR) && e.contains("'x'")),
+        "expected \"duplicate field 'x' in record pattern\" for `Point {{ x: a, x: b, x: c }}`, got: {errs:?}"
+    );
+}
+
+#[test]
+fn record_pattern_distinct_fields_still_typechecks() {
+    // POSITIVE control: same structural shape as the negative repros
+    // (explicit-sub bindings on every field) but with distinct field
+    // names. Must still typecheck — a regression in the dedup walk
+    // accidentally rejecting every multi-field record pattern would
+    // trip this.
+    let errs = type_errors(
+        r#"
+type Point { x: Int, y: Int }
+fn main() {
+  let p = Point { x: 1, y: 2 }
+  let r = match p {
+    Point { x: a, y: b } -> a + b
+  }
+  println(r)
+}
+"#,
+    );
+    assert!(
+        errs.is_empty(),
+        "`Point {{ x: a, y: b }}` must remain legal, got: {errs:?}"
+    );
+}

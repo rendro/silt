@@ -468,9 +468,17 @@ fn main() -> String {
         err.contains("time.format_date"),
         "error should be tagged time.format_date, got: {err}"
     );
+    // Narrow lock: `%z` is a `Fixed::TimezoneOffset`, which routes to
+    // the `is_tz` branch in src/builtins/data.rs::validate_strftime_pattern
+    // and emits "timezone specifier in '<pattern>' is not valid for a
+    // Date; silt DateTimes are naive (no TZ)". The old OR included
+    // "time specifier", which is the message for time-only
+    // (`%H`/`%M`/`%S`/...) specifiers on a Date — a different code
+    // path that cannot fire for `%z`. Dropping that dead arm pins
+    // the timezone-specific rejection.
     assert!(
-        err.to_lowercase().contains("timezone") || err.to_lowercase().contains("time specifier"),
-        "error should mention 'timezone' or 'time specifier', got: {err}"
+        err.to_lowercase().contains("timezone specifier"),
+        "error should mention 'timezone specifier', got: {err}"
     );
     assert!(
         !err.contains("panicked"),

@@ -180,14 +180,6 @@ impl std::fmt::Display for TypeError {
 
 // ── Free functions on types ─────────────────────────────────────────
 
-/// Count the number of parameters in a function type.
-pub fn count_params(ty: &Type) -> usize {
-    match ty {
-        Type::Fun(params, _) => params.len(),
-        _ => 0,
-    }
-}
-
 /// Collect free type variables in a type.
 pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
     match ty {

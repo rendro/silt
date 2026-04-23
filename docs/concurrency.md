@@ -292,12 +292,38 @@ let h = task.spawn(fn() {
   42
 })
 task.cancel(h)
--- h is marked as Cancelled; it will not run further
+let r = task.join(h)  -- Err("cancelled")
 ```
 
-`task.cancel` marks a task as cancelled. The task is removed from the
-scheduler's ready queue and will not execute again. Joining a cancelled task
-produces an error.
+`task.cancel(h)` sets the handle's result to `Err("cancelled")` using
+first-writer-wins semantics: if the task has already completed with some other
+result, `task.cancel` is a no-op on the handle. Its effect on the running task
+depends on where that task is at the moment of cancellation:
+
+- **Task is currently parked** (blocked on a channel receive/send, a
+  `task.join`, a `task.sleep`, a timer, or similar): the pending wake
+  registrations are torn down, the scheduler drops the task from its live
+  set, and the task will not be resumed. The handle resolves to
+  `Err("cancelled")`.
+- **Task is currently running** (executing a worker slice between parks, or
+  in a tight non-yielding loop): the handle's result is set to
+  `Err("cancelled")` immediately, but the running slice continues to
+  execute until its next park point or natural completion. Any side effects
+  the slice performs before it next parks — writes to shared cells, spawns
+  of new tasks, channel sends, I/O — run to completion. When the task
+  eventually parks or finishes, its own completion result is discarded
+  (first-writer-wins: the cancel already won), and a subsequent
+  `task.join(h)` still observes `Err("cancelled")`.
+
+`task.cancel` is therefore **not** a synchronous stop signal. Treat it as a
+request that the handle be marked cancelled; to know the task is actually done,
+pair it with `task.join` and treat the `Err("cancelled")` return as the
+authoritative "task is done" signal:
+
+```silt
+task.cancel(h)
+let _ = task.join(h)  -- returns Err("cancelled") once the task is settled
+```
 
 Returns `Unit`.
 

@@ -675,9 +675,17 @@ fn test_add_git_nonexistent_branch_errors() {
         .unwrap();
     assert!(!out.status.success(), "expected nonexistent branch to fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // Narrow lock: src/cli/add.rs emits
+    //     "silt add: cannot resolve {ref_kind} `{ref}` in `{url}`: {e}"
+    // from `resolve_ref`'s error mapping. The old OR accepted "not
+    // found" too, which is so generic it could match unrelated
+    // failures (`git: command not found`, `file not found`, etc.).
+    // Pin the `cannot resolve` prefix emitted by the add-command
+    // wrapper so a regression that swaps this error for a generic
+    // "ref ... not found" would fail.
     assert!(
-        stderr.contains("cannot resolve") || stderr.contains("not found"),
-        "expected resolution-failure diagnostic; got: {stderr}"
+        stderr.contains("cannot resolve"),
+        "expected `silt add: cannot resolve ...` diagnostic; got: {stderr}"
     );
 }
 

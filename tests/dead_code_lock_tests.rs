@@ -18,6 +18,8 @@ const VM_RUNTIME_RS: &str = include_str!("../src/vm/runtime.rs");
 const CLI_PIPELINE_RS: &str = include_str!("../src/cli/pipeline.rs");
 const TYPECHECKER_MOD_RS: &str = include_str!("../src/typechecker/mod.rs");
 const COMPILER_MOD_RS: &str = include_str!("../src/compiler/mod.rs");
+const TYPES_RS: &str = include_str!("../src/types.rs");
+const SCHEDULER_TEST_SUPPORT_RS: &str = include_str!("../src/scheduler/test_support.rs");
 
 // ── Deleted items stay deleted ──────────────────────────────────────
 
@@ -319,5 +321,61 @@ fn typechecker_test_helpers_submodule_exists() {
          is the single source of truth for the typechecker test-helper \
          trio — don't delete it without porting the helpers somewhere \
          else AND updating the three count-locks above"
+    );
+}
+
+// ── Round-52: internal-only dead pubs stay deleted ─────────────────
+//
+// The round-52 audit found four `pub` items in the internal tree
+// (not part of the public API by virtue of crate structure, but
+// `pub` on their defining types/modules) that had zero callers
+// anywhere in `src/`, `tests/`, `benches/`, `fuzz/`, or `examples/`.
+// They were internal-only dead surface. Deletion is
+// behaviour-identical. These locks make the deletions stick.
+
+#[test]
+fn types_count_params_fn_stays_deleted() {
+    // `pub fn count_params(ty: &Type) -> usize` in src/types.rs.
+    // Zero callers at time of deletion.
+    assert!(
+        !TYPES_RS.contains("fn count_params"),
+        "types::count_params was deleted — don't resurrect it without a real caller"
+    );
+}
+
+#[test]
+fn vm_register_fn3_stays_deleted() {
+    // `Vm::register_fn3<A, B, C, R>` — no caller used the
+    // 3-argument marshalling helper. `register_fn`, `register_fn1`,
+    // and `register_fn2` remain live; `register_fn3` was the
+    // arity-3 variant that nobody called.
+    assert!(
+        !VM_MOD_RS.contains("fn register_fn3"),
+        "Vm::register_fn3 was deleted — don't resurrect it without a real caller"
+    );
+}
+
+#[test]
+fn scheduler_test_support_run_trials_stays_deleted() {
+    // `pub fn run_trials(source, iterations, per_trial_budget)` in
+    // src/scheduler/test_support.rs. The convenience wrapper had
+    // zero callers — migrated tests always invoke
+    // `InProcessRunner::run_trial` directly because they need
+    // per-trial budget control.
+    assert!(
+        !SCHEDULER_TEST_SUPPORT_RS.contains("fn run_trials"),
+        "scheduler::test_support::run_trials was deleted — don't resurrect it without a real caller"
+    );
+}
+
+#[test]
+fn scheduler_test_support_stdout_contains_stays_deleted() {
+    // `TrialOutcome::stdout_contains(&self, needle)` in
+    // src/scheduler/test_support.rs. Zero callers — tests call
+    // `outcome.stdout.contains(needle)` directly on the public
+    // `stdout` field instead of going through the helper.
+    assert!(
+        !SCHEDULER_TEST_SUPPORT_RS.contains("fn stdout_contains"),
+        "TrialOutcome::stdout_contains was deleted — don't resurrect it without a real caller"
     );
 }

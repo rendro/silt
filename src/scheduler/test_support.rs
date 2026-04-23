@@ -126,13 +126,6 @@ impl TrialOutcome {
         }
     }
 
-    /// True if `stdout` contains the given substring. Mirrors the
-    /// `res.stdout.contains("sum=136")` shape used in every migrated
-    /// test.
-    pub fn stdout_contains(&self, needle: &str) -> bool {
-        self.stdout.contains(needle)
-    }
-
     /// True if the run completed without error (`vm.run` returned
     /// `Ok`) AND did not time out. The subprocess equivalent is
     /// `exit == Some(0)`.
@@ -339,22 +332,6 @@ static TRIAL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn trial_id() -> u64 {
     TRIAL_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-/// Run `source` `iterations` times in-process and return the per-trial
-/// outcomes. Convenience wrapper for the common shape used by every
-/// migrated test: build a runner, set a budget, loop.
-///
-/// Tests that need different budgets per trial (e.g. one warm-up
-/// trial at 15s, then 49 fast trials at 2s) should invoke
-/// `InProcessRunner::run_trial` directly.
-pub fn run_trials(
-    source: &str,
-    iterations: usize,
-    per_trial_budget: Duration,
-) -> Vec<TrialOutcome> {
-    let runner = InProcessRunner::new(source).with_budget(per_trial_budget);
-    (0..iterations).map(|_| runner.run_trial()).collect()
 }
 
 /// Aggregate counters from a slice of trial outcomes. Used by every

@@ -15,7 +15,7 @@ syntax keyword siltBuiltin print println panic
 syntax keyword siltConstructor Ok Err Some None Stop Continue Message Closed Empty
 
 " ── Module names (before the dot) ───────────────────────────────────
-syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\)\>\ze\."
+syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\)\>\ze\."
 
 " ── Comments ────────────────────────────────────────────────────────
 syntax match siltLineComment "--.*$" contains=siltTodo

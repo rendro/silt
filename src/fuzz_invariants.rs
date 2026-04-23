@@ -16,6 +16,7 @@
 //! `crate::parser`, and `crate::formatter`, and is deliberately kept
 //! side-effect-free so it stays safe to call from `no_main` fuzz drivers.
 
+use crate::ast::{Decl, Program};
 use crate::lexer::{Lexer, Span, SpannedToken, Token};
 use crate::parser::Parser;
 
@@ -227,6 +228,107 @@ pub fn check_formatter_invariants(original: &str, formatted: &str) -> Result<(),
         return Err("original parsed but formatted output did not".into());
     }
 
+    Ok(())
+}
+
+/// Extract the declaration's top-level span. Used by
+/// [`check_parser_invariants`] to validate that every `Decl` points into
+/// the source buffer the parser was given (not past the end).
+fn decl_span(decl: &Decl) -> Span {
+    match decl {
+        Decl::Fn(f) => f.span,
+        Decl::Type(t) => t.span,
+        Decl::Trait(t) => t.span,
+        Decl::TraitImpl(i) => i.span,
+        Decl::Import(_, span) => *span,
+        Decl::Let { span, .. } => *span,
+    }
+}
+
+/// Verify structural invariants on a successful `Parser::parse_program`
+/// result. The caller must have already lexed `source` into `tokens`
+/// and produced `program` by calling `Parser::new(tokens).parse_program()`.
+///
+/// Current checks:
+///
+/// 1. Every top-level `Decl`'s span offset is `<= source.len()`. A
+///    formatter or parser that silently corrupts spans would otherwise
+///    slip past the other invariants — the fuzzer can't see AST fields
+///    directly, but it can see a panic on this assertion.
+/// 2. If the source contains any "significant" token (excluding
+///    `Newline`, `Eof`, `LParen`, `RParen`), then `program.decls` must
+///    be non-empty. A parser bug that silently drops every top-level
+///    construct would otherwise produce an empty-but-Ok program.
+///    Conversely, empty/whitespace-only source must yield zero decls.
+/// 3. The number of decls is bounded by the number of tokens — trivially
+///    true for a correct parser, but catches pathological duplication
+///    bugs (accidental push-in-a-loop).
+pub fn check_parser_invariants(
+    source: &str,
+    tokens: &[SpannedToken],
+    program: &Program,
+) -> Result<(), String> {
+    let src_len = source.len();
+    for (idx, decl) in program.decls.iter().enumerate() {
+        let span = decl_span(decl);
+        if span.offset > src_len {
+            return Err(format!(
+                "decl at index {idx} has span offset {} beyond source length {}",
+                span.offset, src_len
+            ));
+        }
+    }
+
+    let sig = significant_token_count(tokens);
+    if sig == 0 && !program.decls.is_empty() {
+        return Err(format!(
+            "empty-of-tokens source produced {} decls",
+            program.decls.len()
+        ));
+    }
+    if sig > 0 && program.decls.is_empty() {
+        return Err(format!(
+            "source has {sig} significant tokens but program has zero decls"
+        ));
+    }
+
+    if program.decls.len() > tokens.len() {
+        return Err(format!(
+            "decl count {} exceeds token count {}",
+            program.decls.len(),
+            tokens.len()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Verify that the formatter is idempotent: `format(format(src))` must
+/// equal `format(src)` byte-for-byte. This is a well-known property of
+/// a well-behaved formatter and is complementary to the structural
+/// checks in [`check_formatter_invariants`]: that function compares
+/// original-vs-formatted shape, this one locks down the fixed-point
+/// property.
+///
+/// Returns Ok if `src` fails to format (the formatter may legitimately
+/// reject invalid programs); callers who require parseability should
+/// gate on that separately before calling this.
+pub fn check_format_idempotent(source: &str) -> Result<(), String> {
+    let first = match crate::formatter::format(source) {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    let second = match crate::formatter::format(&first) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("second format pass failed: {e:?}")),
+    };
+    if first != second {
+        return Err(format!(
+            "formatter not idempotent: first pass {} bytes, second pass {} bytes",
+            first.len(),
+            second.len()
+        ));
+    }
     Ok(())
 }
 
