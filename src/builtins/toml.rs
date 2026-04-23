@@ -108,42 +108,25 @@ pub(crate) fn toml_unknown_err<S: Into<String>>(msg: S) -> Value {
 
 /// Dispatch the builtin `trait Error for TomlError` method table.
 /// Routed through `dispatch_builtin`'s "TomlError" module arm, exactly
-/// like `call_io_error_trait`.
+/// like `call_io_error_trait`. Scaffolding lives in
+/// `super::dispatch_error_trait`; this site just supplies the
+/// variant → message rendering.
 pub fn call_toml_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "TomlError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("TomlError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
+                format!("toml syntax error at byte {offset}: {m}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("TomlSyntax", [Value::String(m), Value::Int(offset)]) => {
-                        format!("toml syntax error at byte {offset}: {m}")
-                    }
-                    ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
-                        format!("toml type mismatch: expected {exp}, got {act}")
-                    }
-                    ("TomlMissingField", [Value::String(n)]) => {
-                        format!("toml missing field: {n}")
-                    }
-                    ("TomlUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("TomlError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "TomlError.message: expected TomlError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown TomlError trait method: {name}"
-        ))),
-    }
+            ("TomlTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+                format!("toml type mismatch: expected {exp}, got {act}")
+            }
+            ("TomlMissingField", [Value::String(n)]) => {
+                format!("toml missing field: {n}")
+            }
+            ("TomlUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

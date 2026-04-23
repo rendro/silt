@@ -77,38 +77,21 @@ fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Valu
 
 /// Dispatch the builtin `trait Error for ParseError` method table.
 /// Routed through `dispatch_builtin`'s "ParseError" module arm, mirroring
-/// `call_io_error_trait`.
+/// `call_io_error_trait`. Scaffolding lives in
+/// `super::dispatch_error_trait`; this site just supplies the
+/// variant → message rendering.
 pub fn call_parse_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "ParseError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("ParseError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("ParseEmpty", []) => "cannot parse empty string".to_string(),
+            ("ParseInvalidDigit", [Value::Int(offset)]) => {
+                format!("invalid digit at byte {offset}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("ParseEmpty", []) => "cannot parse empty string".to_string(),
-                    ("ParseInvalidDigit", [Value::Int(offset)]) => {
-                        format!("invalid digit at byte {offset}")
-                    }
-                    ("ParseOverflow", []) => "number too large".to_string(),
-                    ("ParseUnderflow", []) => "number too small".to_string(),
-                    _ => format!("ParseError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "ParseError.message: expected ParseError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown ParseError trait method: {name}"
-        ))),
-    }
+            ("ParseOverflow", []) => "number too large".to_string(),
+            ("ParseUnderflow", []) => "number too small".to_string(),
+            _ => return None,
+        })
+    })
 }
 
 /// Dispatch `int.<name>(args)`.

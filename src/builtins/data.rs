@@ -160,120 +160,69 @@ pub(crate) fn json_unknown_err<S: Into<String>>(msg: S) -> Value {
 
 /// Dispatch the builtin `trait Error for JsonError` method table.
 /// Routed through `dispatch_builtin`'s "JsonError" module arm, exactly
-/// like `call_io_error_trait`.
+/// like `call_io_error_trait`. Scaffolding lives in
+/// `super::dispatch_error_trait`; this site just supplies the
+/// variant → message rendering.
 pub fn call_json_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "JsonError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("JsonError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("JsonSyntax", [Value::String(m), Value::Int(offset)]) => {
+                format!("json syntax error at byte {offset}: {m}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("JsonSyntax", [Value::String(m), Value::Int(offset)]) => {
-                        format!("json syntax error at byte {offset}: {m}")
-                    }
-                    ("JsonTypeMismatch", [Value::String(exp), Value::String(act)]) => {
-                        format!("json type mismatch: expected {exp}, got {act}")
-                    }
-                    ("JsonMissingField", [Value::String(n)]) => {
-                        format!("json missing field: {n}")
-                    }
-                    ("JsonUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("JsonError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "JsonError.message: expected JsonError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown JsonError trait method: {name}"
-        ))),
-    }
+            ("JsonTypeMismatch", [Value::String(exp), Value::String(act)]) => {
+                format!("json type mismatch: expected {exp}, got {act}")
+            }
+            ("JsonMissingField", [Value::String(n)]) => {
+                format!("json missing field: {n}")
+            }
+            ("JsonUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 /// Dispatch the builtin `trait Error for HttpError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_http_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "HttpError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("HttpError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
+            ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
+            ("HttpTimeout", []) => "http request timed out".to_string(),
+            ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
+            ("HttpInvalidResponse", [Value::String(m)]) => {
+                format!("http invalid response: {m}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("HttpConnect", [Value::String(m)]) => format!("http connect failed: {m}"),
-                    ("HttpTls", [Value::String(m)]) => format!("http TLS error: {m}"),
-                    ("HttpTimeout", []) => "http request timed out".to_string(),
-                    ("HttpInvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
-                    ("HttpInvalidResponse", [Value::String(m)]) => {
-                        format!("http invalid response: {m}")
-                    }
-                    ("HttpClosedEarly", []) => {
-                        "http connection closed before response completed".to_string()
-                    }
-                    ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
-                        if body.is_empty() {
-                            format!("http status {code}")
-                        } else {
-                            format!("http status {code}: {body}")
-                        }
-                    }
-                    ("HttpUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("HttpError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "HttpError.message: expected HttpError variant, got {other}"
-                    )));
+            ("HttpClosedEarly", []) => {
+                "http connection closed before response completed".to_string()
+            }
+            ("HttpStatusCode", [Value::Int(code), Value::String(body)]) => {
+                if body.is_empty() {
+                    format!("http status {code}")
+                } else {
+                    format!("http status {code}: {body}")
                 }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown HttpError trait method: {name}"
-        ))),
-    }
+            }
+            ("HttpUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 /// Dispatch the builtin `trait Error for RegexError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_regex_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "RegexError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("RegexError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+                format!("invalid regex pattern at position {pos}: {m}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("RegexInvalidPattern", [Value::String(m), Value::Int(pos)]) => {
-                        format!("invalid regex pattern at position {pos}: {m}")
-                    }
-                    ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
-                    _ => format!("RegexError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "RegexError.message: expected RegexError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown RegexError trait method: {name}"
-        ))),
-    }
+            ("RegexTooBig", []) => "compiled regex exceeds size budget".to_string(),
+            _ => return None,
+        })
+    })
 }
 
 /// Build `Err(TimeParseFormat(msg))` from a chrono `ParseError`. chrono's
@@ -303,33 +252,16 @@ fn time_out_of_range_err(msg: String) -> Value {
 }
 
 /// Dispatch the builtin `trait Error for TimeError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_time_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "TimeError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
-            }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
-                    ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
-                    _ => format!("TimeError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "TimeError.message: expected TimeError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown TimeError trait method: {name}"
-        ))),
-    }
+    super::dispatch_error_trait("TimeError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("TimeParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
+            ("TimeOutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
+            _ => return None,
+        })
+    })
 }
 
 fn json_type_name(v: &serde_json::Value) -> &'static str {
@@ -978,32 +910,60 @@ fn json_to_typed_value(
 
 // ── Regex dispatch ──────────────────────────────────────────────────
 
+/// Arity-check + typed-destructure for the common
+/// `regex.<op>(pattern: String, text: String)` shape.
+///
+/// Error messages are verbatim those emitted by the pre-dedupe arms; a
+/// round-36 parity test suite (`tests/regex_dispatch_parity_round36_tests.rs`)
+/// locks them so any accidental phrasing drift breaks loudly.
+fn parse_regex_string_pair<'a>(
+    op_name: &str,
+    args: &'a [Value],
+) -> Result<(&'a str, &'a str), VmError> {
+    if args.len() != 2 {
+        return Err(VmError::new(format!(
+            "regex.{op_name} takes 2 arguments (pattern, text)"
+        )));
+    }
+    let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
+        return Err(VmError::new(format!(
+            "regex.{op_name} requires string arguments"
+        )));
+    };
+    Ok((pattern.as_str(), text.as_str()))
+}
+
+/// Sibling helper for the two `replace`-family arms that take a third
+/// string argument (`replacement`). Same parity-lock applies.
+fn parse_regex_string_triple<'a>(
+    op_name: &str,
+    args: &'a [Value],
+) -> Result<(&'a str, &'a str, &'a str), VmError> {
+    if args.len() != 3 {
+        return Err(VmError::new(format!(
+            "regex.{op_name} takes 3 arguments (pattern, text, replacement)"
+        )));
+    }
+    let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
+        (&args[0], &args[1], &args[2])
+    else {
+        return Err(VmError::new(format!(
+            "regex.{op_name} requires string arguments"
+        )));
+    };
+    Ok((pattern.as_str(), text.as_str(), replacement.as_str()))
+}
+
 /// Dispatch `regex.<name>(args)`.
 pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "is_match" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.is_match takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "regex.is_match requires string arguments".into(),
-                ));
-            };
+            let (pattern, text) = parse_regex_string_pair("is_match", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             Ok(Value::Bool(re.is_match(text)))
         }
         "find" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.find takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.find requires string arguments".into()));
-            };
+            let (pattern, text) = parse_regex_string_pair("find", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.find(text) {
                 Some(m) => Ok(Value::Variant(
@@ -1014,16 +974,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             }
         }
         "find_all" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.find_all takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "regex.find_all requires string arguments".into(),
-                ));
-            };
+            let (pattern, text) = parse_regex_string_pair("find_all", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let matches: Vec<Value> = re
                 .find_iter(text)
@@ -1032,14 +983,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             Ok(Value::List(Arc::new(matches)))
         }
         "split" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.split takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new("regex.split requires string arguments".into()));
-            };
+            let (pattern, text) = parse_regex_string_pair("split", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let parts: Vec<Value> = re
                 .split(text)
@@ -1048,40 +992,14 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             Ok(Value::List(Arc::new(parts)))
         }
         "replace" => {
-            if args.len() != 3 {
-                return Err(VmError::new(
-                    "regex.replace takes 3 arguments (pattern, text, replacement)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
-                (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new(
-                    "regex.replace requires string arguments".into(),
-                ));
-            };
+            let (pattern, text, replacement) = parse_regex_string_triple("replace", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            Ok(Value::String(
-                re.replace(text, replacement.as_str()).to_string(),
-            ))
+            Ok(Value::String(re.replace(text, replacement).to_string()))
         }
         "replace_all" => {
-            if args.len() != 3 {
-                return Err(VmError::new(
-                    "regex.replace_all takes 3 arguments (pattern, text, replacement)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text), Value::String(replacement)) =
-                (&args[0], &args[1], &args[2])
-            else {
-                return Err(VmError::new(
-                    "regex.replace_all requires string arguments".into(),
-                ));
-            };
+            let (pattern, text, replacement) = parse_regex_string_triple("replace_all", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
-            Ok(Value::String(
-                re.replace_all(text, replacement.as_str()).to_string(),
-            ))
+            Ok(Value::String(re.replace_all(text, replacement).to_string()))
         }
         "replace_all_with" => {
             if args.len() != 3 {
@@ -1143,16 +1061,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             Ok(Value::String(result))
         }
         "captures" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.captures takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "regex.captures requires string arguments".into(),
-                ));
-            };
+            let (pattern, text) = parse_regex_string_pair("captures", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             match re.captures(text) {
                 Some(caps) => {
@@ -1172,16 +1081,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             }
         }
         "captures_all" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.captures_all takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "regex.captures_all requires string arguments".into(),
-                ));
-            };
+            let (pattern, text) = parse_regex_string_pair("captures_all", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             let all_captures: Vec<Value> = re
                 .captures_iter(text)
@@ -1199,16 +1099,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
             Ok(Value::List(Arc::new(all_captures)))
         }
         "captures_named" => {
-            if args.len() != 2 {
-                return Err(VmError::new(
-                    "regex.captures_named takes 2 arguments (pattern, text)".into(),
-                ));
-            }
-            let (Value::String(pattern), Value::String(text)) = (&args[0], &args[1]) else {
-                return Err(VmError::new(
-                    "regex.captures_named requires string arguments".into(),
-                ));
-            };
+            let (pattern, text) = parse_regex_string_pair("captures_named", args)?;
             let re = Vm::get_regex(&mut vm.regex_cache, pattern)?;
             // `capture_names()` yields one entry per group, including the
             // implicit whole-match group at index 0 (whose name is
@@ -2254,68 +2145,46 @@ fn do_http_request(method_tag: &str, url: &str, body: &str, headers: &[(String, 
         .build()
         .into();
 
+    // Unified dispatch — each ureq verb-fn returns a differently-typed
+    // `RequestBuilder<WithBody>` vs `RequestBuilder<WithoutBody>` (phantom
+    // type carries whether a body is expected), so we can't bind a
+    // single variable to the builder. Two small local macros collapse
+    // the prior 7 near-identical arms into one header-apply + send line
+    // per family. Semantics preserved: same header-setting order, same
+    // send_empty()/send(body) split for body verbs, same call() for
+    // no-body verbs (GET with a body is still a no-op, matching the
+    // prior silt API surprise).
+    macro_rules! with_body {
+        ($verb:ident) => {{
+            let mut req = agent.$verb(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            if body.is_empty() {
+                req.send_empty()
+            } else {
+                req.send(body)
+            }
+        }};
+    }
+    macro_rules! no_body {
+        ($verb:ident) => {{
+            let mut req = agent.$verb(url);
+            for (key, val) in headers {
+                req = req.header(key.as_str(), val.as_str());
+            }
+            req.call()
+        }};
+    }
+
     let result = match method_tag {
-        "POST" => {
-            let mut req = agent.post(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            if body.is_empty() {
-                req.send_empty()
-            } else {
-                req.send(body)
-            }
-        }
-        "PUT" => {
-            let mut req = agent.put(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            if body.is_empty() {
-                req.send_empty()
-            } else {
-                req.send(body)
-            }
-        }
-        "PATCH" => {
-            let mut req = agent.patch(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            if body.is_empty() {
-                req.send_empty()
-            } else {
-                req.send(body)
-            }
-        }
-        "GET" => {
-            let mut req = agent.get(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            req.call()
-        }
-        "DELETE" => {
-            let mut req = agent.delete(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            req.call()
-        }
-        "HEAD" => {
-            let mut req = agent.head(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            req.call()
-        }
-        "OPTIONS" => {
-            let mut req = agent.options(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            req.call()
-        }
+        "POST" => with_body!(post),
+        "PUT" => with_body!(put),
+        "PATCH" => with_body!(patch),
+        "GET" => no_body!(get),
+        "DELETE" => no_body!(delete),
+        "HEAD" => no_body!(head),
+        "OPTIONS" => no_body!(options),
         other => {
             return Value::Variant(
                 "Err".into(),

@@ -99,42 +99,25 @@ pub(crate) fn io_result_err_unknown<S: Into<String>>(msg: S) -> Value {
 /// Dispatch the builtin `trait Error for IoError` method table. Today
 /// only `message` is implemented; additional Error-trait methods would
 /// land here too. The receiver (self) is the first argument — `CallMethod`
-/// compiles the receiver as arg 0 of the call.
+/// compiles the receiver as arg 0 of the call. Scaffolding lives in
+/// `super::dispatch_error_trait`; this site just supplies the
+/// variant → message rendering.
 pub fn call_io_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "IoError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("IoError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("IoNotFound", [Value::String(p)]) => format!("file not found: {p}"),
+            ("IoPermissionDenied", [Value::String(p)]) => {
+                format!("permission denied: {p}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("IoNotFound", [Value::String(p)]) => format!("file not found: {p}"),
-                    ("IoPermissionDenied", [Value::String(p)]) => {
-                        format!("permission denied: {p}")
-                    }
-                    ("IoAlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
-                    ("IoInvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
-                    ("IoInterrupted", []) => "operation interrupted".to_string(),
-                    ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
-                    ("IoWriteZero", []) => "zero-byte write".to_string(),
-                    ("IoUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("IoError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "IoError.message: expected IoError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown IoError trait method: {name}"
-        ))),
-    }
+            ("IoAlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
+            ("IoInvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
+            ("IoInterrupted", []) => "operation interrupted".to_string(),
+            ("IoUnexpectedEof", []) => "unexpected end of file".to_string(),
+            ("IoWriteZero", []) => "zero-byte write".to_string(),
+            ("IoUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 /// Dispatch `io.<name>(args)`.

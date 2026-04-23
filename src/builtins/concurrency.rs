@@ -8,33 +8,16 @@ use crate::value::{Channel, TaskHandle, TryReceiveResult, TrySendResult, Value};
 use crate::vm::{BlockReason, SelectOpKind, Vm, VmError};
 
 /// Dispatch the builtin `trait Error for ChannelError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_channel_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "ChannelError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
-            }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("ChannelTimeout", []) => "channel receive timed out".to_string(),
-                    ("ChannelClosed", []) => "channel closed with no more values".to_string(),
-                    _ => format!("ChannelError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "ChannelError.message: expected ChannelError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown ChannelError trait method: {name}"
-        ))),
-    }
+    super::dispatch_error_trait("ChannelError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("ChannelTimeout", []) => "channel receive timed out".to_string(),
+            ("ChannelClosed", []) => "channel closed with no more values".to_string(),
+            _ => return None,
+        })
+    })
 }
 
 /// Dispatch `channel.<name>(args)`.

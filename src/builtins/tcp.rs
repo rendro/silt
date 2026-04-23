@@ -48,36 +48,19 @@ fn tcp_completion() -> Arc<IoCompletion> {
 }
 
 /// Dispatch the builtin `trait Error for TcpError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_tcp_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "TcpError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
-            }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("TcpConnect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
-                    ("TcpTls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
-                    ("TcpClosed", []) => "tcp connection closed".to_string(),
-                    ("TcpTimeout", []) => "tcp operation timed out".to_string(),
-                    ("TcpUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("TcpError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "TcpError.message: expected TcpError variant, got {other}"
-                    )));
-                }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown TcpError trait method: {name}"
-        ))),
-    }
+    super::dispatch_error_trait("TcpError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("TcpConnect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
+            ("TcpTls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
+            ("TcpClosed", []) => "tcp connection closed".to_string(),
+            ("TcpTimeout", []) => "tcp operation timed out".to_string(),
+            ("TcpUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 pub fn call(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {

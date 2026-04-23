@@ -1212,7 +1212,24 @@ impl TypeChecker {
             }
         }
 
-        // Narrow function schemes based on body constraints, then re-check
+        // Narrow function schemes based on body constraints, then re-check.
+        //
+        // Invariant (audit-round-36 LATENT doc): when `finalize_deferred_checks`
+        // runs below, `pending_field_accesses` / `pending_numeric_checks` /
+        // `pending_where_constraints` must contain EXACTLY the pushes from the
+        // most recent body-check pass — not a mix of pass-2 + pass-3 entries.
+        // Two paths preserve that:
+        //   (1) `any_narrowed == false`: no re-check happens, so pass 3's
+        //       pushes ARE the "most recent" pool and finalize consumes them
+        //       as-is.
+        //   (2) `any_narrowed == true`: the truncate/clear inside the branch
+        //       rolls the pools back to their pre-pass-3 baseline before the
+        //       re-check repopulates them, so finalize again sees only the
+        //       most-recent pass's entries.
+        // If a future edit adds a THIRD re-check path it MUST either set
+        // `any_narrowed = true` (to go through the truncate branch) or add its
+        // own equivalent reset/repopulate pairing, or this invariant breaks
+        // and duplicate obligations leak into finalize.
         let body_types: HashMap<Symbol, Type> = std::mem::take(&mut self.fn_body_types);
         if !body_types.is_empty() {
             let mut any_narrowed = false;

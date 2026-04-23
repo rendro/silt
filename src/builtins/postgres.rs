@@ -1669,58 +1669,39 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
 // ── trait Error for PgError ─────────────────────────────────────────
 
 /// Dispatch the builtin `trait Error for PgError` method table.
+/// Scaffolding lives in `super::dispatch_error_trait`; this site just
+/// supplies the variant → message rendering.
 pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    match name {
-        "message" => {
-            if args.len() != 1 {
-                return Err(VmError::new(format!(
-                    "PgError.message takes 1 argument (self), got {}",
-                    args.len()
-                )));
+    super::dispatch_error_trait("PgError", name, args, |tag, fields| {
+        Some(match (tag, fields) {
+            ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
+            ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
+            ("PgAuthFailed", [Value::String(m)]) => {
+                format!("postgres authentication failed: {m}")
             }
-            let msg = match &args[0] {
-                Value::Variant(tag, fields) => match (tag.as_str(), fields.as_slice()) {
-                    ("PgConnect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
-                    ("PgTls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
-                    ("PgAuthFailed", [Value::String(m)]) => {
-                        format!("postgres authentication failed: {m}")
-                    }
-                    ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
-                        if sqlstate.is_empty() {
-                            format!("postgres query error: {msg}")
-                        } else {
-                            format!("postgres query error [{sqlstate}]: {msg}")
-                        }
-                    }
-                    (
-                        "PgTypeMismatch",
-                        [Value::String(col), Value::String(exp), Value::String(act)],
-                    ) => format!(
-                        "postgres type mismatch on column `{col}`: expected {exp}, got {act}"
-                    ),
-                    ("PgNoSuchColumn", [Value::String(col)]) => {
-                        format!("postgres: no such column `{col}`")
-                    }
-                    ("PgClosed", []) => "postgres connection closed".to_string(),
-                    ("PgTimeout", []) => "postgres operation timed out".to_string(),
-                    ("PgTxnAborted", []) => {
-                        "postgres transaction aborted; rollback required".to_string()
-                    }
-                    ("PgUnknown", [Value::String(m)]) => m.clone(),
-                    _ => format!("PgError: unrecognized variant shape `{tag}`"),
-                },
-                other => {
-                    return Err(VmError::new(format!(
-                        "PgError.message: expected PgError variant, got {other}"
-                    )));
+            ("PgQuery", [Value::String(msg), Value::String(sqlstate)]) => {
+                if sqlstate.is_empty() {
+                    format!("postgres query error: {msg}")
+                } else {
+                    format!("postgres query error [{sqlstate}]: {msg}")
                 }
-            };
-            Ok(Value::String(msg))
-        }
-        _ => Err(VmError::new(format!(
-            "unknown PgError trait method: {name}"
-        ))),
-    }
+            }
+            (
+                "PgTypeMismatch",
+                [Value::String(col), Value::String(exp), Value::String(act)],
+            ) => format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}"),
+            ("PgNoSuchColumn", [Value::String(col)]) => {
+                format!("postgres: no such column `{col}`")
+            }
+            ("PgClosed", []) => "postgres connection closed".to_string(),
+            ("PgTimeout", []) => "postgres operation timed out".to_string(),
+            ("PgTxnAborted", []) => {
+                "postgres transaction aborted; rollback required".to_string()
+            }
+            ("PgUnknown", [Value::String(m)]) => m.clone(),
+            _ => return None,
+        })
+    })
 }
 
 // ── Public dispatch ─────────────────────────────────────────────────
