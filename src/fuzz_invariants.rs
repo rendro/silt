@@ -88,12 +88,19 @@ pub fn check_lexer_invariants(source: &str, tokens: &[SpannedToken]) -> Result<(
     Ok(())
 }
 
-/// Count "significant" tokens, skipping `Newline` and `Eof`. A formatter
-/// is allowed to reshape whitespace but must preserve every other token.
+/// Count "significant" tokens, skipping `Newline`, `Eof`, and `Comma`.
+///
+/// The formatter is allowed to reshape whitespace AND to canonicalize
+/// optional punctuation. silt's parser accepts comma-less forms for fn
+/// params and for list/tuple/map/set literal elements
+/// (`fn f(a b c)` and `[1 2 3]` both parse), and the formatter
+/// consistently inserts commas on emit. So a Comma count change is
+/// legitimate — the real invariant is that every semantic token
+/// (identifier, keyword, literal, operator) is preserved.
 fn significant_token_count(tokens: &[SpannedToken]) -> usize {
     tokens
         .iter()
-        .filter(|(t, _)| !matches!(t, Token::Newline | Token::Eof))
+        .filter(|(t, _)| !matches!(t, Token::Newline | Token::Eof | Token::Comma))
         .count()
 }
 
