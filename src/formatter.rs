@@ -1521,6 +1521,24 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                 line: i + 1, // 1-based
                 text: comment_text,
             });
+        } else if let Some(comment_text) = extract_bracket_interior_line_comment_from_line(line) {
+            // A `--` line comment that sits AFTER a bracket-open on the
+            // SAME source line (e.g. `fn nc(){ -- cmt` or `f( -- note`),
+            // where the bracket doesn't close on this line. The trailing-
+            // comment extractor refuses to claim it (bracket_depth > 0 at
+            // the `--`), and no multi-line emitter ever sees the `--`
+            // because it's lexed as whitespace — so the comment silently
+            // vanishes on round-trip, breaking the formatter's `--`-
+            // marker invariant (audit round 51 repro `fn nc(){ --\n}`).
+            //
+            // Recover by recording it as a standalone comment attributed
+            // to the SAME source line. The body-comment partitioner and
+            // the empty-block / first-stmt drains consult this entry so
+            // it is emitted inside the enclosing block.
+            comments.push(Comment {
+                line: i + 1, // 1-based
+                text: comment_text,
+            });
         }
 
         i += 1;
@@ -1794,6 +1812,169 @@ fn extract_trailing_comment_from_line(line: &str) -> Option<String> {
         }
     }
     // Emit the trailing substring starting at the `{-`.
+    let comment: String = chars[start..].iter().collect();
+    Some(comment.trim_end().to_string())
+}
+
+/// Extract a `--` line comment that sits inside an unclosed bracket pair
+/// on THIS line — i.e. the line OPENS a `(`/`[`/`{` and then ends with
+/// `<whitespace>? -- ...` without closing the bracket. Such a comment is
+/// NOT a statement-trailing comment (that's what
+/// `extract_trailing_comment_from_line` refuses to return when
+/// `line_comment_bracket_depth > 0`), but it is also not picked up by any
+/// multi-line emitter because the `--` character is never lexed as a
+/// token. Without recovery the comment silently disappears on round-trip,
+/// breaking the formatter's `--`-marker invariant (audit round 51 fuzz
+/// repro `fn nc(){ --\n}`).
+///
+/// We return the comment text when ALL of:
+///   * the first `--` line-comment starts at `bracket_depth > 0`, AND
+///   * every character before that `--` is either whitespace or part of
+///     a bracket opener (`(`, `[`, `{`) — in other words, the line
+///     consists of a bracket-opening prefix followed by a line comment.
+///
+/// Restricting to "bracket-opening prefix" keeps us from double-reporting
+/// trailing comments on lines that happen to be mid-expression but whose
+/// `--` is NOT the only content after a bracket-open. For those the
+/// multi-line emitter already routes the comment via the per-line
+/// `trailing_map` / `comments` vec pathways.
+fn extract_bracket_interior_line_comment_from_line(line: &str) -> Option<String> {
+    // Reuse the same string/comment/interp scanner as
+    // `extract_trailing_comment_from_line`, but (a) only succeed when the
+    // `--` sits at bracket_depth > 0, and (b) require the prefix before
+    // `--` to contain no non-bracket-open code characters.
+    let chars: Vec<char> = line.chars().collect();
+    let mut in_string = false;
+    let mut in_triple = false;
+    let mut interp_depths: Vec<usize> = Vec::new();
+    let mut block_depth: usize = 0;
+    let mut line_comment_start: Option<usize> = None;
+    let mut line_comment_bracket_depth: i32 = 0;
+    let mut bracket_depth: i32 = 0;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_triple {
+            if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+                in_triple = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' && i + 1 < chars.len() {
+                i += 2;
+                continue;
+            }
+            if ch == '{' {
+                interp_depths.push(0);
+                in_string = false;
+                i += 1;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if block_depth > 0 {
+            if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+            in_triple = true;
+            i += 3;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            if interp_depths.is_empty() {
+                line_comment_start = Some(i);
+                line_comment_bracket_depth = bracket_depth;
+                break;
+            }
+            i += 2;
+            continue;
+        }
+        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            block_depth += 1;
+            i += 2;
+            continue;
+        }
+        if interp_depths.is_empty() {
+            if ch == '(' || ch == '[' || ch == '{' {
+                bracket_depth += 1;
+            } else if ch == ')' || ch == ']' || ch == '}' {
+                bracket_depth -= 1;
+            }
+        }
+        if !interp_depths.is_empty() {
+            if ch == '{' {
+                if let Some(d) = interp_depths.last_mut() {
+                    *d += 1;
+                }
+                i += 1;
+                continue;
+            }
+            if ch == '}' {
+                if let Some(d) = interp_depths.last_mut() {
+                    if *d == 0 {
+                        interp_depths.pop();
+                        in_string = true;
+                    } else {
+                        *d -= 1;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    let start = line_comment_start?;
+    // Must be inside an unclosed bracket pair — otherwise the trailing-
+    // comment extractor would have already claimed it.
+    if line_comment_bracket_depth <= 0 {
+        return None;
+    }
+    // The character immediately before the `--` (skipping whitespace)
+    // must be a bracket opener. That tells us the `--` is the first
+    // non-whitespace content after a newly-opened `(`/`[`/`{`, i.e. it
+    // is an interior comment for the surrounding scope rather than a
+    // trailing comment on some expression earlier on this same line.
+    //
+    // For lines like `foo(0) -- note` inside an unclosed `{` body, the
+    // char before `--` is `)`, not an opener, so we do NOT claim it
+    // here; the comment's recovery belongs to the per-stmt trailing
+    // pathway which handles it on its own.
+    let mut k = start;
+    while k > 0 && chars[k - 1].is_whitespace() {
+        k -= 1;
+    }
+    if k == 0 {
+        return None;
+    }
+    let prev = chars[k - 1];
+    if !(prev == '(' || prev == '[' || prev == '{') {
+        return None;
+    }
     let comment: String = chars[start..].iter().collect();
     Some(comment.trim_end().to_string())
 }
@@ -2702,12 +2883,19 @@ fn format_program_with_comments(program: &Program, source: &str) -> String {
     let mut body_comments: Vec<Vec<Comment>> = vec![Vec::new(); n];
 
     for comment in comments.iter().cloned() {
-        // A comment is inside decl[i]'s body if its line is strictly between
-        // the decl's start line and its end line (inclusive of end line, since
-        // a comment before the closing `}` is still inside).
+        // A comment is inside decl[i]'s body if its line is within the
+        // decl's source span (inclusive of BOTH endpoints). The start-line
+        // inclusion catches "bracket-interior line comments" on the same
+        // line as the decl's opener — e.g. `fn nc() { -- cmt\n}`, where
+        // `-- cmt` sits after the body-opening `{` on the fn's first line
+        // and is recorded at `line == decl_lines[i]` by the interior-
+        // line-comment recovery path in `extract_comments`. Before this
+        // inclusion the comment landed in the top-level bucket and was
+        // emitted BEFORE the fn (corrupting placement) or lost entirely
+        // (dropping the `--` marker and breaking the fuzz invariant).
         let mut is_body = false;
         for i in 0..n {
-            if comment.line > decl_lines[i] && comment.line <= decl_end_lines[i] {
+            if comment.line >= decl_lines[i] && comment.line <= decl_end_lines[i] {
                 body_comments[i].push(comment.clone());
                 is_body = true;
                 break;
@@ -3056,8 +3244,13 @@ fn format_body(expr: &Expr, depth: usize) -> String {
             };
             let close_suffix = close_trailing.unwrap_or_default();
             if stmts.is_empty() {
-                // Drain comments that sit strictly between `{` and `}`.
-                let inner = take_comments_between(open_line, close_line);
+                // Drain comments that sit inside `{ ... }`. The lower
+                // bound is `open_line - 1` (saturated) so we also pick
+                // up bracket-interior line comments attributed to the
+                // open-brace's own source line by `extract_comments`
+                // (e.g. `fn nc() { -- cmt\n}` — `-- cmt` lives on line 1
+                // but belongs inside the empty body).
+                let inner = take_comments_between(open_line.saturating_sub(1), close_line);
                 if inner.is_empty() {
                     format!("{{}}{close_suffix}")
                 } else {
@@ -3138,6 +3331,23 @@ fn format_stmts_with_comments(stmts: &[Stmt], depth: usize, block_close_line: us
         }
         result.push(formatted);
         let end_line = stmt_end_line(stmt).max(stmt_line);
+        // A multi-line expression (e.g. unary `-` on one line with its
+        // operand on the next) may carry a trailing `-- comment` on its
+        // LAST source line, not its START line. Because the formatter
+        // collapses such expressions onto a single output line, we
+        // append any such trailing comment to the just-emitted statement
+        // so the `--` marker survives round-trip. Without this the
+        // comment is orphaned in `trailing_map` (keyed by the last line,
+        // which nothing else consumes) and silently dropped on pass 1,
+        // breaking the formatter's `--`-marker invariant (audit round
+        // 51 fuzz repro `fn a() { -\n b-- c\n }`).
+        if end_line > stmt_line
+            && let Some(tc) = take_trailing_for_line(end_line)
+            && let Some(last) = result.last_mut()
+        {
+            last.push(' ');
+            last.push_str(&tc);
+        }
         // Drain any standalone comments that lived STRICTLY INSIDE this
         // statement's source span (between its start line and its last
         // touched line). Such comments appear in source between an
