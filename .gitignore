@@ -9,6 +9,11 @@
 /fuzz/corpus/fuzz_parser/[0-9a-f]*
 /fuzz/corpus/fuzz_roundtrip/[0-9a-f]*
 /fuzz/corpus/fuzz_formatter/[0-9a-f]*
+# libfuzzer writes reproducers here on crash. We upload them as CI
+# artifacts and optionally promote them into fuzz/corpus/<target>/
+# as `.silt` regression seeds — the raw dump should never land in
+# the repo.
+/fuzz/artifacts/
 .sediment
 .DS_Store
 .env

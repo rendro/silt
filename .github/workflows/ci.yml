@@ -57,9 +57,15 @@ jobs:
       - name: cargo test
         run: cargo test --all-features
 
-  fuzz:
-    name: Fuzz (libfuzzer, 60s per target)
+  fuzz-corpus:
+    name: Fuzz corpus replay
     runs-on: ubuntu-latest
+    # Deterministic regression gate: replays every committed file
+    # under fuzz/corpus/<target>/ through each fuzz target exactly
+    # once, with NO mutation. Catches regressions on bugs we have
+    # previously found without blocking merges on stochastic new
+    # discoveries. Discovery-mode fuzzing lives in fuzz-nightly.yml
+    # and `fuzz/local.sh`; see fuzz/README.md for the workflow.
     steps:
       - uses: actions/checkout@v6
 
@@ -79,17 +85,17 @@ jobs:
       - name: Seed corpus
         run: ./fuzz/seed.sh
 
-      - name: Fuzz lexer (60s)
-        run: cargo +nightly fuzz run fuzz_lexer -- -max_total_time=60
+      - name: Replay fuzz_lexer corpus
+        run: ./fuzz/replay.sh fuzz_lexer
 
-      - name: Fuzz parser (60s)
-        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=60
+      - name: Replay fuzz_parser corpus
+        run: ./fuzz/replay.sh fuzz_parser
 
-      - name: Fuzz formatter (60s)
-        run: cargo +nightly fuzz run fuzz_formatter -- -max_total_time=60
+      - name: Replay fuzz_formatter corpus
+        run: ./fuzz/replay.sh fuzz_formatter
 
-      - name: Fuzz roundtrip (60s)
-        run: cargo +nightly fuzz run fuzz_roundtrip -- -max_total_time=60
+      - name: Replay fuzz_roundtrip corpus
+        run: ./fuzz/replay.sh fuzz_roundtrip
 
       - name: Upload reproducers on failure
         if: failure()

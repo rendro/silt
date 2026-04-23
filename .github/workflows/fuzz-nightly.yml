@@ -1,0 +1,78 @@
+name: Fuzz (nightly deep)
+
+# Discovery-mode fuzzing: runs real libfuzzer mutation against every
+# target for a meaningful length of time, on a schedule instead of
+# per-push. Per-push fuzz runs at 60s each are both too slow to find
+# deep bugs and too flaky to gate merges (each run explores different
+# inputs and blocks merges on whichever random bug it happens to
+# hit). Keep PR CI fast and deterministic via the corpus-replay job
+# in ci.yml; do real discovery here.
+#
+# When a crash fires, the artifact is uploaded for triage. Any new
+# crash that needs permanent regression coverage should be copied
+# into fuzz/corpus/<target>/ so the ci.yml corpus-replay gate picks
+# it up on every subsequent push.
+
+on:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds_per_target:
+        description: 'Seconds of fuzz mutation per target'
+        required: false
+        default: '900'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }} (${{ github.event.inputs.seconds_per_target || 900 }}s)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_lexer
+          - fuzz_parser
+          - fuzz_formatter
+          - fuzz_roundtrip
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Seed corpus
+        run: ./fuzz/seed.sh
+
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          secs=${{ github.event.inputs.seconds_per_target || 900 }}
+          cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=$secs
+
+      - name: Upload reproducers on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-nightly-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/**
+            fuzz/crash-*
+            fuzz/leak-*
+            fuzz/timeout-*
+            fuzz/oom-*
+          retention-days: 30
+          if-no-files-found: ignore
