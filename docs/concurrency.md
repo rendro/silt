@@ -688,6 +688,85 @@ fn main() {
 --   channel closed, all done
 ```
 
+### Supervision and restart
+
+For long-running workers, treat failures as values. Wrap the worker body
+in a function that returns a `Result`, have the worker send a completion
+status on an outcome channel, and have a supervisor task decide whether
+to restart:
+
+```silt
+import channel
+import task
+import time
+
+type Outcome { Ok, Failed(String) }
+
+fn worker_body(id, jobs) {
+  channel.each(jobs) { job ->
+    when job != "poison" else { panic("worker {id} hit poison pill") }
+    println("worker {id} handled {job}")
+  }
+}
+
+fn spawn_worker(id, jobs, outcomes) {
+  task.spawn(fn() {
+    -- task.join on the inner handle lets us convert a panic into a value.
+    let inner = task.spawn(fn() { worker_body(id, jobs) })
+    match task.join(inner) {
+      Ok(_) -> channel.send(outcomes, (id, Ok))
+      Err(e) -> channel.send(outcomes, (id, Failed(e.message())))
+    }
+  })
+}
+
+fn supervise(jobs, outcomes, max_restarts) {
+  loop {
+    when let Message((id, outcome)) = channel.receive(outcomes) else { return }
+    match outcome {
+      Ok -> ()
+      Failed(msg) -> {
+        println("worker {id} failed: {msg}")
+        when max_restarts > 0 else { return }
+        spawn_worker(id, jobs, outcomes)
+        -- decrement max_restarts via recursion in real code
+      }
+    }
+  }
+}
+
+fn main() {
+  let jobs = channel.new(10)
+  let outcomes = channel.new(10)
+
+  spawn_worker(1, jobs, outcomes)
+  spawn_worker(2, jobs, outcomes)
+
+  let sup = task.spawn(fn() { supervise(jobs, outcomes, 3) })
+
+  channel.send(jobs, "a")
+  channel.send(jobs, "b")
+  channel.close(jobs)
+  task.join(sup)
+}
+```
+
+Key points:
+
+- **`task.join` propagates the failure**. When the joined task panics or
+  returns an error, `task.join` yields `Err(e)` with the message — that is
+  how a crash becomes a value the supervisor can inspect.
+- **Supervisors are just tasks**. There is no built-in supervision tree.
+  Compose the policy you need (restart, circuit-break, escalate) in
+  ordinary silt.
+- **Cancel children on shutdown**. If the supervisor is cancelled
+  (`task.cancel`), cancel each child it spawned to avoid leaks. Keep the
+  child handles in a list and cancel them in the `Closed` branch of the
+  outcome channel.
+- **Prefer `Result` over panic**. Panics are caught, but panicking for
+  control flow inside a hot worker is wasteful — return `Result` from
+  `worker_body` and send a typed `Outcome` instead.
+
 
 ## 6. Runtime Model
 

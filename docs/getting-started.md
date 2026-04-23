@@ -110,7 +110,34 @@ fn area(shape) {
 }
 ```
 
-## 5. Errors as values
+## 5. Modules and imports
+
+Every `.silt` file is a module. Items are private unless marked `pub`. Import a module to use its contents:
+
+```silt
+import list                    -- qualified:  list.map(xs, f)
+import list.{ map, filter }    -- direct:     map(xs, f)
+import list as l               -- aliased:    l.map(xs, f)
+```
+
+`import` brings in both stdlib modules (`list`, `io`, `channel`, …) and your own files. If `src/math.silt` exists, `import math` makes its `pub` items available.
+
+```silt
+-- File: src/math.silt
+pub fn add(a, b) { a + b }
+fn helper(x) { x * 2 }   -- private: only visible inside math.silt
+
+-- File: src/main.silt
+import math
+
+fn main() {
+  println("{math.add(1, 2)}")
+}
+```
+
+See [Modules](language/modules.md) for the full rules.
+
+## 6. Errors as values
 
 No exceptions. Fallible functions return `Result`. The `?` operator propagates errors when the
 surrounding function returns the same `Err` type:
@@ -136,7 +163,7 @@ match io.read_file("app.json") {
 }
 ```
 
-## 6. Pipes and trailing closures
+## 7. Pipes and trailing closures
 
 The `|>` operator passes the left value as the first argument of the right:
 
@@ -149,7 +176,7 @@ import list
 |> list.fold(0) { acc, n -> acc + n }
 ```
 
-## 7. Concurrency
+## 8. Concurrency
 
 Spawn lightweight tasks that run in parallel. Communicate through channels. I/O inside tasks transparently yields — no async/await.
 

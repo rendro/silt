@@ -32,6 +32,8 @@ JsonError` is wired in):
 | `JsonMissingField(name)` | `String` | A required (non-`Option`) field was absent |
 | `JsonUnknown(msg)` | `String` | Anything else (out-of-range numbers, internal failures) |
 
+See [stdlib errors](errors.md) for the shared `Error` trait.
+
 
 ## `json.parse`
 

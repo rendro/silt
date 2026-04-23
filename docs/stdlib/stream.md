@@ -19,6 +19,10 @@ dedicated OS thread (not a scheduler worker), sinks can safely block even
 when called from a `task.spawn`'d task — producers keep making progress
 regardless of scheduler state.
 
+See also [io / fs](io-fs.md) for the underlying file operations behind
+`file_chunks` / `file_lines`, [tcp](tcp.md) for `tcp_chunks` / `tcp_lines`,
+and [channel / task](channel-task.md) for the primitive channel operations.
+
 ## Summary
 
 ### Sources

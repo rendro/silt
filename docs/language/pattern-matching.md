@@ -193,26 +193,18 @@ Asserts a pattern match and binds on success, or diverges on failure:
 ```silt
 fn process(input) {
   when let Ok(value) = parse(input) else { return Err("parse failed") }
-  when let Some(user) = find_user(value) else { return Err("not found") }
   when let Admin(perms) = user.role else { return Err("unauthorized") }
-  do_admin_thing(user, perms)
+  do_admin_thing(value, perms)
 }
 ```
 
-The `else` block **must** diverge (`return` or `panic`). This flattens the
-"staircase of doom" that nested `match` creates.
+The `else` block **must** diverge (`return` or `panic`). A boolean form
+(`when cond else { ... }`) also exists for flat guard sequences, and both
+forms can be mixed.
 
-**Boolean form** -- also accepted, for flat guard sequences:
-
-```silt
-fn buy(qty, balance, price) {
-  when qty > 0 else { return Err("out of stock") }
-  when balance >= price else { return Err("not enough money") }
-  Ok("purchased")
-}
-```
-
-Both forms can be mixed freely in the same function.
+See [Error Handling](error-handling.md#when-let-else-for-custom-errors) for
+the full treatment, including when to reach for `when let`-`else` instead
+of `?`.
 
 ## Exhaustiveness Checking
 

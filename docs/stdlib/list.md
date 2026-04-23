@@ -9,6 +9,10 @@ order: 2
 Functions for working with ordered, immutable lists (`List(a)`). Lists use
 `[...]` literal syntax and support the range operator `1..5`.
 
+See also [result / option](result-option.md) for the return types of
+`find`, `head`, `last`, `get`, and `filter_map`; [stream](stream.md) for
+channel-backed lazy pipelines over the same combinator names.
+
 ## Summary
 
 | Function | Signature | Description |

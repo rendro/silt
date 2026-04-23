@@ -233,14 +233,10 @@ let x = 42  -- inline comment
 
 ## Operators
 
-| Category   | Operators                                |
-|------------|------------------------------------------|
-| Arithmetic | `+`, `-`, `*`, `/`, `%`                  |
-| Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=`         |
-| Boolean    | `&&`, `||`, `!`                           |
-| Unary prefix | `-x` (numeric negation), `!x` (boolean not) |
-| Pipe       | `|>`                                      |
-| Field      | `.`                                       |
-| Range      | `..`                                      |
-| Question   | `?` (error propagation)                   |
-| Float recovery | `else` (narrows ExtFloat → Float)        |
+silt has arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`,
+`<`, `>`, `<=`, `>=`), boolean (`&&`, `||`, `!`), pipe (`|>`), range
+(`..`), error propagation (`?`), field / record-update (`.`), type
+ascription (`as`), and float recovery (`else`).
+
+See [Operators and Precedence](operators.md) for the full table with
+precedence, associativity, and newline-sensitivity rules.

@@ -1,6 +1,6 @@
 //! `silt run [--disassemble] [<file>]` — compile and execute a silt
-//! program with the bytecode VM. Also backs the legacy `silt
-//! <file>.silt` convenience shim and `silt vm run <file>` alias.
+//! program with the bytecode VM. Also backs the bare `silt
+//! <file>.silt` convenience shim.
 
 use std::path::Path;
 use std::process;
@@ -87,24 +87,6 @@ pub(crate) fn dispatch_bare_file(args: &[String], file: &str) {
         crate::cli::disasm::disasm_file(file);
     } else {
         vm_run_file(file);
-    }
-}
-
-/// Legacy `silt vm run <file>` alias — kept so existing scripts don't
-/// need to migrate to the bare `silt run <file>` form overnight.
-pub(crate) fn dispatch_vm_legacy(args: &[String]) {
-    match args.get(2).map(|s| s.as_str()) {
-        Some("run") => {
-            let file = args.get(3).unwrap_or_else(|| {
-                eprintln!("Usage: silt vm run <file.silt>");
-                process::exit(1);
-            });
-            vm_run_file(file);
-        }
-        _ => {
-            eprintln!("Usage: silt vm run <file.silt>");
-            process::exit(1);
-        }
     }
 }
 

@@ -145,3 +145,67 @@ vm.register_fn1("pure", |x: i64| -> i64 { x * 2 }).unwrap();
 ```
 
 Use `Arc<Mutex<T>>` if you need shared mutable state in a foreign function.
+
+## Vm Lifecycle
+
+A `Vm` is a single interpreter instance. The typical embedding pattern is:
+
+```rust
+let mut vm = Vm::new();
+
+// 1. Register every foreign function up front.
+vm.register_fn1("double", |x: i64| -> i64 { x * 2 })?;
+vm.register_fn1("fetch_user", |id: i64| -> Option<String> { ... })?;
+
+// 2. Compile the silt program.
+let script = compile("fn main() { ... }")?;
+
+// 3. Run it.
+let result = vm.run(script)?;
+```
+
+**Register before spawning.** Foreign-function registration mutates the
+shared runtime. Once silt code has spawned tasks — or anything else that
+clones the runtime `Arc` — `register_fn*` returns an `Err(VmError)`
+explaining that the runtime is already shared. Register every foreign
+function before the first `vm.run(...)` that might spawn.
+
+**Reusing a Vm.** You can call `vm.run(...)` multiple times with different
+scripts on the same `Vm`. Globals defined by one run persist into the next,
+which is useful for REPL-style embeddings. If you want hermetic runs,
+build a fresh `Vm::new()` per script.
+
+**Thread safety.** A single `Vm` is **not** `Sync` and must be driven from
+one thread (the scheduler owns its own worker threads internally, which is
+separate from the embedding thread). If you need to run multiple scripts in
+parallel from Rust, create one `Vm` per thread.
+
+## Error Surfacing
+
+`vm.run(script)` returns `Result<Value, VmError>`. `VmError` is the single
+channel through which every kind of silt runtime failure reaches Rust:
+
+- **Type errors** detected during compilation surface as a `VmError` from
+  the compile step, before `run` is called.
+- **Runtime errors** (overflow, out-of-bounds, failed `match`, unwrapped
+  `Err`/`None` that bubbled to the top) return as `Err(VmError)` from `run`.
+- **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
+  message carries the panicked string.
+- **Panics inside a foreign function** are caught by
+  `std::panic::catch_unwind` inside the dispatcher and converted to a
+  `VmError`. The scheduler worker survives; other tasks keep running.
+  Returning `Err(VmError)` from a foreign function is still strongly
+  preferred — panics are a safety net, not an API.
+
+```rust
+match vm.run(script) {
+    Ok(value) => println!("result: {:?}", value),
+    Err(e) => eprintln!("silt error: {}", e.message()),
+}
+```
+
+Silt code has no access to the host filesystem, network, or environment
+beyond what the stdlib (or your registered foreign functions) provides.
+Calling an unknown function produces a compile-time error from the type
+checker, not a runtime surprise — build the compile pipeline with the
+checker in place when embedding untrusted code.

@@ -20,7 +20,8 @@ This guide is split into focused pages:
 - [Pattern Matching](language/pattern-matching.md) -- match, literals, constructors, tuples, records, lists, maps, or-patterns, guards, ranges, pin, when/else, exhaustiveness
 - [Error Handling](language/error-handling.md) -- Result, Option, `?` operator, when let-else, Never type
 - [Collections](language/collections.md) -- lists, maps, sets
-- [Loops, Pipes, and Other Features](language/loops-and-pipes.md) -- pipe operator, string interpolation, loop expression, ranges, comments, operators
+- [Loops, Pipes, and Other Features](language/loops-and-pipes.md) -- pipe operator, string interpolation, loop expression, ranges, comments
+- [Operators and Precedence](language/operators.md) -- full operator table, precedence, associativity, newline rules
 - [Traits](language/traits.md) -- declaration, implementation, Self type, built-in traits, where clauses
 - [Modules](language/modules.md) -- file-based modules, imports, built-in modules, standard library
 - [Testing](language/testing.md) -- test runner, assertions, file and function conventions

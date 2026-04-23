@@ -208,7 +208,11 @@ LSP server with diagnostics, hover types, go-to-definition, completion, signatur
 
 ## Documentation
 
-Full documentation and an interactive playground are at [silt-lang.com](https://silt-lang.com).
+New here? Read **[Why silt](docs/why-silt.md)** to see how it compares to Rust, Go, Gleam, and OCaml. Then start with **[Getting Started](docs/getting-started.md)** to install silt and walk through the essentials, and see the **[Language Guide](docs/language-guide.md)** for the complete reference and the **[Standard Library](docs/stdlib/index.md)** for every built-in.
+
+Deeper dives: **[Concurrency](docs/concurrency.md)**, **[FFI](docs/ffi.md)** (embedding silt in Rust), and **[Editor Setup](docs/editor-setup.md)**.
+
+A hosted version with an interactive playground is at [silt-lang.com](https://silt-lang.com).
 
 ## License
 

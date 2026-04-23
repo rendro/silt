@@ -55,7 +55,6 @@ fn main() {
             process::exit(0);
         }
         "run" => cli::run::dispatch(&args),
-        "vm" => cli::run::dispatch_vm_legacy(&args),
         "disasm" => cli::disasm::dispatch(&args),
         "test" => cli::test::dispatch(&args),
         "check" => cli::check::dispatch(&args),

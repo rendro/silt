@@ -6,6 +6,26 @@ order: 5
 
 # Collections
 
+silt has three built-in collection types: **list** (ordered sequence),
+**map** (key → value), and **set** (unique elements). All three are
+immutable — every "mutating" operation returns a new collection.
+
+## Choosing a collection
+
+| You need …                                                     | Use     |
+|----------------------------------------------------------------|---------|
+| an ordered sequence, index-addressable, duplicates allowed     | **list** |
+| lookup by key, one value per key                               | **map**  |
+| membership test, uniqueness, set algebra (union / intersection)| **set**  |
+| a fixed-shape heterogeneous record                             | **record** (see [Types](types.md)) |
+| a fixed-size heterogeneous sequence                            | **tuple** |
+
+Rule of thumb: if you know the field names at compile time, use a record or
+tuple. Reach for a map only when keys are dynamic.
+
+Pattern matching works on all three — see [Pattern Matching](pattern-matching.md)
+for `[head, ..tail]`, `#{ "k": v }`, and set patterns.
+
 ## Lists
 
 Ordered, homogeneous collections:
@@ -27,6 +47,8 @@ Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 `list.last`, `list.length`, `list.contains`, `list.append`, `list.concat`,
 `list.reverse`, `list.get`, `list.take`, `list.drop`, `list.enumerate`,
 `list.group_by`, `list.fold_until`, `list.unfold`.
+
+See [`stdlib/list`](../stdlib/list.md) for the full reference.
 
 ## Maps
 
@@ -53,11 +75,14 @@ type Person { name: String, age: Int }
 
 **Design rationale.** Heterogeneous maps defeat static typing. If the type
 checker cannot know what `map.get(m, key)` returns, it cannot catch errors
-at compile time.
+at compile time. See [Design Decisions](design-decisions.md#homogeneous-maps)
+for the full argument.
 
 Key functions: `map.get`, `map.set`, `map.delete`, `map.contains`,
 `map.keys`, `map.values`, `map.entries`, `map.from_entries`, `map.length`,
 `map.merge`, `map.filter`, `map.map`, `map.each`, `map.update`.
+
+See [`stdlib/map`](../stdlib/map.md) for the full reference.
 
 ## Sets
 
@@ -79,3 +104,5 @@ Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
 `set.insert`, `set.remove`, `set.length`, `set.union`, `set.intersection`,
 `set.difference`, `set.is_subset`, `set.map`, `set.filter`, `set.each`,
 `set.fold`.
+
+See [`stdlib/set`](../stdlib/set.md) for the full reference.

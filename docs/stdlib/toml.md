@@ -32,6 +32,8 @@ TomlError` is wired in):
 | `TomlMissingField(name)` | `String` | A required (non-`Option`) field was absent |
 | `TomlUnknown(msg)` | `String` | Anything else (serialization failures, document-shape violations) |
 
+See [stdlib errors](errors.md) for the shared `Error` trait.
+
 
 ## `toml.parse`
 

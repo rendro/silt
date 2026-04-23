@@ -41,6 +41,47 @@ let hundred = 1e2       -- Float(100.0), not Int
 Scientific notation always produces a `Float`, even when the value is a whole number.
 Non-finite results like `1e999` are rejected at compile time.
 
+## Numeric Safety
+
+silt treats silent wrong answers as worse than crashes. The numeric types are designed so that every value in `Int` and `Float` is a finite, ordinary number.
+
+### Integer overflow
+
+`Int` is 64-bit signed. Arithmetic that would overflow is a **runtime error**, not silent wrapping:
+
+```silt
+9223372036854775807 + 1      -- runtime error: integer overflow
+int.abs(-9223372036854775808) -- runtime error: absolute value overflow
+```
+
+### Finite floats and `ExtFloat`
+
+Operations that *can* produce `NaN` or `Infinity` return `ExtFloat` instead of `Float`. This splits the type system: `Float` values are always finite and totally ordered, `ExtFloat` values may be anything IEEE 754 produces.
+
+```silt
+1.0 + 2.0        -- Float        (addition of finite Floats)
+1.0 / 2.0        -- ExtFloat     (division may produce Infinity)
+math.sqrt(x)     -- ExtFloat     (may produce NaN)
+```
+
+Non-division arithmetic (`+`, `-`, `*`) on `Float` values stays in `Float` and panics on overflow to `Infinity`, matching the integer rule.
+
+### Recovering `Float` with `else`
+
+To use an `ExtFloat` where a `Float` is needed, supply a finite fallback with the `else` operator:
+
+```silt
+let x: Float = 1.0 / 3.0 else 0.0        -- finite result → 0.333...
+let y: Float = 1.0 / 0.0 else 0.0        -- infinity → fallback 0.0
+let z: Float = math.sqrt(-1.0) else 0.0  -- NaN → fallback 0.0
+```
+
+`else` is the lowest-precedence infix operator. See [Operators and Precedence](operators.md) for details.
+
+### No implicit coercion
+
+There are no implicit conversions between `Int` and `Float`. Convert explicitly with `int.to_float(n)` and `float.to_int(x)`. The `Float` → `ExtFloat` direction is safe (every finite value is valid IEEE 754) and happens automatically where needed; the `ExtFloat` → `Float` direction always requires `else`.
+
 ## Enums (Tagged Unions)
 
 ```silt

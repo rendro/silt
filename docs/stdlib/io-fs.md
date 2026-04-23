@@ -18,15 +18,28 @@ Functions for file I/O, stdin, command-line arguments, and debug inspection.
 | `read_line` | `() -> Result(String, IoError)` | Read one line from stdin |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
 
-Every fallible `io` / `fs` function returns `Result(T, IoError)`. `IoError`
-is the built-in error enum (variants: `IoNotFound(path)`,
-`IoPermissionDenied(path)`, `IoAlreadyExists(path)`, `IoInvalidInput(msg)`,
-`IoInterrupted`, `IoUnexpectedEof`, `IoWriteZero`, `IoUnknown(msg)`). It
-implements the built-in `Error` trait, so every `IoError` value exposes
+## Errors
+
+Every fallible `io` / `fs` function returns `Result(T, IoError)`.
+
+| Variant                      | Meaning                                    |
+|------------------------------|--------------------------------------------|
+| `IoNotFound(path)`           | file or directory does not exist           |
+| `IoPermissionDenied(path)`   | OS denied access                           |
+| `IoAlreadyExists(path)`      | destination already exists                 |
+| `IoInvalidInput(msg)`        | malformed argument                         |
+| `IoInterrupted`              | syscall was interrupted                    |
+| `IoUnexpectedEof`            | stream ended before the requested bytes    |
+| `IoWriteZero`                | write returned 0 bytes                     |
+| `IoUnknown(msg)`             | everything else                            |
+
+`IoError` implements the built-in `Error` trait, so every value exposes
 `.message() -> String` for a human-readable summary. Most call sites
 destructure specific variants when they need to branch (e.g. "create a
 default when the file does not exist") and fall through to `.message()`
-otherwise.
+otherwise. See [stdlib errors](errors.md) for the shared `Error` trait.
+
+See also [bytes](bytes.md) for reading/writing binary data.
 
 
 ## `io.args`
