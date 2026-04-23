@@ -427,6 +427,7 @@ impl Vm {
     /// because IDs are only compared within their own `Value` variant
     /// (a TcpStream can never compare equal to a Handle), and avoiding
     /// a third atomic keeps the Vm struct small.
+    #[cfg(feature = "tcp")]
     pub(crate) fn next_tcp_id(&mut self) -> usize {
         self.next_task_id.fetch_add(1, Ordering::Relaxed) as usize
     }

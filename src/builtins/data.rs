@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use crate::value::{IoCompletion, TaskHandle, Value, checked_range_len};
+use crate::value::{IoCompletion, Value, checked_range_len};
+#[cfg(feature = "http")]
+use crate::value::TaskHandle;
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
@@ -2407,6 +2409,7 @@ fn do_http_serve_inner(
 }
 
 /// Dispatch `http.<name>(args)`.
+#[cfg_attr(not(feature = "http"), allow(unused_variables))]
 pub fn call_http(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmError> {
     match name {
         "get" => {
