@@ -42,7 +42,9 @@ fn assert_ext_float(actual: Value, expected: f64, label: &str) {
             assert!(
                 (x - expected).abs() < 1e-10
                     || (x.is_nan() && expected.is_nan())
-                    || (x.is_infinite() && expected.is_infinite() && x.signum() == expected.signum()),
+                    || (x.is_infinite()
+                        && expected.is_infinite()
+                        && x.signum() == expected.signum()),
                 "{label}: expected ExtFloat({expected}), got ExtFloat({x})"
             );
         }

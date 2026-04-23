@@ -69,10 +69,7 @@ impl Vm {
             // guarantees this or-pattern only runs when at least one operand
             // is `ExtFloat`. Result is always `Value::ExtFloat(_)` regardless
             // of which side was a plain `Float`.
-            (
-                Value::Float(a) | Value::ExtFloat(a),
-                Value::Float(b) | Value::ExtFloat(b),
-            ) => {
+            (Value::Float(a) | Value::ExtFloat(a), Value::Float(b) | Value::ExtFloat(b)) => {
                 let (a, b) = (*a, *b);
                 match op {
                     Op::Add => Value::ExtFloat(a + b),

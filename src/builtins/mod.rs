@@ -68,11 +68,8 @@ where
                 )));
             }
             let rendered = match &args[0] {
-                Value::Variant(tag, fields) => {
-                    render_message(tag.as_str(), fields.as_slice()).unwrap_or_else(|| {
-                        format!("{enum_name}: unrecognized variant shape `{tag}`")
-                    })
-                }
+                Value::Variant(tag, fields) => render_message(tag.as_str(), fields.as_slice())
+                    .unwrap_or_else(|| format!("{enum_name}: unrecognized variant shape `{tag}`")),
                 other => {
                     return Err(VmError::new(format!(
                         "{enum_name}.message: expected {enum_name} variant, got {other}"

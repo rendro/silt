@@ -1686,18 +1686,15 @@ pub fn call_pg_error_trait(name: &str, args: &[Value]) -> Result<Value, VmError>
                     format!("postgres query error [{sqlstate}]: {msg}")
                 }
             }
-            (
-                "PgTypeMismatch",
-                [Value::String(col), Value::String(exp), Value::String(act)],
-            ) => format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}"),
+            ("PgTypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
+                format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}")
+            }
             ("PgNoSuchColumn", [Value::String(col)]) => {
                 format!("postgres: no such column `{col}`")
             }
             ("PgClosed", []) => "postgres connection closed".to_string(),
             ("PgTimeout", []) => "postgres operation timed out".to_string(),
-            ("PgTxnAborted", []) => {
-                "postgres transaction aborted; rollback required".to_string()
-            }
+            ("PgTxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
             ("PgUnknown", [Value::String(m)]) => m.clone(),
             _ => return None,
         })

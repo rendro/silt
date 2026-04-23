@@ -262,12 +262,8 @@ pub(crate) fn vm_run_file(path: &str) {
             // users. Round-36: funnel through `SourceError::runtime_at`
             // with a zero span so output renders with the canonical
             // `error[runtime]:` header and never contains "VM error:".
-            let source_err = SourceError::runtime_at(
-                &e.message,
-                silt::lexer::Span::new(0, 0),
-                &source,
-                path,
-            );
+            let source_err =
+                SourceError::runtime_at(&e.message, silt::lexer::Span::new(0, 0), &source, path);
             eprintln!("{source_err}");
         }
         process::exit(1);

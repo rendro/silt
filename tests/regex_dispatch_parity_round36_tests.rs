@@ -318,33 +318,21 @@ fn replace_valid_and_parity_errors() {
         "regex.replace takes 3 arguments (pattern, text, replacement)"
     );
     assert_eq!(
-        err_msg(
-            "replace",
-            vec![s("a"), s("b"), s("c"), s("d")]
-        ),
+        err_msg("replace", vec![s("a"), s("b"), s("c"), s("d")]),
         "regex.replace takes 3 arguments (pattern, text, replacement)"
     );
 
     // Wrong type (on any of the three positions).
     assert_eq!(
-        err_msg(
-            "replace",
-            vec![Value::Int(0), s("text"), s("repl")]
-        ),
+        err_msg("replace", vec![Value::Int(0), s("text"), s("repl")]),
         "regex.replace requires string arguments"
     );
     assert_eq!(
-        err_msg(
-            "replace",
-            vec![s("pat"), Value::Int(0), s("repl")]
-        ),
+        err_msg("replace", vec![s("pat"), Value::Int(0), s("repl")]),
         "regex.replace requires string arguments"
     );
     assert_eq!(
-        err_msg(
-            "replace",
-            vec![s("pat"), s("text"), Value::Int(0)]
-        ),
+        err_msg("replace", vec![s("pat"), s("text"), Value::Int(0)]),
         "regex.replace requires string arguments"
     );
 }
@@ -363,33 +351,21 @@ fn replace_all_valid_and_parity_errors() {
         "regex.replace_all takes 3 arguments (pattern, text, replacement)"
     );
     assert_eq!(
-        err_msg(
-            "replace_all",
-            vec![s("a"), s("b"), s("c"), s("d")]
-        ),
+        err_msg("replace_all", vec![s("a"), s("b"), s("c"), s("d")]),
         "regex.replace_all takes 3 arguments (pattern, text, replacement)"
     );
 
     // Wrong type (on any of the three positions).
     assert_eq!(
-        err_msg(
-            "replace_all",
-            vec![Value::Bool(true), s("text"), s("repl")]
-        ),
+        err_msg("replace_all", vec![Value::Bool(true), s("text"), s("repl")]),
         "regex.replace_all requires string arguments"
     );
     assert_eq!(
-        err_msg(
-            "replace_all",
-            vec![s("pat"), Value::Bool(true), s("repl")]
-        ),
+        err_msg("replace_all", vec![s("pat"), Value::Bool(true), s("repl")]),
         "regex.replace_all requires string arguments"
     );
     assert_eq!(
-        err_msg(
-            "replace_all",
-            vec![s("pat"), s("text"), Value::Bool(true)]
-        ),
+        err_msg("replace_all", vec![s("pat"), s("text"), Value::Bool(true)]),
         "regex.replace_all requires string arguments"
     );
 }

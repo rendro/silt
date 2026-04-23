@@ -72,9 +72,7 @@ fn test_silt_test_banner_consistency_top_level_and_subcommand() {
         .expect("failed to run silt --help");
     let top_stdout = String::from_utf8_lossy(&top_help.stdout);
     let top_row = extract_top_level_test_row(&top_stdout).unwrap_or_else(|| {
-        panic!(
-            "no `silt test ...` row in top-level help output:\n{top_stdout}"
-        )
+        panic!("no `silt test ...` row in top-level help output:\n{top_stdout}")
     });
 
     let sub_help = silt_cmd()
@@ -82,11 +80,8 @@ fn test_silt_test_banner_consistency_top_level_and_subcommand() {
         .output()
         .expect("failed to run silt test --help");
     let sub_stdout = String::from_utf8_lossy(&sub_help.stdout);
-    let sub_banner = extract_subcommand_usage(&sub_stdout).unwrap_or_else(|| {
-        panic!(
-            "no `Usage:` line in `silt test --help` output:\n{sub_stdout}"
-        )
-    });
+    let sub_banner = extract_subcommand_usage(&sub_stdout)
+        .unwrap_or_else(|| panic!("no `Usage:` line in `silt test --help` output:\n{sub_stdout}"));
 
     assert_eq!(
         top_row.trim(),

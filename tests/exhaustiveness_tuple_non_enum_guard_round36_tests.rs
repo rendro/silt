@@ -77,7 +77,8 @@ fn main() {
     // checker would silently accept the match and this assertion would
     // fail because no diagnostic would be emitted.
     assert!(
-        errs.iter().any(|m| m.contains("not all patterns are covered")),
+        errs.iter()
+            .any(|m| m.contains("not all patterns are covered")),
         "expected the tuple-witness phrasing 'not all patterns are covered' \
          in the diagnostic for (Record, Enum), got: {errs:?}"
     );
@@ -109,7 +110,8 @@ fn main() {
          first-column tuple, got: {errs:?}"
     );
     assert!(
-        errs.iter().any(|m| m.contains("not all patterns are covered")),
+        errs.iter()
+            .any(|m| m.contains("not all patterns are covered")),
         "expected the tuple-witness phrasing 'not all patterns are covered' \
          in the diagnostic for (List, Enum), got: {errs:?}"
     );
@@ -163,7 +165,8 @@ fn main() {
          first-column tuple, got: {errs:?}"
     );
     assert!(
-        errs.iter().any(|m| m.contains("not all patterns are covered")),
+        errs.iter()
+            .any(|m| m.contains("not all patterns are covered")),
         "expected the tuple-witness phrasing 'not all patterns are covered' \
          in the diagnostic for (Map, Enum), got: {errs:?}"
     );

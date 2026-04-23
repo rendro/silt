@@ -82,8 +82,8 @@ fn parse_http_request(stream: &mut TcpStream) -> std::io::Result<Captured> {
     }
 
     let header_bytes = &buf[..header_end];
-    let head = std::str::from_utf8(header_bytes)
-        .map_err(|_| std::io::Error::other("non-utf8 headers"))?;
+    let head =
+        std::str::from_utf8(header_bytes).map_err(|_| std::io::Error::other("non-utf8 headers"))?;
     let mut lines = head.split("\r\n");
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
@@ -142,17 +142,11 @@ fn spawn_one_shot_server() -> (u16, mpsc::Receiver<Captured>) {
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        listener
-            .set_nonblocking(false)
-            .ok();
+        listener.set_nonblocking(false).ok();
         // Accept exactly one connection.
         if let Ok((mut stream, _)) = listener.accept() {
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .ok();
-            stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
-                .ok();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
             match parse_http_request(&mut stream) {
                 Ok(cap) => {
                     // HEAD responses must not include a body per RFC 7230,
@@ -195,12 +189,7 @@ fn headers_map(pairs: &[(&str, &str)]) -> Value {
     Value::Map(Arc::new(m))
 }
 
-fn call_request(
-    method: &str,
-    url: &str,
-    body: &str,
-    headers: &[(&str, &str)],
-) -> Value {
+fn call_request(method: &str, url: &str, body: &str, headers: &[(&str, &str)]) -> Value {
     let mut vm = Vm::new();
     let args = vec![
         method_variant(method),
@@ -268,10 +257,7 @@ fn run_no_body_verb_parity(verb: &str) {
     // verbs MUST drop it on the floor (ureq 3's no-body RequestBuilder
     // has no API to attach a body, so `call()` sends no body).
     let body = "this-should-be-ignored";
-    let headers = &[
-        ("X-Silt-Verb", verb),
-        ("X-Silt-Probe", "parity"),
-    ];
+    let headers = &[("X-Silt-Verb", verb), ("X-Silt-Probe", "parity")];
     let resp = call_request(verb, &url, body, headers);
     match &resp {
         Value::Variant(tag, _) => assert_eq!(tag, "Ok", "unexpected Err from {verb}: {resp:?}"),
@@ -388,7 +374,11 @@ fn post_empty_body_uses_send_empty_path() {
         .recv_timeout(Duration::from_secs(5))
         .expect("server did not see the empty-body POST");
     assert_eq!(cap.method, "POST");
-    assert!(cap.body.is_empty(), "empty-body POST sent bytes: {:?}", cap.body);
+    assert!(
+        cap.body.is_empty(),
+        "empty-body POST sent bytes: {:?}",
+        cap.body
+    );
 }
 
 // ── unknown verb preserves pre-refactor error shape ──────────────────
@@ -453,16 +443,14 @@ fn assert_connect_failure_err_shape(verb: &str) {
 
     let url = format!("http://127.0.0.1:{port}/");
     let mut vm = Vm::new();
-    let args = vec![
-        method_variant(verb),
-        s(&url),
-        s(""),
-        headers_map(&[]),
-    ];
+    let args = vec![method_variant(verb), s(&url), s(""), headers_map(&[])];
     let resp = call_http(&mut vm, "request", &args).expect("call_http request");
     match &resp {
         Value::Variant(outer, outer_payload) => {
-            assert_eq!(outer, "Err", "expected Err for {verb} connect-failure: {resp:?}");
+            assert_eq!(
+                outer, "Err",
+                "expected Err for {verb} connect-failure: {resp:?}"
+            );
             assert_eq!(outer_payload.len(), 1);
             match &outer_payload[0] {
                 Value::Variant(inner, _) => {

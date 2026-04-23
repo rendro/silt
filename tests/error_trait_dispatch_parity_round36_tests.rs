@@ -26,8 +26,7 @@
 use silt::builtins::bytes::call_bytes_error_trait;
 use silt::builtins::concurrency::call_channel_error_trait;
 use silt::builtins::data::{
-    call_http_error_trait, call_json_error_trait, call_regex_error_trait,
-    call_time_error_trait,
+    call_http_error_trait, call_json_error_trait, call_regex_error_trait, call_time_error_trait,
 };
 use silt::builtins::io::call_io_error_trait;
 use silt::builtins::numeric::call_parse_error_trait;
@@ -85,11 +84,7 @@ fn assert_scaffolding_parity(
     //    what the error reports (receiver counts as arg 0, extras
     //    push the count above 1). Two extras → got 3, etc.
     assert_eq!(
-        expect_err(
-            dispatch,
-            "message",
-            &[receiver.clone(), Value::Int(99)]
-        ),
+        expect_err(dispatch, "message", &[receiver.clone(), Value::Int(99)]),
         format!("{enum_name}.message takes 1 argument (self), got 2"),
         "{enum_name}: wrong-arity error wording changed",
     );
@@ -158,20 +153,14 @@ fn json_error_dispatch_parity() {
     assert_scaffolding_parity(
         call_json_error_trait,
         "JsonError",
-        v(
-            "JsonSyntax",
-            vec![s("unexpected token"), Value::Int(42)],
-        ),
+        v("JsonSyntax", vec![s("unexpected token"), Value::Int(42)]),
         "json syntax error at byte 42: unexpected token",
     );
     assert_eq!(
         expect_ok(
             call_json_error_trait,
             "message",
-            &[v(
-                "JsonTypeMismatch",
-                vec![s("string"), s("number")]
-            )]
+            &[v("JsonTypeMismatch", vec![s("string"), s("number")])]
         ),
         "json type mismatch: expected string, got number"
     );
@@ -214,10 +203,7 @@ fn http_error_dispatch_parity() {
         expect_ok(
             call_http_error_trait,
             "message",
-            &[v(
-                "HttpStatusCode",
-                vec![Value::Int(500), s("boom")]
-            )]
+            &[v("HttpStatusCode", vec![Value::Int(500), s("boom")])]
         ),
         "http status 500: boom"
     );
@@ -228,10 +214,7 @@ fn regex_error_dispatch_parity() {
     assert_scaffolding_parity(
         call_regex_error_trait,
         "RegexError",
-        v(
-            "RegexInvalidPattern",
-            vec![s("bad escape"), Value::Int(3)],
-        ),
+        v("RegexInvalidPattern", vec![s("bad escape"), Value::Int(3)]),
         "invalid regex pattern at position 3: bad escape",
     );
     assert_eq!(
@@ -409,19 +392,11 @@ fn tcp_error_dispatch_parity() {
         "tcp TLS error: handshake failed"
     );
     assert_eq!(
-        expect_ok(
-            call_tcp_error_trait,
-            "message",
-            &[v("TcpClosed", vec![])]
-        ),
+        expect_ok(call_tcp_error_trait, "message", &[v("TcpClosed", vec![])]),
         "tcp connection closed"
     );
     assert_eq!(
-        expect_ok(
-            call_tcp_error_trait,
-            "message",
-            &[v("TcpTimeout", vec![])]
-        ),
+        expect_ok(call_tcp_error_trait, "message", &[v("TcpTimeout", vec![])]),
         "tcp operation timed out"
     );
     assert_eq!(
@@ -456,10 +431,7 @@ fn pg_error_dispatch_parity() {
         expect_ok(
             call_pg_error_trait,
             "message",
-            &[v(
-                "PgQuery",
-                vec![s("unique violation"), s("23505")]
-            )]
+            &[v("PgQuery", vec![s("unique violation"), s("23505")])]
         ),
         "postgres query error [23505]: unique violation"
     );
@@ -467,10 +439,7 @@ fn pg_error_dispatch_parity() {
         expect_ok(
             call_pg_error_trait,
             "message",
-            &[v(
-                "PgTypeMismatch",
-                vec![s("id"), s("int"), s("string")]
-            )]
+            &[v("PgTypeMismatch", vec![s("id"), s("int"), s("string")])]
         ),
         "postgres type mismatch on column `id`: expected int, got string"
     );
@@ -483,27 +452,15 @@ fn pg_error_dispatch_parity() {
         "postgres: no such column `foo`"
     );
     assert_eq!(
-        expect_ok(
-            call_pg_error_trait,
-            "message",
-            &[v("PgClosed", vec![])]
-        ),
+        expect_ok(call_pg_error_trait, "message", &[v("PgClosed", vec![])]),
         "postgres connection closed"
     );
     assert_eq!(
-        expect_ok(
-            call_pg_error_trait,
-            "message",
-            &[v("PgTimeout", vec![])]
-        ),
+        expect_ok(call_pg_error_trait, "message", &[v("PgTimeout", vec![])]),
         "postgres operation timed out"
     );
     assert_eq!(
-        expect_ok(
-            call_pg_error_trait,
-            "message",
-            &[v("PgTxnAborted", vec![])]
-        ),
+        expect_ok(call_pg_error_trait, "message", &[v("PgTxnAborted", vec![])]),
         "postgres transaction aborted; rollback required"
     );
 }
