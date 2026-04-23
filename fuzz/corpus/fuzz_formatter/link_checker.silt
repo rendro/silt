@@ -22,7 +22,7 @@ fn main() {
   let content = match io.read_file(file_path) {
     Ok(c) -> c
     Err(e) -> {
-      println("Error reading file: {e}")
+      println("Error reading file: {e.message()}")
       return panic("Cannot continue without file")
     }
   }

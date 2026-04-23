@@ -20,9 +20,9 @@ type Schedule {
 
 fn main() {
   -- Parse JSON with Date field
-  let event = match json.parse(Event, """{"name": "launch", "date": "2024-03-15"}""") {
+  let event = match json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event) {
     Ok(e) -> e
-    Err(e) -> panic("parse error: {e}")
+    Err(e) -> panic("parse error: {e.message()}")
   }
   println("event: {event.name}")
   println("date: {event.date}")
@@ -30,27 +30,27 @@ fn main() {
   |> time.weekday
   println("weekday: {wd}")
   -- Parse JSON with DateTime field
-  let meeting = match json.parse(Meeting, """{"title": "standup", "start": "2024-03-15T09:00:00"}""") {
+  let meeting = match json.parse("""{"title": "standup", "start": "2024-03-15T09:00:00"}""", Meeting) {
     Ok(m) -> m
-    Err(e) -> panic("parse error: {e}")
+    Err(e) -> panic("parse error: {e.message()}")
   }
   println("meeting: {meeting.title} at {meeting.start}")
   -- Parse JSON with Time field
-  let sched = match json.parse(Schedule, """{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""") {
+  let sched = match json.parse("""{"event": "lunch", "date": "2024-03-15", "time": "12:30:00"}""", Schedule) {
     Ok(s) -> s
-    Err(e) -> panic("parse error: {e}")
+    Err(e) -> panic("parse error: {e.message()}")
   }
   println("schedule: {sched.event} on {sched.date} at {sched.time}")
   -- Parse a list of events
-  let events = match json.parse_list(Event, """
+  let events = match json.parse_list("""
     [
         {"name": "alpha", "date": "2024-01-15"},
         {"name": "beta", "date": "2024-06-01"},
         {"name": "gamma", "date": "2024-12-25"}
       ]
-    """) {
+    """, Event) {
     Ok(e) -> e
-    Err(e) -> panic("parse error: {e}")
+    Err(e) -> panic("parse error: {e.message()}")
   }
   events
   |> list.each { e ->
@@ -63,9 +63,9 @@ fn main() {
   |> time.add_days(90)
   println("90 days after launch: {deadline}")
   -- Invalid date in JSON
-  let bad = json.parse(Event, """{"name": "oops", "date": "not-a-date"}""")
+  let bad = json.parse("""{"name": "oops", "date": "not-a-date"}""", Event)
   match bad {
     Ok(e) -> println("bad date: parsed as {e.name}")
-    Err(e) -> println("bad date: {e}")
+    Err(e) -> println("bad date: {e.message()}")
   }
 }

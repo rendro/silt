@@ -109,10 +109,10 @@ fn print_separator() {
 }
 
 fn main() {
-  -- Read and parse CSV using match with Never-typed panic in Err arm
+  -- Read and parse CSV; bail out on IO errors with a rendered message.
   let content = match io.read_file("examples/data.csv") {
     Ok(text) -> text
-    Err(e) -> panic("Error reading data.csv: {e}")
+    Err(e) -> panic("Error reading data.csv: {e.message()}")
   }
   let lines = content
   |> string.split("\n")

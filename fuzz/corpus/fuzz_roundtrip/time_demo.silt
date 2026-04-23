@@ -5,31 +5,31 @@ fn main() {
   let date = time.date(2024, 3, 15)
   match date {
     Ok(d) -> println("date: {d}")
-    Err(e) -> println("date error: {e}")
+    Err(e) -> println("date error: {e.message()}")
   }
   let bad_date = time.date(2024, 13, 1)
   match bad_date {
     Ok(d) -> println("bad date: {d}")
-    Err(e) -> println("bad date: {e}")
+    Err(e) -> println("bad date: {e.message()}")
   }
   let t = time.time(14, 30, 0)
   match t {
     Ok(tm) -> println("time: {tm}")
-    Err(e) -> println("time error: {e}")
+    Err(e) -> println("time error: {e.message()}")
   }
   let bad_time = time.time(25, 0, 0)
   match bad_time {
     Ok(tm) -> println("bad time: {tm}")
-    Err(e) -> println("bad time: {e}")
+    Err(e) -> println("bad time: {e.message()}")
   }
   -- Compose date + time into datetime
   let d = match time.date(2024, 6, 15) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let tod = match time.time(9, 30, 0) {
     Ok(t) -> t
-    Err(e) -> panic("time error: {e}")
+    Err(e) -> panic("time error: {e.message()}")
   }
   let dt = time.datetime(d, tod)
   println("datetime: {dt}")
@@ -41,11 +41,11 @@ fn main() {
   -- ── Formatting ──────────────────────────────────────────────────────
   let dt2_date = match time.date(2024, 12, 25) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let dt2_time = match time.time(18, 0, 0) {
     Ok(t) -> t
-    Err(e) -> panic("time error: {e}")
+    Err(e) -> panic("time error: {e.message()}")
   }
   let dt2 = time.datetime(dt2_date, dt2_time)
   println("formatted: {dt2
@@ -56,17 +56,17 @@ fn main() {
   let parsed = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
   match parsed {
     Ok(dt) -> println("parsed: {dt}")
-    Err(e) -> println("parse error: {e}")
+    Err(e) -> println("parse error: {e.message()}")
   }
   let parsed_date = time.parse_date("2024-07-04", "%Y-%m-%d")
   match parsed_date {
     Ok(d) -> println("parsed date: {d}")
-    Err(e) -> println("parse date error: {e}")
+    Err(e) -> println("parse date error: {e.message()}")
   }
   let bad_parse = time.parse("not-a-date", "%Y-%m-%d")
   match bad_parse {
     Ok(dt) -> println("bad parse: {dt}")
-    Err(e) -> println("bad parse: {e}")
+    Err(e) -> println("bad parse: {e.message()}")
   }
   -- ── Date arithmetic ─────────────────────────────────────────────────
   let future = today
@@ -78,14 +78,14 @@ fn main() {
   -- Month arithmetic with end-of-month clamping
   let jan31 = match time.date(2024, 1, 31) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let feb_result = jan31
   |> time.add_months(1)
   println("Jan 31 + 1 month = {feb_result}")
   let mar31 = match time.date(2024, 3, 31) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let prev = mar31
   |> time.add_months(-1)
@@ -121,11 +121,11 @@ fn main() {
   println("today is: {weekday}")
   let d_start = match time.date(2024, 1, 1) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let d_end = match time.date(2024, 12, 31) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let days = time.days_between(d_start, d_end)
   println("days in 2024: {days}")
@@ -137,11 +137,11 @@ fn main() {
   -- ── Comparison ──────────────────────────────────────────────────────
   let d1 = match time.date(2024, 1, 31) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   let d2 = match time.date(2024, 2, 1) {
     Ok(d) -> d
-    Err(e) -> panic("date error: {e}")
+    Err(e) -> panic("date error: {e.message()}")
   }
   println("Jan 31 < Feb 1: {d1 < d2}")
   println("Feb 1 > Jan 31: {d2 > d1}")

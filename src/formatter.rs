@@ -96,6 +96,70 @@ fn with_fmt_state<R>(
     result
 }
 
+/// Detect whether the source's body for a delimited block (enum/record
+/// decl, fn params, etc.) has a trailing comma before its closing
+/// delimiter. Used so the formatter preserves — rather than strips —
+/// the source's last-position trailing comma, which otherwise breaks
+/// the fuzz-invariant "significant token count unchanged".
+///
+/// Inputs: `close_line` is the 1-based source line of the closing
+/// delimiter (e.g. `}` for a type body). `body_start_line` is the
+/// 1-based line of the opening brace — used as a lower bound so the
+/// backward scan cannot escape the enclosing block. Returns true iff
+/// the last non-comment, non-whitespace byte between the block content
+/// and the closing delimiter is `,`.
+///
+/// Correctness: false negatives are safe (we simply don't emit a
+/// trailing comma when one existed — the invariant tolerates that only
+/// if the formatter also doesn't emit one, which is the current
+/// pre-fix behavior we're narrowing). False positives (spurious `true`
+/// on sources without a trailing comma) would cause the formatter to
+/// insert a comma where none exists — also an invariant violation. So
+/// the scanner must be conservative: return true only when we're
+/// certain a comma is the last meaningful byte before the delimiter.
+fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> bool {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return false;
+        };
+        let lines = &state.source_lines;
+        if close_line == 0 || close_line > lines.len() {
+            return false;
+        }
+        let low_idx = body_start_line.saturating_sub(1);
+        let mut idx = close_line - 1;
+
+        // The `}` line: strip line comment, find `}`, look at content
+        // before it. If the brace is preceded by non-whitespace content,
+        // the last significant byte on that line answers the question.
+        let line = &lines[idx];
+        let before_brace = match line.rfind('}') {
+            Some(col) => &line[..col],
+            None => "",
+        };
+        let before_trimmed = before_brace.split("--").next().unwrap_or("").trim_end();
+        if !before_trimmed.is_empty() {
+            return before_trimmed.ends_with(',');
+        }
+
+        // `}` is alone on its line (possibly with leading whitespace).
+        // Walk upward over blank / comment-only lines until we hit a
+        // line with real content. That line's final significant byte
+        // answers the question.
+        while idx > low_idx {
+            idx -= 1;
+            let line = lines[idx].trim_end();
+            let stripped = line.split("--").next().unwrap_or("").trim_end();
+            if stripped.is_empty() {
+                continue;
+            }
+            return stripped.ends_with(',');
+        }
+        false
+    })
+}
+
 /// Take the trailing comment attached to `line`, marking it consumed so
 /// it is not also emitted later. Returns the raw comment text (including
 /// the `-- ` prefix) or `None`.
@@ -3656,6 +3720,12 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
     // trailing comments attached to each variant/field line.
     let close_line = compute_block_end_line(t.span);
 
+    // Round-52 fix: preserve the source's trailing-comma state on the
+    // last entry. The fuzz invariant "significant token count unchanged"
+    // treats `,` as significant, so stripping a trailing comma the user
+    // wrote (or adding one they didn't) corrupts the token count and
+    // trips the fuzz harness.
+    let source_has_trailing_comma = block_body_has_trailing_comma(t.span.line, close_line);
     match &t.body {
         TypeBody::Enum(variants) => {
             // Map each variant to its source line so we can fetch any
@@ -3678,12 +3748,13 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
                     let fields: Vec<String> = v.fields.iter().map(format_type_expr).collect();
                     format!("{}{}({})", indent(depth + 1), v.name, fields.join(", "))
                 };
-                // Original enum formatting omits the trailing comma on
-                // the last variant. Preserve that behavior unless the
-                // last variant has an attached trailing comment, in
-                // which case we need a comma to separate `entry ,-- c`.
+                // Non-last variants always take a comma (separator). For
+                // the LAST variant, mirror the source: a comma goes in
+                // iff the user wrote one. An attached trailing comment
+                // also forces a comma so the `,-- c` split is well-
+                // formed at parse time.
                 let trailing = src_line.and_then(take_trailing_for_line);
-                let needs_comma = i < last_idx || trailing.is_some();
+                let needs_comma = i < last_idx || trailing.is_some() || source_has_trailing_comma;
                 let comma = if needs_comma { "," } else { "" };
                 let tail = match trailing {
                     Some(tc) => format!("{head}{comma} {tc}"),

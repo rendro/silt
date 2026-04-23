@@ -84,7 +84,7 @@ fn handle_save(store) {
   let json_str = json.stringify(store)
   match io.write_file(db_path, json_str) {
     Ok(_) -> println("OK - saved {map.length(store)} entries to {db_path}")
-    Err(e) -> println("Error saving: {e}")
+    Err(e) -> println("Error saving: {e.message()}")
   }
   store
 }
@@ -92,18 +92,18 @@ fn handle_save(store) {
 fn handle_load() {
   match io.read_file(db_path) {
     Err(e) -> {
-      println("Error loading: {e}")
+      println("Error loading: {e.message()}")
       println("Starting with empty store.")
       #{}
     }
     Ok(content) -> {
-      match json.parse_map(String, content) {
+      match json.parse_map(content, String) {
         Ok(loaded) -> {
           println("OK - loaded {map.length(loaded)} entries from {db_path}")
           loaded
         }
         Err(e) -> {
-          println("Error parsing JSON: {e}")
+          println("Error parsing JSON: {e.message()}")
           println("Starting with empty store.")
           #{}
         }

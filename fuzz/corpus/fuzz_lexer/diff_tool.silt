@@ -108,14 +108,14 @@ fn trace_diff(table, old_lines, new_lines, i, j) {
 fn main() {
   println("=== Line-by-Line Diff Tool ===")
   println("")
-  -- Read both files using match with panic in Err arm (Never type unifies with Ok's value)
+  -- Read both files, bailing out if either is missing.
   let old_content = match io.read_file("examples/data/original.txt") {
     Ok(content) -> content
-    Err(e) -> panic("Error reading original.txt: {e}")
+    Err(e) -> panic("Error reading original.txt: {e.message()}")
   }
   let new_content = match io.read_file("examples/data/modified.txt") {
     Ok(content) -> content
-    Err(e) -> panic("Error reading modified.txt: {e}")
+    Err(e) -> panic("Error reading modified.txt: {e.message()}")
   }
   -- Split into lines, filter out trailing empty line from final newline
   let old_lines = old_content

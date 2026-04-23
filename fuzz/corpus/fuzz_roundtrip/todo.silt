@@ -61,7 +61,7 @@ fn save_todos(todos, path) {
   let content = json.stringify(todos)
   match io.write_file(path, content) {
     Ok(_) -> println("  Saved {list.length(todos)} todo(s) to {path}")
-    Err(e) -> println("  Error saving: {e}")
+    Err(e) -> println("  Error saving: {e.message()}")
   }
 }
 
@@ -72,19 +72,19 @@ fn load_todos(path) {
         println("  Loaded 0 todo(s) from {path}")
         []
       }
-      trimmed -> match json.parse_list(Todo, trimmed) {
+      trimmed -> match json.parse_list(trimmed, Todo) {
         Ok(todos) -> {
           println("  Loaded {list.length(todos)} todo(s) from {path}")
           todos
         }
         Err(e) -> {
-          println("  Error parsing: {e}")
+          println("  Error parsing: {e.message()}")
           []
         }
       }
     }
     Err(e) -> {
-      println("  Error loading: {e}")
+      println("  Error loading: {e.message()}")
       []
     }
   }
