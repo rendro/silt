@@ -1539,6 +1539,26 @@ fn extract_comments(source: &str) -> (Vec<Comment>, Vec<TrailingComment>, HashMa
                 line: i + 1, // 1-based
                 text: comment_text,
             });
+        } else if let Some(comment_text) = extract_block_body_trailing_comment_from_line(line) {
+            // A trailing `-- cmt` on the open-brace line AFTER a complete
+            // inner statement (e.g. `fn f() { x -- cmt\n}` or
+            // `fn f() { foo() -- cmt\n}`). The trailing extractor won't
+            // claim it (the outer `{` keeps `bracket_depth > 0` at the
+            // `--`), and the bracket-interior extractor only fires when
+            // the prev char is a bracket opener — neither matches when
+            // the prev is real code like `x` or `)`. Without this third
+            // case the comment is dropped on round-trip.
+            //
+            // We record it as a trailing comment for this line. The inner
+            // statement inside the `{` block shares `stmt_line == line`,
+            // and `format_stmt`'s recursion into the nested body consumes
+            // `take_trailing_for_line` BEFORE the outer per-stmt pickup
+            // at this same line, so the comment correctly attaches to the
+            // inner statement rather than the enclosing construct.
+            trailing.push(TrailingComment {
+                line: i + 1, // 1-based
+                text: comment_text,
+            });
         }
 
         i += 1;
@@ -1973,6 +1993,174 @@ fn extract_bracket_interior_line_comment_from_line(line: &str) -> Option<String>
     }
     let prev = chars[k - 1];
     if !(prev == '(' || prev == '[' || prev == '{') {
+        return None;
+    }
+    let comment: String = chars[start..].iter().collect();
+    Some(comment.trim_end().to_string())
+}
+
+/// Extract a `--` line comment that sits INSIDE an unclosed `{` block body
+/// on THIS line, AFTER a (balanced) inner statement — i.e. the line opens a
+/// `{` block, contains one or more complete inner-statement tokens, and ends
+/// with `<code> -- ...` without closing the `{`. Example:
+/// `fn f() { x -- note\n}` where `x` is a statement inside the body whose
+/// trailing comment lives on the open-brace line.
+///
+/// This is the third sibling to `extract_trailing_comment_from_line` (which
+/// refuses at `bracket_depth > 0`) and `extract_bracket_interior_line_comment
+/// _from_line` (which only claims when the `--` immediately follows a
+/// bracket opener). Without it, a trailing `-- note` whose previous code
+/// token is *inside* a `{` block body (e.g. `x` / `foo()` / etc.) is dropped
+/// on round-trip: the trailing extractor won't claim it (bracket_depth > 0),
+/// the bracket-interior helper won't claim it (prev char is not an opener),
+/// and no multi-line emitter sees the `--` because it's lexed as whitespace.
+///
+/// We return the comment text when ALL of:
+///   * the first `--` line-comment starts at `bracket_depth > 0`, AND
+///   * the innermost unclosed bracket at the `--` is a `{` (a block body —
+///     statements, not expression args), AND
+///   * the character immediately before `--` (skipping whitespace) is NOT a
+///     bracket opener — that is left to
+///     `extract_bracket_interior_line_comment_from_line`.
+///
+/// The caller records the result in `trailing_map[line]`. The block's inner
+/// statement (which shares `stmt_line == line` with the outer construct)
+/// picks it up via `take_trailing_for_line` FIRST because `format_stmt`
+/// recurses through nested blocks before the outer per-stmt trailing pickup
+/// runs — so the comment attaches to the correct inner statement rather
+/// than the enclosing one.
+fn extract_block_body_trailing_comment_from_line(line: &str) -> Option<String> {
+    // Reuse the same string/comment/interp scanner as its siblings, but
+    // track a STACK of bracket kinds so we can inspect which bracket the
+    // `--` sits inside when `bracket_depth > 0`.
+    let chars: Vec<char> = line.chars().collect();
+    let mut in_string = false;
+    let mut in_triple = false;
+    let mut interp_depths: Vec<usize> = Vec::new();
+    let mut block_depth: usize = 0;
+    let mut line_comment_start: Option<usize> = None;
+    // Stack of unclosed bracket-opener characters at the `--`'s position.
+    let mut bracket_stack: Vec<char> = Vec::new();
+    let mut line_comment_stack_top: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_triple {
+            if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+                in_triple = false;
+                i += 3;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' && i + 1 < chars.len() {
+                i += 2;
+                continue;
+            }
+            if ch == '{' {
+                interp_depths.push(0);
+                in_string = false;
+                i += 1;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if block_depth > 0 {
+            if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '}' {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' && i + 2 < chars.len() && chars[i + 1] == '"' && chars[i + 2] == '"' {
+            in_triple = true;
+            i += 3;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if ch == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            if interp_depths.is_empty() {
+                line_comment_start = Some(i);
+                line_comment_stack_top = bracket_stack.last().copied();
+                break;
+            }
+            i += 2;
+            continue;
+        }
+        if ch == '{' && i + 1 < chars.len() && chars[i + 1] == '-' {
+            block_depth += 1;
+            i += 2;
+            continue;
+        }
+        if interp_depths.is_empty() {
+            if ch == '(' || ch == '[' || ch == '{' {
+                bracket_stack.push(ch);
+            } else if ch == ')' || ch == ']' || ch == '}' {
+                bracket_stack.pop();
+            }
+        }
+        if !interp_depths.is_empty() {
+            if ch == '{' {
+                if let Some(d) = interp_depths.last_mut() {
+                    *d += 1;
+                }
+                i += 1;
+                continue;
+            }
+            if ch == '}' {
+                if let Some(d) = interp_depths.last_mut() {
+                    if *d == 0 {
+                        interp_depths.pop();
+                        in_string = true;
+                    } else {
+                        *d -= 1;
+                    }
+                }
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    let start = line_comment_start?;
+    // Must be inside an unclosed bracket pair. The plain trailing extractor
+    // already handles `bracket_depth == 0`.
+    let top = line_comment_stack_top?;
+    // Innermost unclosed bracket must be a `{` — a block body where the
+    // preceding code forms a complete inner statement. Claiming `(` / `[`
+    // here would hoist mid-call / mid-array comments out of the call.
+    if top != '{' {
+        return None;
+    }
+    // Immediate-prev-char must NOT be a bracket opener; that case is owned
+    // by `extract_bracket_interior_line_comment_from_line` (which records
+    // into `comments` for the empty-body / interior drains).
+    let mut k = start;
+    while k > 0 && chars[k - 1].is_whitespace() {
+        k -= 1;
+    }
+    if k == 0 {
+        return None;
+    }
+    let prev = chars[k - 1];
+    if prev == '(' || prev == '[' || prev == '{' {
         return None;
     }
     let comment: String = chars[start..].iter().collect();

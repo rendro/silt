@@ -149,3 +149,67 @@ fn multi_line_expression_trailing_line_comment_is_preserved() {
         line_comment_line_count(&pass1)
     );
 }
+
+#[test]
+fn trailing_line_comment_after_last_stmt_on_open_brace_line_is_preserved() {
+    // Third sibling of the two classes fixed in commit da1c1ab: a trailing
+    // `-- cmt` on the open-brace line AFTER a complete inner statement
+    // (`fn f() { x -- cmt\n}`). The closing `}` is on a later line, so
+    // `extract_trailing_comment_from_line` refuses to claim it
+    // (`bracket_depth > 0` at the `--` because of the outer `{`), and the
+    // bracket-interior helper only fires when the prev char is a bracket
+    // opener — neither matches when the prev is real code like `x`.
+    // Before the fix the comment vanished silently on round-trip.
+    let source = "fn f() { x -- comment here\n }\n";
+    let pass1 = format(source).expect("should format");
+    assert!(
+        pass1.contains("--"),
+        "`--` must survive round-trip; got {pass1:?}"
+    );
+    let pass2 = format(&pass1).expect("pass1 should re-format cleanly");
+    assert_eq!(
+        pass1, pass2,
+        "trailing-after-last-stmt-on-open-brace-line round-trip must be idempotent"
+    );
+    assert_eq!(
+        line_comment_line_count(source),
+        line_comment_line_count(&pass1)
+    );
+}
+
+#[test]
+fn trailing_line_comment_after_single_stmt_body_is_preserved() {
+    // Variant of the third class where the body closer `}` appears on the
+    // SAME source line as the trailing comment, e.g. `fn f() { x -- c }`.
+    // Because `--` is a line comment to EOL, the lexer consumes the `}`
+    // as part of the comment and the input no longer parses as a balanced
+    // block. This is an intrinsic source-level issue, not a formatter
+    // bug: the comment cannot coexist on the same line as the closer.
+    //
+    // The formatter must at minimum NOT silently succeed with a dropped
+    // comment (which was the pre-fix misbehaviour for related inputs) —
+    // it is acceptable for it to return a parse error. If a future
+    // language change makes this parse, the assertion below should be
+    // upgraded to require `--` survives in pass1 output.
+    let source = "fn f() { x -- c }\n";
+    match format(source) {
+        Ok(pass1) => {
+            // If it ever parses, the `--` must survive.
+            assert!(
+                pass1.contains("--"),
+                "`--` must survive round-trip when input parses; got {pass1:?}"
+            );
+            let pass2 = format(&pass1).expect("pass1 should re-format cleanly");
+            assert_eq!(pass1, pass2);
+            assert_eq!(
+                line_comment_line_count(source),
+                line_comment_line_count(&pass1)
+            );
+        }
+        Err(_) => {
+            // Expected with today's lexer: `--` eats the `}` so the block
+            // is unclosed. Not a silent mutation, so the formatter
+            // invariant is intact.
+        }
+    }
+}
