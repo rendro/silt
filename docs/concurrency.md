@@ -690,47 +690,48 @@ fn main() {
 
 ### Supervision and restart
 
-For long-running workers, treat failures as values. Wrap the worker body
-in a function that returns a `Result`, have the worker send a completion
-status on an outcome channel, and have a supervisor task decide whether
-to restart:
+For long-running workers, treat failures as values. Give each worker a
+fallible body that returns `Result`, report completion on an outcome
+channel, and have a supervisor task decide whether to restart:
 
 ```silt
 import channel
 import task
-import time
 
-type Outcome { Ok, Failed(String) }
+type Outcome { Finished, Crashed(String) }
 
-fn worker_body(id, jobs) {
+fn do_job(id, job) {
+  when job != "poison" else { return Err("worker {id} hit poison pill") }
+  println("worker {id} handled {job}")
+  Ok(())
+}
+
+fn worker_body(id, jobs, outcomes) {
   channel.each(jobs) { job ->
-    when job != "poison" else { panic("worker {id} hit poison pill") }
-    println("worker {id} handled {job}")
+    match do_job(id, job) {
+      Ok(_) -> ()
+      Err(msg) -> {
+        channel.send(outcomes, (id, Crashed(msg)))
+        return
+      }
+    }
   }
+  channel.send(outcomes, (id, Finished))
 }
 
 fn spawn_worker(id, jobs, outcomes) {
-  task.spawn(fn() {
-    -- task.join on the inner handle lets us convert a panic into a value.
-    let inner = task.spawn(fn() { worker_body(id, jobs) })
-    match task.join(inner) {
-      Ok(_) -> channel.send(outcomes, (id, Ok))
-      Err(e) -> channel.send(outcomes, (id, Failed(e.message())))
-    }
-  })
+  task.spawn(fn() { worker_body(id, jobs, outcomes) })
 }
 
-fn supervise(jobs, outcomes, max_restarts) {
-  loop {
-    when let Message((id, outcome)) = channel.receive(outcomes) else { return }
-    match outcome {
-      Ok -> ()
-      Failed(msg) -> {
-        println("worker {id} failed: {msg}")
-        when max_restarts > 0 else { return }
-        spawn_worker(id, jobs, outcomes)
-        -- decrement max_restarts via recursion in real code
-      }
+fn supervise(jobs, outcomes, remaining_restarts) {
+  when let Message((id, outcome)) = channel.receive(outcomes) else { return }
+  match outcome {
+    Finished -> supervise(jobs, outcomes, remaining_restarts)
+    Crashed(msg) -> {
+      println("worker {id} failed: {msg}")
+      when remaining_restarts > 0 else { return }
+      spawn_worker(id, jobs, outcomes)
+      supervise(jobs, outcomes, remaining_restarts - 1)
     }
   }
 }
@@ -753,19 +754,20 @@ fn main() {
 
 Key points:
 
-- **`task.join` propagates the failure**. When the joined task panics or
-  returns an error, `task.join` yields `Err(e)` with the message — that is
-  how a crash becomes a value the supervisor can inspect.
-- **Supervisors are just tasks**. There is no built-in supervision tree.
-  Compose the policy you need (restart, circuit-break, escalate) in
-  ordinary silt.
-- **Cancel children on shutdown**. If the supervisor is cancelled
-  (`task.cancel`), cancel each child it spawned to avoid leaks. Keep the
-  child handles in a list and cancel them in the `Closed` branch of the
-  outcome channel.
-- **Prefer `Result` over panic**. Panics are caught, but panicking for
-  control flow inside a hot worker is wasteful — return `Result` from
-  `worker_body` and send a typed `Outcome` instead.
+- **Failures are values on a channel.** Workers catch their own errors
+  via `Result` and `?`, then send a typed `Outcome` so the supervisor
+  can decide policy without relying on panic propagation.
+- **Supervisors are just tasks.** There is no built-in supervision
+  tree. Compose the policy you need (restart, circuit-break, escalate)
+  in ordinary silt — here, bounded restarts via recursion.
+- **Cancel children on shutdown.** If the supervisor is cancelled
+  (`task.cancel`), cancel each child it spawned to avoid leaks. Track
+  handles in a list and cancel them when the outcome channel closes.
+- **`task.join` re-raises runtime errors.** If a spawned task's body
+  panics with an unhandled runtime error, `task.join` on its handle
+  re-raises that error in the joining task. That is the "safety net"
+  path — design for outcomes-as-values instead, and keep `task.join`
+  for awaiting clean completion.
 
 
 ## 6. Runtime Model

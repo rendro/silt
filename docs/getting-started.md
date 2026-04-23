@@ -120,19 +120,17 @@ import list.{ map, filter }    -- direct:     map(xs, f)
 import list as l               -- aliased:    l.map(xs, f)
 ```
 
-`import` brings in both stdlib modules (`list`, `io`, `channel`, …) and your own files. If `src/math.silt` exists, `import math` makes its `pub` items available.
+`import` brings in both stdlib modules (`list`, `io`, `channel`, …) and your own files. If `src/geometry.silt` defines a `pub fn area`, then any other file in the package can `import geometry` and call `geometry.area(...)`:
 
 ```silt
--- File: src/math.silt
-pub fn add(a, b) { a + b }
-fn helper(x) { x * 2 }   -- private: only visible inside math.silt
+-- src/geometry.silt
+pub fn area(w, h) { w * h }
+fn helper(x) { x * 2 }   -- private: only visible inside geometry.silt
+```
 
--- File: src/main.silt
-import math
-
-fn main() {
-  println("{math.add(1, 2)}")
-}
+```silt
+-- src/main.silt — anywhere in this file, `geometry.area(3, 4)` now resolves.
+import geometry
 ```
 
 See [Modules](language/modules.md) for the full rules.
