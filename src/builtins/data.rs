@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
-use crate::value::{IoCompletion, Value, checked_range_len};
 #[cfg(feature = "http")]
 use crate::value::TaskHandle;
+use crate::value::{IoCompletion, Value, checked_range_len};
 use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 
 // ── Field type for JSON parsing ──────────────────────────────────────
