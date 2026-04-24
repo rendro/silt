@@ -306,16 +306,17 @@ fn main() {
     // earlier successful iterations would surface as phantom frames.
     let wrapper_count = run.stderr.matches("-> wrapper").count();
     assert!(
-        wrapper_count <= 1,
-        "expected at most 1 '-> wrapper' in call stack, got {wrapper_count}. \
-         Phantom frames indicate tco_elided was NOT pruned on the Err arm. \
+        wrapper_count == 1,
+        "expected exactly 1 '-> wrapper' in call stack, got {wrapper_count}. \
+         Phantom frames indicate tco_elided was NOT pruned on the Err arm; \
+         a count of 0 indicates the call stack was truncated entirely. \
          stderr:\n{}",
         run.stderr
     );
     let helper_count = run.stderr.matches("-> helper").count();
     assert!(
-        helper_count <= 1,
-        "expected at most 1 '-> helper' in call stack, got {helper_count}. \
+        helper_count == 1,
+        "expected exactly 1 '-> helper' in call stack, got {helper_count}. \
          stderr:\n{}",
         run.stderr
     );

@@ -202,9 +202,16 @@ fn formatter_invariants_reject_unparseable_output_when_original_parsed() {
     // Same token count, same balance, same comment markers — but
     // rearranged into a syntactically invalid form.
     let corrupted = "= let x 1\n";
-    let result = check_formatter_invariants(original, corrupted);
-    // Either the significant-token / parse check fires.
-    assert!(result.is_err(), "expected invariant failure");
+    let err = check_formatter_invariants(original, corrupted)
+        .expect_err("expected invariant failure");
+    // Either the significant-token-count check or the parse-preservation
+    // check must fire — anything else (e.g. a generic lex error) would
+    // mean the invariants we care about aren't actually being exercised.
+    assert!(
+        err.contains("significant token count")
+            || err.contains("original parsed but formatted output did not"),
+        "expected significant-token-count or parse-preservation failure, got: {err}"
+    );
 }
 
 #[test]

@@ -20,6 +20,8 @@ const TYPECHECKER_MOD_RS: &str = include_str!("../src/typechecker/mod.rs");
 const COMPILER_MOD_RS: &str = include_str!("../src/compiler/mod.rs");
 const TYPES_RS: &str = include_str!("../src/types.rs");
 const SCHEDULER_TEST_SUPPORT_RS: &str = include_str!("../src/scheduler/test_support.rs");
+const SCHEDULER_TEST_HOOKS_RS: &str = include_str!("../src/scheduler/test_hooks.rs");
+const DISASSEMBLE_RS: &str = include_str!("../src/disassemble.rs");
 
 // ── Deleted items stay deleted ──────────────────────────────────────
 
@@ -377,5 +379,78 @@ fn scheduler_test_support_stdout_contains_stays_deleted() {
     assert!(
         !SCHEDULER_TEST_SUPPORT_RS.contains("fn stdout_contains"),
         "TrialOutcome::stdout_contains was deleted — don't resurrect it without a real caller"
+    );
+}
+
+// ── Round-58: scheduler test-hook installers with zero external callers ─
+
+#[test]
+fn scheduler_test_hooks_install_on_submit_stays_deleted() {
+    // `install_on_submit(hook)` in src/scheduler/test_hooks.rs had zero
+    // external callers — only an in-file `#[cfg(test)]` unit test used it.
+    // The dispatch `on_submit` entry remains live (fired by the
+    // `fire_hook!` macro from src/scheduler.rs). Only the installer is
+    // gone. `install_on_park` remains the only installer because tests
+    // in `tests/scheduler_deadlock_detector_tests.rs` use it.
+    assert!(
+        !SCHEDULER_TEST_HOOKS_RS.contains("fn install_on_submit"),
+        "scheduler::test_hooks::install_on_submit was deleted — don't resurrect it without a real caller"
+    );
+}
+
+#[test]
+fn scheduler_test_hooks_install_on_dequeue_stays_deleted() {
+    // `install_on_dequeue(hook)` in src/scheduler/test_hooks.rs had zero
+    // external callers — only an in-file `#[cfg(test)]` unit test used it.
+    // The dispatch `on_dequeue` entry remains live (fired by the
+    // `fire_hook!` macro from src/scheduler.rs).
+    assert!(
+        !SCHEDULER_TEST_HOOKS_RS.contains("fn install_on_dequeue"),
+        "scheduler::test_hooks::install_on_dequeue was deleted — don't resurrect it without a real caller"
+    );
+}
+
+#[test]
+fn scheduler_test_hooks_install_on_wake_stays_deleted() {
+    // `install_on_wake(hook)` in src/scheduler/test_hooks.rs had zero
+    // external callers — only an in-file `#[cfg(test)]` unit test used it.
+    // The dispatch `on_wake` entry remains live (fired by the
+    // `fire_hook!` macro from src/scheduler.rs).
+    assert!(
+        !SCHEDULER_TEST_HOOKS_RS.contains("fn install_on_wake"),
+        "scheduler::test_hooks::install_on_wake was deleted — don't resurrect it without a real caller"
+    );
+}
+
+// ── Round-58: disassemble helpers shrunk from pub to private ───────────
+
+#[test]
+fn disassemble_chunk_stays_private() {
+    // `disassemble_chunk` in src/disassemble.rs was `pub` but had zero
+    // callers outside the file (its sibling `disassemble_function` is
+    // the only external entry point, re-exported through the CLI).
+    // Shrunk to private `fn`. If a real external caller appears, expose
+    // it with the narrowest visibility needed (`pub(crate)` first).
+    assert!(
+        !DISASSEMBLE_RS.contains("pub fn disassemble_chunk"),
+        "disassemble::disassemble_chunk was demoted from pub to private — don't widen it without a real external caller"
+    );
+    assert!(
+        DISASSEMBLE_RS.contains("fn disassemble_chunk"),
+        "disassemble::disassemble_chunk must still exist (used by disassemble_function and in-file tests)"
+    );
+}
+
+#[test]
+fn disassemble_instruction_stays_private() {
+    // `disassemble_instruction` in src/disassemble.rs was `pub` but had
+    // zero callers outside the file. Shrunk to private `fn`.
+    assert!(
+        !DISASSEMBLE_RS.contains("pub fn disassemble_instruction"),
+        "disassemble::disassemble_instruction was demoted from pub to private — don't widen it without a real external caller"
+    );
+    assert!(
+        DISASSEMBLE_RS.contains("fn disassemble_instruction"),
+        "disassemble::disassemble_instruction must still exist (used by disassemble_chunk)"
     );
 }

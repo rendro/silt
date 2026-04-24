@@ -35,9 +35,31 @@ impl VmError {
 
 impl std::fmt::Display for VmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "VM error: {}", self.message)?;
-        if let Some(span) = self.span {
-            write!(f, " at line {}, column {}", span.line, span.col)?;
+        // Canonicalize to the same `error[runtime]: <msg>` shape produced
+        // by `SourceError::Display` for runtime diagnostics. Production
+        // paths route around this via `SourceError::runtime_at` (round 36
+        // fix), but this Display is an attractive nuisance: any fallback
+        // `eprintln!("{e}")` on a bare VmError would previously re-emit
+        // the raw `"VM error: ..."` prefix, leaking an internal label to
+        // users. Matching SourceError's header means any such fallback
+        // produces a correctly-formed diagnostic instead of a second
+        // dialect. (Audit LATENT L3.)
+        //
+        // No span → no `-->` locator line; no source snippet (we don't
+        // hold the source here). Call-stack rendering follows the same
+        // `  -> name at line N, column M` shape used previously so
+        // operator-side logging keeps the context.
+        //
+        // NOTE: this Display intentionally does NOT do ANSI coloring —
+        // SourceError::Display gates color on `isatty(stderr)`, but a
+        // bare VmError may be formatted to arbitrary sinks (test logs,
+        // panic messages, operator audits). Plain text is the safe
+        // lowest-common-denominator for a fallback.
+        write!(f, "error[runtime]: {}", self.message)?;
+        if let Some(span) = self.span
+            && span.line > 0
+        {
+            write!(f, "\n --> <input>:{}:{}", span.line, span.col)?;
         }
         // Only show the call stack if it has at least two meaningful (non-synthetic)
         // frames — a single-frame "stack" would just restate the error site above.

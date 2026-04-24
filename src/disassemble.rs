@@ -206,7 +206,7 @@ fn constant_comment(chunk: &Chunk, index: u16) -> String {
 /// Disassemble a single instruction at `offset`.
 ///
 /// Returns `(formatted_line, next_offset)`.
-pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
+fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) {
     let code = &chunk.code;
     let byte = code[offset];
 
@@ -445,7 +445,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
 // ── Chunk disassembly ─────────────────────────────────────────────
 
 /// Disassemble a complete `Chunk`, returning the formatted output.
-pub fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
+fn disassemble_chunk(chunk: &Chunk, name: &str) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while offset < chunk.code.len() {

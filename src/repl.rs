@@ -231,13 +231,43 @@ pub fn run_repl() {
     }
 }
 
-fn builtin_names() -> Vec<String> {
+pub fn builtin_names() -> Vec<String> {
     let mut names: Vec<String> = vec![
-        // Keywords / commands
-        ":quit", ":help", "fn", "let", "type", "trait", "match", "when", "return", "import", "loop",
-        "true", "false", // Globals
-        "print", "println", "panic", "Ok", "Err", "Some", "None", "Stop", "Continue", "Message",
-        "Closed", "Empty",
+        // Keywords / commands. Keep the non-`:` keywords in sync with
+        // `src/lsp/completion.rs::KEYWORDS` — they feed the same user-
+        // facing "things I can type here" expectation, just in two
+        // different UIs.
+        ":quit",
+        ":help",
+        "as",
+        "else",
+        "fn",
+        "import",
+        "let",
+        "loop",
+        "match",
+        "mod",
+        "pub",
+        "return",
+        "trait",
+        "type",
+        "when",
+        "where",
+        "true",
+        "false",
+        // Globals
+        "print",
+        "println",
+        "panic",
+        "Ok",
+        "Err",
+        "Some",
+        "None",
+        "Stop",
+        "Continue",
+        "Message",
+        "Closed",
+        "Empty",
     ]
     .into_iter()
     .map(String::from)
@@ -469,8 +499,11 @@ fn eval_declaration(
                 let source_err = SourceError::runtime_at(&e.message, span, input, "<repl>");
                 eprintln!("{source_err}");
             } else {
-                eprintln!("error[runtime]: {}", e.message);
-                eprintln!(" --> <declaration>");
+                // Out-of-range span (prior-entry chunk): render with the
+                // `<declaration>` locator and split multi-line messages
+                // into `= note:`/`= help:` continuation, matching the
+                // `SourceError::Display` shape. Round-59 GAP #5.
+                eprintln!("{}", render_runtime_error_without_source(&e.message, true));
             }
             // Print the call stack for the non-synthetic frames. Frame line
             // numbers come from the original REPL input buffer, so we label
@@ -480,7 +513,12 @@ fn eval_declaration(
                 eprintln!("{line}");
             }
         } else {
-            eprintln!("{e}");
+            // Span-less runtime error: `VmError::Display` starts with
+            // `"VM error: "`, which leaks the internal label to users.
+            // Round-59 GAP #4 — funnel through the shared helper so
+            // output renders with the canonical `error[runtime]:`
+            // header, matching the `silt run` / `silt test` paths.
+            eprintln!("{}", render_runtime_error_without_source(&e.message, false));
         }
         return;
     }
@@ -706,8 +744,11 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                     let source_err = SourceError::runtime_at(&e.message, adjusted, input, "<repl>");
                     eprintln!("{source_err}");
                 } else {
-                    eprintln!("error[runtime]: {}", e.message);
-                    eprintln!(" --> <declaration>");
+                    // Out-of-range span (prior-entry chunk): render with
+                    // the `<declaration>` locator and split multi-line
+                    // messages into `= note:`/`= help:` continuation,
+                    // matching `SourceError::Display`. Round-59 GAP #5.
+                    eprintln!("{}", render_runtime_error_without_source(&e.message, true));
                 }
                 // Print the filtered call stack. Frame line numbers come
                 // from the wrapped input and don't survive `adjust_span`
@@ -720,7 +761,11 @@ fn eval_expression(vm: &mut Vm, type_ctx: &mut ReplTypeContext, input: &str) {
                     eprintln!("{line}");
                 }
             } else {
-                eprintln!("{e}");
+                // Span-less runtime error: `VmError::Display` leaks the
+                // `"VM error: "` prefix. Route through the shared helper
+                // to render the canonical `error[runtime]:` header
+                // instead. Round-59 GAP #4.
+                eprintln!("{}", render_runtime_error_without_source(&e.message, false));
             }
         }
     }
@@ -748,6 +793,96 @@ fn span_fits_input(span: Span, input: &str) -> bool {
     };
     let line_chars = line_text.chars().count();
     span.col <= line_chars + 1
+}
+
+/// Render a runtime-error diagnostic for the REPL when no usable source
+/// location is available. Two shapes share this code path:
+///
+///   * `VmError::span == None` — the VM reported a runtime failure with
+///     no span at all. Previously this fell through to `eprintln!("{e}")`,
+///     which leaks the internal `"VM error: "` prefix from
+///     `VmError::Display`. Now we route through this helper so the output
+///     matches the canonical `error[runtime]:` header used by
+///     `silt run` / `silt test`.
+///
+///   * `VmError::span == Some(_)` but the span doesn't fit the current
+///     REPL entry — the error originated inside a chunk compiled in a
+///     *previous* entry (e.g. a `fn` called from a later expression).
+///     Aligning a caret against this entry's text would point at
+///     phantom whitespace, so the primary location is rendered as
+///     `--> <declaration>`, matching how the call-stack frames already
+///     label prior-entry frames.
+///
+/// `show_declaration_locator` controls which shape is emitted:
+///   * `true`  → include ` --> <declaration>` below the header.
+///   * `false` → omit the locator entirely (`SourceError::Display` does
+///     the same when `span.line == 0`).
+///
+/// Multi-line messages are split on the first `\n`: the first line goes
+/// into the `error[runtime]:` header, and subsequent lines render AFTER
+/// the locator as `  = note: …` / `  = help: …` continuation, matching
+/// the layout emitted by `SourceError::Display` (see src/errors.rs).
+///
+/// Public so `tests/repl_error_render_and_keywords_tests.rs` can lock
+/// the output shape directly rather than round-tripping through a
+/// subprocess.
+pub fn render_runtime_error_without_source(message: &str, show_declaration_locator: bool) -> String {
+    let (header_msg, note_body): (&str, Option<&str>) = match message.split_once('\n') {
+        Some((head, rest)) => (head, Some(rest)),
+        None => (message, None),
+    };
+
+    let mut out = String::new();
+    out.push_str("error[runtime]: ");
+    out.push_str(header_msg);
+
+    if show_declaration_locator {
+        out.push_str("\n --> <declaration>");
+    }
+
+    // Multi-line body: first line becomes `= note:` (unless it
+    // starts with `help: `, in which case it becomes `= help:`);
+    // every subsequent line is aligned-indented continuation.
+    // Matches `SourceError::Display`'s body-line formatting so
+    // multi-line REPL errors look identical to CLI errors.
+    if let Some(body) = note_body {
+        let mut first = true;
+        for line in body.lines() {
+            let (prefix, content) = if let Some(rest) = line.strip_prefix("help: ") {
+                first = false;
+                ("= help:", rest)
+            } else if first {
+                first = false;
+                ("= note:", line)
+            } else {
+                // 7-char padding aligns continuation content under
+                // `= note:`/`= help:` content (same trick as
+                // `SourceError::Display`).
+                ("       ", line)
+            };
+            out.push_str("\n  ");
+            out.push_str(prefix);
+            out.push(' ');
+            out.push_str(content);
+        }
+    }
+
+    out
+}
+
+/// Completion candidates for a given prefix, using the REPL's builtin name
+/// list. Mirrors the logic inside `SiltHelper::complete` but takes just a
+/// prefix string so integration tests can exercise it without building a
+/// full `rustyline` editor. Intentionally does not re-implement the
+/// word-boundary search — callers pass the already-extracted prefix.
+pub fn completion_candidates_for_prefix(prefix: &str) -> Vec<String> {
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    builtin_names()
+        .into_iter()
+        .filter(|n| n.starts_with(prefix))
+        .collect()
 }
 
 /// Adjust a span from `wrapped` coordinates to `input` coordinates.

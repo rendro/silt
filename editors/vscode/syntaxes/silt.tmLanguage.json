@@ -116,7 +116,7 @@
     },
     "constructors": {
       "name": "constant.language.constructor.silt",
-      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty)\\b"
+      "match": "\\b(Ok|Err|Some|None|Stop|Continue|Message|Closed|Empty|Sent|Recv|Send|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|IoNotFound|IoPermissionDenied|IoAlreadyExists|IoInvalidInput|IoInterrupted|IoUnexpectedEof|IoWriteZero|IoUnknown|JsonSyntax|JsonTypeMismatch|JsonMissingField|JsonUnknown|TomlSyntax|TomlTypeMismatch|TomlMissingField|TomlUnknown|ParseEmpty|ParseInvalidDigit|ParseOverflow|ParseUnderflow|HttpConnect|HttpTls|HttpTimeout|HttpInvalidUrl|HttpInvalidResponse|HttpClosedEarly|HttpStatusCode|HttpUnknown|RegexInvalidPattern|RegexTooBig|PgConnect|PgTls|PgAuthFailed|PgQuery|PgTypeMismatch|PgNoSuchColumn|PgClosed|PgTimeout|PgTxnAborted|PgUnknown|TcpConnect|TcpTls|TcpClosed|TcpTimeout|TcpUnknown|TimeParseFormat|TimeOutOfRange|BytesInvalidUtf8|BytesInvalidHex|BytesInvalidBase64|BytesByteOutOfRange|BytesOutOfBounds|ChannelTimeout|ChannelClosed)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.silt",

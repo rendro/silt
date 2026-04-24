@@ -32,6 +32,17 @@ pub(crate) fn dispatch(args: &[String]) {
                 eprintln!("--filter requires a pattern");
                 process::exit(1);
             }
+        } else if let Some(value) = args[i].strip_prefix("--filter=") {
+            // GNU-style `--filter=pat` form, to match `silt add --path=...`
+            // and every other subcommand that accepts an `=`-joined value.
+            // An empty value (`--filter=`) is a usage error — treat it
+            // the same as `--filter` with no following argument.
+            if value.is_empty() {
+                eprintln!("--filter requires a pattern");
+                process::exit(1);
+            }
+            filter = Some(value.to_string());
+            i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", test_usage_banner());
             println!();

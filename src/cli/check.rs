@@ -32,6 +32,16 @@ pub(crate) fn dispatch(args: &[String]) {
                 eprintln!("--format requires 'json'");
                 process::exit(1);
             }
+        } else if let Some(value) = args[i].strip_prefix("--format=") {
+            // GNU-style `--format=json` form, to match `silt add --path=...`
+            // and every other subcommand that accepts an `=`-joined value.
+            if value == "json" {
+                format = OutputFormat::Json;
+                i += 1;
+            } else {
+                eprintln!("--format requires 'json'");
+                process::exit(1);
+            }
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", check_usage_banner());
             println!();

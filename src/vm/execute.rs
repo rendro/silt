@@ -743,7 +743,7 @@ impl Vm {
                             self.prune_tco_elided(self.frames.len());
                             if self.frames.len() < saved_frame_count {
                                 return Err(VmError::new(
-                                    "frame underflow in invoke_callable".into(),
+                                    "internal VM error: frame stack underflow during call".into(),
                                 ));
                             }
                             if self.frames.len() == saved_frame_count {

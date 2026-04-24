@@ -59,8 +59,10 @@ Three design commitments shape everything:
   (`let … in`). Familiar to most programmers on day one.
 - Records are nominal (`type User { name, age }`), not structural. Record
   update is a first-class operator: `user.{ age: 31 }`.
-- The standard library is larger and more task-focused (`http`, `json`,
-  `postgres`, `channel`, `stream`, `time` all ship in-box).
+- The standard library is larger and more task-focused. `http`, `json`,
+  `channel`, `stream`, `tcp`, and `time` ship in-box by default;
+  `postgres` is available as an opt-in feature (build with
+  `--features postgres`).
 
 ## When not to use silt
 

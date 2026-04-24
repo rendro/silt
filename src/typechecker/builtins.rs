@@ -723,10 +723,11 @@ impl TypeChecker {
         // `Int * 2` would typecheck when `Int` is the bare descriptor
         // (T2 audit fix: the runtime represents the value as
         // `Value::PrimitiveDescriptor("Int")`, not `Value::Int(_)`).
-        for name in &["Int", "Float", "String", "Bool"] {
+        for name in &["Int", "Float", "ExtFloat", "String", "Bool"] {
             let inner = match *name {
                 "Int" => Type::Int,
                 "Float" => Type::Float,
+                "ExtFloat" => Type::ExtFloat,
                 "String" => Type::String,
                 "Bool" => Type::Bool,
                 _ => unreachable!(),

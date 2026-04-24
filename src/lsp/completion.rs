@@ -187,8 +187,18 @@ impl Server {
 
 // ── Dot-completion helpers ─────────────────────────────────────────
 
-/// Extract the identifier before the `.` at the cursor position.
+/// Extract the identifier (or postfix-call / index-expression receiver)
+/// before the `.` at the cursor position.
+///
 /// Returns `None` if the cursor is not in a dot-completion context.
+///
+/// The walk handles chained method calls and index expressions — `xs.first().`
+/// and `arr[0].` must trigger completion on the receiver, not bail because
+/// `)` / `]` terminate the identifier scan. We scan char-by-char from right
+/// to left, skipping over matched `()` / `[]` spans, then greedily collect
+/// identifier characters (plus `.` for qualified names like `mod.inner.`).
+/// Anything else terminates the walk — keeps multi-statement lines from
+/// greedily swallowing the previous expression.
 fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
     let line = source.lines().nth(pos.line as usize)?;
     let col = pos.character as usize;
@@ -211,16 +221,65 @@ fn extract_dot_prefix(source: &str, pos: &Position) -> Option<String> {
         return None;
     }
     let before_dot = &before[..before.len() - 1];
-    // Walk backwards to find the identifier
-    let ident: String = before_dot
-        .chars()
-        .rev()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    if ident.is_empty() { None } else { Some(ident) }
+    // Walk backwards, skipping balanced `()` / `[]` groups so method
+    // chains like `xs.first().` and index expressions like `arr[0].`
+    // resolve to a sensible receiver instead of bailing on the closer.
+    let chars: Vec<char> = before_dot.chars().collect();
+    let mut end = chars.len(); // exclusive upper bound of the prefix
+    loop {
+        if end == 0 {
+            break;
+        }
+        let last = chars[end - 1];
+        match last {
+            ')' | ']' => {
+                let (open, close) = if last == ')' { ('(', ')') } else { ('[', ']') };
+                // Scan back to the matching opener, handling nesting.
+                let mut depth = 1i32;
+                let mut i = end - 1; // index of the closer
+                while i > 0 {
+                    i -= 1;
+                    let c = chars[i];
+                    if c == close {
+                        depth += 1;
+                    } else if c == open {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+                if depth != 0 {
+                    // Unbalanced — stop here.
+                    break;
+                }
+                // `i` now points at the matching opener; consume through it.
+                end = i;
+            }
+            c if c.is_alphanumeric() || c == '_' || c == '.' => {
+                // Greedily consume the identifier (possibly qualified).
+                while end > 0 {
+                    let ch = chars[end - 1];
+                    if ch.is_alphanumeric() || ch == '_' || ch == '.' {
+                        end -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    let prefix: String = chars[end..].iter().collect();
+    // Strip a trailing `.` — shouldn't happen in practice but keeps the
+    // contract "returned prefix never ends with `.`" trivially true.
+    let prefix = prefix.trim_end_matches('.').to_string();
+    if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    }
 }
 
 // ── Completion data ────────────────────────────────────────────────

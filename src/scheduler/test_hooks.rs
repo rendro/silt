@@ -67,32 +67,12 @@ thread_local! {
 
 // ── Install / clear API ───────────────────────────────────────────
 
-/// Install a hook to fire after `Scheduler::submit` bumps both
-/// counters, before the queue push. Returns the previously-installed
-/// hook (if any) so the caller can restore it on tear-down.
-pub fn install_on_submit(hook: Hook) -> Option<Hook> {
-    ON_SUBMIT_HOOK.with(|cell| cell.borrow_mut().replace(hook))
-}
-
-/// Install a hook to fire after a worker pops a task off the run
-/// queue, before that task's slice executes. Returns the previously-
-/// installed hook (if any).
-pub fn install_on_dequeue(hook: Hook) -> Option<Hook> {
-    ON_DEQUEUE_HOOK.with(|cell| cell.borrow_mut().replace(hook))
-}
-
 /// Install a hook to fire as the `Blocked` arm enters the per-reason
 /// register-waker block, BEFORE `register_*_waker_guard`. The tag
 /// distinguishes recv / send / select / join / io. Returns the
 /// previously-installed hook (if any).
 pub fn install_on_park(hook: Hook) -> Option<Hook> {
     ON_PARK_HOOK.with(|cell| cell.borrow_mut().replace(hook))
-}
-
-/// Install a hook to fire as `requeue` runs, before any counter
-/// mutation. Returns the previously-installed hook (if any).
-pub fn install_on_wake(hook: Hook) -> Option<Hook> {
-    ON_WAKE_HOOK.with(|cell| cell.borrow_mut().replace(hook))
 }
 
 /// Clear every hook on the calling thread. Test tear-down convenience
@@ -171,26 +151,6 @@ mod tests {
     }
 
     #[test]
-    fn install_on_submit_observed() {
-        clear_all();
-        let count = Arc::new(AtomicUsize::new(0));
-        let count2 = count.clone();
-        install_on_submit(Box::new(move |_tag| {
-            count2.fetch_add(1, Ordering::SeqCst);
-        }));
-        on_submit("submit_after_counters");
-        on_submit("submit_after_counters");
-        assert_eq!(count.load(Ordering::SeqCst), 2);
-        clear_all();
-        on_submit("submit_after_counters");
-        assert_eq!(
-            count.load(Ordering::SeqCst),
-            2,
-            "clear_all should detach the hook"
-        );
-    }
-
-    #[test]
     fn install_returns_previous_hook() {
         clear_all();
         install_on_park(Box::new(|_| {}));
@@ -205,11 +165,15 @@ mod tests {
         let last_tag: Arc<parking_lot::Mutex<Option<&'static str>>> =
             Arc::new(parking_lot::Mutex::new(None));
         let last_tag2 = last_tag.clone();
-        install_on_dequeue(Box::new(move |tag| {
+        let count = Arc::new(AtomicUsize::new(0));
+        let count2 = count.clone();
+        install_on_park(Box::new(move |tag| {
             *last_tag2.lock() = Some(tag);
+            count2.fetch_add(1, Ordering::SeqCst);
         }));
-        on_dequeue("pop_front");
-        assert_eq!(*last_tag.lock(), Some("pop_front"));
+        on_park("blocked_arm_entry_recv");
+        assert_eq!(*last_tag.lock(), Some("blocked_arm_entry_recv"));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
         clear_all();
     }
 
@@ -218,16 +182,16 @@ mod tests {
         clear_all();
         let count = Arc::new(AtomicUsize::new(0));
         let count2 = count.clone();
-        install_on_wake(Box::new(move |_| {
+        install_on_park(Box::new(move |_| {
             count2.fetch_add(1, Ordering::SeqCst);
         }));
         // Hook installed on this thread fires here.
-        on_wake("requeue_entry");
+        on_park("blocked_arm_entry_recv");
         assert_eq!(count.load(Ordering::SeqCst), 1);
         // Hook NOT installed on a sibling thread does not fire there.
         let count3 = count.clone();
         std::thread::spawn(move || {
-            on_wake("requeue_entry"); // No hook on this thread.
+            on_park("blocked_arm_entry_recv"); // No hook on this thread.
             assert_eq!(count3.load(Ordering::SeqCst), 1);
         })
         .join()

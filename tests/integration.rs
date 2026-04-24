@@ -3969,7 +3969,27 @@ import time
 type Event { name: String, date: Date }
 fn main() { json.parse("\{\"name\": \"x\", \"date\": \"not-a-date\"\}", Event) }
     "#);
-    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+    match result {
+        Value::Variant(ref tag, ref args) if tag == "Err" => match args.first() {
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                assert_eq!(
+                    inner_tag, "JsonUnknown",
+                    "expected Err(JsonUnknown(...)), got Err({inner_tag}(...))"
+                );
+                match inner_args.first() {
+                    Some(Value::String(msg)) => {
+                        assert!(
+                            msg.contains("invalid date") && msg.contains("not-a-date"),
+                            "expected JsonUnknown payload to mention the bad date string, got: {msg:?}"
+                        );
+                    }
+                    other => panic!("expected JsonUnknown(String), got {other:?}"),
+                }
+            }
+            other => panic!("expected Err(JsonError variant), got {other:?}"),
+        },
+        other => panic!("expected Err variant, got {other:?}"),
+    }
 }
 
 #[test]
@@ -5635,7 +5655,27 @@ fn test_time_date_invalid() {
 import time
 fn main() { time.date(2024, 13, 1) }
     "#);
-    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+    match result {
+        Value::Variant(ref tag, ref args) if tag == "Err" => match args.first() {
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                assert_eq!(
+                    inner_tag, "TimeOutOfRange",
+                    "expected Err(TimeOutOfRange(...)), got Err({inner_tag}(...))"
+                );
+                match inner_args.first() {
+                    Some(Value::String(msg)) => {
+                        assert!(
+                            msg.contains("invalid date") && msg.contains("2024-13-1"),
+                            "expected TimeOutOfRange payload to name the bad y-m-d, got: {msg:?}"
+                        );
+                    }
+                    other => panic!("expected TimeOutOfRange(String), got {other:?}"),
+                }
+            }
+            other => panic!("expected Err(TimeError variant), got {other:?}"),
+        },
+        other => panic!("expected Err variant, got {other:?}"),
+    }
 }
 
 #[test]
@@ -5656,7 +5696,27 @@ fn test_time_date_non_leap_day() {
 import time
 fn main() { time.date(2023, 2, 29) }
     "#);
-    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+    match result {
+        Value::Variant(ref tag, ref args) if tag == "Err" => match args.first() {
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                assert_eq!(
+                    inner_tag, "TimeOutOfRange",
+                    "expected Err(TimeOutOfRange(...)), got Err({inner_tag}(...))"
+                );
+                match inner_args.first() {
+                    Some(Value::String(msg)) => {
+                        assert!(
+                            msg.contains("invalid date") && msg.contains("2023-2-29"),
+                            "expected TimeOutOfRange payload to name the bad y-m-d, got: {msg:?}"
+                        );
+                    }
+                    other => panic!("expected TimeOutOfRange(String), got {other:?}"),
+                }
+            }
+            other => panic!("expected Err(TimeError variant), got {other:?}"),
+        },
+        other => panic!("expected Err variant, got {other:?}"),
+    }
 }
 
 #[test]
@@ -5677,7 +5737,27 @@ fn test_time_time_invalid() {
 import time
 fn main() { time.time(25, 0, 0) }
     "#);
-    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+    match result {
+        Value::Variant(ref tag, ref args) if tag == "Err" => match args.first() {
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                assert_eq!(
+                    inner_tag, "TimeOutOfRange",
+                    "expected Err(TimeOutOfRange(...)), got Err({inner_tag}(...))"
+                );
+                match inner_args.first() {
+                    Some(Value::String(msg)) => {
+                        assert!(
+                            msg.contains("invalid time") && msg.contains("25:0:0"),
+                            "expected TimeOutOfRange payload to name the bad h:m:s, got: {msg:?}"
+                        );
+                    }
+                    other => panic!("expected TimeOutOfRange(String), got {other:?}"),
+                }
+            }
+            other => panic!("expected Err(TimeError variant), got {other:?}"),
+        },
+        other => panic!("expected Err variant, got {other:?}"),
+    }
 }
 
 #[test]
@@ -5771,7 +5851,22 @@ fn test_time_parse_invalid() {
 import time
 fn main() { time.parse("not-a-date", "%Y-%m-%d") }
     "#);
-    assert!(matches!(result, Value::Variant(ref tag, _) if tag == "Err"));
+    match result {
+        Value::Variant(ref tag, ref args) if tag == "Err" => match args.first() {
+            Some(Value::Variant(inner_tag, inner_args)) => {
+                assert!(
+                    inner_tag == "TimeParseFormat" || inner_tag == "TimeOutOfRange",
+                    "expected Err(TimeParseFormat|TimeOutOfRange(...)), got Err({inner_tag}(...))"
+                );
+                assert!(
+                    matches!(inner_args.first(), Some(Value::String(s)) if !s.is_empty()),
+                    "expected {inner_tag} to carry a non-empty chrono message, got {inner_args:?}"
+                );
+            }
+            other => panic!("expected Err(TimeError variant), got {other:?}"),
+        },
+        other => panic!("expected Err variant, got {other:?}"),
+    }
 }
 
 #[test]

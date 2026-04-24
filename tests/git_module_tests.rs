@@ -72,7 +72,15 @@ fn test_resolve_ref_rev_validates_format() {
         "https://example.invalid/repo",
         &GitRef::Rev("notahex".into()),
     );
-    assert!(bad.is_err(), "expected error for non-hex rev");
+    // Pin the error to the offline shape-check path. If that fast-path
+    // is removed, the function will hit the network, time out, and still
+    // return Err — but with a very different message — so asserting the
+    // message shape here prevents that silent regression.
+    let err = bad.expect_err("expected error for non-hex rev").to_string();
+    assert!(
+        err.contains("git ref not found") && err.contains("rev") && err.contains("notahex"),
+        "expected RefNotFound-shaped error naming the rev `notahex`, got: {err}"
+    );
 
     // 7-hex SHA is the minimum acceptable shape; this should succeed
     // (returning the lowercased SHA verbatim) without any network call

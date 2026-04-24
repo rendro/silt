@@ -89,6 +89,28 @@ impl Server {
                         children: None,
                     });
                 }
+                // Trait implementations surface in the outline as
+                // `impl <Trait> for <Target>`. The editor's document-symbol
+                // panel would otherwise skip them entirely, making impl
+                // blocks invisible when navigating a file. We use the
+                // descriptive `impl ... for ...` name (mirroring the
+                // idiomatic outline caption other editors use) even though
+                // silt's source syntax is `trait X for Y` — the outline
+                // caption should reflect what the declaration does, not
+                // the keyword it starts with. The range spans the whole
+                // impl block so clicking the symbol jumps to it.
+                Decl::TraitImpl(ti) => {
+                    symbols.push(DocumentSymbol {
+                        name: format!("impl {} for {}", ti.trait_name, ti.target_type),
+                        detail: None,
+                        kind: SymbolKind::NAMESPACE,
+                        range: span_to_range(&ti.span, &doc.source),
+                        selection_range: span_to_range(&ti.span, &doc.source),
+                        tags: None,
+                        deprecated: None,
+                        children: None,
+                    });
+                }
                 _ => {}
             }
         }

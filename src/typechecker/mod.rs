@@ -1551,6 +1551,28 @@ impl TypeChecker {
     // ── Register type declarations ──────────────────────────────────
 
     fn register_type_decl(&mut self, td: &TypeDecl, env: &mut TypeEnv) {
+        // BROKEN #1: Reject redefinition of reserved type-system sentinel
+        // names. `TypeOf` is used internally as the head of
+        // `Type::Generic(intern("TypeOf"), [..])` to represent a type
+        // descriptor (e.g. the runtime value produced by `Employee` when
+        // used as a first-class type argument to `json.parse`). A user
+        // declaring `type TypeOf(a) { Foo(a) }` would bind `Foo` as a
+        // constructor returning a value structurally indistinguishable
+        // from that internal descriptor, which silently typechecks and
+        // then fails at runtime with "type argument must be a record
+        // type". Reject at declaration time for a clear diagnostic. See
+        // the sibling guard for builtin trait names in
+        // `register_trait_decl` below.
+        let td_name_str = resolve(td.name);
+        if td_name_str == "TypeOf" {
+            self.error(
+                format!(
+                    "'{td_name_str}' is a reserved type name used by the type system"
+                ),
+                td.span,
+            );
+            return;
+        }
         // G1: Detect duplicate top-level type declarations. Only user-defined
         // top-level names count; collision with a builtin type (Option,
         // Result, ChannelResult, Step) is handled by the shadow-warning

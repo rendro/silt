@@ -79,7 +79,24 @@ impl Server {
         }
 
         let type_errors = typechecker::check(&mut program);
+        // GAP #8: drop the "unknown module" warning for user-module imports
+        // and the follow-on "undefined" errors for names they bring in. The
+        // type checker has no filesystem access, so every legitimate
+        // `import <user_module>` would otherwise surface as a warning in the
+        // editor, plus noise for every imported name. The compiler resolves
+        // those at link time — if the name truly is missing a hard error
+        // will surface there — so we suppress them here the same way the
+        // CLI does.
+        let has_user_import_warning = type_errors
+            .iter()
+            .any(is_unknown_module_warning_te);
         for e in &type_errors {
+            if is_unknown_module_warning_te(e) {
+                continue;
+            }
+            if has_user_import_warning && is_user_import_resolvable_error_te(e) {
+                continue;
+            }
             let severity = match e.severity {
                 typechecker::Severity::Error => DiagnosticSeverity::ERROR,
                 typechecker::Severity::Warning => DiagnosticSeverity::WARNING,
@@ -117,4 +134,27 @@ impl Server {
             .send(Message::Notification(notif))
             .ok();
     }
+}
+
+// mirrors is_user_import_resolvable_error in src/cli/pipeline.rs.
+// The CLI helper operates on SourceError (post-wrapping); this version
+// operates on the typechecker's native TypeError so the LSP can filter
+// before converting to lsp_types::Diagnostic. Keep the two in sync; a
+// future LATENT dedupe round can lift them into a shared module.
+fn is_unknown_module_warning_te(err: &typechecker::TypeError) -> bool {
+    err.severity == typechecker::Severity::Warning && err.message.contains("unknown module")
+}
+
+// mirrors is_user_import_resolvable_error in src/cli/pipeline.rs.
+// Deliberately omits a `starts_with("type ")` clause: the CLI filter
+// dropped that pattern because it swallowed real type-mismatch errors
+// alongside user-module follow-ons (GAP #7). Trait-impl cascades flow
+// through the narrow `"does not implement"` substring instead.
+fn is_user_import_resolvable_error_te(err: &typechecker::TypeError) -> bool {
+    err.severity == typechecker::Severity::Error
+        && (err.message.starts_with("undefined variable")
+            || err.message.starts_with("undefined constructor")
+            || err.message.starts_with("undefined type")
+            || err.message.starts_with("unknown field")
+            || err.message.contains("does not implement"))
 }

@@ -21,6 +21,7 @@ use crate::vm::{BlockReason, BuiltinIterKind, Vm, VmError};
 pub(crate) enum FieldType {
     Int,
     Float,
+    ExtFloat,
     String,
     Bool,
     List(Box<FieldType>),
@@ -43,6 +44,7 @@ pub(crate) fn decode_field_type(s: &str) -> FieldType {
         match s {
             "Int" => FieldType::Int,
             "Float" => FieldType::Float,
+            "ExtFloat" => FieldType::ExtFloat,
             "String" => FieldType::String,
             "Bool" => FieldType::Bool,
             "Date" => FieldType::Date,
@@ -751,6 +753,7 @@ fn json_to_map(vm: &mut Vm, value_type: &str, json: &serde_json::Value) -> Resul
         "String" => FieldType::String,
         "Int" => FieldType::Int,
         "Float" => FieldType::Float,
+        "ExtFloat" => FieldType::ExtFloat,
         "Bool" => FieldType::Bool,
         record_name => {
             // Check if it's a known record type
@@ -834,6 +837,18 @@ fn json_to_typed_value(
                 }
             }
             _ => Err(mismatch("Float", json_type_name(json))),
+        },
+        FieldType::ExtFloat => match json {
+            serde_json::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Ok(Value::ExtFloat(f))
+                } else {
+                    Err(unknown(
+                        "expected ExtFloat, got non-numeric number".into(),
+                    ))
+                }
+            }
+            _ => Err(mismatch("ExtFloat", json_type_name(json))),
         },
         FieldType::Bool => match json {
             serde_json::Value::Bool(b) => Ok(Value::Bool(*b)),
@@ -1153,16 +1168,42 @@ pub fn call_json(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                 ));
             };
             let s = s.clone();
-            let Value::TypeDescriptor(type_name) = &args[1] else {
-                return Err(VmError::new(
-                    "json.parse: type argument must be a record type".into(),
-                ));
-            };
-            let type_name = type_name.clone();
-            let fields = load_record_fields(vm, &type_name)?;
-            match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(json_val) => json_to_record(vm, &type_name, &fields, &json_val),
-                Err(e) => Ok(json_result_err(&e)),
+            match &args[1] {
+                Value::PrimitiveDescriptor(name) => {
+                    // Primitive descriptor path: decode JSON scalars directly
+                    // into `Value::Int / Float / ExtFloat / String / Bool`,
+                    // returning the typed `Result(a, JsonError)` shape.
+                    let field_type = match name.as_str() {
+                        "Int" => FieldType::Int,
+                        "Float" => FieldType::Float,
+                        "ExtFloat" => FieldType::ExtFloat,
+                        "String" => FieldType::String,
+                        "Bool" => FieldType::Bool,
+                        other => {
+                            return Err(VmError::new(format!(
+                                "json.parse: unsupported primitive descriptor '{other}'"
+                            )));
+                        }
+                    };
+                    match serde_json::from_str::<serde_json::Value>(&s) {
+                        Ok(json_val) => match json_to_typed_value(vm, &json_val, &field_type) {
+                            Ok(val) => Ok(Value::Variant("Ok".into(), vec![val])),
+                            Err(e) => Ok(decode_err_to_silt(e)),
+                        },
+                        Err(e) => Ok(json_result_err(&e)),
+                    }
+                }
+                Value::TypeDescriptor(type_name) => {
+                    let type_name = type_name.clone();
+                    let fields = load_record_fields(vm, &type_name)?;
+                    match serde_json::from_str::<serde_json::Value>(&s) {
+                        Ok(json_val) => json_to_record(vm, &type_name, &fields, &json_val),
+                        Err(e) => Ok(json_result_err(&e)),
+                    }
+                }
+                _ => Err(VmError::new(
+                    "json.parse: type argument must be a type (Int, Float, ExtFloat, String, Bool, or a record type)".into(),
+                )),
             }
         }
         "parse_list" => {

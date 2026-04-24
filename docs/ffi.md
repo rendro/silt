@@ -51,16 +51,13 @@ vm.register_fn("my_func", |args: &[Value]| -> Result<Value, VmError> {
 
 ### Typed registration (auto-marshalling)
 
-The `register_fn0` through `register_fn3` methods handle argument extraction
+The `register_fn0` through `register_fn2` methods handle argument extraction
 and type checking automatically:
 
 ```rust
 vm.register_fn0("answer", || -> i64 { 42 }).unwrap();
 vm.register_fn1("double", |x: i64| -> i64 { x * 2 }).unwrap();
 vm.register_fn2("add", |a: i64, b: i64| -> i64 { a + b }).unwrap();
-vm.register_fn3("clamp", |x: i64, lo: i64, hi: i64| -> i64 {
-    x.max(lo).min(hi)
-}).unwrap();
 ```
 
 Type mismatches produce clear errors:

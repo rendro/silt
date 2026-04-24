@@ -772,7 +772,16 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            Ok(Value::Float(total))
+            // Preserve the silt-wide invariant that every `Value::Float` is
+            // finite. If the accumulator overflowed to ±inf (or somehow
+            // became NaN), widen to `ExtFloat` — mirroring the `float.min`
+            // / `float.max` / `float.clamp` treatment in
+            // `src/builtins/numeric.rs`.
+            if total.is_finite() {
+                Ok(Value::Float(total))
+            } else {
+                Ok(Value::ExtFloat(total))
+            }
         }
         "product" => {
             if args.len() != 1 {
@@ -810,7 +819,13 @@ pub fn call_list(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmErr
                     }
                 }
             }
-            Ok(Value::Float(total))
+            // Same finiteness guard as `sum_float`: ±inf / NaN widens to
+            // `ExtFloat` to preserve the `Value::Float` finite invariant.
+            if total.is_finite() {
+                Ok(Value::Float(total))
+            } else {
+                Ok(Value::ExtFloat(total))
+            }
         }
         "scan" => {
             if args.len() != 3 {

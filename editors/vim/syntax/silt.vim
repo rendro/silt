@@ -12,7 +12,20 @@ syntax keyword siltBoolean true false
 
 " ── Builtins ────────────────────────────────────────────────────────
 syntax keyword siltBuiltin print println panic
-syntax keyword siltConstructor Ok Err Some None Stop Continue Message Closed Empty
+syntax keyword siltConstructor Ok Err Some None Stop Continue Message Closed Empty Sent Recv Send
+syntax keyword siltConstructor Monday Tuesday Wednesday Thursday Friday Saturday Sunday
+syntax keyword siltConstructor GET POST PUT PATCH DELETE HEAD OPTIONS
+syntax keyword siltConstructor IoNotFound IoPermissionDenied IoAlreadyExists IoInvalidInput IoInterrupted IoUnexpectedEof IoWriteZero IoUnknown
+syntax keyword siltConstructor JsonSyntax JsonTypeMismatch JsonMissingField JsonUnknown
+syntax keyword siltConstructor TomlSyntax TomlTypeMismatch TomlMissingField TomlUnknown
+syntax keyword siltConstructor ParseEmpty ParseInvalidDigit ParseOverflow ParseUnderflow
+syntax keyword siltConstructor HttpConnect HttpTls HttpTimeout HttpInvalidUrl HttpInvalidResponse HttpClosedEarly HttpStatusCode HttpUnknown
+syntax keyword siltConstructor RegexInvalidPattern RegexTooBig
+syntax keyword siltConstructor PgConnect PgTls PgAuthFailed PgQuery PgTypeMismatch PgNoSuchColumn PgClosed PgTimeout PgTxnAborted PgUnknown
+syntax keyword siltConstructor TcpConnect TcpTls TcpClosed TcpTimeout TcpUnknown
+syntax keyword siltConstructor TimeParseFormat TimeOutOfRange
+syntax keyword siltConstructor BytesInvalidUtf8 BytesInvalidHex BytesInvalidBase64 BytesByteOutOfRange BytesOutOfBounds
+syntax keyword siltConstructor ChannelTimeout ChannelClosed
 
 " ── Module names (before the dot) ───────────────────────────────────
 syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\)\>\ze\."

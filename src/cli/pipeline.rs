@@ -217,17 +217,30 @@ pub(crate) fn is_unknown_module_warning(err: &SourceError) -> bool {
         && err.message.contains("unknown module")
 }
 
-/// Returns true iff `err` is an "undefined variable" or "undefined
-/// constructor" diagnostic that the compiler is likely to resolve at
-/// link time (because the name comes from a user-module selective
-/// import that the type checker can't see into).
+/// Returns true iff `err` is a typechecker diagnostic that the
+/// compiler is likely to resolve at link time (because the name comes
+/// from a user-module import that the type checker can't see into).
 ///
 /// The type checker only registers selective imports for builtin
 /// modules; for user modules it emits an "unknown module" warning and
 /// every imported name then surfaces as "undefined variable" /
-/// "undefined constructor". We demote those to warnings so the run
-/// proceeds; if the name truly is undefined the compiler will emit a
-/// hard runtime/link error.
+/// "undefined constructor" / "undefined type" / "unknown field". We
+/// demote those to warnings so the run proceeds; if the name truly is
+/// undefined the compiler will emit a hard runtime/link error.
+///
+/// Trait-impl cascades: when the unknown module is the one that would
+/// have supplied a type's trait impl (or defined a supertrait), the
+/// typechecker emits one of three shapes, all containing
+/// `"does not implement"`:
+///   - `"type '<X>' does not implement trait '<Y>'"`
+///   - `"type '<X>' does not implement Display (required for string interpolation)"`
+///   - `"type '<X>' implements '<T>' but does not implement supertrait '<S>'"`
+/// We match those via the narrow substring `"does not implement"`
+/// rather than `starts_with("type ")`, which would also swallow every
+/// real `"type mismatch: expected ..., got ..."` and
+/// `"type argument count mismatch ..."` produced by the typechecker —
+/// the old prefix silently demoted real type errors in any file that
+/// also happened to import a user module (GAP #7).
 pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
     err.kind == silt::errors::ErrorKind::Type
         && !err.is_warning
@@ -235,7 +248,6 @@ pub(crate) fn is_user_import_resolvable_error(err: &SourceError) -> bool {
             || err.message.starts_with("undefined constructor")
             || err.message.starts_with("undefined type")
             || err.message.starts_with("unknown field")
-            || err.message.starts_with("type ")
             || err.message.contains("does not implement"))
 }
 

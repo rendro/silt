@@ -295,6 +295,10 @@ impl Vm {
             .insert("Int".into(), Value::PrimitiveDescriptor("Int".into()));
         self.globals
             .insert("Float".into(), Value::PrimitiveDescriptor("Float".into()));
+        self.globals.insert(
+            "ExtFloat".into(),
+            Value::PrimitiveDescriptor("ExtFloat".into()),
+        );
         self.globals
             .insert("String".into(), Value::PrimitiveDescriptor("String".into()));
         self.globals

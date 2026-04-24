@@ -301,7 +301,7 @@ result, `task.cancel` is a no-op on the handle. Its effect on the running task
 depends on where that task is at the moment of cancellation:
 
 - **Task is currently parked** (blocked on a channel receive/send, a
-  `task.join`, a `task.sleep`, a timer, or similar): the pending wake
+  `task.join`, a `time.sleep`, a timer, or similar): the pending wake
   registrations are torn down, the scheduler drops the task from its live
   set, and the task will not be resumed. The handle resolves to
   `Err("cancelled")`.
