@@ -107,7 +107,7 @@ fn registry() -> &'static Mutex<PoolRegistry> {
 }
 
 fn insert_pool(pool: PgPool) -> u64 {
-    let mut reg = registry().lock().unwrap();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let id = reg.next_id;
     reg.next_id = reg.next_id.wrapping_add(1);
     reg.pools.insert(id, Arc::new(pool));
@@ -115,12 +115,12 @@ fn insert_pool(pool: PgPool) -> u64 {
 }
 
 fn lookup_pool(id: u64) -> Option<Arc<PgPool>> {
-    let reg = registry().lock().unwrap();
+    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.pools.get(&id).cloned()
 }
 
 fn remove_pool(id: u64) -> bool {
-    let mut reg = registry().lock().unwrap();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.pools.remove(&id).is_some()
 }
 
@@ -150,7 +150,7 @@ fn tx_registry() -> &'static Mutex<TxRegistry> {
 }
 
 fn insert_tx(conn: PinnedConn) -> u64 {
-    let mut reg = tx_registry().lock().unwrap();
+    let mut reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
     let id = reg.next_id;
     reg.next_id = reg.next_id.wrapping_add(1);
     reg.txs.insert(id, Arc::new(Mutex::new(conn)));
@@ -158,12 +158,12 @@ fn insert_tx(conn: PinnedConn) -> u64 {
 }
 
 fn lookup_tx(id: u64) -> Option<Arc<Mutex<PinnedConn>>> {
-    let reg = tx_registry().lock().unwrap();
+    let reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.txs.get(&id).cloned()
 }
 
 fn remove_tx(id: u64) -> Option<Arc<Mutex<PinnedConn>>> {
-    let mut reg = tx_registry().lock().unwrap();
+    let mut reg = tx_registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.txs.remove(&id)
 }
 
@@ -206,7 +206,7 @@ fn cursors() -> &'static Mutex<CursorRegistry> {
 }
 
 fn register_cursor(tx_id: u64, batch_size: u64) -> (u64, String) {
-    let mut reg = cursors().lock().unwrap();
+    let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     let id = reg.next_id;
     reg.next_id = reg.next_id.wrapping_add(1);
     let name = format!("silt_cursor_{id}");
@@ -223,19 +223,19 @@ fn register_cursor(tx_id: u64, batch_size: u64) -> (u64, String) {
 }
 
 fn lookup_cursor(id: u64) -> Option<CursorEntry> {
-    let reg = cursors().lock().unwrap();
+    let reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     reg.cursors.get(&id).cloned()
 }
 
 fn update_cursor_exhausted(id: u64, flag: bool) {
-    let mut reg = cursors().lock().unwrap();
+    let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = reg.cursors.get_mut(&id) {
         entry.exhausted = flag;
     }
 }
 
 fn remove_cursor(id: u64) -> Option<CursorEntry> {
-    let mut reg = cursors().lock().unwrap();
+    let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     reg.cursors.remove(&id)
 }
 
@@ -244,7 +244,7 @@ fn remove_cursor(id: u64) -> Option<CursorEntry> {
 /// reaped alongside the tx. PG closes the server-side cursor objects
 /// automatically at tx end, so we only reap local bookkeeping here.
 fn drain_cursors_for_tx(tx_id: u64) {
-    let mut reg = cursors().lock().unwrap();
+    let mut reg = cursors().lock().unwrap_or_else(|e| e.into_inner());
     reg.cursors.retain(|_, entry| entry.tx_id != tx_id);
 }
 
@@ -1245,7 +1245,7 @@ fn do_query(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value {
             }
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap();
+            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
             match conn.client_mut().query(&sql, &bind) {
                 Ok(rows) => {
                     let mapped: Vec<Value> = rows.iter().map(row_to_map).collect();
@@ -1304,7 +1304,7 @@ fn do_execute(target: ExecutorRef, sql: String, params: Vec<SqlParam>) -> Value 
             run(conn.client_mut(), &sql, &bind, has_returning)
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap();
+            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
             run(conn.client_mut(), &sql, &bind, has_returning)
         }
     }
@@ -1424,7 +1424,7 @@ fn do_stream_worker(target: ExecutorRef, sql: String, params: Vec<SqlParam>, ch:
             }
         },
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap();
+            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
             pump(conn.client_mut(), &sql, &bind);
         }
     }
@@ -1451,7 +1451,7 @@ fn do_cursor_open(
     let bind: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p.as_to_sql()).collect();
     let (cursor_id, name) = register_cursor(tx_id, batch_size);
     let declare_sql = format!("DECLARE {name} CURSOR FOR {sql}");
-    let mut conn = cell.lock().unwrap();
+    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
     match conn.client_mut().execute(declare_sql.as_str(), &bind) {
         Ok(_) => ok(make_cursor_handle(cursor_id)),
         Err(e) => {
@@ -1489,7 +1489,7 @@ fn do_cursor_next(cursor_id: u64) -> Value {
         }
     };
     let fetch_sql = format!("FETCH FORWARD {} FROM {}", entry.batch_size, entry.name);
-    let mut conn = cell.lock().unwrap();
+    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
     match conn.client_mut().query(fetch_sql.as_str(), &[]) {
         Ok(rows) => {
             let n = rows.len();
@@ -1522,7 +1522,7 @@ fn do_cursor_close(cursor_id: u64) -> Value {
         }
     };
     let close_sql = format!("CLOSE {}", entry.name);
-    let mut conn = cell.lock().unwrap();
+    let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
     match conn.client_mut().execute(close_sql.as_str(), &[]) {
         Ok(_) => ok(Value::Unit),
         Err(e) => err(pg_error_to_variant(&e)),
@@ -1657,7 +1657,7 @@ fn do_notify(target: ExecutorRef, channel_name: String, payload: String) -> Valu
             }
         }
         ExecutorRef::Tx(cell) => {
-            let mut conn = cell.lock().unwrap();
+            let mut conn = cell.lock().unwrap_or_else(|e| e.into_inner());
             match conn.client_mut().execute(sql, &params) {
                 Ok(_) => ok(Value::Unit),
                 Err(e) => err(pg_error_to_variant(&e)),
@@ -2053,7 +2053,7 @@ fn transact(vm: &mut Vm, args: &[Value]) -> Result<Value, VmError> {
             Err(shared) => {
                 // Can't reclaim ownership; run against the locked cell.
                 // The conn lingers until the other reference is dropped.
-                let mut conn = shared.lock().unwrap();
+                let mut conn = shared.lock().unwrap_or_else(|e| e.into_inner());
                 if let Err(e) = conn.client_mut().batch_execute(sql) {
                     return Some(err(pg_error_to_variant(&e)));
                 }

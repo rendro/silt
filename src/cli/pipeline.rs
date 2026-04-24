@@ -133,23 +133,43 @@ pub(crate) fn run_compile_pipeline(
                 .iter()
                 .map(|w| SourceError::compile_warning(&w.message, w.span, &source, path))
                 .collect();
+            // An Ok compile can still have accumulated module parse
+            // errors if a future refactor teaches the compiler to keep
+            // going past a broken module. Today the first error short-
+            // circuits, so this is defensive — but draining on both
+            // arms keeps the "every diagnostic, one run" invariant
+            // robust against that evolution.
+            let module_extras: Vec<SourceError> = compiler
+                .module_parse_errors()
+                .iter()
+                .map(|e| SourceError::from_compile_error(e, &source, path))
+                .collect();
             CompilePipelineResult {
                 source,
                 parse_errors,
                 type_errors,
                 functions: Some(functions),
-                compile_errors: Vec::new(),
+                compile_errors: module_extras,
                 compile_warnings,
             }
         }
         Err(e) => {
-            let source_err = SourceError::from_compile_error(&e, &source, path);
+            // Primary first, then the rest in source order. This matches
+            // how the entrypoint's own parse errors flow (all pushed,
+            // parse-source order) so the composite output is uniform.
+            let mut compile_errors = vec![SourceError::from_compile_error(&e, &source, path)];
+            compile_errors.extend(
+                compiler
+                    .module_parse_errors()
+                    .iter()
+                    .map(|extra| SourceError::from_compile_error(extra, &source, path)),
+            );
             CompilePipelineResult {
                 source,
                 parse_errors,
                 type_errors,
                 functions: None,
-                compile_errors: vec![source_err],
+                compile_errors,
                 compile_warnings: Vec::new(),
             }
         }

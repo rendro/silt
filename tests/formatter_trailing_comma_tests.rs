@@ -73,6 +73,7 @@ fn single_line_enum_preserves_trailing_comma() {
     check_formatter_invariants(src, &out).expect("invariants on single-line form");
 }
 
+
 /// Idempotency: a second format pass on an already-formatted source
 /// with a trailing comma must not strip it.
 #[test]

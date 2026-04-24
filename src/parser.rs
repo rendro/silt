@@ -167,6 +167,25 @@ impl Parser {
             && std::mem::discriminant(self.peek()) != std::mem::discriminant(our_closer)
     }
 
+    /// True if the current token is `fn` and the next non-newline token is
+    /// an identifier. That shape is unambiguously a top-level `fn NAME(...)`
+    /// declaration — an anonymous-fn expression must be `fn(...)` with
+    /// parens immediately after. Used inside delimited-list parsers so an
+    /// unclosed `[`, `(`, or `{` whose next line begins a fresh `fn` decl
+    /// is blamed on the opener rather than on the innards of a failed
+    /// anon-fn shape. (Round-52 deferred item 3.)
+    fn at_top_level_fn_start(&self) -> bool {
+        if !matches!(self.peek(), Token::Fn) {
+            return false;
+        }
+        // Look ahead past newlines to the next real token.
+        let mut i = self.pos + 1;
+        while i < self.tokens.len() && matches!(self.tokens[i].0, Token::Newline) {
+            i += 1;
+        }
+        matches!(self.tokens.get(i), Some((Token::Ident(_), _)))
+    }
+
     /// Wrap `parse_expr()` so that if it fails because the next token is
     /// EOF or a foreign closer, the error is upgraded to a contextual
     /// unclosed-delimiter message.
@@ -181,6 +200,13 @@ impl Parser {
         // produce the contextual error immediately.
         self.skip_nl();
         if self.at(&Token::Eof) || self.at_foreign_closer(our_closer) {
+            return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
+        }
+        // If we see `fn NAME`, that's a top-level fn decl — never a valid
+        // anon-fn expression (which must be `fn(...)`). Blame the unclosed
+        // opener instead of letting parse_fn_expr consume the `fn` and
+        // error on the trailing ident. (Round-52 deferred item 3.)
+        if self.at_top_level_fn_start() {
             return Err(self.delim_unclosed_err(construct, closer_char, opener_span));
         }
         self.parse_expr()

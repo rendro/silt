@@ -118,6 +118,424 @@ fn with_fmt_state<R>(
 /// the scanner must be conservative: return true only when we're
 /// certain a comma is the last meaningful byte before the delimiter.
 fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> bool {
+    bracket_body_has_trailing_comma(body_start_line, close_line, '}')
+}
+
+/// Generalization of `block_body_has_trailing_comma` to any close
+/// delimiter character (`)`, `]`, or `}`). Walks backward from the
+/// close line over comment-only / blank lines until a line with real
+/// content appears, then returns whether its last non-whitespace,
+/// non-comment byte is `,`. Used by the formatter to mirror (preserve)
+/// the source's last-position trailing comma across every comma-
+/// separated construct: list / tuple / call-args / fn-params / record
+/// create / record pattern / match arms' terminator / import items /
+/// set literals / map literals / type record fields / trait method
+/// lists (for any comma-separated form). The round-52 fuzz invariant
+/// "significant token count unchanged" treats `,` as significant, so
+/// silently adding or dropping one corrupts the count and trips the
+/// harness.
+///
+/// Correctness: false negatives (we wrongly say "no trailing comma")
+/// lead to the formatter not emitting one — fine when the source had
+/// none, a violation when it did. False positives lead to the
+/// formatter inserting one where the source had none — also a
+/// violation. So the scan must be conservative: only return `true`
+/// when the last meaningful byte before the close delimiter is
+/// unambiguously `,`.
+/// Convenience helper for single-line (and generally inline) emitters:
+/// locate the `open`/`close` delimiter pair belonging to this `Expr`
+/// by scanning forward from `expr.span.offset` (the byte offset of
+/// the expression's first token), find the matching close, and
+/// return whether the source had a `,` immediately before the close
+/// (ignoring whitespace, line comments, and block comments).
+///
+/// The byte-offset anchor matters because multiple `(`/`[`/`{` can
+/// legitimately appear on the same source line — e.g. a call
+/// `fn main() = add(1, 2)` has both the fn's `()` and the call's
+/// `()`. Using `compute_bracket_end_line(expr.span.line, ...)` would
+/// latch onto the first `(` on the line (the fn's), not the call's.
+/// Scanning from `expr.span.offset` skips over any same-line prefix
+/// that is NOT part of this expression.
+fn source_has_trailing_comma(expr: &Expr, open: char, close: char) -> bool {
+    source_has_trailing_comma_at_offset(expr.span, open, close)
+}
+
+/// Specialized trailing-comma detector for call-argument lists. A
+/// `Call`'s span points at the callee (not at the call's `(`), so
+/// `source_has_trailing_comma_at_offset(call.span, '(', ')')` would
+/// mis-seed on a callee-internal `(` for chained calls like
+/// `foo()(x,)`. Anchoring on the first arg's offset lets us skip the
+/// entire callee (whatever its shape — `Ident`, `FieldAccess`, nested
+/// `Call`, etc.). From there the call's `(` is the LAST `(` that
+/// appears strictly before `args[0].span.offset` at top level; the
+/// matching `)` is found by the standard forward scan.
+///
+/// Returns `false` for empty arg lists (a call with no args cannot
+/// have a trailing comma).
+fn call_args_source_has_trailing_comma(args: &[Expr]) -> bool {
+    let Some(first) = args.first() else {
+        return false;
+    };
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return false;
+        };
+        let source: String = state.source_lines.join("\n");
+        let bytes = source.as_bytes();
+        if first.span.offset >= bytes.len() {
+            return false;
+        }
+        // Walk backward from first.span.offset to find the nearest
+        // `(`. The call's `(` immediately precedes the first arg
+        // modulo whitespace and comments. We do a conservative
+        // backward search that only steps through whitespace and line
+        // comments (which we skip by not entering them; we just check
+        // characters). For robustness, skip any `--...` line comments
+        // that start on lines above by not going back past a newline
+        // that has `--` on it.
+        let mut k = first.span.offset;
+        // Step back over whitespace.
+        while k > 0 {
+            let prev = bytes[k - 1];
+            if prev == b' ' || prev == b'\t' || prev == b'\r' || prev == b'\n' {
+                k -= 1;
+                continue;
+            }
+            break;
+        }
+        // At this point we expect bytes[k-1] == b'(' for a valid
+        // source. If not, bail — a later, forward-based scan is
+        // attempted as a fallback.
+        if k == 0 || bytes[k - 1] != b'(' {
+            return false;
+        }
+        // Now scan forward from that `(` for the matching `)`, same
+        // logic as in `source_has_trailing_comma_at_offset`'s inner
+        // matching scan. We reuse that helper by calling it with a
+        // synthetic span offset pointing at the `(`.
+        let open_offset = k - 1;
+        scan_trailing_comma_from_open(&source, open_offset, ')')
+    })
+}
+
+/// Shared inner scan: given a source string and a byte offset that
+/// points at an opening delimiter, find the matching close of the
+/// same kind (tracking mixed bracket depth for safety) and return
+/// whether the last non-whitespace, non-comment byte before the
+/// matching close is `,`.
+fn scan_trailing_comma_from_open(source: &str, open_offset: usize, close: char) -> bool {
+    let bytes = source.as_bytes();
+    if open_offset >= bytes.len() {
+        return false;
+    }
+    let mut j = open_offset + 1;
+    let mut inner_depth: i32 = 1;
+    let mut mode = ScanMode::Code;
+    let mut block_depth: usize = 0;
+    let mut last_sig_is_comma = false;
+    let mut has_any_content = false;
+    while j < bytes.len() {
+        let ch = bytes[j] as char;
+        let nxt = bytes.get(j + 1).map(|b| *b as char);
+        let nxt2 = bytes.get(j + 2).map(|b| *b as char);
+        if block_depth > 0 {
+            if ch == '{' && nxt == Some('-') {
+                block_depth += 1;
+                j += 2;
+                continue;
+            }
+            if ch == '-' && nxt == Some('}') {
+                block_depth -= 1;
+                j += 2;
+                continue;
+            }
+            j += 1;
+            continue;
+        }
+        match mode {
+            ScanMode::InTriple => {
+                if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                    mode = ScanMode::Code;
+                    j += 3;
+                } else {
+                    j += 1;
+                }
+                last_sig_is_comma = false;
+                has_any_content = true;
+            }
+            ScanMode::InRegular => {
+                if ch == '\\' {
+                    j += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    mode = ScanMode::Code;
+                }
+                j += 1;
+                last_sig_is_comma = false;
+                has_any_content = true;
+            }
+            ScanMode::Code => {
+                if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                    mode = ScanMode::InTriple;
+                    j += 3;
+                    last_sig_is_comma = false;
+                    has_any_content = true;
+                    continue;
+                }
+                if ch == '"' {
+                    mode = ScanMode::InRegular;
+                    j += 1;
+                    last_sig_is_comma = false;
+                    has_any_content = true;
+                    continue;
+                }
+                if ch == '-' && nxt == Some('-') {
+                    while j < bytes.len() && bytes[j] != b'\n' {
+                        j += 1;
+                    }
+                    continue;
+                }
+                if ch == '{' && nxt == Some('-') {
+                    block_depth = 1;
+                    j += 2;
+                    continue;
+                }
+                if ch == close && inner_depth == 1 {
+                    return has_any_content && last_sig_is_comma;
+                }
+                if matches!(ch, '(' | '[' | '{') {
+                    inner_depth += 1;
+                } else if matches!(ch, ')' | ']' | '}') {
+                    inner_depth -= 1;
+                }
+                if !ch.is_whitespace() {
+                    last_sig_is_comma = ch == ',';
+                    has_any_content = true;
+                }
+                j += 1;
+            }
+        }
+    }
+    false
+}
+
+/// Byte-offset-anchored check: scan the source starting at
+/// `span.offset` forward, find the first `open` at bracket-depth 0
+/// (ignoring strings / comments / enclosing-bracket nesting), then
+/// find the matching `close`. Return whether the last non-whitespace,
+/// non-comment byte between that `open` and `close` is `,`.
+fn source_has_trailing_comma_at_offset(span: Span, open: char, close: char) -> bool {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return false;
+        };
+        // Reconstruct the source as a single string for offset-based
+        // scanning. `source_lines` has the line-split view already;
+        // concatenate with `\n` to restore positions modulo CRLF
+        // quirks (silt uses LF per its lexer, see `Lexer::new`).
+        let source: String = state.source_lines.join("\n");
+        let bytes = source.as_bytes();
+        if span.offset >= bytes.len() {
+            return false;
+        }
+        let start = span.offset;
+
+        // Walk forward from `start`, tracking string/comment state and
+        // bracket depth, to locate the target `open` at depth 0. The
+        // scan state mirrors the logic of `compute_bracket_end_line`
+        // but operates at byte granularity to honor `span.offset`.
+        let mut i = start;
+        let mut depth: i32 = 0;
+        let mut found_open_at: Option<usize> = None;
+        let mut mode = ScanMode::Code;
+        let mut block_depth: usize = 0;
+        // We track ALL three bracket kinds while looking for `open`,
+        // so a `close` matching some *other* bracket pair (e.g. a `]`
+        // when we're looking for `)`) does not pop our counter. Once
+        // we find `open`, the subsequent scan for the matching `close`
+        // is a simple depth counter on that ONE kind (see below), but
+        // must also respect strings/comments.
+        while i < bytes.len() {
+            let ch = bytes[i] as char;
+            let nxt = bytes.get(i + 1).map(|b| *b as char);
+            let nxt2 = bytes.get(i + 2).map(|b| *b as char);
+            if block_depth > 0 {
+                if ch == '{' && nxt == Some('-') {
+                    block_depth += 1;
+                    i += 2;
+                    continue;
+                }
+                if ch == '-' && nxt == Some('}') {
+                    block_depth -= 1;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                continue;
+            }
+            match mode {
+                ScanMode::InTriple => {
+                    if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                        mode = ScanMode::Code;
+                        i += 3;
+                        continue;
+                    }
+                    i += 1;
+                }
+                ScanMode::InRegular => {
+                    if ch == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '"' {
+                        mode = ScanMode::Code;
+                    }
+                    i += 1;
+                }
+                ScanMode::Code => {
+                    if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                        mode = ScanMode::InTriple;
+                        i += 3;
+                        continue;
+                    }
+                    if ch == '"' {
+                        mode = ScanMode::InRegular;
+                        i += 1;
+                        continue;
+                    }
+                    if ch == '-' && nxt == Some('-') {
+                        // Line comment: skip to end of line.
+                        while i < bytes.len() && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    if ch == '{' && nxt == Some('-') {
+                        block_depth = 1;
+                        i += 2;
+                        continue;
+                    }
+                    if ch == open && depth == 0 {
+                        found_open_at = Some(i);
+                        break;
+                    }
+                    match ch {
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+        }
+        let Some(open_pos) = found_open_at else {
+            return false;
+        };
+        // Now scan from just past `open` for the matching `close`.
+        let mut j = open_pos + 1;
+        let mut inner_depth: i32 = 1;
+        let mut mode = ScanMode::Code;
+        let mut block_depth: usize = 0;
+        let mut last_sig_is_comma = false;
+        let mut has_any_content = false;
+        while j < bytes.len() {
+            let ch = bytes[j] as char;
+            let nxt = bytes.get(j + 1).map(|b| *b as char);
+            let nxt2 = bytes.get(j + 2).map(|b| *b as char);
+            if block_depth > 0 {
+                if ch == '{' && nxt == Some('-') {
+                    block_depth += 1;
+                    j += 2;
+                    continue;
+                }
+                if ch == '-' && nxt == Some('}') {
+                    block_depth -= 1;
+                    j += 2;
+                    continue;
+                }
+                j += 1;
+                continue;
+            }
+            match mode {
+                ScanMode::InTriple => {
+                    if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                        mode = ScanMode::Code;
+                        j += 3;
+                    } else {
+                        j += 1;
+                    }
+                    last_sig_is_comma = false;
+                    has_any_content = true;
+                }
+                ScanMode::InRegular => {
+                    if ch == '\\' {
+                        j += 2;
+                        continue;
+                    }
+                    if ch == '"' {
+                        mode = ScanMode::Code;
+                    }
+                    j += 1;
+                    last_sig_is_comma = false;
+                    has_any_content = true;
+                }
+                ScanMode::Code => {
+                    if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                        mode = ScanMode::InTriple;
+                        j += 3;
+                        last_sig_is_comma = false;
+                        has_any_content = true;
+                        continue;
+                    }
+                    if ch == '"' {
+                        mode = ScanMode::InRegular;
+                        j += 1;
+                        last_sig_is_comma = false;
+                        has_any_content = true;
+                        continue;
+                    }
+                    if ch == '-' && nxt == Some('-') {
+                        // Line comment: skip to newline (no effect on
+                        // last-significant-byte tracking).
+                        while j < bytes.len() && bytes[j] != b'\n' {
+                            j += 1;
+                        }
+                        continue;
+                    }
+                    if ch == '{' && nxt == Some('-') {
+                        block_depth = 1;
+                        j += 2;
+                        continue;
+                    }
+                    // Matching close at depth 1 → we're done.
+                    if ch == close && inner_depth == 1 {
+                        return has_any_content && last_sig_is_comma;
+                    }
+                    if matches!(ch, '(' | '[' | '{') {
+                        inner_depth += 1;
+                    } else if matches!(ch, ')' | ']' | '}') {
+                        inner_depth -= 1;
+                    }
+                    if !ch.is_whitespace() {
+                        last_sig_is_comma = ch == ',';
+                        has_any_content = true;
+                    }
+                    j += 1;
+                }
+            }
+        }
+        false
+    })
+}
+
+fn bracket_body_has_trailing_comma(
+    body_start_line: usize,
+    close_line: usize,
+    close_char: char,
+) -> bool {
     FMT_STATE.with(|cell| {
         let borrowed = cell.borrow();
         let Some(state) = borrowed.as_ref() else {
@@ -130,23 +548,24 @@ fn block_body_has_trailing_comma(body_start_line: usize, close_line: usize) -> b
         let low_idx = body_start_line.saturating_sub(1);
         let mut idx = close_line - 1;
 
-        // The `}` line: strip line comment, find `}`, look at content
-        // before it. If the brace is preceded by non-whitespace content,
-        // the last significant byte on that line answers the question.
+        // The close-delimiter's line: strip any `-- line comment`, find
+        // the close char, look at content before it. If the close is
+        // preceded by non-whitespace content, the last significant byte
+        // on that line answers the question.
         let line = &lines[idx];
-        let before_brace = match line.rfind('}') {
+        let before_close = match line.rfind(close_char) {
             Some(col) => &line[..col],
             None => "",
         };
-        let before_trimmed = before_brace.split("--").next().unwrap_or("").trim_end();
+        let before_trimmed = before_close.split("--").next().unwrap_or("").trim_end();
         if !before_trimmed.is_empty() {
             return before_trimmed.ends_with(',');
         }
 
-        // `}` is alone on its line (possibly with leading whitespace).
-        // Walk upward over blank / comment-only lines until we hit a
-        // line with real content. That line's final significant byte
-        // answers the question.
+        // Close delimiter is alone on its line (possibly with leading
+        // whitespace). Walk upward over blank / comment-only lines until
+        // we hit a line with real content. That line's final significant
+        // byte answers the question.
         while idx > low_idx {
             idx -= 1;
             let line = lines[idx].trim_end();
@@ -3309,7 +3728,7 @@ fn format_decl_with_comments(decl: &Decl, depth: usize) -> String {
         Decl::Type(t) => format_type(t, depth),
         Decl::Trait(t) => format_trait_with_comments(t, depth),
         Decl::TraitImpl(t) => format_trait_impl_with_comments(t, depth),
-        Decl::Import(i, _) => format_import(i, depth),
+        Decl::Import(i, span) => format_import(i, *span, depth),
         Decl::Let {
             pattern,
             ty,
@@ -3352,6 +3771,11 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
     let multiline_params = !f.params.is_empty()
         && should_layout_multiline(fn_start_line, params_close_line, &concrete_param_lines);
     let params = if multiline_params {
+        // Round-52 trailing-comma preservation for fn params. Use the
+        // byte-offset-anchored scan so a `fn foo(x) = Some(x,)` single-
+        // line body doesn't confuse a line-based `rfind(')')`.
+        let source_has_trailing_comma = source_has_trailing_comma_at_offset(f.span, '(', ')');
+        let last_idx = f.params.len().saturating_sub(1);
         let mut lines: Vec<String> = Vec::new();
         let mut prev_line = fn_start_line;
         for (i, p) in f.params.iter().enumerate() {
@@ -3364,7 +3788,10 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
             let trailing = take_trailing_for_line(p_line)
                 .map(|c| format!(" {c}"))
                 .unwrap_or_default();
-            lines.push(format!("{}{p_str},{trailing}", indent(depth + 1)));
+            let needs_comma =
+                i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+            let comma = if needs_comma { "," } else { "" };
+            lines.push(format!("{}{p_str}{comma}{trailing}", indent(depth + 1)));
             prev_line = p_line;
         }
         // Drain any remaining unconsumed standalone comments that live
@@ -3383,11 +3810,23 @@ fn format_fn_with_comments(f: &FnDecl, depth: usize) -> String {
         }
         format!("\n{}\n{}", lines.join("\n"), indent(depth))
     } else {
-        f.params
+        let joined = f
+            .params
             .iter()
             .map(format_param)
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", ");
+        // Round-52 trailing-comma preservation for single-line fn
+        // params. Byte-offset anchored so a `fn foo(x) = Some(x,)`
+        // body's trailing comma does not leak into the param check.
+        let trailing = if !f.params.is_empty()
+            && source_has_trailing_comma_at_offset(f.span, '(', ')')
+        {
+            ","
+        } else {
+            ""
+        };
+        format!("{joined}{trailing}")
     };
     let ret = if let Some(ty) = &f.return_type {
         format!(" -> {}", format_type_expr(ty))
@@ -3771,7 +4210,8 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
         TypeBody::Record(fields) => {
             let mut cursor = t.span.line + 1;
             let mut lines: Vec<String> = Vec::with_capacity(fields.len());
-            for f in fields {
+            let last_idx = fields.len().saturating_sub(1);
+            for (i, f) in fields.iter().enumerate() {
                 let name = resolve(f.name);
                 let src_line = find_ident_line(&name, cursor, close_line);
                 if let Some(l) = src_line {
@@ -3784,12 +4224,18 @@ fn format_type(t: &TypeDecl, depth: usize) -> String {
                     format_type_expr(&f.ty)
                 );
                 let trailing = src_line.and_then(take_trailing_for_line);
-                // Record fields always receive a trailing comma so the
-                // syntax is uniform whether or not a trailing comment
-                // follows.
+                // Round-52 trailing-comma preservation: mirror the
+                // source on the last field; non-last fields still take
+                // a separator comma. A trailing `-- comment` always
+                // forces a comma before it so the `,-- c` split is
+                // well-formed at re-parse.
+                let needs_comma = i < last_idx
+                    || trailing.is_some()
+                    || source_has_trailing_comma;
+                let comma = if needs_comma { "," } else { "" };
                 let tail = match trailing {
-                    Some(tc) => format!("{head}, {tc}"),
-                    None => format!("{head},"),
+                    Some(tc) => format!("{head}{comma} {tc}"),
+                    None => format!("{head}{comma}"),
                 };
                 lines.push(tail);
             }
@@ -3892,13 +4338,28 @@ fn format_trait_methods(methods: &[FnDecl], depth: usize, close_line: usize) -> 
     out
 }
 
-fn format_import(i: &ImportTarget, depth: usize) -> String {
+fn format_import(i: &ImportTarget, span: Span, depth: usize) -> String {
     let prefix = indent(depth);
     match i {
         ImportTarget::Module(name) => format!("{prefix}import {name}"),
         ImportTarget::Items(module, items) => {
             let item_strs: Vec<String> = items.iter().map(|i| resolve(*i)).collect();
-            format!("{prefix}import {module}.{{ {} }}", item_strs.join(", "))
+            // Round-52 trailing-comma preservation for selective
+            // import lists (`import mod.{ a, b, }`). The `import`
+            // keyword lives at `span.line`; the `{` follows on the
+            // same line (no intervening newline in silt's grammar).
+            let close_line = compute_bracket_end_line(span.line, '{', '}');
+            let trailing = if !items.is_empty()
+                && bracket_body_has_trailing_comma(span.line, close_line, '}')
+            {
+                ","
+            } else {
+                ""
+            };
+            format!(
+                "{prefix}import {module}.{{ {}{trailing} }}",
+                item_strs.join(", ")
+            )
         }
         ImportTarget::Alias(module, alias) => {
             format!("{prefix}import {module} as {alias}")
@@ -4002,7 +4463,7 @@ fn format_expr(expr: &Expr, depth: usize) -> String {
     {
         return out;
     }
-    format_expr_inner(&expr.kind, depth)
+    format_expr_inner(expr, depth)
 }
 
 /// If `expr` is a list literal that requires multi-line formatting
@@ -4030,6 +4491,13 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     if !should_layout_multiline(open_line, close_line, &elem_lines) {
         return None;
     }
+    // Round-52 trailing-comma preservation: mirror the source's
+    // last-element comma state so the fuzz invariant "significant token
+    // count unchanged" (which counts `,`) holds on re-format. Uses
+    // byte-offset anchoring so a same-line outer `]` (e.g. inside a
+    // larger outer expression) doesn't mis-seed the trailing scan.
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '[', ']');
+    let last_idx = elems.len().saturating_sub(1);
     // Drain any standalone comments before the first element (inside
     // the brackets).
     let mut lines: Vec<String> = Vec::new();
@@ -4049,7 +4517,14 @@ fn format_list_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         let trailing = take_trailing_for_line(elem_line)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        lines.push(format!("{}{elem_str},{trailing}", indent(depth + 1)));
+        // Non-last elements are always separated by a comma. The LAST
+        // element only takes one iff the source wrote one (or carries
+        // an attached trailing `-- comment`, which needs a `,` before
+        // it so the split is well-formed at re-parse).
+        let needs_comma =
+            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
         prev_line = elem_line;
     }
     // Drain any trailing standalone comments between the last element
@@ -4075,6 +4550,16 @@ fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
     if !should_layout_multiline(open_line, close_line, &elem_lines) {
         return None;
     }
+    // Round-52 trailing-comma preservation. Single-element tuples are
+    // a special case: `(x,)` must keep the comma as a disambiguator
+    // even when the source had none — handled by the single-line
+    // `ExprKind::Tuple` branch, which this emitter does not shadow
+    // because `should_layout_multiline` requires interior comments or
+    // an attached trailing `--`.
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '(', ')');
+    let last_idx = elems.len().saturating_sub(1);
+    // Single-elem tuple is always `(x,)` for disambiguation.
+    let force_single_tuple_comma = elems.len() == 1;
     let mut lines: Vec<String> = Vec::new();
     let mut prev_line = open_line;
     for (i, elem) in elems.iter().enumerate() {
@@ -4087,7 +4572,12 @@ fn format_tuple_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         let trailing = take_trailing_for_line(elem_line)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        lines.push(format!("{}{elem_str},{trailing}", indent(depth + 1)));
+        let needs_comma = i < last_idx
+            || !trailing.is_empty()
+            || source_has_trailing_comma
+            || force_single_tuple_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{elem_str}{comma}{trailing}", indent(depth + 1)));
         prev_line = elem_line;
     }
     let tail = take_comments_between(prev_line, close_line);
@@ -4123,6 +4613,12 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         return None;
     }
     let callee_str = format_expr(callee, depth);
+    // Round-52 trailing-comma preservation for call args. Anchor the
+    // scan at the first arg's source offset so `foo()(x,)`-style
+    // chained calls don't mis-seed on the callee's own `(`. We then
+    // scan BACKWARD to the preceding `(` — that's the call's opener.
+    let source_has_trailing_comma = call_args_source_has_trailing_comma(args);
+    let last_idx = args.len().saturating_sub(1);
     let mut lines: Vec<String> = Vec::new();
     let mut prev_line = open_line;
     for (i, arg) in args.iter().enumerate() {
@@ -4135,7 +4631,10 @@ fn format_call_expr_if_multiline(expr: &Expr, depth: usize) -> Option<String> {
         let trailing = take_trailing_for_line(arg_line)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        lines.push(format!("{}{arg_str},{trailing}", indent(depth + 1)));
+        let needs_comma =
+            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!("{}{arg_str}{comma}{trailing}", indent(depth + 1)));
         prev_line = arg_line;
     }
     let tail = take_comments_between(prev_line, close_line);
@@ -4164,6 +4663,9 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
     if !should_layout_multiline(open_line, close_line, &field_lines) {
         return None;
     }
+    // Round-52 trailing-comma preservation for record-create literals.
+    let source_has_trailing_comma = source_has_trailing_comma_at_offset(expr.span, '{', '}');
+    let last_idx = fields.len().saturating_sub(1);
     let mut lines: Vec<String> = Vec::new();
     let mut prev_line = open_line;
     for (i, (fname, fexpr)) in fields.iter().enumerate() {
@@ -4176,7 +4678,13 @@ fn format_record_create_expr_if_multiline(expr: &Expr, depth: usize) -> Option<S
         let trailing = take_trailing_for_line(fline)
             .map(|c| format!(" {c}"))
             .unwrap_or_default();
-        lines.push(format!("{}{fname}: {val},{trailing}", indent(depth + 1)));
+        let needs_comma =
+            i < last_idx || !trailing.is_empty() || source_has_trailing_comma;
+        let comma = if needs_comma { "," } else { "" };
+        lines.push(format!(
+            "{}{fname}: {val}{comma}{trailing}",
+            indent(depth + 1)
+        ));
         prev_line = fline;
     }
     let tail = take_comments_between(prev_line, close_line);
@@ -4270,6 +4778,205 @@ fn format_pipe_chain_expr(expr: &Expr, depth: usize) -> String {
     result
 }
 
+/// Compute per-arm "emit trailing comma" flags. Commas between match
+/// arms are optional by silt's grammar (see `parse_match_expr` in
+/// `src/parser.rs`), so the formatter must mirror the source's comma
+/// count exactly — dropping or adding one changes the significant
+/// token count and trips the fuzz invariant.
+///
+/// Strategy: count the number of top-level `,` that appear directly
+/// inside the match's `{ ... }` body (i.e. not nested inside any
+/// sub-expression's `()`, `[]`, `{}`, string, or comment). Distribute
+/// that many commas sequentially starting with the first arm. The
+/// invariant checks total token count, so any well-formed
+/// distribution works; we pick "after the first N arms" because it
+/// reproduces the natural author style (comma after every non-trailing
+/// arm, with or without a trailing comma on the last).
+///
+/// Result length equals `arms.len()`.
+fn compute_match_arm_trailing_commas(
+    arms: &[MatchArm],
+    match_span: Span,
+    match_close_line: usize,
+) -> Vec<bool> {
+    let mut out = vec![false; arms.len()];
+    if arms.is_empty() {
+        return out;
+    }
+    let comma_count = count_toplevel_commas_in_match_body(match_span, match_close_line);
+    for i in 0..arms.len().min(comma_count) {
+        out[i] = true;
+    }
+    out
+}
+
+/// Count top-level `,` characters directly inside the body of the
+/// `match` expression whose `match` keyword begins at `match_span`
+/// and whose body close `}` is on `match_close_line`. Only commas
+/// that separate arms are counted; commas nested inside any `()`,
+/// `[]`, `{}`, string, or comment are skipped. This is used by
+/// `compute_match_arm_trailing_commas` to mirror the source's comma
+/// distribution on re-format so the fuzz invariant holds.
+///
+/// The scan starts at `match_span.offset` (the `m` of `match`),
+/// skips the keyword + the scrutinee (if any) by tracking bracket
+/// depth, locks onto the FIRST `{` that is at depth 0 — that's the
+/// body opener, NOT any `{` inside the scrutinee or preceding
+/// position (e.g. a lambda that wraps the match). Once inside the
+/// body, counts every top-level `,` until the matching `}`.
+fn count_toplevel_commas_in_match_body(match_span: Span, match_close_line: usize) -> usize {
+    FMT_STATE.with(|cell| {
+        let borrowed = cell.borrow();
+        let Some(state) = borrowed.as_ref() else {
+            return 0;
+        };
+        let lines = &state.source_lines;
+        let start_line = match_span.line;
+        if start_line == 0
+            || match_close_line == 0
+            || start_line > lines.len()
+            || match_close_line > lines.len()
+        {
+            return 0;
+        }
+        let mut paren: i32 = 0;
+        let mut brace: i32 = 0;
+        let mut brack: i32 = 0;
+        let mut mode = ScanMode::Code;
+        let mut block_depth: usize = 0;
+        let mut seen_open_brace = false;
+        let mut count: usize = 0;
+        // Determine which column on `start_line` the `match` keyword
+        // begins at, so a leading `|> list.fold(first) { acc, x -> match {`
+        // doesn't trick the scanner into treating the lambda's `{` as
+        // the match body. The column is `match_span.col` (1-based).
+        let start_col = match_span.col.saturating_sub(1);
+        for (line_idx, line) in lines
+            .iter()
+            .enumerate()
+            .take(match_close_line)
+            .skip(start_line - 1)
+        {
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = if line_idx + 1 == start_line {
+                // Clamp to the match keyword's column; this skips any
+                // prefix on the start line (like `|> list.fold(first) {`).
+                start_col.min(chars.len())
+            } else {
+                0
+            };
+            // Skip the "match" keyword itself on the start line (the
+            // scanner below only counts commas inside the body, but
+            // we must not confuse the `m a t c h` characters with
+            // anything — they're letters and will be ignored anyway).
+            while i < chars.len() {
+                let ch = chars[i];
+                let nxt = chars.get(i + 1).copied();
+                let nxt2 = chars.get(i + 2).copied();
+                if block_depth > 0 {
+                    if ch == '{' && nxt == Some('-') {
+                        block_depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '-' && nxt == Some('}') {
+                        block_depth -= 1;
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+                match mode {
+                    ScanMode::InTriple => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            mode = ScanMode::Code;
+                            i += 3;
+                            continue;
+                        }
+                        i += 1;
+                    }
+                    ScanMode::InRegular => {
+                        if ch == '\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if ch == '"' {
+                            mode = ScanMode::Code;
+                        }
+                        i += 1;
+                    }
+                    ScanMode::Code => {
+                        if ch == '"' && nxt == Some('"') && nxt2 == Some('"') {
+                            mode = ScanMode::InTriple;
+                            i += 3;
+                            continue;
+                        }
+                        if ch == '"' {
+                            mode = ScanMode::InRegular;
+                            i += 1;
+                            continue;
+                        }
+                        if ch == '-' && nxt == Some('-') {
+                            break;
+                        }
+                        if ch == '{' && nxt == Some('-') {
+                            block_depth = 1;
+                            i += 2;
+                            continue;
+                        }
+                        if !seen_open_brace {
+                            if ch == '{' {
+                                seen_open_brace = true;
+                                // Don't count this one toward brace depth;
+                                // the body's `}` will pop us back out
+                                // symmetrically via the `brace -= 1` path
+                                // when we return to the outer zero level.
+                                i += 1;
+                                continue;
+                            }
+                            // Track parens/brackets so a `{` inside the
+                            // scrutinee's nested expression does NOT
+                            // mis-open the body.
+                            match ch {
+                                '(' => paren += 1,
+                                ')' => paren -= 1,
+                                '[' => brack += 1,
+                                ']' => brack -= 1,
+                                _ => {}
+                            }
+                            i += 1;
+                            continue;
+                        }
+                        // We're inside the match body. Count top-level
+                        // commas (not inside any nested delimiter).
+                        match ch {
+                            '(' => paren += 1,
+                            ')' => paren -= 1,
+                            '{' => brace += 1,
+                            '}' => {
+                                if paren == 0 && brace == 0 && brack == 0 {
+                                    // Matching close of body's `{` — stop.
+                                    return count;
+                                }
+                                brace -= 1;
+                            }
+                            '[' => brack += 1,
+                            ']' => brack -= 1,
+                            ',' if paren == 0 && brace == 0 && brack == 0 => {
+                                count += 1;
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+            }
+        }
+        count
+    })
+}
+
 /// Like `collect_pipe_stages` but walks the `Expr` wrapper so callers
 /// get span information for each stage.
 fn collect_pipe_stages_expr<'a>(expr: &'a Expr, stages: &mut Vec<&'a Expr>) {
@@ -4301,9 +5008,17 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
     };
     let guardless = scrutinee.is_none();
 
+    // Round-52 trailing-comma preservation: commas between arms are
+    // optional (see `parse_match_expr` / `parse_match_arm` in
+    // `src/parser.rs`), so source and output counts must match.
+    // Count top-level commas inside the match's body `{...}` and
+    // distribute them across arms (see
+    // `compute_match_arm_trailing_commas` for the distribution rule).
+    let arm_trailing_commas = compute_match_arm_trailing_commas(arms, expr.span, close_line);
+
     let mut lines: Vec<String> = Vec::new();
     let mut last_arm_line = 0usize;
-    for arm in arms.iter() {
+    for (i, arm) in arms.iter().enumerate() {
         let arm_line = arm.body.span.line;
         // Standalone comments before this arm become leading comment lines.
         let pre = take_comments_before(arm_line);
@@ -4311,6 +5026,9 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
             lines.push(format!("{}{}", indent(depth + 1), c.text.trim()));
         }
         let mut arm_str = format_match_arm(arm, depth + 1, guardless);
+        if arm_trailing_commas.get(i).copied().unwrap_or(false) {
+            arm_str.push(',');
+        }
         if let Some(tc) = take_trailing_for_line(arm_line) {
             arm_str.push(' ');
             arm_str.push_str(&tc);
@@ -4350,7 +5068,8 @@ fn format_match_expr(expr: &Expr, depth: usize) -> String {
     )
 }
 
-fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
+fn format_expr_inner(outer: &Expr, depth: usize) -> String {
+    let kind = &outer.kind;
     match kind {
         ExprKind::Int(n) => n.to_string(),
         ExprKind::Float(n) => {
@@ -4394,7 +5113,16 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                         ListElem::Spread(e) => format!("..{}", format_expr(e, depth)),
                     })
                     .collect();
-                format!("[{}]", items.join(", "))
+                // Round-52 trailing-comma preservation for single-line
+                // list literals: mirror the source's last-position
+                // comma state so the fuzz invariant "significant token
+                // count unchanged" holds across re-format.
+                let trailing = if source_has_trailing_comma(outer, '[', ']') {
+                    ","
+                } else {
+                    ""
+                };
+                format!("[{}{trailing}]", items.join(", "))
             }
         }
 
@@ -4406,7 +5134,18 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                     .iter()
                     .map(|(k, v)| format!("{}: {}", format_expr(k, depth), format_expr(v, depth)))
                     .collect();
-                format!("#{{ {} }}", items.join(", "))
+                // The map opener is `#{` — for the source scan we look
+                // for the matching `}` starting at the map's source
+                // line. Callers that want strict start detection use
+                // `#{`; `compute_bracket_end_line` matches `{`/`}` and
+                // latches onto the first `{` it sees, which for a map
+                // is the `#{` opener.
+                let trailing = if source_has_trailing_comma(outer, '{', '}') {
+                    ","
+                } else {
+                    ""
+                };
+                format!("#{{ {}{trailing} }}", items.join(", "))
             }
         }
 
@@ -4415,7 +5154,12 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 "#[]".to_string()
             } else {
                 let items: Vec<String> = elems.iter().map(|e| format_expr(e, depth)).collect();
-                format!("#[{}]", items.join(", "))
+                let trailing = if source_has_trailing_comma(outer, '[', ']') {
+                    ","
+                } else {
+                    ""
+                };
+                format!("#[{}{trailing}]", items.join(", "))
             }
         }
 
@@ -4429,7 +5173,12 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             if elems.len() == 1 {
                 format!("({},)", items[0])
             } else {
-                format!("({})", items.join(", "))
+                let trailing = if source_has_trailing_comma(outer, '(', ')') {
+                    ","
+                } else {
+                    ""
+                };
+                format!("({}{trailing})", items.join(", "))
             }
         }
 
@@ -4536,7 +5285,16 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 }
             }
             let arg_strs: Vec<String> = args.iter().map(|a| format_expr(a, depth)).collect();
-            format!("{callee_str}({})", arg_strs.join(", "))
+            // Round-52 trailing-comma preservation for call args when
+            // the single-line compact form is being emitted. Anchor
+            // the scan at the first arg's offset (see
+            // `call_args_source_has_trailing_comma`).
+            let trailing = if call_args_source_has_trailing_comma(args) {
+                ","
+            } else {
+                ""
+            };
+            format!("{callee_str}({}{trailing})", arg_strs.join(", "))
         }
 
         ExprKind::Lambda { params, body } => {
@@ -4554,7 +5312,12 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
             }
             let param_strs: Vec<String> = params.iter().map(format_param).collect();
             let params_str = param_strs.join(", ");
-            format!("fn({params_str}) {}", format_body(body, depth))
+            let trailing = if !params.is_empty() && source_has_trailing_comma(outer, '(', ')') {
+                ","
+            } else {
+                ""
+            };
+            format!("fn({params_str}{trailing}) {}", format_body(body, depth))
         }
 
         ExprKind::FieldAccess(expr, field) => {
@@ -4566,7 +5329,12 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 .iter()
                 .map(|(fname, fexpr)| format!("{fname}: {}", format_expr(fexpr, depth)))
                 .collect();
-            format!("{name} {{ {} }}", field_strs.join(", "))
+            let trailing = if !fields.is_empty() && source_has_trailing_comma(outer, '{', '}') {
+                ","
+            } else {
+                ""
+            };
+            format!("{name} {{ {}{trailing} }}", field_strs.join(", "))
         }
 
         ExprKind::RecordUpdate { expr, fields } => {
@@ -4574,8 +5342,13 @@ fn format_expr_inner(kind: &ExprKind, depth: usize) -> String {
                 .iter()
                 .map(|(fname, fexpr)| format!("{fname}: {}", format_expr(fexpr, depth)))
                 .collect();
+            let trailing = if !fields.is_empty() && source_has_trailing_comma(outer, '{', '}') {
+                ","
+            } else {
+                ""
+            };
             format!(
-                "{}.{{ {} }}",
+                "{}.{{ {}{trailing} }}",
                 format_expr(expr, depth),
                 field_strs.join(", ")
             )
@@ -6847,10 +7620,15 @@ import a
 
     #[test]
     fn test_format_preserves_trailing_comments_on_multiline_record_literal_fields() {
+        // Round-52 note: the formatter now mirrors the source's
+        // last-position trailing-comma state for type-record fields
+        // (previously it always inserted one). The source here has no
+        // trailing comma after `y: Int`, so the multi-line reshape
+        // emits `y: Int` without one.
         let source =
             "type Point { x: Int, y: Int }\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
         let result = format(source).unwrap();
-        let expected = "type Point {\n  x: Int,\n  y: Int,\n}\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
+        let expected = "type Point {\n  x: Int,\n  y: Int\n}\n\nfn main() = Point {\n  x: 1, -- a\n  y: 2, -- b\n}\n";
         assert_eq!(result, expected);
     }
 

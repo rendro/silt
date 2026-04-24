@@ -385,6 +385,20 @@ pub struct Compiler {
     compiling_package_stack: Vec<Symbol>,
     /// Warnings emitted during compilation.
     warnings: Vec<CompileWarning>,
+    /// Extra parse errors from imported modules that were recovered past
+    /// via `Parser::parse_program_recovering`. The first such error is
+    /// still returned as the hard `Err` from `compile_program` so the
+    /// existing "compile fails on broken module" flow is preserved; the
+    /// remainder live here and are drained by the CLI pipeline so the
+    /// user sees every diagnostic at once instead of fixing-then-rerunning.
+    ///
+    /// Each entry's `message` is pre-formatted via
+    /// `format_module_source_error`, so it already embeds the imported
+    /// module's file path, line, and source snippet. The `span` refers
+    /// to the outer `import` statement in the entrypoint, matching the
+    /// single-error flow so `SourceError::from_compile_error` renders
+    /// the outer caret against the correct file.
+    module_parse_errors: Vec<CompileError>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
     /// Whether the current expression is in tail position (for TCO).
@@ -454,6 +468,7 @@ impl Compiler {
             compiling_modules_stack: Vec::new(),
             compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
+            module_parse_errors: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
@@ -488,6 +503,7 @@ impl Compiler {
             compiling_modules_stack: Vec::new(),
             compiling_package_stack: Vec::new(),
             warnings: Vec::new(),
+            module_parse_errors: Vec::new(),
             imported_builtin_modules: HashSet::new(),
             in_tail_position: false,
             module_scope: None,
@@ -506,6 +522,25 @@ impl Compiler {
     /// Returns warnings emitted during compilation.
     pub fn warnings(&self) -> &[CompileWarning] {
         &self.warnings
+    }
+
+    /// Returns the **extra** module parse errors recovered during
+    /// compilation — i.e. every parse error past the first that an
+    /// imported module produced via `Parser::parse_program_recovering`.
+    ///
+    /// The first module parse error is still surfaced as the hard `Err`
+    /// return from `compile_program`, matching the long-standing
+    /// single-error flow that callers already render. These extras let
+    /// the CLI emit the full batch of diagnostics in one run so users
+    /// don't have to fix-then-rerun when a module has several unrelated
+    /// mistakes.
+    ///
+    /// Each entry's `message` is pre-formatted (module file path + inner
+    /// snippet) and its `span` points at the `import` statement in the
+    /// entrypoint, so lifting with `SourceError::from_compile_error` uses
+    /// exactly the same context as the primary error.
+    pub fn module_parse_errors(&self) -> &[CompileError] {
+        &self.module_parse_errors
     }
 
     /// Mark all builtin modules as imported (used by the REPL).
@@ -1197,19 +1232,50 @@ impl Compiler {
             span,
         })?;
 
-        let mut program = Parser::new(tokens)
-            .parse_program()
-            .map_err(|e| CompileError {
-                message: format_module_source_error(
-                    module_name,
-                    &file_display,
-                    &source,
-                    "parse error",
-                    &e.message,
-                    e.span,
-                ),
-                span,
-            })?;
+        // Parse with the recovery parser so a module with multiple
+        // independent parse errors surfaces every one of them in a
+        // single run — the single-pass `parse_program()` would bail on
+        // the first, forcing users to fix-then-rerun for each error.
+        //
+        // Round-52 deferred: propagate every recovered error upward.
+        // First one becomes the hard `Err` (matching the historical
+        // single-error flow every caller already renders); the rest go
+        // onto `self.module_parse_errors`, drained by the CLI pipeline
+        // alongside the primary.
+        //
+        // Each parse error is formatted with the SAME
+        // `format_module_source_error` helper the single-error path used,
+        // so the module file path + inline snippet + caret render
+        // identically regardless of how many errors the module produced.
+        // The outer `span` (the import statement in the entrypoint) is
+        // reused for every accumulated error; `SourceError` rendering then
+        // pins the outer caret at the import site while the pre-formatted
+        // message carries the inner module location.
+        let (mut program, parse_errors) = Parser::new(tokens).parse_program_recovering();
+        if !parse_errors.is_empty() {
+            let mut formatted: Vec<CompileError> = parse_errors
+                .iter()
+                .map(|e| CompileError {
+                    message: format_module_source_error(
+                        module_name,
+                        &file_display,
+                        &source,
+                        "parse error",
+                        &e.message,
+                        e.span,
+                    ),
+                    span,
+                })
+                .collect();
+            // Preserve source order: the parser collects errors in the
+            // order it encounters them, so `formatted[0]` is the first
+            // problem in the file. That's the one we return as the hard
+            // Err; the remainder flow through `module_parse_errors` in
+            // the same order.
+            let primary = formatted.remove(0);
+            self.module_parse_errors.extend(formatted);
+            return Err(primary);
+        }
 
         // Type-check the imported module before compiling.
         // Type errors are not fatal here — modules with transitive imports will

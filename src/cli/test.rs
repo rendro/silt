@@ -233,6 +233,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             Err(e) => {
                 let source_err = SourceError::from_compile_error(&e, &source, path);
                 eprintln!("{path}: failed to compile — {source_err}");
+                // Round-52: when the primary error originated from a
+                // broken imported module, the recovery parser will have
+                // collected additional module parse errors that the CLI
+                // should surface too so users can fix them all in one go.
+                for extra in compiler.module_parse_errors() {
+                    let extra_err = SourceError::from_compile_error(extra, &source, path);
+                    eprintln!("{path}: failed to compile — {extra_err}");
+                }
                 file_errors += 1;
                 continue;
             }
