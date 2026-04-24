@@ -211,6 +211,7 @@ const BUILTIN_GLOBALS: &[&str] = &[
     "Bool",
     "ExtFloat",
     "List",
+    "Range",
     "Map",
     "Set",
     "Channel",

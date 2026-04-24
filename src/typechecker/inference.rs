@@ -2080,8 +2080,11 @@ impl TypeChecker {
                         );
                         Type::Error
                     }
-                    // Collection types
-                    Type::List(_) => {
+                    // Collection types. Range(T) is a nominal alias for
+                    // List(T) (see Type::Range in src/types.rs); method
+                    // dispatch on a Range receiver routes through the
+                    // List method table.
+                    Type::List(_) | Type::Range(_) => {
                         if let Some(entry) =
                             self.method_table.get(&(intern("List"), field)).cloned()
                         {
@@ -2664,7 +2667,12 @@ impl TypeChecker {
                 let et = self.infer_expr(end, env);
                 self.unify(&st, &Type::Int, start_span);
                 self.unify(&et, &Type::Int, end_span);
-                Type::List(Box::new(Type::Int))
+                // Range(T) is a nominal alias over List(T): unifies
+                // bidirectionally with List(T) (see unify in
+                // src/typechecker/mod.rs), runtime rep is still Vec<Value>.
+                // The nominal distinction lets `let r: Range(Int) = 1..10`
+                // typecheck cleanly without silently widening annotations.
+                Type::Range(Box::new(Type::Int))
             }
 
             ExprKind::QuestionMark(inner) => {
@@ -3875,6 +3883,7 @@ pub(super) fn is_valid_compare_operand(ty: &Type, is_equality: bool) -> bool {
         | Type::ExtFloat
         | Type::String
         | Type::List(_)
+        | Type::Range(_)
         | Type::Record(..)
         | Type::Generic(..)
         | Type::Error

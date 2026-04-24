@@ -135,12 +135,21 @@ Both have precedence 90 — tighter than any binary arithmetic, looser than `as`
 
 ## Range (`..`)
 
-`a..b` is an inclusive range from `a` to `b`. Ranges are lazy and work anywhere a list does:
+`a..b` is an inclusive range from `a` to `b`. It has type `Range(Int)`, a
+nominal wrapper that converts implicitly to and from `List(Int)`, so ranges
+work anywhere a list does:
 
 ```silt
 1..100 |> list.sum()              -- 5050
 (1..n) |> list.each { i -> ... }
+let r: Range(Int) = 1..10         -- annotated
+let xs: List(Int) = 1..10         -- implicit Range→List
 ```
+
+Today `a..b` is materialized eagerly into a list at runtime; the `Range`
+type is a zero-cost alias for `List(Int)` that lets annotations and
+diagnostics say what the user wrote. Lazy iteration is a future design
+and is not implemented yet.
 
 Range binds tighter than `|>` so `1..10 |> list.sum()` needs no parens, and looser than arithmetic so `a+1..b-1` works.
 

@@ -291,6 +291,13 @@ pub(super) fn type_expr_to_type(te: &TypeExpr) -> Type {
                         Type::Generic(intern("List"), vec![])
                     }
                 }
+                "Range" => {
+                    if let Some(inner) = targs.into_iter().next() {
+                        Type::Range(Box::new(inner))
+                    } else {
+                        Type::Generic(intern("Range"), vec![])
+                    }
+                }
                 "Option" => Type::Generic(intern("Option"), targs),
                 _ => Type::Generic(*name, targs),
             }

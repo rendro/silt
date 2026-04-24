@@ -28,6 +28,12 @@ pub enum Type {
     Fun(Vec<Type>, Box<Type>),
     /// Homogeneous list type.
     List(Box<Type>),
+    /// Inclusive integer-range type produced by `a..b`. Nominally distinct
+    /// from `List(T)` so annotations like `let r: Range(Int) = 1..10`
+    /// succeed, but unifies bidirectionally with `List(T)` — Range is a
+    /// zero-cost alias whose runtime representation is the same `Vec<Value>`
+    /// as a List. Laziness is future work (tracked in docs/language/operators.md).
+    Range(Box<Type>),
     /// Tuple type (fixed length, heterogeneous).
     Tuple(Vec<Type>),
     /// A nominal record type: name + field name/type pairs.
@@ -77,6 +83,7 @@ impl std::fmt::Display for Type {
                 write!(f, ") -> {ret}")
             }
             Type::List(inner) => write!(f, "List({inner})"),
+            Type::Range(inner) => write!(f, "Range({inner})"),
             Type::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
@@ -201,6 +208,7 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             fvs
         }
         Type::List(inner) => free_vars_in(inner),
+        Type::Range(inner) => free_vars_in(inner),
         Type::Tuple(elems) => {
             let mut fvs = Vec::new();
             for e in elems {
@@ -272,6 +280,7 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
             Type::Fun(params, ret)
         }
         Type::List(inner) => Type::List(Box::new(substitute_vars(inner, mapping))),
+        Type::Range(inner) => Type::Range(Box::new(substitute_vars(inner, mapping))),
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|e| substitute_vars(e, mapping)).collect())
         }
@@ -326,6 +335,11 @@ pub fn substitute_enum_params(
             Type::Fun(params, ret)
         }
         Type::List(inner) => Type::List(Box::new(substitute_enum_params(
+            inner,
+            param_var_ids,
+            type_args,
+        ))),
+        Type::Range(inner) => Type::Range(Box::new(substitute_enum_params(
             inner,
             param_var_ids,
             type_args,

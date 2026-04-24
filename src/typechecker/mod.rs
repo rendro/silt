@@ -425,6 +425,7 @@ impl TypeChecker {
                 Type::Fun(params, ret)
             }
             Type::List(inner) => Type::List(Box::new(self.apply(inner))),
+            Type::Range(inner) => Type::Range(Box::new(self.apply(inner))),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.apply(e)).collect()),
             Type::Record(name, fields) => {
                 let fields = fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
@@ -507,6 +508,20 @@ impl TypeChecker {
             }
 
             (Type::List(a), Type::List(b)) => {
+                self.unify(a, b, span);
+            }
+
+            (Type::Range(a), Type::Range(b)) => {
+                self.unify(a, b, span);
+            }
+
+            // Range(T) is a nominal zero-cost alias for List(T): they
+            // unify bidirectionally at the element level. `1..10` infers
+            // as `Range(Int)` so annotations `let r: Range(Int) = 1..10`
+            // typecheck, but existing `list.*` call sites still accept
+            // ranges and `let r: List(Int) = 1..10` still typechecks.
+            // Runtime representation is unchanged (Vec<Value>).
+            (Type::Range(a), Type::List(b)) | (Type::List(b), Type::Range(a)) => {
                 self.unify(a, b, span);
             }
 
@@ -852,6 +867,12 @@ impl TypeChecker {
             Type::Record(name, _) => Some(*name),
             Type::Generic(name, _) => Some(*name),
             Type::List(_) => Some(intern("List")),
+            // Range acts as List for trait-impl lookup: traits registered
+            // against List (e.g. Iterable, Sized) apply to Range since the
+            // runtime representation is identical. Without this mapping,
+            // auto-derived trait methods on Range receivers (e.g. `.len()`)
+            // would fail to resolve.
+            Type::Range(_) => Some(intern("List")),
             Type::Map(_, _) => Some(intern("Map")),
             Type::Set(_) => Some(intern("Set")),
             Type::Channel(_) => Some(intern("Channel")),
@@ -878,7 +899,10 @@ impl TypeChecker {
     pub(super) fn type_args_of(ty: &Type) -> Vec<Type> {
         match ty {
             Type::Generic(_, args) => args.clone(),
-            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
+            Type::List(inner)
+            | Type::Range(inner)
+            | Type::Set(inner)
+            | Type::Channel(inner) => {
                 vec![(**inner).clone()]
             }
             Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
@@ -1816,6 +1840,13 @@ impl TypeChecker {
                         // List without explicit type param => List(fresh_var)
                         Type::List(Box::new(self.fresh_var()))
                     }
+                    "Range" => {
+                        // Range without explicit type param => Range(fresh_var).
+                        // Range is a nominal alias for List (see Type::Range
+                        // in src/types.rs); inference is bidirectional at
+                        // unify time.
+                        Type::Range(Box::new(self.fresh_var()))
+                    }
                     "Map" => {
                         // Map without explicit type params => Map(fresh_var, fresh_var)
                         Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
@@ -1873,6 +1904,12 @@ impl TypeChecker {
                     "List" if resolved_args.is_empty() => Type::List(Box::new(self.fresh_var())),
                     "List" if resolved_args.len() == 1 => {
                         Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Range" if resolved_args.is_empty() => {
+                        Type::Range(Box::new(self.fresh_var()))
+                    }
+                    "Range" if resolved_args.len() == 1 => {
+                        Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
                     }
                     "Map" if resolved_args.is_empty() => {
                         Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
@@ -2374,7 +2411,7 @@ impl TypeChecker {
             );
             let is_builtin_container = matches!(
                 name_str.as_str(),
-                "List" | "Map" | "Set" | "Channel" | "Tuple" | "Fn" | "Fun" | "Handle"
+                "List" | "Range" | "Map" | "Set" | "Channel" | "Tuple" | "Fn" | "Fun" | "Handle"
             );
             let is_user_record = self.records.contains_key(&ti.target_type);
             let is_user_enum = self.enums.contains_key(&ti.target_type);
@@ -2414,6 +2451,7 @@ impl TypeChecker {
             let name_str_for_arity = resolve(ti.target_type);
             let builtin_arity: Option<(usize, &'static str)> = match name_str_for_arity.as_str() {
                 "List" => Some((1, "builtin")),
+                "Range" => Some((1, "builtin")),
                 "Set" => Some((1, "builtin")),
                 "Channel" => Some((1, "builtin")),
                 "Map" => Some((2, "builtin")),
@@ -2452,6 +2490,9 @@ impl TypeChecker {
             match name_str.as_str() {
                 "List" if resolved_args.len() == 1 => {
                     Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                }
+                "Range" if resolved_args.len() == 1 => {
+                    Type::Range(Box::new(resolved_args.into_iter().next().unwrap()))
                 }
                 "Set" if resolved_args.len() == 1 => {
                     Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
@@ -2805,6 +2846,15 @@ fn align_tyvars_into(old: &Type, new: &Type, map: &mut HashMap<TyVar, TyVar>) {
             align_tyvars_into(or_, nr, map);
         }
         (Type::List(o), Type::List(n)) => align_tyvars_into(o, n, map),
+        (Type::Range(o), Type::Range(n)) => align_tyvars_into(o, n, map),
+        // Range is a nominal alias for List (see unify arms in
+        // src/typechecker/mod.rs). Align element-wise across the
+        // List/Range boundary so scheme generalization/instantiation
+        // remains sound when a fn returning List(a) flows into a
+        // Range-typed binder or vice versa.
+        (Type::List(o), Type::Range(n)) | (Type::Range(o), Type::List(n)) => {
+            align_tyvars_into(o, n, map)
+        }
         (Type::Set(o), Type::Set(n)) => align_tyvars_into(o, n, map),
         (Type::Channel(o), Type::Channel(n)) => align_tyvars_into(o, n, map),
         (Type::Tuple(o), Type::Tuple(n)) if o.len() == n.len() => {
@@ -2880,6 +2930,7 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Var(v) => *v == var,
         Type::Fun(params, ret) => params.iter().any(|p| occurs_in(var, p)) || occurs_in(var, ret),
         Type::List(inner) => occurs_in(var, inner),
+        Type::Range(inner) => occurs_in(var, inner),
         Type::Tuple(elems) => elems.iter().any(|e| occurs_in(var, e)),
         Type::Record(_, fields) => fields.iter().any(|(_, t)| occurs_in(var, t)),
         Type::Generic(_, args) => args.iter().any(|a| occurs_in(var, a)),

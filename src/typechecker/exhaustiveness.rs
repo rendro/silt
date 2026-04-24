@@ -229,7 +229,10 @@ impl TypeChecker {
             // seen in the matrix. The final "open" constructor
             // `[_, _, ..., _, ..rest]` (of length max+1 with a rest pattern)
             // stands for "all lists strictly longer than max".
-            Type::List(_elem_ty) => {
+            // Range(T) is a nominal alias for List(T) (see Type::Range in
+            // src/types.rs). Exhaustiveness follows the same list-constructor
+            // enumeration: `[]`, `[_]`, `[_,_]`, ..., and the open form.
+            Type::Range(_elem_ty) | Type::List(_elem_ty) => {
                 let max_fixed_len = matrix
                     .iter()
                     .filter_map(|p| match &p.kind {
@@ -391,7 +394,7 @@ impl TypeChecker {
                 // wildcard binding, so element-level checks there aren't
                 // informative for the common case).
                 let elem_ty = match ty {
-                    Type::List(e) => (**e).clone(),
+                    Type::List(e) | Type::Range(e) => (**e).clone(),
                     _ => Type::Error,
                 };
 
@@ -849,6 +852,7 @@ impl TypeChecker {
             Type::Tuple(_) => true,
             // Container types with effectively unbounded shapes.
             Type::List(_) => true,
+            Type::Range(_) => true,
             Type::Map(_, _) => true,
             Type::Set(_) => true,
             // Function / channel / inference-artefact / error / never

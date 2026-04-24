@@ -42,7 +42,10 @@ fn encode_type_expr(te: &TypeExpr) -> String {
             }
         }
         TypeExprKind::Generic(name, args) => match resolve(*name).as_str() {
-            "List" => {
+            "List" | "Range" => {
+                // Range is a nominal alias for List (see Type::Range in
+                // src/types.rs); encode both as a list for runtime type
+                // descriptors since the runtime representation is shared.
                 let inner = args
                     .first()
                     .map(encode_type_expr)
