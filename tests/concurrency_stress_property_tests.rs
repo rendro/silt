@@ -281,6 +281,9 @@ mod genp {
         /// on the `Program` for debuggability; the emitter derives
         /// safety from the per-op variant (Close is only generated for
         /// closeable channels and blocking Send only for non-closeable).
+        // kept for shrinker/debug printouts: field is never read via
+        // `.closeable`, but `Debug` formatting reads it when proptest
+        // emits a failing-case minimised program.
         #[allow(dead_code)]
         pub closeable: Vec<bool>,
         /// Worker task op sequences.

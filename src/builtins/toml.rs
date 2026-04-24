@@ -356,7 +356,6 @@ fn toml_to_record(
             },
         }
     }
-    let _ = type_name;
     Ok(Value::Variant(
         "Ok".into(),
         vec![Value::Record(

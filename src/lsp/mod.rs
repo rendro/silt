@@ -56,6 +56,13 @@ mod workspace_symbol;
 
 use state::Document;
 
+/// Re-export `preload::path_to_file_uri` so integration tests (and any
+/// external caller that legitimately needs to synthesize a `file://`
+/// URI with LSP-compatible percent-encoding) can reach it without
+/// having to duplicate the `URI_PATH_RESERVED` character set or the
+/// Windows drive-letter fix-up.
+pub use preload::path_to_file_uri;
+
 // ── Server ─────────────────────────────────────────────────────────
 
 struct Server {
@@ -304,7 +311,19 @@ impl Server {
 /// (`file:///C:/Users/...`) shapes; on Windows we strip the leading
 /// `/` before the drive letter because Rust's `PathBuf` expects
 /// `C:/Users/...`, not `/C:/Users/...`.
-fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
+///
+/// Percent-decodes the path component per RFC 3986 so URIs like
+/// `file:///home/klaus/My%20Project` or
+/// `file:///tmp/%D1%82%D0%B5%D1%81%D1%82` (Cyrillic `тест`) resolve
+/// to real filesystem paths. Pre-fix this path was fed verbatim to
+/// `PathBuf::from`, so VSCode/any client sending an encoded workspace
+/// root (spaces, non-ASCII) silently failed `fs::read_dir` and the
+/// preload dropped every file.
+///
+/// Falls back to the literal stripped string if UTF-8 decode fails —
+/// the decode is best-effort; a malformed URI shouldn't crash the
+/// server.
+pub fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
     let stripped = uri.strip_prefix("file://")?;
     #[cfg(windows)]
     let stripped = {
@@ -320,7 +339,11 @@ fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
             stripped
         }
     };
-    Some(std::path::PathBuf::from(stripped))
+    let decoded = percent_encoding::percent_decode_str(stripped)
+        .decode_utf8()
+        .map(|cow| cow.into_owned())
+        .unwrap_or_else(|_| stripped.to_string());
+    Some(std::path::PathBuf::from(decoded))
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

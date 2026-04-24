@@ -116,7 +116,7 @@ Creates a validated `Date`. Returns `Err` for invalid dates.
 import time
 fn main() {
     println(time.date(2024, 3, 15))   -- Ok(2024-03-15)
-    println(time.date(2024, 2, 29))   -- Ok(2024-02-29) — leap year
+    println(time.date(2024, 2, 29))   -- Ok(2024-02-29)  (leap year)
     println(time.date(2024, 13, 1))   -- Err(TimeOutOfRange(invalid date: 2024-13-1))
 }
 ```
@@ -401,7 +401,7 @@ fn main() {
     println(time.minutes(30))   -- 30m
     println(time.seconds(5))    -- 5s
     println(time.ms(500))       -- 500ms
-    println(time.micros(250))   -- 250µs
+    println(time.micros(250))   -- 250us
     println(time.nanos(42))     -- 42ns
 }
 ```

@@ -499,9 +499,10 @@ impl TypeChecker {
                 let n = info.params.len();
                 self.error(
                     format!(
-                        "trait '{}' expects {} type argument(s) in bound, got 0",
+                        "trait '{}' expects {} {} in bound, got 0",
                         resolve(*trait_name),
-                        n
+                        n,
+                        plural(n, "type argument", "type arguments")
                     ),
                     f.span,
                 );

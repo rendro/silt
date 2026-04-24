@@ -15,7 +15,7 @@ syntax keyword siltBoolean true false
 " names the compiler prints in diagnostics and the names accepted in
 " type-annotation position. Keep in sync with the lock test at
 " tests/editor_grammar_primitives_tests.rs.
-syntax keyword siltType Int Float ExtFloat Bool String Unit List Map Set
+syntax keyword siltType Int Float ExtFloat Bool String Unit List Range Map Set Channel Tuple Fn Fun Handle
 
 " ── Builtins ────────────────────────────────────────────────────────
 syntax keyword siltBuiltin print println panic

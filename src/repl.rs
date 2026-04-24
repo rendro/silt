@@ -238,7 +238,9 @@ pub fn builtin_names() -> Vec<String> {
         // facing "things I can type here" expectation, just in two
         // different UIs.
         ":quit",
+        ":q",
         ":help",
+        ":h",
         "as",
         "else",
         "fn",

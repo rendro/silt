@@ -1238,7 +1238,7 @@ impl Vm {
                 let count = self.read_u8()? as usize;
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "internal: string interpolation expects {} values but only {} are available",
+                        "internal VM error: string interpolation expects {} values but only {} are available",
                         count,
                         self.stack.len()
                     )));

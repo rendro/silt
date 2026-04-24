@@ -46,8 +46,8 @@ import list
 fn main() {
     match regex.captures("(\\w+)@(\\w+)", "user@host") {
         Some(groups) -> {
-            println(list.get(groups, 1))  -- Some("user")
-            println(list.get(groups, 2))  -- Some("host")
+            println(list.get(groups, 1))  -- Some(user)
+            println(list.get(groups, 2))  -- Some(host)
         }
         None -> println("no match")
     }
@@ -95,8 +95,8 @@ import map
 fn main() {
     match regex.captures_named("(?P<user>\\w+)@(?P<host>\\w+)", "alice@example") {
         Some(groups) -> {
-            println(map.get(groups, "user"))  -- Some("alice")
-            println(map.get(groups, "host"))  -- Some("example")
+            println(map.get(groups, "user"))  -- Some(alice)
+            println(map.get(groups, "host"))  -- Some(example)
         }
         None -> println("no match")
     }
@@ -116,7 +116,7 @@ Returns `Some(matched_text)` for the first match, or `None`.
 import regex
 fn main() {
     let first = regex.find("\\d+", "abc 123 def")
-    println(first)  -- Some("123")
+    println(first)  -- Some(123)
 }
 ```
 
@@ -133,7 +133,7 @@ Returns all non-overlapping matches as a list of strings.
 import regex
 fn main() {
     let nums = regex.find_all("\\d+", "a1 b22 c333")
-    println(nums)  -- ["1", "22", "333"]
+    println(nums)  -- [1, 22, 333]
 }
 ```
 
@@ -167,7 +167,7 @@ Replaces the first match with the replacement string.
 import regex
 fn main() {
     let replaced = regex.replace("\\d+", "abc 123 def 456", "NUM")
-    println(replaced)  -- "abc NUM def 456"
+    println(replaced)  -- abc NUM def 456
 }
 ```
 
@@ -184,7 +184,7 @@ Replaces all matches with the replacement string.
 import regex
 fn main() {
     let scrubbed = regex.replace_all("\\d+", "abc 123 def 456", "NUM")
-    println(scrubbed)  -- "abc NUM def NUM"
+    println(scrubbed)  -- abc NUM def NUM
 }
 ```
 
@@ -208,7 +208,7 @@ fn main() {
         let n = int.parse(m) |> result.unwrap_or(0)
         int.to_string(n * 2)
     }
-    println(doubled)  -- "a2 b44 c666"
+    println(doubled)  -- a2 b44 c666
 }
 ```
 
@@ -225,6 +225,6 @@ Splits the text on every occurrence of the pattern.
 import regex
 fn main() {
     let parts = regex.split("\\s+", "hello   world   silt")
-    println(parts)  -- ["hello", "world", "silt"]
+    println(parts)  -- [hello, world, silt]
 }
 ```

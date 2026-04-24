@@ -432,7 +432,7 @@ fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) 
     }
 
     // Current file definitions.
-    if let Some(def) = doc.definitions.get(&name) {
+    if doc.definitions.contains_key(&name) {
         // We don't keep kind info on DefInfo, so consult the program's
         // decl list directly.
         if let Some(program) = doc.program.as_ref() {
@@ -465,7 +465,6 @@ fn classify_ident(name: Symbol, offset: usize, doc: &Document, server: &Server) 
             }
         }
         // Fallback: we know it's defined but couldn't locate which kind.
-        let _ = def;
         return Some(TT_VARIABLE);
     }
 

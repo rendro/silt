@@ -48,7 +48,7 @@ fn main() {
   -- Random UUID
   let id = uuid.v4()
   println(id)
-  -- e.g. "e8400-e29b-41d4-a716-446655440000"
+  -- e.g. 550e8400-e29b-41d4-a716-446655440000
 
   -- Time-ordered UUID (good for DB primary keys)
   let pk = uuid.v7()
@@ -62,7 +62,7 @@ fn main() {
   -- Validate + canonicalize external input
   match uuid.parse("550E8400-E29B-41D4-A716-446655440000") {
     Ok(canonical) -> println(canonical)
-    -- "550e8400-e29b-41d4-a716-446655440000"
+    -- 550e8400-e29b-41d4-a716-446655440000
     Err(e) -> println(e)
   }
 
@@ -74,7 +74,7 @@ fn main() {
 
   -- Sentinel
   println(uuid.nil())
-  -- "00000000-0000-0000-0000-000000000000"
+  -- 00000000-0000-0000-0000-000000000000
 }
 ```
 

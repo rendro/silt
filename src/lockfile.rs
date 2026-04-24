@@ -328,14 +328,17 @@ impl Lockfile {
     /// network to see if a branch dep's HEAD has advanced upstream. A
     /// lockfile pinning `branch = "main"` to SHA `abc...` stays valid
     /// across `silt run` invocations even when `main` has new commits;
-    /// `silt update` is the explicit refresh trigger. (If a future
-    /// maintainer "fixes" this by re-resolving here, every `silt run`
-    /// becomes a network operation — the wrong tradeoff.)
+    /// `silt update` is the explicit refresh trigger. The offline path
+    /// implemented in [`Lockfile::resolve_offline`] is authoritative —
+    /// it reuses the SHAs already pinned in `self` for every git dep
+    /// rather than calling `git ls-remote`.
     pub fn matches_manifest(&self, manifest: &Manifest) -> bool {
-        // Re-resolve the manifest to a fresh transitive set; if any
-        // step fails we treat the lockfile as out of date so the
-        // explicit regenerate path produces the real diagnostic.
-        let Ok(fresh) = Lockfile::resolve(manifest) else {
+        // Re-resolve the manifest to a fresh transitive set using the
+        // offline variant (reusing stored SHAs for git deps). Any failure
+        // means the lockfile is out of date (e.g. a new git dep without
+        // a matching lock entry, or a missing path dep); the explicit
+        // regenerate path then produces the real diagnostic.
+        let Ok(fresh) = Lockfile::resolve_offline(manifest, self) else {
             return false;
         };
         let mut a: Vec<&str> = self.packages.iter().map(|p| p.name.as_str()).collect();
@@ -343,6 +346,95 @@ impl Lockfile {
         a.sort();
         b.sort();
         a == b
+    }
+
+    /// Offline variant of [`Lockfile::resolve`]: uses the stored
+    /// `resolved_sha` from `existing` for every git dep rather than
+    /// calling `git ls-remote`. Used by [`Lockfile::matches_manifest`]
+    /// to do the name-set comparison without network I/O.
+    ///
+    /// Returns `Err` if a git dep is present in `manifest` (directly or
+    /// transitively) but has no matching entry (by `url` + `ref_spec`)
+    /// in `existing` — this means the manifest has a new git dep and
+    /// the caller should regenerate the lockfile via the full
+    /// [`Lockfile::resolve`] path.
+    ///
+    /// Mirrors the BFS in `resolve` exactly, substituting
+    /// `resolve_dep_path_offline` for the network-bound `resolve_dep_path`.
+    fn resolve_offline(manifest: &Manifest, existing: &Lockfile) -> Result<Lockfile, LockfileError> {
+        let mut packages: BTreeMap<String, LockedPackage> = BTreeMap::new();
+        let mut visited: BTreeSet<PathBuf> = BTreeSet::new();
+
+        let root_dir = manifest_dir(manifest).to_path_buf();
+        visited.insert(root_dir.clone());
+        let root_name = intern::resolve(manifest.package.name).to_string();
+        packages.insert(
+            root_name.clone(),
+            LockedPackage {
+                name: root_name,
+                version: manifest.package.version.clone(),
+                source: LockedSource::Local,
+                checksum: String::new(),
+            },
+        );
+
+        let mut queue: Vec<ResolvedDep> = Vec::new();
+        for (name, dep) in &manifest.dependencies {
+            let dep_name = intern::resolve(*name);
+            queue.push(resolve_dep_path_offline(&dep_name, dep, &root_dir, existing)?);
+        }
+
+        while let Some(resolved) = queue.pop() {
+            let dep_root = resolved.root_path.clone();
+            if !visited.insert(dep_root.clone()) {
+                continue;
+            }
+            let dep_manifest_path = dep_root.join("silt.toml");
+            if !dep_root.exists() {
+                return Err(LockfileError::DepNotFound {
+                    name: dep_root
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| dep_root.display().to_string()),
+                    path: dep_root,
+                });
+            }
+            if !dep_manifest_path.is_file() {
+                return Err(LockfileError::DepNotPackage {
+                    name: dep_root
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| dep_root.display().to_string()),
+                    path: dep_root,
+                });
+            }
+            let dep_manifest = Manifest::load(&dep_manifest_path)?;
+            let checksum = checksum_path_source(&dep_root)
+                .map_err(|e| LockfileError::Io(e, dep_root.clone()))?;
+            let pkg_name = intern::resolve(dep_manifest.package.name).to_string();
+            packages.entry(pkg_name.clone()).or_insert(LockedPackage {
+                name: pkg_name,
+                version: dep_manifest.package.version.clone(),
+                source: resolved.source,
+                checksum,
+            });
+            for (sub_name, sub_dep) in &dep_manifest.dependencies {
+                let sub = resolve_dep_path_offline(
+                    &intern::resolve(*sub_name),
+                    sub_dep,
+                    &dep_root,
+                    existing,
+                )?;
+                if !visited.contains(&sub.root_path) {
+                    queue.push(sub);
+                }
+            }
+        }
+
+        Ok(Lockfile {
+            version: 1,
+            packages: packages.into_values().collect(),
+        })
     }
 
     /// Build the `package_roots` map the compiler consumes from this
@@ -479,6 +571,76 @@ fn resolve_dep_path(
                     source: e,
                 }
             })?;
+            Ok(ResolvedDep {
+                root_path: cache_path,
+                source: LockedSource::Git {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                    resolved_sha,
+                },
+            })
+        }
+    }
+}
+
+/// Offline variant of [`resolve_dep_path`]: for git deps, looks up the
+/// matching `(url, ref_spec)` entry in `existing` and reuses its stored
+/// `resolved_sha` rather than calling `git ls-remote`. For path deps,
+/// behaves identically to `resolve_dep_path` (path deps are offline).
+///
+/// Returns a [`LockfileError::GitOperation`] wrapping [`GitError::RefNotFound`]
+/// when a git dep in the manifest has no matching entry in `existing`
+/// (by `url` and `ref_spec` equality) — the caller treats this as "lock
+/// is stale, regenerate via the full network path".
+///
+/// Also fails if the cache directory for the resolved SHA is missing its
+/// `silt.toml`: we cannot read the transitive manifest to recurse, so
+/// the offline comparison is incomplete and we fall back to the full
+/// regenerate. In practice `Lockfile::resolve` populates the cache on
+/// the first lock-write, so on steady-state `silt run` invocations the
+/// cache is always present.
+fn resolve_dep_path_offline(
+    _name: &str,
+    dep: &Dependency,
+    parent_dir: &Path,
+    existing: &Lockfile,
+) -> Result<ResolvedDep, LockfileError> {
+    match dep {
+        Dependency::Path { path } => {
+            let abs = normalize_path(&parent_dir.join(path));
+            Ok(ResolvedDep {
+                root_path: abs.clone(),
+                source: LockedSource::Path { path: abs },
+            })
+        }
+        Dependency::Git { url, ref_spec } => {
+            // Find the matching lockfile entry by (url, ref_spec).
+            let matching = existing.packages.iter().find_map(|pkg| match &pkg.source {
+                LockedSource::Git {
+                    url: lu,
+                    ref_spec: lr,
+                    resolved_sha,
+                } if lu == url && lr == ref_spec => Some(resolved_sha.clone()),
+                _ => None,
+            });
+            let resolved_sha = matching.ok_or_else(|| LockfileError::GitOperation {
+                url: url.clone(),
+                ref_spec: ref_spec.clone(),
+                source: GitError::RefNotFound {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                },
+            })?;
+            // Compute the cache path deterministically from (url, sha).
+            // The cache must already be populated — if not, the offline
+            // comparison cannot recurse into the git dep's manifest to
+            // gather transitive deps, so we bail out (caller regenerates).
+            let cache_path =
+                git::cache_for(url, &resolved_sha).map_err(|e| LockfileError::GitOperation {
+                    url: url.clone(),
+                    ref_spec: ref_spec.clone(),
+                    source: e,
+                })?;
             Ok(ResolvedDep {
                 root_path: cache_path,
                 source: LockedSource::Git {

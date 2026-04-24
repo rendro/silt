@@ -117,7 +117,7 @@
     },
     "primitives": {
       "name": "support.type.primitive.silt",
-      "match": "\\b(Int|Float|ExtFloat|Bool|String|Unit|List|Map|Set)\\b"
+      "match": "\\b(Int|Float|ExtFloat|Bool|String|Unit|List|Range|Map|Set|Channel|Tuple|Fn|Fun|Handle)\\b"
     },
     "constructors": {
       "name": "constant.language.constructor.silt",

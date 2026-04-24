@@ -56,7 +56,7 @@ Collapses a nested Result. `Ok(Ok(v))` becomes `Ok(v)`, `Ok(Err(e))` becomes
 import result
 fn main() {
     println(result.flatten(Ok(Ok(42))))         -- Ok(42)
-    println(result.flatten(Ok(Err("oops"))))    -- Err("oops")
+    println(result.flatten(Ok(Err("oops"))))    -- Err(oops)
 }
 ```
 
@@ -107,7 +107,7 @@ If `r` is `Err(e)`, returns `Err(f(e))`. If `r` is `Ok`, returns it unchanged.
 import result
 fn main() {
     let r = Err("not found") |> result.map_err { e -> "Error: {e}" }
-    println(r)  -- Err("Error: not found")
+    println(r)  -- Err(Error: not found)
 }
 ```
 
@@ -281,7 +281,7 @@ fn main() {
     println(r)  -- Ok(42)
 
     let r2 = option.to_result(None, "missing")
-    println(r2)  -- Err("missing")
+    println(r2)  -- Err(missing)
 }
 ```
 

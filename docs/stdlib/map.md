@@ -168,7 +168,7 @@ Returns all keys as a list, in sorted order.
 import map
 fn main() {
     let ks = map.keys(#{"b": 2, "a": 1})
-    println(ks)  -- ["a", "b"]
+    println(ks)  -- [a, b]
 }
 ```
 

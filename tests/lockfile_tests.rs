@@ -687,7 +687,12 @@ fn test_lockfile_resolve_git_dep_validates_manifest() {
 // other PR 1/2 git tests and to keep `cargo test` fast/hermetic.
 
 fn skip_unless_network() -> bool {
-    std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err()
+    if std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err() {
+        eprintln!("SKIP: network test skipped; set SILT_GIT_INTEGRATION_TESTS=1 to enable");
+        true
+    } else {
+        false
+    }
 }
 
 /// Create a bare git repo with a tiny silt library committed on `main`,

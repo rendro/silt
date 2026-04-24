@@ -112,8 +112,8 @@ Returns the cosine of `x` (in radians).
 ```silt
 import math
 fn main() {
-    println(math.cos(0.0))       -- 1.0
-    println(math.cos(math.pi))   -- -1.0
+    println(math.cos(0.0))       -- 1
+    println(math.cos(math.pi))   -- -1
 }
 ```
 
@@ -166,7 +166,7 @@ Returns the natural logarithm (base e) of `x`. Returns `-Infinity` for zero,
 import math
 fn main() {
     let ln_e = math.log(math.e) else 0.0
-    println(ln_e)  -- 1.0
+    println(ln_e)  -- 1
 }
 ```
 
@@ -184,7 +184,7 @@ Returns the base-10 logarithm of `x`. Returns `-Infinity` for zero,
 import math
 fn main() {
     let log_100 = math.log10(100.0) else 0.0
-    println(log_100)  -- 2.0
+    println(log_100)  -- 2
 }
 ```
 
@@ -219,7 +219,7 @@ Infinity for large results. Use `else` to narrow:
 import math
 fn main() {
     let two_to_ten = math.pow(2.0, 10.0) else 0.0
-    println(two_to_ten)  -- 1024.0
+    println(two_to_ten)  -- 1024
 }
 ```
 
@@ -252,8 +252,8 @@ Returns the sine of `x` (in radians).
 ```silt
 import math
 fn main() {
-    println(math.sin(0.0))           -- 0.0
-    println(math.sin(1.5707963))     -- 1.0 (pi/2)
+    println(math.sin(0.0))           -- 0
+    println(math.sin(1.5707963))     -- 0.9999999999999997 (approximately 1.0, pi/2)
 }
 ```
 
@@ -271,7 +271,7 @@ to narrow:
 import math
 fn main() {
     let root = math.sqrt(4.0) else 0.0
-    println(root)  -- 2.0
+    println(root)  -- 2
 }
 ```
 
@@ -287,7 +287,7 @@ Returns the tangent of `x` (in radians).
 ```silt
 import math
 fn main() {
-    println(math.tan(0.0))           -- 0.0
-    println(math.tan(0.7853982))     -- 1.0 (approximately, pi/4)
+    println(math.tan(0.0))           -- 0
+    println(math.tan(0.7853982))     -- 1.0000000732051062 (approximately 1.0, pi/4)
 }
 ```

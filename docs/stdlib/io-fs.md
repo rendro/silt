@@ -197,7 +197,7 @@ import env
 
 fn main() {
     env.set("MY_VAR", "hello")
-    println(env.get("MY_VAR"))  -- Some("hello")
+    println(env.get("MY_VAR"))  -- Some(hello)
 }
 ```
 

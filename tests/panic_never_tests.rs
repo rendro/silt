@@ -30,16 +30,6 @@ fn assert_no_type_errors(input: &str) {
     assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
 }
 
-/// Assert that the typechecker produces at least one error matching the pattern.
-#[allow(dead_code)]
-fn assert_type_error(input: &str, pattern: &str) {
-    let errs = type_errors(input);
-    assert!(
-        errs.iter().any(|e| e.contains(pattern)),
-        "expected type error containing '{pattern}', got: {errs:?}"
-    );
-}
-
 /// Compile and run, returning the runtime error message.
 fn run_err(input: &str) -> String {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");

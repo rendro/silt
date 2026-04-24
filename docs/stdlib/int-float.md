@@ -135,7 +135,7 @@ Converts an integer to a float.
 import int
 fn main() {
     let f = int.to_float(42)
-    println(f)  -- 42.0
+    println(f)  -- 42
 }
 ```
 
@@ -152,7 +152,7 @@ Converts an integer to its string representation.
 import int
 fn main() {
     let s = int.to_string(42)
-    println(s)  -- "42"
+    println(s)  -- 42
 }
 ```
 
@@ -227,8 +227,8 @@ Rounds up to the nearest integer, returned as a Float.
 ```silt
 import float
 fn main() {
-    println(float.ceil(3.2))   -- 4.0
-    println(float.ceil(-3.2))  -- -3.0
+    println(float.ceil(3.2))   -- 4
+    println(float.ceil(-3.2))  -- -3
 }
 ```
 
@@ -251,8 +251,8 @@ the output is **undefined for NaN inputs**. Use `float.is_nan` on an
 import float
 fn main() {
     println(float.clamp(0.5, 0.0, 1.0))   -- 0.5
-    println(float.clamp(-0.2, 0.0, 1.0))  -- 0.0
-    println(float.clamp(1.5, 0.0, 1.0))   -- 1.0
+    println(float.clamp(-0.2, 0.0, 1.0))  -- 0
+    println(float.clamp(1.5, 0.0, 1.0))   -- 1
 }
 ```
 
@@ -324,8 +324,8 @@ Rounds down to the nearest integer, returned as a Float.
 ```silt
 import float
 fn main() {
-    println(float.floor(3.9))   -- 3.0
-    println(float.floor(-3.2))  -- -4.0
+    println(float.floor(3.9))   -- 3
+    println(float.floor(-3.2))  -- -4
 }
 ```
 
@@ -396,8 +396,8 @@ Rounds to the nearest integer, returned as a Float. Ties round away from zero.
 ```silt
 import float
 fn main() {
-    println(float.round(3.6))  -- 4.0
-    println(float.round(3.4))  -- 3.0
+    println(float.round(3.6))  -- 4
+    println(float.round(3.4))  -- 3
 }
 ```
 
@@ -440,12 +440,12 @@ Converts a float to its string representation. Accepts both `Float` and
 import float
 fn main() {
     -- 1-arg form: shortest round-trippable
-    println(float.to_string(3.14159))     -- "3.14159"
-    println(float.to_string(42.0))        -- "42.0"
+    println(float.to_string(3.14159))     -- 3.14159
+    println(float.to_string(42.0))        -- 42.0
 
     -- 2-arg form: fixed decimal places
-    println(float.to_string(3.14159, 2))  -- "3.14"
-    println(float.to_string(42.0, 0))     -- "42"
+    println(float.to_string(3.14159, 2))  -- 3.14
+    println(float.to_string(42.0, 0))     -- 42
 }
 ```
 

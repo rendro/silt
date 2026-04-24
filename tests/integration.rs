@@ -67,7 +67,6 @@ fn run_typed(input: &str) -> Value {
 }
 
 /// Like `run_ok`, but asserts that the typechecker produces no hard errors.
-#[allow(dead_code)]
 fn run_typed_ok(input: &str) {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     let mut program = Parser::new(tokens).parse_program().expect("parse error");
@@ -5630,11 +5629,6 @@ fn make_time(h: i64, m: i64, s: i64, ns: i64) -> Value {
 
 fn make_datetime(date: Value, time: Value) -> Value {
     make_record("DateTime", vec![("date", date), ("time", time)])
-}
-
-#[allow(dead_code)]
-fn make_duration(ns: i64) -> Value {
-    make_record("Duration", vec![("ns", Value::Int(ns))])
 }
 
 #[test]

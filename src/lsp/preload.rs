@@ -12,8 +12,49 @@ use std::path::Path;
 use std::str::FromStr;
 
 use lsp_types::Uri;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::Server;
+
+/// Characters that must be percent-encoded inside a `file://` path
+/// component. Built from `CONTROLS` (all bytes below 0x20 plus 0x7F)
+/// and then every non-unreserved printable ASCII byte except `/`
+/// (preserved as the path separator) and `:` (preserved so the Windows
+/// drive letter `C:` survives; it's in RFC 3986 `pchar`'s sub-delims
+/// via `pchar = unreserved / pct-encoded / sub-delims / ":" / "@"`).
+///
+/// Unreserved set per RFC 3986: `ALPHA / DIGIT / "-" / "." / "_" / "~"`.
+/// Everything else in ASCII gets encoded. Non-ASCII bytes are encoded
+/// by `utf8_percent_encode` automatically.
+const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'!')
+    .add(b'"')
+    .add(b'#')
+    .add(b'$')
+    .add(b'%')
+    .add(b'&')
+    .add(b'\'')
+    .add(b'(')
+    .add(b')')
+    .add(b'*')
+    .add(b'+')
+    .add(b',')
+    .add(b';')
+    .add(b'<')
+    .add(b'=')
+    .add(b'>')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}')
+    .add(b'\x7f');
 
 /// Maximum recursion depth for the workspace scan. Keeps a rogue
 /// symlink cycle or an inhumanly-deep tree from pegging the thread.
@@ -120,14 +161,21 @@ fn load_file(server: &mut Server, path: &Path) {
 
 /// Build a `file://`-scheme `Uri` from an absolute filesystem path.
 /// Uses `Uri::from_str` per the LSP 3.17+ Uri type.
-fn path_to_file_uri(path: &Path) -> Option<Uri> {
+///
+/// Percent-encodes every path byte that isn't in the RFC 3986
+/// unreserved set (plus `/` as the separator and `:` so Windows drive
+/// letters survive). Spaces become `%20`, non-ASCII bytes become
+/// `%XX%XX…`. Without this, `Uri::from_str` rejects any workspace
+/// containing a space or non-ASCII character, so preload silently
+/// skipped those files.
+pub fn path_to_file_uri(path: &Path) -> Option<Uri> {
     let abs = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let s = abs.to_str()?;
 
     // On Unix, absolute paths start with `/`; LSP wants `file:///path`.
     // On Windows, absolute paths look like `C:\foo` → `file:///C:/foo`.
     #[cfg(windows)]
-    let encoded = {
+    let raw = {
         let with_fwd = s.replace('\\', "/");
         if with_fwd.starts_with('/') {
             format!("file://{with_fwd}")
@@ -136,11 +184,22 @@ fn path_to_file_uri(path: &Path) -> Option<Uri> {
         }
     };
     #[cfg(not(windows))]
-    let encoded = if s.starts_with('/') {
+    let raw = if s.starts_with('/') {
         format!("file://{s}")
     } else {
         format!("file:///{s}")
     };
+
+    // Split into `file://` prefix and the path remainder; only the
+    // remainder needs percent-encoding (the scheme must stay literal).
+    // Every reachable branch above writes `file://` then either the
+    // already-leading `/` or an inserted `/`, so the full prefix is
+    // always `file:///` on a valid absolute path — but we handle the
+    // `file://` slice conservatively for robustness.
+    let prefix_len = "file://".len();
+    let (prefix, remainder) = raw.split_at(prefix_len);
+    let encoded_remainder = utf8_percent_encode(remainder, URI_PATH_RESERVED).to_string();
+    let encoded = format!("{prefix}{encoded_remainder}");
 
     Uri::from_str(&encoded).ok()
 }

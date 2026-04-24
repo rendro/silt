@@ -617,7 +617,12 @@ fn test_add_git_invalid_rev_format_errors() {
 // ── Network-gated tests (require SILT_GIT_INTEGRATION_TESTS=1) ────────
 
 fn skip_unless_network() -> bool {
-    std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err()
+    if std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err() {
+        eprintln!("SKIP: network test skipped; set SILT_GIT_INTEGRATION_TESTS=1 to enable");
+        true
+    } else {
+        false
+    }
 }
 
 /// A URL that resolves at the DNS level but won't host a real repo.

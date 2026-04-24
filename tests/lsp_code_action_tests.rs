@@ -227,15 +227,13 @@ fn code_actions(resp: &Value) -> Vec<Value> {
 
 // ── Tests ──────────────────────────────────────────────────────────
 
-// Ignored: silt's "module 'X' is not imported" error is emitted by the
-// compiler phase, not the typechecker. The LSP's diagnostics pipeline
-// today runs lex+parse+typecheck only, so the diagnostic never reaches
-// the client. The quick-fix implementation is correct and will fire the
-// moment the LSP surfaces this diagnostic — which requires either
-// extending the diagnostics pipeline to invoke compilation, or moving
-// the import check into the typechecker. Tracked as LSP follow-up.
+// Round 56 moved the "module 'X' is not imported" check into the
+// typechecker (src/typechecker/inference.rs::~1920), and the LSP
+// diagnostics pipeline forwards typechecker errors verbatim
+// (src/lsp/diagnostics.rs:81-105). The code-action parser matches the
+// exact phrase (src/lsp/code_action.rs::import_module_from_message), so
+// the quick-fix end-to-end is live and this test locks it.
 #[test]
-#[ignore = "requires compile-phase diagnostics in LSP pipeline"]
 fn add_import_quickfix_offered_for_unimported_module() {
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_ca_import.silt";

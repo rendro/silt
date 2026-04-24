@@ -430,14 +430,14 @@ impl Vm {
     fn pop(&mut self) -> Result<Value, VmError> {
         self.stack.pop().ok_or_else(|| {
             let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
-            VmError::new(format!("internal: stack underflow at ip={ip}"))
+            VmError::new(format!("internal VM error: stack underflow at ip={ip}"))
         })
     }
 
     fn peek(&self) -> Result<&Value, VmError> {
         self.stack.last().ok_or_else(|| {
             let ip = self.frames.last().map(|f| f.ip).unwrap_or(0);
-            VmError::new(format!("internal: stack underflow at ip={ip}"))
+            VmError::new(format!("internal VM error: stack underflow at ip={ip}"))
         })
     }
 
@@ -447,15 +447,23 @@ impl Vm {
         let frame = self
             .frames
             .last()
-            .ok_or_else(|| VmError::new("internal: no call frame in read_byte".to_string()))?;
+            .ok_or_else(|| {
+                VmError::new(
+                    "internal VM error: no call frame while reading bytecode".to_string(),
+                )
+            })?;
         let ip = frame.ip;
         let byte =
             *frame.closure.function.chunk.code.get(ip).ok_or_else(|| {
-                VmError::new(format!("internal: bytecode out of bounds at ip={ip}"))
+                VmError::new(format!("internal VM error: bytecode out of bounds at ip={ip}"))
             })?;
         self.frames
             .last_mut()
-            .ok_or_else(|| VmError::new("internal: no call frame in read_byte".to_string()))?
+            .ok_or_else(|| {
+                VmError::new(
+                    "internal VM error: no call frame while reading bytecode".to_string(),
+                )
+            })?
             .ip = ip + 1;
         Ok(byte)
     }
@@ -479,7 +487,11 @@ impl Vm {
             .constants
             .get(index)
             .cloned()
-            .ok_or_else(|| VmError::new(format!("internal: constant index {index} out of bounds")))
+            .ok_or_else(|| {
+                VmError::new(format!(
+                    "internal VM error: constant index {index} out of bounds"
+                ))
+            })
     }
 
     fn read_constant_string(&self, index: usize) -> Result<String, VmError> {
@@ -498,13 +510,13 @@ impl Vm {
     fn current_frame(&self) -> Result<&CallFrame, VmError> {
         self.frames
             .last()
-            .ok_or_else(|| VmError::new("internal: no call frame".to_string()))
+            .ok_or_else(|| VmError::new("internal VM error: no call frame".to_string()))
     }
 
     fn current_frame_mut(&mut self) -> Result<&mut CallFrame, VmError> {
         self.frames
             .last_mut()
-            .ok_or_else(|| VmError::new("internal: no call frame".to_string()))
+            .ok_or_else(|| VmError::new("internal VM error: no call frame".to_string()))
     }
 
     /// Drop `tco_elided` entries whose depth is `>= keep_depth`, i.e.
@@ -699,7 +711,15 @@ impl Vm {
             Value::Bool(_) => "Bool".to_string(),
             Value::String(_) => "String".to_string(),
             Value::List(_) => "List".to_string(),
-            Value::Range(..) => "Range".to_string(),
+            // Range is a nominal zero-cost alias of List (see Type::Range
+            // unify arms in typechecker/mod.rs). The compiler registers
+            // `trait X for Range(a)` and `trait X for List(a)` methods
+            // under the same `"List.<m>"` global (matching the typechecker's
+            // `trait_head_of` mapping at typechecker/mod.rs:988). Returning
+            // "Range" here would miss the qualified-global lookup in
+            // `Op::CallMethod` and produce spurious
+            // `no method '<m>' for type 'Range'` errors.
+            Value::Range(..) => "List".to_string(),
             Value::Map(_) => "Map".to_string(),
             Value::Set(_) => "Set".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),

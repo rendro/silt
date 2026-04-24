@@ -3002,11 +3002,13 @@ impl TypeChecker {
         let trait_info_clone = self.traits.get(&ti.trait_name).cloned();
         if let Some(trait_info) = &trait_info_clone {
             if ti.trait_args.len() != trait_info.params.len() {
+                let expected = trait_info.params.len();
                 self.error(
                     format!(
-                        "trait '{}' expects {} type argument(s), got {} in impl for '{}'",
+                        "trait '{}' expects {} {}, got {} in impl for '{}'",
                         resolve(ti.trait_name),
-                        trait_info.params.len(),
+                        expected,
+                        inference::plural(expected, "type argument", "type arguments"),
                         ti.trait_args.len(),
                         resolve(ti.target_type),
                     ),
@@ -3372,6 +3374,40 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
     }
 }
 
+/// Register a single built-in trait declaration with a one-method
+/// signature of the shape `fn <method>(a0, ..., a{arity-1}) -> <ret>`.
+/// Each `ai` is a fresh type variable. All per-trait fields other than
+/// the method signature are defaulted (empty params, no supertraits,
+/// no default bodies, zero span) — the four built-in traits Display,
+/// Compare, Equal, Hash share that shape exactly. Extracted round 61
+/// to collapse four near-identical blocks that differed only in the
+/// (trait_name, method_name, arity, return_ty) 4-tuple.
+fn register_builtin_trait_decl(
+    checker: &mut TypeChecker,
+    trait_name: &str,
+    method_name: &str,
+    arity: usize,
+    return_ty: Type,
+) {
+    let param_vars: Vec<Type> = (0..arity).map(|_| checker.fresh_var()).collect();
+    checker.traits.insert(
+        intern(trait_name),
+        TraitInfo {
+            params: Vec::new(),
+            param_var_ids: Vec::new(),
+            supertraits: Vec::new(),
+            supertrait_args: Vec::new(),
+            param_where_clauses: Vec::new(),
+            methods: vec![(
+                intern(method_name),
+                Type::Fun(param_vars, Box::new(return_ty)),
+            )],
+            decl_span: Span::new(0, 0),
+            default_method_bodies: HashMap::new(),
+        },
+    );
+}
+
 /// Register built-in trait declarations (Display/Compare/Equal/Hash)
 /// and their auto-derived impls for primitives and builtin containers.
 ///
@@ -3394,84 +3430,18 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
 ///   variants at runtime.
 pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // ── Register built-in trait declarations ────────────────────
-    {
-        let display_self = checker.fresh_var();
-        checker.traits.insert(
-            intern("Display"),
-            TraitInfo {
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                supertraits: Vec::new(),
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: vec![(
-                    intern("display"),
-                    Type::Fun(vec![display_self], Box::new(Type::String)),
-                )],
-                decl_span: Span::new(0, 0),
-                default_method_bodies: HashMap::new(),
-            },
-        );
-    }
-    {
-        let compare_a = checker.fresh_var();
-        let compare_b = checker.fresh_var();
-        checker.traits.insert(
-            intern("Compare"),
-            TraitInfo {
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                supertraits: Vec::new(),
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: vec![(
-                    intern("compare"),
-                    Type::Fun(vec![compare_a, compare_b], Box::new(Type::Int)),
-                )],
-                decl_span: Span::new(0, 0),
-                default_method_bodies: HashMap::new(),
-            },
-        );
-    }
-    {
-        let equal_a = checker.fresh_var();
-        let equal_b = checker.fresh_var();
-        checker.traits.insert(
-            intern("Equal"),
-            TraitInfo {
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                supertraits: Vec::new(),
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: vec![(
-                    intern("equal"),
-                    Type::Fun(vec![equal_a, equal_b], Box::new(Type::Bool)),
-                )],
-                decl_span: Span::new(0, 0),
-                default_method_bodies: HashMap::new(),
-            },
-        );
-    }
-    {
-        let hash_self = checker.fresh_var();
-        checker.traits.insert(
-            intern("Hash"),
-            TraitInfo {
-                params: Vec::new(),
-                param_var_ids: Vec::new(),
-                supertraits: Vec::new(),
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: vec![(
-                    intern("hash"),
-                    Type::Fun(vec![hash_self], Box::new(Type::Int)),
-                )],
-                decl_span: Span::new(0, 0),
-                default_method_bodies: HashMap::new(),
-            },
-        );
-    }
+    // Round 61 dead-code fix: four near-identical blocks (Display,
+    // Compare, Equal, Hash) collapsed to one parameterised helper.
+    // Every per-block field (params/param_var_ids/supertraits/
+    // supertrait_args/param_where_clauses/decl_span/default_method_bodies)
+    // was already identical across the four sites — only the trait
+    // name, method name, arity, and return type varied. The sibling
+    // helper `register_auto_derived_impls_for` proved this shape is
+    // parameterisable.
+    register_builtin_trait_decl(checker, "Display", "display", 1, Type::String);
+    register_builtin_trait_decl(checker, "Compare", "compare", 2, Type::Int);
+    register_builtin_trait_decl(checker, "Equal", "equal", 2, Type::Bool);
+    register_builtin_trait_decl(checker, "Hash", "hash", 1, Type::Int);
     // ── Error trait ─────────────────────────────────────────────
     // Phase 1 of the stdlib error redesign (see
     // `docs/proposals/stdlib-errors.md`). `trait Error: Display`
@@ -3971,6 +3941,58 @@ pub fn __trait_init_fingerprint_repl() -> (
         .map(|(ty, m)| format!("{}.{}", resolve(*ty), resolve(*m)))
         .collect();
     (trait_impls, method_keys)
+}
+
+/// Test-only introspection for the built-in trait declarations
+/// (Display/Compare/Equal/Hash). Returns one tuple per registered
+/// trait in the fixed order Display, Compare, Equal, Hash:
+///
+///   (trait_name, method_name, method_arity, return_type_string,
+///    supertrait_args_count, default_method_bodies_count,
+///    params_count, supertraits_count, param_where_clauses_count)
+///
+/// Used by `tests/typechecker_builtin_trait_registration_parity_tests.rs`
+/// to lock the semantics of the round-61 dead-code collapse: the four
+/// near-identical TraitInfo construction blocks were replaced with a
+/// single parameterised helper, and this fingerprint proves the
+/// before/after shapes are identical.
+#[doc(hidden)]
+pub fn __builtin_trait_registration_fingerprint()
+-> Vec<(String, String, usize, String, usize, usize, usize, usize, usize)> {
+    let mut checker = TypeChecker::new();
+    register_builtin_trait_impls(&mut checker);
+    let names = ["Display", "Compare", "Equal", "Hash"];
+    let mut out = Vec::new();
+    for name in names {
+        let sym = intern(name);
+        let info = checker
+            .traits
+            .get(&sym)
+            .unwrap_or_else(|| panic!("built-in trait {name} not registered"));
+        assert_eq!(
+            info.methods.len(),
+            1,
+            "built-in trait {name} should have exactly one method, got {}",
+            info.methods.len()
+        );
+        let (method_sym, method_ty) = &info.methods[0];
+        let (arity, ret_str) = match method_ty {
+            Type::Fun(params, ret) => (params.len(), format!("{ret:?}")),
+            other => panic!("built-in trait {name} method type is not Fun: {other:?}"),
+        };
+        out.push((
+            name.to_string(),
+            resolve(*method_sym),
+            arity,
+            ret_str,
+            info.supertrait_args.len(),
+            info.default_method_bodies.len(),
+            info.params.len(),
+            info.supertraits.len(),
+            info.param_where_clauses.len(),
+        ));
+    }
+    out
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

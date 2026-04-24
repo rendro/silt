@@ -436,6 +436,18 @@ impl Vm {
                     | (Value::List(_), Value::Range(..))
                     | (Value::Range(..), Value::List(_))
                     | (Value::Range(..), Value::Range(..)) => receiver.cmp(other),
+                    // Variant vs Variant: typechecker auto-derives Compare
+                    // for enum variants (e.g. user `type Color { Red, Green }`
+                    // and built-in Weekday from the time module).
+                    // `Value::cmp` handles Variant content-wise (see
+                    // src/value.rs:1551) and uses weekday ordinals when
+                    // applicable, so defer to it.
+                    (Value::Variant(..), Value::Variant(..)) => receiver.cmp(other),
+                    // Record vs Record: typechecker auto-derives Compare for
+                    // user-declared records. `Value::cmp` orders records by
+                    // name then lexicographically by fields (src/value.rs:1537)
+                    // with canonical Date/Time/DateTime field ordering.
+                    (Value::Record(..), Value::Record(..)) => receiver.cmp(other),
                     // Unit vs Unit: typechecker auto-derives Compare for `()`
                     // (src/typechecker/mod.rs:3383). All units are equal.
                     (Value::Unit, Value::Unit) => std::cmp::Ordering::Equal,
@@ -491,6 +503,12 @@ impl Vm {
                     // `impl Hash for Value` (src/value.rs:1821) already
                     // hashes Variant by name + payload.
                     | Value::Variant(..)
+                    // Record covers user-declared records the typechecker
+                    // auto-derives Hash for. `impl Hash for Value`
+                    // (src/value.rs:1814) hashes records structurally by
+                    // name + fields, matching the HashMap<Value, Value>
+                    // keying contract.
+                    | Value::Record(..)
                     | Value::Unit => {
                         use std::collections::hash_map::DefaultHasher;
                         use std::hash::{Hash, Hasher};

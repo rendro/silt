@@ -12,6 +12,15 @@
 //! there without updating both grammars would regress editor
 //! highlighting silently; this test enforces the coupling.
 //!
+//! Round-61 extension: the set was widened to include the 6 builtin
+//! container / callable / resource types recognised by
+//! `src/typechecker/mod.rs::is_builtin_container` (Range, Channel,
+//! Tuple, Fn, Fun, Handle). These are legal in type-annotation
+//! position (see docs/language/operators.md, stdlib/channel-task.md,
+//! stdlib/http.md, stdlib/stream.md) and must highlight as types.
+//! Authoritative source of the widened list: the `match` arm in
+//! `src/typechecker/mod.rs::is_builtin_container` (around line 2823).
+//!
 //! Mirrors the pattern of:
 //!   - tests/editor_grammar_constructors_tests.rs
 //!   - tests/editor_grammar_modules_tests.rs
@@ -25,12 +34,22 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Primitive type names as printed by `src/types.rs::impl Display for
-/// Type`. `Unit` is the logical name even though the Display impl
-/// renders it as `()` — in type-annotation position the surface form is
-/// `Unit`, which is what an editor grammar needs to recognise. The
-/// other 8 names match the Display output byte-for-byte.
+/// Type`, plus the builtin-container / callable / resource type names
+/// recognised by `src/typechecker/mod.rs::is_builtin_container`.
+/// `Unit` is the logical name even though the Display impl renders
+/// the unit type as `()` — in type-annotation position the surface
+/// form is `Unit`, which is what an editor grammar needs to recognise.
+/// The other names match the typechecker / Display output byte-for-
+/// byte.
+///
+/// Authoritative source for the 6 builtin-container names (Range,
+/// Channel, Tuple, Fn, Fun, Handle): the `is_builtin_container`
+/// `match` arm in `src/typechecker/mod.rs` (around line 2823). Adding
+/// a new entry to that match arm without also adding it here (and to
+/// both editor grammars) will leave the new type un-highlighted.
 const PRIMITIVES: &[&str] = &[
-    "Int", "Float", "String", "Bool", "ExtFloat", "List", "Map", "Set", "Unit",
+    "Int", "Float", "String", "Bool", "ExtFloat", "List", "Map", "Set", "Unit", "Range", "Channel",
+    "Tuple", "Fn", "Fun", "Handle",
 ];
 
 fn repo_root() -> PathBuf {

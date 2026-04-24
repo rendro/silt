@@ -2859,16 +2859,13 @@ impl Compiler {
     fn end_scope(&mut self, span: Span) {
         let depth = self.ctx().scope_depth;
         // Pop locals belonging to the scope we are leaving.
-        let mut pop_count: u8 = 0;
         while self.ctx().locals.last().is_some_and(|l| l.depth >= depth) {
             self.ctx_mut().locals.pop();
-            pop_count += 1;
         }
         // The block's result is on TOS. The locals sit below it in the stack.
         // With a stack VM, we can't pop them from under TOS without a Swap op.
         // For now, the VM's frame mechanism reclaims them on function return.
         // This is correct as long as we don't reuse local slots across scopes.
-        let _ = pop_count;
         let _ = span;
 
         self.ctx_mut().scope_depth -= 1;

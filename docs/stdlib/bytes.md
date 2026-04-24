@@ -59,21 +59,21 @@ fn main() {
   }
 
   -- Encoding
-  println(bytes.to_hex(hello))                     -- "68656c6c6f"
-  println(bytes.to_base64(hello))                  -- "aGVsbG8="
+  println(bytes.to_hex(hello))                     -- 68656c6c6f
+  println(bytes.to_base64(hello))                  -- aGVsbG8=
 
   -- Concatenation
   let space = bytes.from_string(" ")
   let world = bytes.from_string("world")
   let greeting = bytes.concat_all([hello, space, world])
   match bytes.to_string(greeting) {
-    Ok(s) -> println(s)                            -- "hello world"
+    Ok(s) -> println(s)                            -- hello world
     Err(e) -> println(e.message())
   }
 
   -- Slicing (half-open)
   match bytes.slice(greeting, 6, 11) {
-    Ok(s) -> println(bytes.to_hex(s))              -- "776f726c64"
+    Ok(s) -> println(bytes.to_hex(s))              -- 776f726c64
     Err(e) -> println(e.message())
   }
 

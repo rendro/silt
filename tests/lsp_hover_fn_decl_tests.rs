@@ -282,12 +282,17 @@ fn hover_on_fn_decl_name_renders_signature_substring() {
         .and_then(|c| c.get("value"))
         .and_then(|v| v.as_str())
         .expect("hover contents.value is a string");
-    // The exact pretty-printed form of a fn type is `(Int, Int) -> Int`
-    // or similar. Assert at minimum we got a non-trivial fn-shaped
-    // string (contains `->` or `Int`).
+    // Pre-fix the assertion accepted any hover containing `->` OR `Int`,
+    // which would pass even if hover returned just `Int`. Tighten: require
+    // the return-type arrow AND a parameter shape — either the pretty
+    // `(Int, Int)` form or the raw `fn add` declaration prefix.
     assert!(
-        contents_value.contains("->") || contents_value.contains("Int"),
-        "expected hover signature to contain `->` or `Int`; got {contents_value:?}"
+        contents_value.contains("->"),
+        "hover did not render return-type arrow; got {contents_value:?}"
+    );
+    assert!(
+        contents_value.contains("(Int, Int)") || contents_value.contains("fn add"),
+        "hover did not render signature parameters or fn decl; got {contents_value:?}"
     );
     client.shutdown();
 }

@@ -46,14 +46,12 @@ fn assert_type_error(input: &str, pattern: &str) {
 }
 
 /// Assert that the typechecker produces no hard errors.
-#[allow(dead_code)]
 fn assert_no_type_errors(input: &str) {
     let errs = type_errors(input);
     assert!(errs.is_empty(), "expected no type errors, got: {errs:?}");
 }
 
 /// Expect a parse error; return the error message.
-#[allow(dead_code)]
 fn parse_err(input: &str) -> String {
     let tokens = Lexer::new(input).tokenize().expect("lexer error");
     match Parser::new(tokens).parse_program() {

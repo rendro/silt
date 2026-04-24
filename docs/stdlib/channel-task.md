@@ -198,7 +198,7 @@ fn main() {
     let ch2 = channel.new(1)
     task.spawn(fn() { channel.send(ch2, "hello") })
     match channel.select([Recv(ch1), Recv(ch2)]) {
-        (^ch2, Message(val)) -> println(val)  -- "hello"
+        (^ch2, Message(val)) -> println(val)  -- hello
         (_, Closed) -> println("closed")
         _ -> ()
     }
@@ -463,7 +463,7 @@ fn main() {
     })
     match outcome {
         Ok(contents) -> println(contents)
-        Err(IoUnknown(msg)) -> println(msg)  -- "I/O timeout (task.deadline exceeded)"
+        Err(IoUnknown(msg)) -> println(msg)  -- I/O timeout (task.deadline exceeded)
         Err(_) -> println("other io error")
     }
 }

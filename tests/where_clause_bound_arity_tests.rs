@@ -10,6 +10,10 @@
 //! (`inference.rs:474`-ish, `check_fn_body_with_name`): when the
 //! trait has params but the bound supplies zero trait_args, emit a
 //! specific "expects N type argument(s) in bound, got 0" error.
+//!
+//! Round 61: the `(s)` pluralization was swapped to the `plural()`
+//! helper so the diagnostic reads "1 type argument" / "2 type
+//! arguments" instead of "1 type argument(s)".
 
 use silt::lexer::Lexer;
 use silt::parser::Parser;
@@ -41,8 +45,8 @@ fn main() { }
     );
     let joined = errs.join("\n");
     assert!(
-        joined.contains("trait 'Cast' expects 1 type argument(s) in bound, got 0"),
-        "expected arity-in-bound error, got:\n{joined}"
+        joined.contains("trait 'Cast' expects 1 type argument in bound, got 0"),
+        "expected arity-in-bound error (singular), got:\n{joined}"
     );
 }
 
@@ -67,6 +71,26 @@ fn main() {
         errs.is_empty(),
         "matching-arity where bound should typecheck, got:\n{}",
         errs.join("\n")
+    );
+}
+
+/// Plural form: a two-parameter trait referenced bare in a where
+/// clause renders "2 type arguments" (not "2 type argument(s)").
+#[test]
+fn test_where_clause_bare_bound_two_param_trait_uses_plural() {
+    let errs = type_errors(
+        r#"
+trait Convert(from, to) {
+  fn convert(self) -> to
+}
+fn g(x: a) -> Float where a: Convert { 1.0 }
+fn main() { }
+"#,
+    );
+    let joined = errs.join("\n");
+    assert!(
+        joined.contains("trait 'Convert' expects 2 type arguments in bound, got 0"),
+        "expected arity-in-bound error (plural), got:\n{joined}"
     );
 }
 

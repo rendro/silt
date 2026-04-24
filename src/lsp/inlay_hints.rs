@@ -173,7 +173,6 @@ fn emit_ident_hint(pattern: &Pattern, ty: &Type, out: &mut Vec<HintRecord>) {
 
 fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
     // Compute the LSP position at the end of the ident.
-    let ident_end_span = Span::new(h.ident_span.line, h.ident_span.col + h.ident_len);
     // span_to_range uses the original offset to compute both ends;
     // we only need the start position, which we place just past the
     // identifier. Re-use the UTF-16 conversion for correctness.
@@ -188,9 +187,6 @@ fn render_hint(h: HintRecord, source: &str) -> Option<InlayHint> {
         line: start_line,
         character: start_char + width_utf16,
     };
-
-    // Dummy reference to keep ident_end_span typed-used.
-    let _ = ident_end_span;
 
     Some(InlayHint {
         position,

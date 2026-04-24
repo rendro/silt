@@ -75,7 +75,7 @@ Splits the string into a list of single-character strings.
 ```silt
 import string
 fn main() {
-    println(string.chars("hi"))  -- ["h", "i"]
+    println(string.chars("hi"))  -- [h, i]
 }
 ```
 
@@ -124,9 +124,9 @@ programmatic equivalent of string interpolation `"{value}"`.
 ```silt
 import string
 fn main() {
-    println(string.from(42))        -- "42"
-    println(string.from(true))      -- "true"
-    println(string.from([1, 2, 3])) -- "[1, 2, 3]"
+    println(string.from(42))        -- 42
+    println(string.from(true))      -- true
+    println(string.from([1, 2, 3])) -- [1, 2, 3]
 }
 ```
 
@@ -143,7 +143,7 @@ code points.
 ```silt
 import string
 fn main() {
-    println(string.from_char_code(65))  -- "A"
+    println(string.from_char_code(65))  -- A
 }
 ```
 
@@ -328,7 +328,7 @@ Joins a list of strings with a separator between each pair.
 import string
 fn main() {
     let joined = string.join(["a", "b", "c"], ", ")
-    println(joined)  -- "a, b, c"
+    println(joined)  -- a, b, c
 }
 ```
 
@@ -346,7 +346,7 @@ Returns the length of the string in bytes (UTF-8 encoding). See also
 import string
 fn main() {
     println(string.byte_length("hello"))  -- 5
-    println(string.byte_length("café"))   -- 5 (é is 2 bytes in UTF-8)
+    println(string.byte_length("café"))   -- 5  (é is 2 bytes in UTF-8)
 }
 ```
 
@@ -364,7 +364,7 @@ you need the size in bytes.
 import string
 fn main() {
     println(string.length("hello"))  -- 5
-    println(string.length("café"))   -- 4 (4 characters, 5 bytes)
+    println(string.length("café"))   -- 4  (4 characters, 5 bytes)
 }
 ```
 
@@ -383,8 +383,8 @@ sources.
 ```silt
 import string
 fn main() {
-    println(string.lines("a\nb\nc"))      -- ["a", "b", "c"]
-    println(string.lines("a\nb\n"))       -- ["a", "b"]
+    println(string.lines("a\nb\nc"))      -- [a, b, c]
+    println(string.lines("a\nb\n"))       -- [a, b]
     println(string.lines(""))             -- []
 }
 ```
@@ -405,7 +405,7 @@ Pads `s` on the left with the first character of `pad` until it reaches
 ```silt
 import string
 fn main() {
-    println(string.pad_left("42", 5, "0"))  -- "00042"
+    println(string.pad_left("42", 5, "0"))  -- 00042
 }
 ```
 
@@ -422,7 +422,7 @@ Pads `s` on the right with the first character of `pad` until it reaches
 ```silt
 import string
 fn main() {
-    println(string.pad_right("hi", 5, "."))  -- "hi..."
+    println(string.pad_right("hi", 5, "."))  -- hi...
 }
 ```
 
@@ -438,7 +438,7 @@ Returns the string repeated `n` times. `n` must be non-negative.
 ```silt
 import string
 fn main() {
-    println(string.repeat("ab", 3))  -- "ababab"
+    println(string.repeat("ab", 3))  -- ababab
 }
 ```
 
@@ -455,7 +455,7 @@ Replaces all occurrences of `from` with `to`.
 import string
 fn main() {
     println(string.replace("hello world", "world", "silt"))
-    -- "hello silt"
+    -- hello silt
 }
 ```
 
@@ -473,7 +473,7 @@ if `start > end`. Negative indices are a runtime error.
 ```silt
 import string
 fn main() {
-    println(string.slice("hello", 1, 4))  -- "ell"
+    println(string.slice("hello", 1, 4))  -- ell
 }
 ```
 
@@ -490,7 +490,7 @@ Splits the string on every occurrence of `separator`.
 import string
 fn main() {
     let parts = string.split("a,b,c", ",")
-    println(parts)  -- ["a", "b", "c"]
+    println(parts)  -- [a, b, c]
 }
 ```
 
@@ -509,9 +509,9 @@ a UTF-8 character boundary.
 ```silt
 import string
 fn main() {
-    println(string.split_at("hello", 2))  -- ("he", "llo")
-    println(string.split_at("hello", 0))  -- ("", "hello")
-    println(string.split_at("hello", 5))  -- ("hello", "")
+    println(string.split_at("hello", 2))  -- (he, llo)
+    println(string.split_at("hello", 0))  -- (, hello)
+    println(string.split_at("hello", 5))  -- (hello, )
 }
 ```
 
@@ -565,7 +565,7 @@ Converts all characters to lowercase.
 ```silt
 import string
 fn main() {
-    println(string.to_lower("HELLO"))  -- "hello"
+    println(string.to_lower("HELLO"))  -- hello
 }
 ```
 
@@ -581,7 +581,7 @@ Converts all characters to uppercase.
 ```silt
 import string
 fn main() {
-    println(string.to_upper("hello"))  -- "HELLO"
+    println(string.to_upper("hello"))  -- HELLO
 }
 ```
 
@@ -597,7 +597,7 @@ Removes leading and trailing whitespace.
 ```silt
 import string
 fn main() {
-    println(string.trim("  hello  "))  -- "hello"
+    println(string.trim("  hello  "))  -- hello
 }
 ```
 
@@ -613,7 +613,7 @@ Removes trailing whitespace only.
 ```silt
 import string
 fn main() {
-    println(string.trim_end("hello   "))  -- "hello"
+    println(string.trim_end("hello   "))  -- hello
 }
 ```
 
@@ -629,6 +629,6 @@ Removes leading whitespace only.
 ```silt
 import string
 fn main() {
-    println(string.trim_start("   hello"))  -- "hello"
+    println(string.trim_start("   hello"))  -- hello
 }
 ```

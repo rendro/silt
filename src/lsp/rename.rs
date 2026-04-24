@@ -200,4 +200,7 @@ const BUILTIN_GLOBALS: &[&str] = &[
     "Set",
     "Channel",
     "Tuple",
+    "Fn",
+    "Fun",
+    "Handle",
 ];

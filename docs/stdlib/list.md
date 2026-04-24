@@ -495,7 +495,7 @@ import string
 fn main() {
     let words = ["fig", "banana", "apple"]
     let longest = list.max_by(words) { w -> string.length(w) }
-    println(longest)  -- Some("banana")
+    println(longest)  -- Some(banana)
     println(list.max_by([], { x -> x }))  -- None
 }
 ```
@@ -517,7 +517,7 @@ import string
 fn main() {
     let words = ["banana", "fig", "apple"]
     let shortest = list.min_by(words) { w -> string.length(w) }
-    println(shortest)  -- Some("fig")
+    println(shortest)  -- Some(fig)
     println(list.min_by([], { x -> x }))  -- None
 }
 ```
@@ -569,8 +569,8 @@ Like `product`, but for lists of floats. Returns `1.0` on an empty list.
 ```silt
 import list
 fn main() {
-    println(list.product_float([1.5, 2.0, 4.0]))  -- 12.0
-    println(list.product_float([]))               -- 1.0
+    println(list.product_float([1.5, 2.0, 4.0]))  -- 12
+    println(list.product_float([]))               -- 1
 }
 ```
 
@@ -681,7 +681,7 @@ import string
 fn main() {
     let words = ["banana", "fig", "apple"]
     let sorted = words |> list.sort_by { w -> string.length(w) }
-    println(sorted)  -- ["fig", "apple", "banana"]
+    println(sorted)  -- [fig, apple, banana]
 }
 ```
 
@@ -715,8 +715,8 @@ Like `sum`, but for lists of floats. Returns `0.0` on an empty list.
 ```silt
 import list
 fn main() {
-    println(list.sum_float([0.5, 1.5, 2.0]))  -- 4.0
-    println(list.sum_float([]))               -- 0.0
+    println(list.sum_float([0.5, 1.5, 2.0]))  -- 4
+    println(list.sum_float([]))               -- 0
 }
 ```
 
@@ -807,6 +807,6 @@ Pairs up elements from two lists. Stops at the shorter list.
 import list
 fn main() {
     let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
-    println(pairs)  -- [(1, "a"), (2, "b"), (3, "c")]
+    println(pairs)  -- [(1, a), (2, b), (3, c)]
 }
 ```
