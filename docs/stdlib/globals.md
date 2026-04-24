@@ -20,13 +20,14 @@ No import or qualification needed.
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
 | `None` | `Option(a)` | The absent Option value (not a function) |
 
-Additionally, four **type descriptors** are in the global namespace for use with
+Additionally, five **type descriptors** are in the global namespace for use with
 `json.parse_map` and similar type-directed APIs:
 
 | Name | Description |
 |------|-------------|
 | `Int` | Integer type descriptor |
 | `Float` | Float type descriptor |
+| `ExtFloat` | Extended-float type descriptor (IEEE-754 `f64`, usable as map/set keys) |
 | `String` | String type descriptor |
 | `Bool` | Boolean type descriptor |
 

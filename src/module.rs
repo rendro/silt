@@ -66,7 +66,7 @@ pub fn gated_constructor_module(name: &str) -> Option<&'static str> {
 /// rewrite already works for user-declared enums.
 ///
 /// Includes both prelude enums (Result, Option) and gated enums.
-/// Keep in sync with `src/typechecker/builtins.rs` enum registrations
+/// Keep in sync with `src/typechecker/builtins/errors.rs` enum registrations
 /// and `src/vm/dispatch.rs` variant globals.
 pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static str])] {
     &[
@@ -185,6 +185,20 @@ pub fn builtin_enum_variants() -> &'static [(&'static str, &'static [&'static st
         ),
         ("ChannelError", &["ChannelTimeout", "ChannelClosed"]),
     ]
+}
+
+/// Iterator over every builtin enum variant name across all builtin enums
+/// (both prelude and gated). Used by LSP rename/completion and REPL
+/// completion to keep hand-rolled parallel lists from drifting away from
+/// the authoritative source at `builtin_enum_variants`.
+///
+/// A parity-lock test at `tests/builtin_constructor_parity_tests.rs`
+/// asserts every surface that mentions builtin constructors consults
+/// this helper (directly or by name-set membership).
+pub fn all_builtin_constructor_names() -> impl Iterator<Item = &'static str> {
+    builtin_enum_variants()
+        .iter()
+        .flat_map(|(_, variants)| variants.iter().copied())
 }
 
 /// Returns the list of builtin function suffixes for a given builtin module.

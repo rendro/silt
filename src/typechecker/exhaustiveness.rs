@@ -53,6 +53,23 @@ impl TypeChecker {
 
         let scrutinee_ty = self.apply(scrutinee_ty);
 
+        // Uninhabited-type short-circuit: a `match x { }` with zero arms on
+        // a scrutinee type that has no inhabitants is vacuously exhaustive
+        // (the bottom-eliminator idiom). The usefulness algorithm's
+        // `matrix.is_empty() -> true` shortcut normally answers "a wildcard
+        // IS useful over an empty matrix", which is the correct answer when
+        // the type is inhabited but wrong when it isn't — no value of an
+        // uninhabited type can reach the match, so no arm is missing.
+        //
+        // We only short-circuit when the user wrote ZERO arms: a non-empty
+        // match on an uninhabited type would indicate user-dead-code worth
+        // reporting through the normal path (and in practice can't happen
+        // because the patterns would have already been type-checked against
+        // the uninhabited type and failed).
+        if arms.is_empty() && self.is_uninhabited(&scrutinee_ty) {
+            return;
+        }
+
         // Reset the depth-exceeded flag before running the usefulness
         // algorithm so we can detect whether any recursive branch bailed
         // out at the depth bound.
@@ -795,6 +812,30 @@ impl TypeChecker {
             }),
             PatternKind::Tuple(ps) => ps.iter().all(Self::is_fully_covering_pattern),
             PatternKind::Or(alts) => alts.iter().any(Self::is_fully_covering_pattern),
+            _ => false,
+        }
+    }
+
+    /// Decide whether `ty` is an uninhabited type — one with zero values.
+    /// Used by `check_exhaustiveness` to certify the bottom-eliminator
+    /// idiom `match x { }` on an empty enum as vacuously exhaustive.
+    ///
+    /// Currently we recognise exactly one uninhabited shape: a user-defined
+    /// enum with zero variants (e.g. `type Absurd { }`), reached either as
+    /// `Type::Generic(name, _)` at a fn boundary or — in principle — any
+    /// future direct reference. We deliberately do NOT try to prove
+    /// uninhabitedness of composite types (a tuple containing `Never`, a
+    /// record with an uninhabited field, etc.): those cases are rare in
+    /// practice and a false positive here would silently swallow a real
+    /// non-exhaustive match. Only extend this when a concrete use case
+    /// demands it.
+    pub(super) fn is_uninhabited(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Generic(name, _) => self
+                .enums
+                .get(name)
+                .is_some_and(|info| info.variants.is_empty()),
+            Type::Never => true,
             _ => false,
         }
     }

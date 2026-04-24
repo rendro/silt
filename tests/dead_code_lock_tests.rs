@@ -422,6 +422,43 @@ fn scheduler_test_hooks_install_on_wake_stays_deleted() {
     );
 }
 
+#[test]
+fn on_submit_dequeue_wake_fire_points_stay_deleted() {
+    // Round 58 deleted the `install_on_submit` / `install_on_dequeue` /
+    // `install_on_wake` installers. The fire-point plumbing (thread-locals,
+    // `on_submit` / `on_dequeue` / `on_wake` entry fns) and the matching
+    // `fire_hook!` call sites in src/scheduler.rs were left behind — every
+    // one was a guaranteed-cold `None` check because nothing ever wrote the
+    // cells. This lock keeps the follow-up cleanup stuck: the plumbing must
+    // not come back without installers that actually exercise it.
+    //
+    // `on_park` is LIVE (used by tests/scheduler_deadlock_detector_tests.rs)
+    // and deliberately not asserted against here.
+    for ident in ["ON_SUBMIT_HOOK", "ON_DEQUEUE_HOOK", "ON_WAKE_HOOK"] {
+        assert!(
+            !SCHEDULER_TEST_HOOKS_RS.contains(ident),
+            "{ident} plumbing must stay deleted (round 58 deleted the installers)"
+        );
+    }
+    for fn_name in ["fn on_submit", "fn on_dequeue", "fn on_wake"] {
+        assert!(
+            !SCHEDULER_TEST_HOOKS_RS.contains(fn_name),
+            "{fn_name} fire entry fn must stay deleted"
+        );
+    }
+    let scheduler_src = include_str!("../src/scheduler.rs");
+    for call in [
+        "fire_hook!(on_submit",
+        "fire_hook!(on_dequeue",
+        "fire_hook!(on_wake",
+    ] {
+        assert!(
+            !scheduler_src.contains(call),
+            "{call} call site must stay deleted"
+        );
+    }
+}
+
 // ── Round-58: disassemble helpers shrunk from pub to private ───────────
 
 #[test]

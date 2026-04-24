@@ -671,6 +671,16 @@ impl Vm {
     }
 
     /// Get the type name for method dispatch. For variants, looks up the parent type.
+    ///
+    /// This name is used to build the qualified global lookup key
+    /// `"<TypeName>.<method>"` in `Op::CallMethod`. Returning the
+    /// canonical `type_name` for every variant is load-bearing: if the
+    /// name disagrees with what the compiler registers (e.g. returning
+    /// `"Unknown"` for `ExtFloat`), the qualified-global miss falls
+    /// through to `dispatch_trait_method` with a stringly-typed type
+    /// name that no fallback arm matches — producing spurious
+    /// `"no method '<m>' for type 'Unknown'"` errors. Keep this in sync
+    /// with `type_name` above and `user_facing_type_name`.
     fn value_type_name_for_dispatch(&self, val: &Value) -> String {
         match val {
             Value::Variant(tag, _) => {
@@ -685,18 +695,28 @@ impl Vm {
             Value::Record(type_name, _) => type_name.clone(),
             Value::Int(_) => "Int".to_string(),
             Value::Float(_) => "Float".to_string(),
+            Value::ExtFloat(_) => "ExtFloat".to_string(),
             Value::Bool(_) => "Bool".to_string(),
             Value::String(_) => "String".to_string(),
             Value::List(_) => "List".to_string(),
+            Value::Range(..) => "Range".to_string(),
             Value::Map(_) => "Map".to_string(),
             Value::Set(_) => "Set".to_string(),
             Value::Tuple(_) => "Tuple".to_string(),
+            Value::Bytes(_) => "Bytes".to_string(),
+            Value::Channel(_) => "Channel".to_string(),
+            Value::Handle(_) => "Handle".to_string(),
+            Value::VmClosure(_) => "Function".to_string(),
+            Value::BuiltinFn(_) => "BuiltinFn".to_string(),
+            Value::VariantConstructor(..) => "VariantConstructor".to_string(),
+            Value::Unit => "Unit".to_string(),
+            Value::TcpListener(_) => "TcpListener".to_string(),
+            Value::TcpStream(_) => "TcpStream".to_string(),
             // Type descriptors dispatch on the carried type name, so
             // `Int.default()` and `Todo.decode(...)` route to impls of
             // `Int` / `Todo` even though the descriptor value itself is
             // neither an Int nor a Todo.
             Value::TypeDescriptor(name) | Value::PrimitiveDescriptor(name) => name.clone(),
-            _ => "Unknown".to_string(),
         }
     }
 }

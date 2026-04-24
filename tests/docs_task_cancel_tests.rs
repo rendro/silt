@@ -24,6 +24,11 @@ fn read_concurrency_doc() -> String {
     std::fs::read_to_string(path).expect("docs/concurrency.md must be readable")
 }
 
+fn read_channel_task_doc() -> String {
+    let path = Path::new("docs/stdlib/channel-task.md");
+    std::fs::read_to_string(path).expect("docs/stdlib/channel-task.md must be readable")
+}
+
 /// The stale wording from before the round-52 fix must not reappear.
 #[test]
 fn concurrency_doc_drops_stale_task_cancel_wording() {
@@ -105,3 +110,65 @@ fn concurrency_doc_recommends_cancel_then_join_pattern() {
          task.join is the authoritative 'task is done' signal."
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Round 59: the stdlib reference page at docs/stdlib/channel-task.md
+// carried the same stale wording that round 52 removed from
+// docs/concurrency.md ("The task will not execute further"). The two
+// pages are the two places a reader can land on looking up
+// `task.cancel`, so both must tell the same story. These assertions
+// mirror the concurrency.md locks against the stdlib page.
+// ─────────────────────────────────────────────────────────────────────
+
+/// The stdlib page must not reassert the stale "won't execute further"
+/// wording (any near-variant form).
+#[test]
+fn channel_task_doc_drops_stale_task_cancel_wording() {
+    let doc = read_channel_task_doc();
+    assert!(
+        !doc.contains("will not execute further"),
+        "docs/stdlib/channel-task.md still claims a cancelled task 'will not \
+         execute further'. A running slice continues until its next park \
+         point; only parked tasks are torn down immediately. Mirror the \
+         corrected wording from docs/concurrency.md."
+    );
+    assert!(
+        !doc.contains("will not execute again"),
+        "docs/stdlib/channel-task.md reintroduced the round-52 stale phrase \
+         'will not execute again'. Fix to the cooperative-request wording."
+    );
+    assert!(
+        !doc.contains("removed from the scheduler's ready queue"),
+        "docs/stdlib/channel-task.md imported the other round-52 stale phrase \
+         ('removed from the scheduler's ready queue'). Remove it."
+    );
+}
+
+/// The stdlib page must describe the first-writer-wins/`Err("cancelled")`
+/// semantics that concurrency.md is authoritative on, so the two pages
+/// agree.
+#[test]
+fn channel_task_doc_documents_cooperative_cancel_semantics() {
+    let doc = read_channel_task_doc();
+    assert!(
+        doc.contains("## `task.cancel`"),
+        "docs/stdlib/channel-task.md must still have a `task.cancel` section"
+    );
+    assert!(
+        doc.contains("first-writer-wins"),
+        "docs/stdlib/channel-task.md must describe first-writer-wins \
+         semantics for task.cancel, matching docs/concurrency.md."
+    );
+    assert!(
+        doc.contains("Err(\"cancelled\")"),
+        "docs/stdlib/channel-task.md must name the exact error value \
+         `Err(\"cancelled\")` that the cancelled handle resolves to."
+    );
+    let lower = doc.to_lowercase();
+    assert!(
+        lower.contains("cooperative"),
+        "docs/stdlib/channel-task.md must call task.cancel a cooperative \
+         request, not a synchronous stop signal (round-52 correction)."
+    );
+}
+

@@ -41,28 +41,32 @@ fn test_vm_error_display_uses_canonical_runtime_header() {
     );
 }
 
-/// Lock: the frame-underflow invariant message uses user-facing
-/// language (`"frame stack underflow"`) and does NOT leak the Rust
-/// identifier `invoke_callable`.
+/// Lock: the frame-underflow invariant message in `src/vm/execute.rs`
+/// uses user-facing language (`"frame stack underflow"`) and does NOT
+/// leak the Rust identifier `invoke_callable`.
 ///
 /// The surface-level trigger is not reachable from normal silt
 /// programs: hitting this branch requires the VM's callback-invocation
 /// code path to pop more frames than it pushed during a single
 /// `invoke_callable` call, which is a pure internal-invariant
 /// violation (nothing in user-space can drive the frame count below
-/// `saved_frame_count`). We therefore lock the rendered string by
-/// direct `VmError` construction with the exact message produced at
-/// `src/vm/execute.rs:745-747`.
+/// `saved_frame_count`). We therefore lock the *source-level* string by
+/// grepping `src/vm/execute.rs` directly — the previous shape of this
+/// test constructed a `VmError` from the fixed string, which is
+/// tautological: reverting the fix in `execute.rs` back to the leaky
+/// message would still pass, because the test literal was the one
+/// being asserted. The source-level grep closes that loop.
 #[test]
 fn test_frame_underflow_message_is_user_facing() {
-    let err = VmError::new("internal VM error: frame stack underflow during call".into());
-    let rendered = format!("{err}");
+    let src = include_str!("../src/vm/execute.rs");
     assert!(
-        rendered.contains("frame stack underflow"),
-        "expected user-meaningful `frame stack underflow` phrase; got: {rendered:?}"
+        !src.contains("frame underflow in invoke_callable"),
+        "execute.rs must not leak the `invoke_callable` Rust identifier \
+         via the legacy `frame underflow in invoke_callable` literal"
     );
     assert!(
-        !rendered.contains("invoke_callable"),
-        "Display must not leak the Rust identifier `invoke_callable`; got: {rendered:?}"
+        src.contains("\"internal VM error: frame stack underflow during call\""),
+        "execute.rs must contain the canonical round-58 user-facing \
+         frame-underflow message `internal VM error: frame stack underflow during call`"
     );
 }

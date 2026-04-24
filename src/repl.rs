@@ -255,23 +255,24 @@ pub fn builtin_names() -> Vec<String> {
         "where",
         "true",
         "false",
-        // Globals
+        // Globals (non-constructor). Constructor variants come from
+        // `module::all_builtin_constructor_names` below so gated ones
+        // (IoNotFound, PgConnect, Recv, Send, Monday…) stay in sync.
         "print",
         "println",
         "panic",
-        "Ok",
-        "Err",
-        "Some",
-        "None",
-        "Stop",
-        "Continue",
-        "Message",
-        "Closed",
-        "Empty",
     ]
     .into_iter()
     .map(String::from)
     .collect();
+
+    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
+    // every gated variant. Sourced from `module::all_builtin_constructor_names`
+    // so additions to `builtin_enum_variants` flow through automatically.
+    // Parity lock: `tests/builtin_constructor_parity_tests.rs`.
+    for name in crate::module::all_builtin_constructor_names() {
+        names.push(name.to_string());
+    }
 
     // Generate module completions from the registry.
     for &module in crate::module::BUILTIN_MODULES {
@@ -284,6 +285,7 @@ pub fn builtin_names() -> Vec<String> {
     }
 
     names.sort();
+    names.dedup();
     names
 }
 

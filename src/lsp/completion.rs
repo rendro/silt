@@ -119,6 +119,28 @@ impl Server {
                     ..CompletionItem::default()
                 });
             }
+            // Gated enum constructors that belong to this module
+            // (e.g. `io.IoNotFound`, `http.GET`, `channel.Recv`,
+            // `time.Monday`, `postgres.PgConnect`). Emitted as
+            // CONSTRUCTOR entries so editors distinguish them from
+            // module functions / constants.
+            //
+            // Silt does not expose gated constructors via `module.Name`
+            // at the runtime binding level — they bind as bare globals
+            // once the module is imported — but surfacing them after a
+            // `.` is the most intuitive discovery affordance for users
+            // exploring the API.
+            for (_enum_name, variants) in module::builtin_enum_variants() {
+                for &variant in *variants {
+                    if module::gated_constructor_module(variant) == Some(prefix) {
+                        items.push(CompletionItem {
+                            label: variant.to_string(),
+                            kind: Some(CompletionItemKind::CONSTRUCTOR),
+                            ..CompletionItem::default()
+                        });
+                    }
+                }
+            }
             // Deterministic ordering so clients/tests see a stable list, and
             // dedupe in case a name was declared as both function and constant.
             items.sort_by(|a, b| a.label.cmp(&b.label));
@@ -291,19 +313,27 @@ const KEYWORDS: &[&str] = &[
 
 /// Build the builtins completion list dynamically from the module registry
 /// so it never falls out of sync with `module.rs`.
-fn builtins() -> Vec<(String, CompletionItemKind)> {
+///
+/// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
+/// can assert every gated constructor from
+/// `module::all_builtin_constructor_names` is emitted here.
+pub fn builtins() -> Vec<(String, CompletionItemKind)> {
     let mut items = vec![
         // Globals (not part of any module)
         ("print".to_string(), CompletionItemKind::FUNCTION),
         ("println".to_string(), CompletionItemKind::FUNCTION),
         ("panic".to_string(), CompletionItemKind::FUNCTION),
-        ("Ok".to_string(), CompletionItemKind::CONSTRUCTOR),
-        ("Err".to_string(), CompletionItemKind::CONSTRUCTOR),
-        ("Some".to_string(), CompletionItemKind::CONSTRUCTOR),
-        ("None".to_string(), CompletionItemKind::CONSTRUCTOR),
         ("true".to_string(), CompletionItemKind::CONSTANT),
         ("false".to_string(), CompletionItemKind::CONSTANT),
     ];
+
+    // Every builtin enum constructor — prelude (Ok/Err/Some/None) plus
+    // every gated variant (Recv/Send, IoNotFound, PgConnect, Monday,
+    // GET/POST/…, etc.). Sourced from the authoritative module helper
+    // so new variants flow through without editing this list.
+    for name in module::all_builtin_constructor_names() {
+        items.push((name.to_string(), CompletionItemKind::CONSTRUCTOR));
+    }
 
     for &m in module::BUILTIN_MODULES {
         for func in module::builtin_module_functions(m) {

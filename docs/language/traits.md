@@ -49,6 +49,13 @@ Implementing `Ordered` on `Int` requires `Int` to also implement `Equal`
 (the four built-in traits — `Equal`, `Hash`, `Compare`, `Display` — are
 auto-derived for every type, so the obligation is satisfied automatically).
 
+**`Equal` vs `==` for `ExtFloat` (NaN divergence).** For `ExtFloat`,
+`a.equal(b)` is reflexive by bit pattern (so `NaN.equal(NaN) = true`)
+while `a == b` follows IEEE-754 (`NaN == NaN = false`). This makes
+`ExtFloat` usable as a map or set key — lookup relies on `equal` being
+reflexive so the key always finds itself — while preserving standard
+floating-point comparison semantics for the language-level `==` operator.
+
 Multiple supertraits separate with `+`:
 
 ```silt

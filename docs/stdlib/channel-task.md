@@ -318,7 +318,7 @@ fixed thread pool and run in parallel. They communicate through channels.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `cancel` | `(Handle) -> ()` | Cancel a running task |
+| `cancel` | `(Handle) -> ()` | Request cancellation of a task (cooperative; see details below) |
 | `deadline` | `(Duration, () -> a) -> a` | Run a callback with a scoped I/O deadline |
 | `join` | `(Handle) -> a` | Wait for a task to complete |
 | `spawn` | `(() -> a) -> Handle` | Spawn a new lightweight task |
@@ -331,8 +331,25 @@ fixed thread pool and run in parallel. They communicate through channels.
 task.cancel(handle: Handle) -> ()
 ```
 
-Cancels a running task. The task will not execute further. No-op if the task has
-already completed.
+Flips the handle's result slot to `Err("cancelled")` using first-writer-wins
+semantics: if the task has already completed with some other result,
+`task.cancel` is a no-op on the handle. This is **not** a synchronous stop
+signal — treat it as a cooperative request, not a hard stop:
+
+- If the task is **currently parked** (blocked on a channel, `task.join`,
+  `time.sleep`, or a timer), the pending wake registrations are torn down and
+  the task will not be resumed. The handle resolves to `Err("cancelled")`.
+- If the task is **currently running**, the handle's result is set
+  immediately, but the running slice continues executing until its next
+  cooperative yield point or natural completion. Any side effects the slice
+  performs before it next parks — writes, spawns, channel sends, I/O — run to
+  completion. Its own final result is then discarded (first-writer-wins).
+
+Pair `task.cancel` with `task.join` when you need to know the task is
+actually done: the `Err("cancelled")` return from `task.join` is the
+authoritative "task is settled" signal. See
+[Concurrency: Cancelling](../concurrency.md#cancelling-taskcancelhandle) for
+the canonical treatment.
 
 ```silt
 import task
@@ -341,6 +358,7 @@ fn main() {
         -- long-running work
     })
     task.cancel(h)
+    let _ = task.join(h)  -- returns Err("cancelled") once the task is settled
 }
 ```
 

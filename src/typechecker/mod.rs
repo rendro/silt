@@ -233,6 +233,12 @@ pub(super) struct PendingWhereConstraint {
     /// the call (used to decide whether the obligation touches the
     /// enclosing fn's own polymorphism).
     pub(super) param_tyvars: Vec<TyVar>,
+    /// Snapshot of the enclosing fn's trait arg bindings for this
+    /// `(tyvar, trait_name)` pair at the time of the call, e.g.
+    /// `[Int]` for `where a: TryInto(Int)`. Empty for parameterless
+    /// traits. Used during finalize so parameterized-trait verification
+    /// can compare bound args against the matched impl's args.
+    pub(super) bound_trait_args: Vec<Type>,
 }
 
 // ── The type checker ────────────────────────────────────────────────
@@ -269,6 +275,15 @@ pub struct TypeChecker {
     /// String does not impl Greet, even though `(Greet, Box)` is in
     /// `trait_impl_set`).
     pub(super) impl_constraints: HashMap<(Symbol, Symbol), Vec<(usize, Symbol)>>,
+    /// Maps `(trait_name, target_head)` → the resolved trait args supplied
+    /// at impl site. For `trait TryInto(Float) for String { ... }` this
+    /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
+    /// consults this when the where-clause bound also carries trait args
+    /// (e.g. `where a: TryInto(Int)`) so that a concrete mismatch (Int vs
+    /// Float) is rejected — closing the soundness hole where parameterized-
+    /// trait where-clause verification previously ignored trait args.
+    /// Absent for parameter-less traits.
+    pub(super) impl_trait_args: HashMap<(Symbol, Symbol), Vec<Type>>,
     /// Maps function names to their where clauses as (param_index, trait_name).
     /// Accumulated type errors.
     pub errors: Vec<TypeError>,
@@ -397,6 +412,7 @@ impl TypeChecker {
             trait_impl_set: std::collections::HashSet::new(),
             trait_impl_spans: HashMap::new(),
             impl_constraints: HashMap::new(),
+            impl_trait_args: HashMap::new(),
             errors: Vec::new(),
             loop_binding_types: None,
             active_constraints: HashMap::new(),
@@ -511,7 +527,13 @@ impl TypeChecker {
 
             (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
                 if p1.len() != p2.len() {
-                    let (exp, got) = (p1.len(), p2.len());
+                    // Directional convention: t1 is the "got" side, t2 is
+                    // the "expected" side (see the Record arm below and
+                    // every unify() call site — e.g. `unify(body_ty,
+                    // ret_ty, span)` passes got then expected). Earlier
+                    // rounds formatted `p1.len()` as "expected", which
+                    // reversed the diagnostic.
+                    let (exp, got) = (p2.len(), p1.len());
                     self.error(
                         format!(
                             "function expects {exp} {arg_word}, got {got}",
@@ -560,11 +582,14 @@ impl TypeChecker {
 
             (Type::Tuple(a), Type::Tuple(b)) => {
                 if a.len() != b.len() {
+                    // Directional convention: t1 (=a) is the "got" side,
+                    // t2 (=b) is the "expected" side. Earlier wording
+                    // "expected {a.len()}, got {b.len()}" reversed this.
                     self.error(
                         format!(
                             "tuple length mismatch: expected {}, got {}",
-                            a.len(),
-                            b.len()
+                            b.len(),
+                            a.len()
                         ),
                         span,
                     );
@@ -693,11 +718,15 @@ impl TypeChecker {
                     }
                     self.error(msg, span);
                 } else if a1.len() != a2.len() {
+                    // Directional convention: t1 (=a1) is the "got" side,
+                    // t2 (=a2) is the "expected" side (see the Record arm
+                    // above and the unify() callsite convention). Earlier
+                    // wording had a1/a2 reversed.
                     self.error(
                         format!(
                             "type argument count mismatch for {n1}: expected {}, got {}",
-                            a1.len(),
-                            a2.len()
+                            a2.len(),
+                            a1.len()
                         ),
                         span,
                     );
@@ -886,6 +915,23 @@ impl TypeChecker {
                 .or_default()
                 .push(trait_name);
         }
+        // Round 58 soundness fix: propagate trait arg bindings across
+        // instantiation so that call sites of `fn f() where a: TryInto(Int)`
+        // still see `[Int]` on the fresh tyvar when verifying against
+        // impl_trait_args. Without this remap, instantiate would erase the
+        // args and verify_trait_obligation would fall back to the bare
+        // "implements trait" check, letting mismatched parameterized impls
+        // silently satisfy the obligation.
+        for (&old_tv, new_ty) in &mapping {
+            if let Type::Var(new_tv) = new_ty {
+                for (&(tv, trait_name), args) in self.trait_arg_bindings.clone().iter() {
+                    if tv == old_tv {
+                        self.trait_arg_bindings
+                            .insert((*new_tv, trait_name), args.clone());
+                    }
+                }
+            }
+        }
         (ty, constraints)
     }
 
@@ -961,7 +1007,13 @@ impl TypeChecker {
     ///
     /// Recursion terminates because each step strips one layer of type
     /// wrapping; finite types finish in O(depth).
-    pub(super) fn verify_trait_obligation(&mut self, trait_name: Symbol, ty: &Type, span: Span) {
+    pub(super) fn verify_trait_obligation(
+        &mut self,
+        trait_name: Symbol,
+        bound_trait_args: &[Type],
+        ty: &Type,
+        span: Span,
+    ) {
         let resolved = self.apply(ty);
         if matches!(resolved, Type::Error | Type::Never) {
             return;
@@ -981,6 +1033,45 @@ impl TypeChecker {
             );
             return;
         }
+        // Parameterized-trait verification: if the bound carries trait
+        // args (e.g. `where a: TryInto(Int)`) and the matched impl also
+        // registered its own args (`trait TryInto(Float) for String`),
+        // the two arg lists must be positionally compatible. Concrete
+        // mismatches reject — this is the soundness hole closed in
+        // round 58. Bare `verify_trait_obligation(trait, &[], ty, ..)`
+        // (supertrait chains, old call sites) keeps the fast path.
+        if !bound_trait_args.is_empty()
+            && let Some(impl_args) = self.impl_trait_args.get(&(trait_name, type_name)).cloned()
+            && impl_args.len() == bound_trait_args.len()
+        {
+            for (bound_arg, impl_arg) in bound_trait_args.iter().zip(impl_args.iter()) {
+                let b = self.apply(bound_arg);
+                let i = self.apply(impl_arg);
+                if !Self::trait_arg_compatible(&b, &i) {
+                    self.error(
+                        format!(
+                            "type '{}' does not implement trait '{}({})': \
+                             the matched impl is '{}({})'",
+                            type_name,
+                            resolve(trait_name),
+                            bound_trait_args
+                                .iter()
+                                .map(|t| format!("{t}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            resolve(trait_name),
+                            impl_args
+                                .iter()
+                                .map(|t| format!("{t}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ),
+                        span,
+                    );
+                    return;
+                }
+            }
+        }
         // Walk the matched impl's own where clauses against the actual
         // type arguments. Clone the obligation list so the recursive
         // `self.error` call doesn't conflict with the borrow.
@@ -990,8 +1081,54 @@ impl TypeChecker {
         let args = Self::type_args_of(&resolved);
         for (idx, sub_trait) in obligations {
             if let Some(arg_ty) = args.get(idx).cloned() {
-                self.verify_trait_obligation(sub_trait, &arg_ty, span);
+                // Sub-obligations on impl target args: no trait args to
+                // thread (impl-level where clauses are `where a: Trait`,
+                // no parameterized form yet).
+                self.verify_trait_obligation(sub_trait, &[], &arg_ty, span);
             }
+        }
+    }
+
+    /// Side-effect-free compatibility check between a bound's trait-arg
+    /// and an impl's trait-arg. Returns true when the pair could unify:
+    /// either side is a type variable (defer), or both are concrete and
+    /// structurally equal. Used by `verify_trait_obligation` to reject
+    /// `where a: TryInto(Int)` when only `TryInto(Float) for ...` exists.
+    fn trait_arg_compatible(a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (Type::Error, _) | (_, Type::Error) => true,
+            (Type::Var(_), _) | (_, Type::Var(_)) => true,
+            (Type::Int, Type::Int)
+            | (Type::Float, Type::Float)
+            | (Type::ExtFloat, Type::ExtFloat)
+            | (Type::Bool, Type::Bool)
+            | (Type::String, Type::String)
+            | (Type::Unit, Type::Unit) => true,
+            (Type::List(x), Type::List(y))
+            | (Type::Range(x), Type::Range(y))
+            | (Type::Set(x), Type::Set(y))
+            | (Type::Channel(x), Type::Channel(y)) => Self::trait_arg_compatible(x, y),
+            (Type::Map(k1, v1), Type::Map(k2, v2)) => {
+                Self::trait_arg_compatible(k1, k2) && Self::trait_arg_compatible(v1, v2)
+            }
+            (Type::Tuple(xs), Type::Tuple(ys)) => {
+                xs.len() == ys.len()
+                    && xs.iter().zip(ys.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
+            }
+            (Type::Fun(p1, r1), Type::Fun(p2, r2)) => {
+                p1.len() == p2.len()
+                    && p1.iter().zip(p2.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
+                    && Self::trait_arg_compatible(r1, r2)
+            }
+            (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1.iter().zip(a2.iter()).all(|(x, y)| Self::trait_arg_compatible(x, y))
+            }
+            (Type::Record(n1, _), Type::Record(n2, _)) => n1 == n2,
+            (Type::Record(n1, _), Type::Generic(n2, _))
+            | (Type::Generic(n1, _), Type::Record(n2, _)) => n1 == n2,
+            _ => false,
         }
     }
 
@@ -1207,8 +1344,17 @@ impl TypeChecker {
                 let is_value = inference::is_syntactic_value(&value.kind);
                 let val_ty = self.infer_expr(value, &mut env);
                 if let Some(te) = ty {
+                    // B2: populate the arity-error span hint with the
+                    // annotation's own span so diagnostics from
+                    // `resolve_type_expr` point at the user-written type,
+                    // not a zero-span sentinel. Without this, errors in
+                    // `let x: Box(Int) = ...` where `Box` is parameterized
+                    // emitted a span-less first error followed by a
+                    // duplicate from the subsequent unify.
+                    let prev_type_span = self.current_type_anno_span.replace(te.span);
                     let declared =
                         self.resolve_type_expr(te, &mut std::collections::HashMap::new());
+                    self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, span);
                 }
                 let scheme = if is_value {
@@ -2052,6 +2198,12 @@ impl TypeChecker {
                                 ),
                                 err_span,
                             );
+                            // Return Error so the subsequent unify doesn't
+                            // cascade a second "arity mismatch" diagnostic
+                            // (the Generic/Generic arm would re-detect the
+                            // same problem). The first report already has
+                            // the user-facing span; extras only confuse.
+                            return Type::Error;
                         }
                         Type::Generic(*name, resolved_args)
                     }
@@ -2688,30 +2840,45 @@ impl TypeChecker {
                     ),
                     ti.span,
                 );
-            } else if !trait_info.param_where_clauses.is_empty() {
+            } else if !ti.trait_args.is_empty() {
                 // Resolve each supplied trait arg through impl_param_map
                 // so lowercase names bind to the same fresh tyvars used
-                // by the impl's methods.
+                // by the impl's methods. Stash for later verification by
+                // `verify_trait_obligation` (closes the trait-args
+                // soundness hole: `where a: TryInto(Int)` against a
+                // `trait TryInto(Float) for String` impl must now reject).
                 let resolved_trait_args: Vec<Type> = ti
                     .trait_args
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                     .collect();
-                for (param_name, bound_trait) in &trait_info.param_where_clauses {
-                    let Some(idx) = trait_info.params.iter().position(|p| p == param_name) else {
-                        continue;
-                    };
-                    let Some(arg_ty) = resolved_trait_args.get(idx) else {
-                        continue;
-                    };
-                    let applied = self.apply(arg_ty);
-                    match &applied {
-                        Type::Var(_) => {
-                            // Deferred — the impl's own where clause path
-                            // will propagate it; skip here.
-                        }
-                        _ => {
-                            self.verify_trait_obligation(*bound_trait, &applied, ti.span);
+                self.impl_trait_args
+                    .insert((ti.trait_name, ti.target_type), resolved_trait_args.clone());
+                if !trait_info.param_where_clauses.is_empty() {
+                    for (param_name, bound_trait) in &trait_info.param_where_clauses {
+                        let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
+                        else {
+                            continue;
+                        };
+                        let Some(arg_ty) = resolved_trait_args.get(idx) else {
+                            continue;
+                        };
+                        let applied = self.apply(arg_ty);
+                        match &applied {
+                            Type::Var(_) => {
+                                // Deferred — the impl's own where clause path
+                                // will propagate it; skip here.
+                            }
+                            _ => {
+                                // Parameterless sub-bound: `trait Foo(a) where a: Display`
+                                // — no args to thread.
+                                self.verify_trait_obligation(
+                                    *bound_trait,
+                                    &[],
+                                    &applied,
+                                    ti.span,
+                                );
+                            }
                         }
                     }
                 }

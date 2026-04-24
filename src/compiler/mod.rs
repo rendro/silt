@@ -404,6 +404,17 @@ pub struct Compiler {
     module_parse_errors: Vec<CompileError>,
     /// Builtin modules that have been explicitly imported in this compilation unit.
     imported_builtin_modules: HashSet<String>,
+    /// Aliases for builtin modules: maps the alias name (e.g. "l" from
+    /// `import list as l`) to the canonical builtin module name (e.g.
+    /// "list"). Used by `extract_builtin_name` and the FieldAccess
+    /// codegen to resolve `l.sum` → `CallBuiltin("list.sum", …)` so that
+    /// non-curated submodule functions (registered in the typechecker
+    /// env / VM dispatcher but absent from `module::builtin_module_functions`)
+    /// remain callable through the alias. Mirrors the typechecker's
+    /// round-58 prefix-mirror (see src/typechecker/mod.rs:1107) on the
+    /// compiler side; without it `l.sum` failed with
+    /// "undefined global: l.sum" at runtime even though `list.sum` worked.
+    imported_builtin_module_aliases: HashMap<String, String>,
     /// Whether the current expression is in tail position (for TCO).
     in_tail_position: bool,
     /// When compiling inside a file-based module, maps bare function names
@@ -473,6 +484,7 @@ impl Compiler {
             warnings: Vec::new(),
             module_parse_errors: Vec::new(),
             imported_builtin_modules: HashSet::new(),
+            imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
             module_scope: None,
             module_public_fns: HashMap::new(),
@@ -508,6 +520,7 @@ impl Compiler {
             warnings: Vec::new(),
             module_parse_errors: Vec::new(),
             imported_builtin_modules: HashSet::new(),
+            imported_builtin_module_aliases: HashMap::new(),
             in_tail_position: false,
             module_scope: None,
             module_public_fns: HashMap::new(),
@@ -983,6 +996,19 @@ impl Compiler {
                 let alias_str = resolve(*alias);
                 if module::is_builtin_module(&mod_str) {
                     self.imported_builtin_modules.insert(mod_str.clone());
+                    // Record alias → canonical mapping so `l.sum(...)` can be
+                    // routed as `CallBuiltin("list.sum", ...)` by
+                    // `extract_builtin_name`, and `l.sum` as a value falls
+                    // back to `GetGlobal("list.sum")`. This covers
+                    // submodule functions registered in the typechecker /
+                    // VM dispatcher that aren't in the curated
+                    // `builtin_module_functions` list (e.g. list.sum,
+                    // string.lines). Without this the curated-only copy
+                    // loop below misses them and `l.sum` fails at runtime
+                    // with "undefined global: l.sum" even though
+                    // `list.sum(...)` works via `CallBuiltin`.
+                    self.imported_builtin_module_aliases
+                        .insert(alias_str.clone(), mod_str.clone());
                     // Builtin alias: copy all "module.func" globals to "alias.func".
                     let names = module::builtin_module_functions(&mod_str)
                         .into_iter()
@@ -2748,17 +2774,31 @@ impl Compiler {
             let mod_str = resolve(*module);
             if self.resolve_local(*module).is_none()
                 && self.resolve_upvalue_peek(*module).is_none()
-                && module::is_builtin_module(&mod_str)
             {
-                if !self.imported_builtin_modules.contains(&mod_str) {
-                    return Err(CompileError {
-                        message: format!(
-                            "module '{module}' is not imported; add `import {module}` at the top of the file"
-                        ),
-                        span: callee.span,
-                    });
+                if module::is_builtin_module(&mod_str) {
+                    if !self.imported_builtin_modules.contains(&mod_str) {
+                        return Err(CompileError {
+                            message: format!(
+                                "module '{module}' is not imported; add `import {module}` at the top of the file"
+                            ),
+                            span: callee.span,
+                        });
+                    }
+                    return Ok(Some(format!("{module}.{field}")));
                 }
-                return Ok(Some(format!("{module}.{field}")));
+                // Aliased builtin: `import list as l` → `l.sum(...)` must
+                // dispatch as `CallBuiltin("list.sum", ...)`. The alias
+                // loop in `compile_import` only mirrors the curated
+                // `builtin_module_functions` list as globals, so any
+                // submodule function registered only in the typechecker
+                // / VM dispatcher (list.sum, string.lines, …) would
+                // otherwise fail at runtime with "undefined global:
+                // l.sum". Rewriting the call at compile time bypasses
+                // the global lookup entirely and lets the VM's
+                // module-prefix dispatcher do the routing.
+                if let Some(canonical) = self.imported_builtin_module_aliases.get(&mod_str) {
+                    return Ok(Some(format!("{canonical}.{field}")));
+                }
             }
         }
         Ok(None)

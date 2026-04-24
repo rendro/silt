@@ -259,6 +259,24 @@ impl TypeChecker {
         }
         for (tv, trait_name) in constraints {
             let resolved = self.apply(&Type::Var(tv));
+            // Look up the caller's bound trait args for this obligation,
+            // e.g. `[Int]` for `where a: TryInto(Int)`. Try the method
+            // entry's own tv first (defensive); then probe every tyvar
+            // unified with the resolved type to find a matching binding
+            // registered by the enclosing fn's `register_fn_decl`. Empty
+            // when the trait has no parameters.
+            let bound_args = self
+                .trait_arg_bindings
+                .get(&(tv, trait_name))
+                .cloned()
+                .or_else(|| {
+                    if let Type::Var(v) = &resolved {
+                        self.trait_arg_bindings.get(&(*v, trait_name)).cloned()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
             match &resolved {
                 Type::Error | Type::Never => {}
                 Type::Var(v) => {
@@ -274,6 +292,7 @@ impl TypeChecker {
                             span,
                             active_snapshot: self.active_constraints.clone(),
                             param_tyvars: self.current_fn_param_tyvars.clone(),
+                            bound_trait_args: bound_args,
                         });
                     }
                 }
@@ -281,7 +300,7 @@ impl TypeChecker {
                     // Concrete receiver — check trait impl exists now,
                     // recursively walking the impl's own where clauses
                     // against the receiver's type arguments.
-                    self.verify_trait_obligation(trait_name, &resolved, span);
+                    self.verify_trait_obligation(trait_name, &bound_args, &resolved, span);
                 }
             }
         }
@@ -778,6 +797,7 @@ impl TypeChecker {
                 span,
                 active_snapshot,
                 param_tyvars,
+                bound_trait_args,
             } = pending;
             let resolved = self.apply(&Type::Var(tyvar));
             if matches!(resolved, Type::Error | Type::Never) {
@@ -785,8 +805,10 @@ impl TypeChecker {
             }
             if self.type_name_for_impl(&resolved).is_some() {
                 // Recursively walk the matched impl's where clauses
-                // against the resolved type's arguments.
-                self.verify_trait_obligation(trait_name, &resolved, span);
+                // against the resolved type's arguments. Thread the
+                // bound trait args so parameterized-trait obligations
+                // reject impls whose args don't match.
+                self.verify_trait_obligation(trait_name, &bound_trait_args, &resolved, span);
                 continue;
             }
             if let Type::Var(v) = &resolved {
@@ -2613,10 +2635,20 @@ impl TypeChecker {
                         // Check where clause constraints using instantiated TyVars
                         for (tyvar, trait_name) in &where_constraints {
                             let resolved = self.apply(&Type::Var(*tyvar));
+                            let bound_args = self
+                                .trait_arg_bindings
+                                .get(&(*tyvar, *trait_name))
+                                .cloned()
+                                .unwrap_or_default();
                             if self.type_name_for_impl(&resolved).is_some() {
                                 // Recursively walk the matched impl's where
                                 // clauses against the resolved type's args.
-                                self.verify_trait_obligation(*trait_name, &resolved, span);
+                                self.verify_trait_obligation(
+                                    *trait_name,
+                                    &bound_args,
+                                    &resolved,
+                                    span,
+                                );
                             } else if matches!(&resolved, Type::Var(_))
                                 && !self.covered_by_active_constraint(&resolved, *trait_name)
                             {
@@ -2634,6 +2666,7 @@ impl TypeChecker {
                                         span,
                                         active_snapshot: self.active_constraints.clone(),
                                         param_tyvars: self.current_fn_param_tyvars.clone(),
+                                        bound_trait_args: bound_args,
                                     });
                                 }
                             }
@@ -2756,7 +2789,11 @@ impl TypeChecker {
 
             ExprKind::Ascription(inner, type_expr) => {
                 let inner_ty = self.infer_expr(inner, env);
+                // B2: annotation arity errors should carry the annotation's
+                // own span, not a zero-span sentinel.
+                let prev_type_span = self.current_type_anno_span.replace(type_expr.span);
                 let declared = self.resolve_type_expr(type_expr, &mut HashMap::new());
+                self.current_type_anno_span = prev_type_span;
                 self.unify(&inner_ty, &declared, span);
                 declared
             }
@@ -2907,10 +2944,20 @@ impl TypeChecker {
                 // Check where clause constraints using instantiated TyVars
                 for (tyvar, trait_name) in &where_constraints {
                     let resolved = self.apply(&Type::Var(*tyvar));
+                    let bound_args = self
+                        .trait_arg_bindings
+                        .get(&(*tyvar, *trait_name))
+                        .cloned()
+                        .unwrap_or_default();
                     if self.type_name_for_impl(&resolved).is_some() {
                         // Recursively walk the matched impl's where clauses
                         // against the resolved type's arguments.
-                        self.verify_trait_obligation(*trait_name, &resolved, span);
+                        self.verify_trait_obligation(
+                            *trait_name,
+                            &bound_args,
+                            &resolved,
+                            span,
+                        );
                     } else if matches!(&resolved, Type::Var(_))
                         && !self.covered_by_active_constraint(&resolved, *trait_name)
                     {
@@ -2926,6 +2973,7 @@ impl TypeChecker {
                                 span,
                                 active_snapshot: self.active_constraints.clone(),
                                 param_tyvars: self.current_fn_param_tyvars.clone(),
+                                bound_trait_args: bound_args,
                             });
                         }
                     }
@@ -2944,7 +2992,13 @@ impl TypeChecker {
                     .iter()
                     .map(|p| {
                         let ty = if let Some(te) = &p.ty {
-                            self.resolve_type_expr(te, &mut HashMap::new())
+                            // B2: annotation arity errors carry the
+                            // annotation's own span.
+                            let prev_type_span =
+                                self.current_type_anno_span.replace(te.span);
+                            let resolved = self.resolve_type_expr(te, &mut HashMap::new());
+                            self.current_type_anno_span = prev_type_span;
+                            resolved
                         } else {
                             self.fresh_var()
                         };
@@ -3402,7 +3456,12 @@ impl TypeChecker {
                 let val_ty = self.infer_expr(value, env);
 
                 if let Some(te) = &ty {
+                    // B2: populate the arity-error span hint with the
+                    // annotation's own span so the duplicate span-less
+                    // diagnostic in `let x: Box(Int) = ...` goes away.
+                    let prev_type_span = self.current_type_anno_span.replace(te.span);
                     let declared = self.resolve_type_expr(te, &mut HashMap::new());
+                    self.current_type_anno_span = prev_type_span;
                     self.unify(&val_ty, &declared, value_span);
                 }
 

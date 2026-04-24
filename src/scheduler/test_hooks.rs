@@ -15,10 +15,7 @@
 //!
 //! | Hook        | Fired when                                                  |
 //! |-------------|-------------------------------------------------------------|
-//! | `on_submit` | After `Scheduler::submit` bumps both counters, before push  |
-//! | `on_dequeue`| Inside `worker_loop`, immediately after `pop_front`         |
 //! | `on_park`   | Inside the `Blocked` arm, just before `register_*_waker_*`  |
-//! | `on_wake`   | Inside `requeue`, before any counter mutation               |
 //!
 //! Each fire site passes a static `&'static str` tag identifying the
 //! exact transition (e.g. `"blocked_arm_entry_recv"`) so a hook can
@@ -28,14 +25,12 @@
 //!
 //! ## Storage shape
 //!
-//! Each hook lives in its own thread-local `RefCell<Option<Hook>>`. A
-//! thread-local is the right shape for these hooks because every
-//! transition fires on a known thread — the worker thread for
-//! `on_dequeue`/`on_park`/`on_wake`, and the caller thread for
-//! `on_submit`. Tests that want a hook to fire only on a specific
-//! thread install it on that thread; tests that want global behavior
-//! install it on every thread that may participate (typically each
-//! worker plus the main thread).
+//! The `on_park` hook lives in a thread-local `RefCell<Option<Hook>>`. A
+//! thread-local is the right shape because the transition fires on a
+//! known thread — the worker thread for `on_park`. Tests that want a
+//! hook to fire only on a specific thread install it on that thread;
+//! tests that want global behavior install it on every thread that may
+//! participate (typically each worker plus the main thread).
 //!
 //! ## Lifetime
 //!
@@ -59,10 +54,7 @@ use std::cell::RefCell;
 pub type Hook = Box<dyn Fn(&'static str) + Send + 'static>;
 
 thread_local! {
-    static ON_SUBMIT_HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
-    static ON_DEQUEUE_HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
     static ON_PARK_HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
-    static ON_WAKE_HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
 }
 
 // ── Install / clear API ───────────────────────────────────────────
@@ -79,55 +71,22 @@ pub fn install_on_park(hook: Hook) -> Option<Hook> {
 /// so a panicking test cannot leak a hook into the next test (which
 /// would run on the same OS thread under `cargo test`).
 pub fn clear_all() {
-    ON_SUBMIT_HOOK.with(|cell| cell.borrow_mut().take());
-    ON_DEQUEUE_HOOK.with(|cell| cell.borrow_mut().take());
     ON_PARK_HOOK.with(|cell| cell.borrow_mut().take());
-    ON_WAKE_HOOK.with(|cell| cell.borrow_mut().take());
 }
 
 // ── Fire entry points (called by the `fire_hook!` macro) ──────────
 //
-// Each entry point is a free function rather than a closure capture
+// The entry point is a free function rather than a closure capture
 // because the macro at the call site has no access to the
-// `thread_local!`'s `with` plumbing. Bodies are deliberately tiny so
+// `thread_local!`'s `with` plumbing. The body is deliberately tiny so
 // the no-hook fast path is a single thread-local read + None check
 // (no allocation, no extra indirection).
-
-/// Fired by `Scheduler::submit`.
-#[inline]
-pub fn on_submit(tag: &'static str) {
-    ON_SUBMIT_HOOK.with(|cell| {
-        if let Some(ref hook) = *cell.borrow() {
-            hook(tag);
-        }
-    });
-}
-
-/// Fired immediately after `pop_front` inside `worker_loop`.
-#[inline]
-pub fn on_dequeue(tag: &'static str) {
-    ON_DEQUEUE_HOOK.with(|cell| {
-        if let Some(ref hook) = *cell.borrow() {
-            hook(tag);
-        }
-    });
-}
 
 /// Fired at the entry of each `BlockReason` arm, before the per-arm
 /// `register_*_waker_guard` call.
 #[inline]
 pub fn on_park(tag: &'static str) {
     ON_PARK_HOOK.with(|cell| {
-        if let Some(ref hook) = *cell.borrow() {
-            hook(tag);
-        }
-    });
-}
-
-/// Fired at the start of `requeue`, before any counter mutation.
-#[inline]
-pub fn on_wake(tag: &'static str) {
-    ON_WAKE_HOOK.with(|cell| {
         if let Some(ref hook) = *cell.borrow() {
             hook(tag);
         }
@@ -143,10 +102,7 @@ mod tests {
     #[test]
     fn no_hook_installed_is_noop() {
         clear_all();
-        on_submit("anything");
-        on_dequeue("anything");
         on_park("anything");
-        on_wake("anything");
         // Reaching here without panic means the no-op fast path works.
     }
 

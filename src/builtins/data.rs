@@ -1050,7 +1050,7 @@ pub fn call_regex(vm: &mut Vm, name: &str, args: &[Value]) -> Result<Value, VmEr
                 vm.iterate_builtin(BuiltinIterKind::ListMap, items, args[2].clone(), args)?;
             let Value::List(replacements) = replacements_val else {
                 return Err(VmError::new(
-                    "internal: regex.replace_all_with iterate_builtin returned non-list".into(),
+                    "internal VM error: regex.replace_all_with builtin iteration returned non-list".into(),
                 ));
             };
             // Validate that all callback results are strings.

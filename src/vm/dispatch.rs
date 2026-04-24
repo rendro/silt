@@ -397,6 +397,33 @@ impl Vm {
                             )));
                         }
                     },
+                    // ExtFloat (produced by `Float / Float`) and mixed
+                    // Float/ExtFloat: mirror the arithmetic.rs compare
+                    // path — widen to f64 and error on NaN.
+                    (Value::ExtFloat(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
+                        Some(ord) => ord,
+                        None => {
+                            return Some(Err(VmError::new(
+                                "compare() cannot compare NaN values".into(),
+                            )));
+                        }
+                    },
+                    (Value::Float(a), Value::ExtFloat(b)) => match a.partial_cmp(b) {
+                        Some(ord) => ord,
+                        None => {
+                            return Some(Err(VmError::new(
+                                "compare() cannot compare NaN values".into(),
+                            )));
+                        }
+                    },
+                    (Value::ExtFloat(a), Value::Float(b)) => match a.partial_cmp(b) {
+                        Some(ord) => ord,
+                        None => {
+                            return Some(Err(VmError::new(
+                                "compare() cannot compare NaN values".into(),
+                            )));
+                        }
+                    },
                     (Value::String(a), Value::String(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     _ => {
@@ -413,6 +440,48 @@ impl Vm {
                     std::cmp::Ordering::Greater => 1,
                 };
                 Some(Ok(Value::Int(result)))
+            }
+            "hash" => {
+                // The typechecker auto-derives `Hash` for Int / Float /
+                // ExtFloat / Bool / String / List (and more). At runtime,
+                // user-defined `trait Hash for T` impls are resolved via
+                // the qualified-global path in `Op::CallMethod`; only
+                // auto-derived primitives fall through to here.
+                //
+                // `Value` already implements `std::hash::Hash` with a
+                // canonical bit-hash for floats (see src/value.rs:1759).
+                // We reuse that impl via `DefaultHasher` so the result
+                // matches `HashMap<Value, Value>` keying.
+                if !extra_args.is_empty() {
+                    return Some(Err(VmError::new("hash() takes no arguments".into())));
+                }
+                // Only honour hash() for types the typechecker actually
+                // auto-derives Hash for — emitting a dispatch error for
+                // anything else keeps the user-impl path authoritative.
+                match receiver {
+                    Value::Int(_)
+                    | Value::Float(_)
+                    | Value::ExtFloat(_)
+                    | Value::Bool(_)
+                    | Value::String(_)
+                    | Value::List(_)
+                    | Value::Tuple(_)
+                    | Value::Map(_)
+                    | Value::Set(_)
+                    | Value::Unit => {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        receiver.hash(&mut hasher);
+                        // Preserve the full hash width via bit-cast — the
+                        // typechecker declares the return type as `Int`
+                        // (i64), and a wrapping reinterpretation is
+                        // cheaper and more collision-resistant than
+                        // truncation.
+                        Some(Ok(Value::Int(hasher.finish() as i64)))
+                    }
+                    _ => None,
+                }
             }
             _ => None,
         }

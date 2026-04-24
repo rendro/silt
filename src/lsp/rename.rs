@@ -129,9 +129,15 @@ impl Server {
 }
 
 /// A user-renameable identifier: not a silt keyword, not a builtin
-/// module, not a reserved name. Constructor variants (`Ok`, `Err`,
-/// `Some`, `None`) are stdlib-defined and also rejected.
-fn is_user_renameable(name: &str) -> bool {
+/// module, not a reserved name. Builtin constructor variants (every
+/// name yielded by `module::all_builtin_constructor_names` — `Ok`,
+/// `Err`, `Some`, `None`, plus every gated variant from `io`, `json`,
+/// `http`, `channel`, `postgres`, `time`, etc.) are stdlib-defined
+/// and also rejected.
+///
+/// `pub` so integration tests (see `tests/builtin_constructor_parity_tests.rs`)
+/// can assert every gated constructor is protected from rename.
+pub fn is_user_renameable(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -141,7 +147,7 @@ fn is_user_renameable(name: &str) -> bool {
     if module::is_builtin_module(name) {
         return false;
     }
-    if BUILTIN_CONSTRUCTORS.contains(&name) {
+    if module::all_builtin_constructor_names().any(|c| c == name) {
         return false;
     }
     if BUILTIN_GLOBALS.contains(&name) {
@@ -173,38 +179,15 @@ const SILT_KEYWORDS: &[&str] = &[
     "when", "where", "true", "false",
 ];
 
-const BUILTIN_CONSTRUCTORS: &[&str] = &[
-    "Ok",
-    "Err",
-    "Some",
-    "None",
-    "Stop",
-    "Continue",
-    "Message",
-    "Closed",
-    "Empty",
-    "Sent",
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "HEAD",
-    "OPTIONS",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-];
+// Builtin constructor rejection consults `module::all_builtin_constructor_names`
+// so new gated variants (e.g. `IoNotFound`, `PgConnect`, `Recv`/`Send`) are
+// picked up automatically. Parity-lock test in
+// `tests/builtin_constructor_parity_tests.rs` guards the coupling.
 
 const BUILTIN_GLOBALS: &[&str] = &[
     "println",
     "print",
     "panic",
-    "unreachable",
     "Int",
     "Float",
     "String",

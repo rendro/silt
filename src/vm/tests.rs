@@ -2900,9 +2900,14 @@ fn test_make_closure_rejects_non_closure_constant() {
         .run(script)
         .expect_err("expected MakeClosure to reject non-VmClosure constant");
     let msg = format!("{err}");
+    // Round-59 audit LATENT fix: the MakeClosure guard error no longer
+    // leaks the raw `MakeClosure` / `VmClosure` Rust/opcode identifiers
+    // to user-facing output. The assertion now matches the user-facing
+    // phrasing used at `src/vm/execute.rs` (`closure construction
+    // constant is not a closure`).
     assert!(
-        msg.contains("MakeClosure") && msg.contains("not a VmClosure"),
-        "expected MakeClosure guard error, got: {msg}"
+        msg.contains("closure construction") && msg.contains("not a closure"),
+        "expected closure-construction guard error, got: {msg}"
     );
 }
 

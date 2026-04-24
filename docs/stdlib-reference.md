@@ -34,3 +34,4 @@ This document has been split into per-module pages. See the **[Standard Library 
 | tcp | [tcp](stdlib/tcp.md) |
 | stream | [stream](stdlib/stream.md) |
 | postgres | [postgres](stdlib/postgres.md) |
+| errors | [errors](stdlib/errors.md) |

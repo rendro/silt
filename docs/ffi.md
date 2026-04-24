@@ -197,7 +197,7 @@ channel through which every kind of silt runtime failure reaches Rust:
 ```rust
 match vm.run(script) {
     Ok(value) => println!("result: {:?}", value),
-    Err(e) => eprintln!("silt error: {}", e.message()),
+    Err(e) => eprintln!("silt error: {}", e.message),
 }
 ```
 

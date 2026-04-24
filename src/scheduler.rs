@@ -513,7 +513,6 @@ impl Scheduler {
         // yet) BEFORE pushing it on the queue so a racing main-thread
         // BFS that fires after the queue push sees the live entry.
         self.inner.wake_graph.on_spawn(task.id);
-        fire_hook!(on_submit, "submit_after_counters");
         let mut queue = self.inner.run_queue.lock();
         queue.push_back(task);
         self.inner.condvar.notify_one();
@@ -584,7 +583,6 @@ fn worker_loop(inner: Arc<SchedulerInner>) {
                     // can prove the task is still going to make progress.
                     // The two decrement sites are below in the
                     // Completed / Failed / Blocked-with-waker arms.
-                    fire_hook!(on_dequeue, "pop_front");
                     break task;
                 }
                 // Wake periodically to re-check the queue. The actual
@@ -1176,7 +1174,6 @@ impl Drop for MainWaiterGuard {
 /// internal-graph parks (channel/select/join) the waker site already
 /// knows which arm it's in.
 fn requeue(inner: &Arc<SchedulerInner>, task: Task, was_io: bool) {
-    fire_hook!(on_wake, "requeue_entry");
     // Bump unsettled_tasks BEFORE pushing the task on the queue so any
     // observer sees a "definitely progressing" counter throughout the
     // requeue window. The worker that next runs this task will

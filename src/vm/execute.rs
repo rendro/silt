@@ -846,7 +846,7 @@ impl Vm {
         // (e.g. inner yield from a nested `task.deadline`) is auto-promoted
         // into the top slot for subsequent `.is_some()` checks. (B5.)
         let suspended = self.take_suspended_invoke().ok_or_else(|| {
-            VmError::new("internal: resume_suspended_invoke called with no suspended state".into())
+            VmError::new("internal VM error: missing suspended state during resume".into())
         })?;
         let saved_frame_count = self.frames.len();
         let func_slot = suspended.func_slot;
@@ -872,7 +872,7 @@ impl Vm {
                     self.prune_tco_elided(self.frames.len());
                     if self.frames.len() < saved_frame_count {
                         return Err(VmError::new(
-                            "frame underflow in resume_suspended_invoke".into(),
+                            "internal VM error: frame stack underflow during resume".into(),
                         ));
                     }
                     if self.frames.len() == saved_frame_count {
@@ -1048,7 +1048,7 @@ impl Vm {
             } else {
                 // Shouldn't happen — defensive.
                 return Err(VmError::new(
-                    "internal: iterate_builtin resumed with stale index".into(),
+                    "internal VM error: builtin iteration resumed with stale index".into(),
                 ));
             }
         }
@@ -1288,7 +1288,7 @@ impl Vm {
                 let target = base + slot;
                 if target >= self.stack.len() {
                     return Err(VmError::new(format!(
-                        "internal: SetLocal slot out of range (slot {slot}, base {base}, stack len {})",
+                        "internal VM error: local binding slot out of range (slot {slot}, base {base}, stack len {})",
                         self.stack.len()
                     )));
                 }
@@ -1469,7 +1469,7 @@ impl Vm {
                     self.push(Value::VmClosure(closure));
                 } else {
                     return Err(VmError::new(
-                        "internal: MakeClosure constant is not a VmClosure".to_string(),
+                        "internal VM error: closure construction constant is not a closure".to_string(),
                     ));
                 }
             }
@@ -1477,7 +1477,7 @@ impl Vm {
                 let count = self.read_u8()? as usize;
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "MakeTuple: count {count} exceeds stack size {}",
+                        "internal VM error: tuple construction count {count} exceeds stack size {}",
                         self.stack.len()
                     )));
                 }
@@ -1490,7 +1490,7 @@ impl Vm {
                 let count = self.read_u16()? as usize;
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "MakeList: count {count} exceeds stack size {}",
+                        "internal VM error: list construction count {count} exceeds stack size {}",
                         self.stack.len()
                     )));
                 }
@@ -1504,7 +1504,7 @@ impl Vm {
                 let total = pair_count * 2;
                 if total > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "MakeMap: need {total} values but stack has {}",
+                        "internal VM error: map construction needs {total} values but stack has {}",
                         self.stack.len()
                     )));
                 }
@@ -1520,7 +1520,7 @@ impl Vm {
                 let count = self.read_u16()? as usize;
                 if count > self.stack.len() {
                     return Err(VmError::new(format!(
-                        "MakeSet: count {count} exceeds stack size {}",
+                        "internal VM error: set construction count {count} exceeds stack size {}",
                         self.stack.len()
                     )));
                 }
