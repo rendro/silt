@@ -1853,6 +1853,33 @@ impl TypeChecker {
                 // Do this BEFORE inferring obj to avoid false "possibly undefined variable" warnings
                 // for stdlib module names like list, string, map, io, etc.
                 if let Some(module_name) = module_name {
+                    // Round 56 item 4: stdlib should be opaque until imported.
+                    // Before this gate, `list.sum(...)` without `import list`
+                    // would typecheck silently (qualified names are
+                    // pre-registered in the environment by `register_builtins`),
+                    // and the compiler would later catch the missing import.
+                    // The audit decision is to surface the recommendation at
+                    // typecheck time so the LSP/CLI/REPL all agree.
+                    //
+                    // The gate fires only when the LHS identifier is a known
+                    // builtin module name AND it was never imported. Non-
+                    // builtin LHS identifiers (record values, enum types,
+                    // fresh vars) fall through to the usual FieldAccess
+                    // resolution paths below.
+                    let module_name_str = resolve(module_name);
+                    if crate::module::is_builtin_module(&module_name_str)
+                        && !self.imported_modules.contains(&module_name)
+                    {
+                        self.error(
+                            format!(
+                                "module '{module_name_str}' is not imported; add `import {module_name_str}` at the top of the file"
+                            ),
+                            span,
+                        );
+                        let fresh = self.fresh_var();
+                        expr.ty = Some(fresh.clone());
+                        return fresh;
+                    }
                     let qualified = intern(&format!("{module_name}.{field}"));
                     if let Some(scheme) = env.lookup(qualified) {
                         let scheme = scheme.clone();

@@ -584,6 +584,7 @@ mod tests {
         // A let binding whose value type is initially unknown but resolved by usage
         assert_no_errors(
             r#"
+import list
 fn main() {
   let x = []
   let y = list.append(x, 1)

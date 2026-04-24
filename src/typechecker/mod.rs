@@ -357,6 +357,25 @@ pub struct TypeChecker {
     /// callee to decide arity semantics (method call adds implicit self;
     /// field/module calls do not).
     pub(super) last_field_access_was_method: bool,
+    /// Round 56 item 4: the set of module names visible through `import`
+    /// statements in the current program. Populated at the start of
+    /// `check()`. Used by the `FieldAccess` path to decide whether
+    /// `list.sum(...)` should typecheck or emit an
+    /// "module 'X' is not imported; add `import X`" error. Stdlib
+    /// module names (`list`, `string`, ...) have all their qualified
+    /// members pre-registered in the environment, so without this
+    /// gate they'd typecheck silently even when never imported; the
+    /// compiler would then emit the import-recommendation at its own
+    /// layer but the typechecker said nothing. The audit decision
+    /// (round 52 item 4) is that stdlib should be opaque until
+    /// imported, so this gate fires at typecheck time.
+    ///
+    /// Entries:
+    ///   - `import list` / `import list.{sum}` → contains `list`.
+    ///   - `import list as l` → contains `l` (alias), NOT `list` —
+    ///     the user renamed the module, so its original name is no
+    ///     longer in scope.
+    pub(super) imported_modules: std::collections::HashSet<Symbol>,
 }
 
 impl Default for TypeChecker {
@@ -395,6 +414,7 @@ impl TypeChecker {
             current_fn_param_tyvars: Vec::new(),
             tyvar_trait_constraints: HashMap::new(),
             last_field_access_was_method: false,
+            imported_modules: std::collections::HashSet::new(),
         }
     }
 
@@ -562,18 +582,35 @@ impl TypeChecker {
                         span,
                     );
                 } else {
-                    // Unify fields by name (symmetric check: error if either
-                    // side has fields missing from the other).
-                    for (name, t1) in f1 {
-                        if let Some((_, t2)) = f2.iter().find(|(n, _)| n == name) {
-                            self.unify(t1, t2, span);
+                    // Unify fields by name. Messages are directional:
+                    // `t1` is the got side, `t2` is the expected side
+                    // (see the tuple/Generic arms above — `unify(t1, t2)`
+                    // treats `t2` as expected, `t1` as got). The symmetric
+                    // "record is missing field" wording was ambiguous
+                    // about which side was at fault; split into distinct
+                    // "unexpected field" (got has a surplus) and
+                    // "missing field" (got is short) diagnostics so the
+                    // caret + message unambiguously identifies the fault.
+                    for (name, t1_inner) in f1 {
+                        if let Some((_, t2_inner)) = f2.iter().find(|(n, _)| n == name) {
+                            self.unify(t1_inner, t2_inner, span);
                         } else {
-                            self.error(format!("record is missing field '{name}'"), span);
+                            self.error(
+                                format!(
+                                    "unexpected field '{name}' in record; type '{n1}' has no such field"
+                                ),
+                                span,
+                            );
                         }
                     }
-                    for (name, _t2) in f2 {
+                    for (name, _t2_inner) in f2 {
                         if !f1.iter().any(|(n, _)| n == name) {
-                            self.error(format!("record is missing field '{name}'"), span);
+                            self.error(
+                                format!(
+                                    "missing field '{name}' in record; type '{n1}' requires it"
+                                ),
+                                span,
+                            );
                         }
                     }
                 }
@@ -1021,11 +1058,16 @@ impl TypeChecker {
         // sync on derive policy).
         register_builtin_trait_impls(self);
 
+        // Round 56 item 4: reset the import set so a fresh check_program
+        // call doesn't inherit modules imported by a previous run.
+        self.imported_modules.clear();
+
         // Process imports: register selective/aliased import names in the type environment
         for decl in &program.decls {
             if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    self.imported_modules.insert(*module);
                     for item in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = env.lookup(qualified).cloned() {
@@ -1045,6 +1087,10 @@ impl TypeChecker {
             } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    // Track the alias (not the original module name) — the
+                    // user chose to rename the module, so the original
+                    // symbol is no longer in scope under its bare name.
+                    self.imported_modules.insert(*alias);
                     let names = crate::module::builtin_module_functions(&module_str)
                         .into_iter()
                         .chain(crate::module::builtin_module_constants(&module_str));
@@ -1064,6 +1110,7 @@ impl TypeChecker {
             } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    self.imported_modules.insert(*module);
                     // Built-in module names are already bound via register_builtins
                     // under their `module.func` qualified form — no additional
                     // action required here.
@@ -3270,11 +3317,15 @@ impl ReplTypeContext {
         // duplicates WITHIN a single input should error.
         self.checker.top_level_names.clear();
 
-        // Process imports
+        // Process imports. Round 56 item 4: we do NOT clear
+        // `self.checker.imported_modules` here — REPL sessions
+        // accumulate imports across inputs, so `import list` typed in
+        // one input stays in scope for subsequent inputs.
         for decl in &program.decls {
             if let Decl::Import(ImportTarget::Items(module, items), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    self.checker.imported_modules.insert(*module);
                     for item in items {
                         let qualified = intern(&format!("{module}.{item}"));
                         if let Some(scheme) = self.env.lookup(qualified).cloned() {
@@ -3292,6 +3343,7 @@ impl ReplTypeContext {
             } else if let Decl::Import(ImportTarget::Alias(module, alias), span) = decl {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
+                    self.checker.imported_modules.insert(*alias);
                     let names = crate::module::builtin_module_functions(&module_str)
                         .into_iter()
                         .chain(crate::module::builtin_module_constants(&module_str));
@@ -3312,7 +3364,9 @@ impl ReplTypeContext {
                 }
             } else if let Decl::Import(ImportTarget::Module(module), span) = decl {
                 let module_str = resolve(*module);
-                if !crate::module::is_builtin_module(&module_str) {
+                if crate::module::is_builtin_module(&module_str) {
+                    self.checker.imported_modules.insert(*module);
+                } else {
                     self.checker.warning(
                         format!(
                             "unknown module '{module_str}'; imported module will not be type-checked"
@@ -4135,6 +4189,7 @@ fn main() {
     fn test_pipe_operator() {
         assert_no_errors(
             r#"
+import list
 fn main() {
   [1, 2, 3, 4, 5]
   |> list.filter { x -> x > 2 }
@@ -4266,6 +4321,9 @@ fn main() {
     fn test_error_handling_pipeline() {
         assert_no_errors(
             r#"
+import list
+import string
+import int
 fn parse_config(text) {
   let lines = text |> string.split("\n")
 
@@ -4709,6 +4767,7 @@ fn main() {
     fn test_list_module_builtins() {
         assert_no_errors(
             r#"
+import list
 fn main() {
   let xs = [1, 2, 3]
   let ys = list.append(xs, 4)
@@ -4734,6 +4793,7 @@ fn main() {
     fn test_string_module_builtins() {
         assert_no_errors(
             r#"
+import string
 fn main() {
   let s = "hello world"
   let upper = string.to_upper(s)
@@ -4756,6 +4816,7 @@ fn main() {
     fn test_float_module_builtins() {
         assert_no_errors(
             r#"
+import float
 fn main() {
   let a = 3.14
   let b = 2.71
@@ -4776,6 +4837,7 @@ fn main() {
     fn test_int_module_builtins() {
         assert_no_errors(
             r#"
+import int
 fn main() {
   let a = 5
   let b = 3
@@ -4792,6 +4854,7 @@ fn main() {
     fn test_map_module_builtins() {
         assert_no_errors(
             r#"
+import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let got = map.get(m, "a")
@@ -4810,6 +4873,7 @@ fn main() {
     fn test_io_module_builtins() {
         assert_no_errors(
             r#"
+import io
 fn main() {
   let result = io.read_file("test.txt")
   let args = io.args()
@@ -4823,6 +4887,7 @@ fn main() {
     fn test_option_module_builtins() {
         assert_no_errors(
             r#"
+import option
 fn main() {
   let opt = Some(42)
   let is_s = option.is_some(opt)
@@ -4840,6 +4905,7 @@ fn main() {
     fn test_result_module_builtins() {
         assert_no_errors(
             r#"
+import result
 fn main() {
   let r = Ok(42)
   let is_ok = result.is_ok(r)
@@ -4854,6 +4920,7 @@ fn main() {
     fn test_higher_order_builtins() {
         assert_no_errors(
             r#"
+import list
 fn main() {
   let xs = [[1, 2], [3, 4], [5]]
   let flat = list.flatten(xs)
@@ -4869,6 +4936,9 @@ fn main() {
     fn test_len_accepts_string_and_map() {
         assert_no_errors(
             r#"
+import list
+import string
+import map
 fn main() {
   let list_len = list.length([1, 2, 3])
   let str_len = string.length("hello")
@@ -4883,6 +4953,7 @@ fn main() {
     fn test_assert_ne_builtin() {
         assert_no_errors(
             r#"
+import test
 fn main() {
   test.assert_ne(1, 2)
 }
@@ -4894,6 +4965,7 @@ fn main() {
     fn test_channel_new_no_type_error() {
         assert_no_errors(
             r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -4908,6 +4980,7 @@ fn main() {
     fn test_channel_send_mixed_types_is_error() {
         assert_has_error(
             r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -4922,6 +4995,7 @@ fn main() {
     fn test_channel_receive_constrains_element_type() {
         assert_no_errors(
             r#"
+import channel
 fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
@@ -4936,6 +5010,7 @@ fn main() {
     fn test_task_spawn_no_type_error() {
         assert_no_errors(
             r#"
+import task
 fn main() {
   let h = task.spawn(fn() { 42 })
   let result = task.join(h)
@@ -4949,6 +5024,7 @@ fn main() {
     fn test_map_length_no_type_error() {
         assert_no_errors(
             r#"
+import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let n = map.length(m)
@@ -5111,6 +5187,7 @@ fn main() {
     fn test_recursive_list_function() {
         assert_no_errors(
             r#"
+import list
 fn sum(xs) {
   match list.head(xs) {
     None -> 0
@@ -5624,6 +5701,7 @@ fn main() {
     fn test_string_module_split() {
         assert_no_errors(
             r#"
+import string
 fn main() {
   let parts = string.split("a,b,c", ",")
   parts
@@ -5636,6 +5714,7 @@ fn main() {
     fn test_list_map_and_filter() {
         assert_no_errors(
             r#"
+import list
 fn main() {
   let xs = [1, 2, 3, 4, 5]
   let doubled = list.map(xs, fn(x) { x * 2 })
@@ -5650,6 +5729,7 @@ fn main() {
     fn test_map_get_returns_option() {
         assert_no_errors(
             r#"
+import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let result = map.get(m, "a")
@@ -5666,6 +5746,8 @@ fn main() {
     fn test_chained_module_calls() {
         assert_no_errors(
             r#"
+import string
+import list
 fn main() {
   let s = "Hello World"
   let result = s

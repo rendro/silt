@@ -23,6 +23,7 @@ fn type_errors(input: &str) -> Vec<String> {
 #[test]
 fn json_parse_new_order_typechecks() {
     let src = r#"
+        import json
         type Todo { id: Int, title: String, done: Bool }
 
         fn use_body(body: String) {
@@ -40,6 +41,7 @@ fn json_parse_new_order_typechecks() {
 #[test]
 fn json_parse_old_order_rejected() {
     let src = r#"
+        import json
         type Todo { id: Int, title: String, done: Bool }
 
         fn use_body(body: String) {
@@ -63,6 +65,7 @@ fn json_parse_old_order_rejected() {
 #[test]
 fn json_parse_pipe_composes() {
     let src = r#"
+        import json
         type Todo { id: Int, title: String, done: Bool }
 
         fn use_body(body: String) {
@@ -80,6 +83,7 @@ fn json_parse_pipe_composes() {
 #[test]
 fn json_parse_list_new_order() {
     let src = r#"
+        import json
         type Todo { id: Int, title: String, done: Bool }
 
         fn use_body(body: String) {
@@ -93,6 +97,7 @@ fn json_parse_list_new_order() {
 #[test]
 fn json_parse_map_new_order() {
     let src = r#"
+        import json
         fn use_body(body: String) {
             let _ = json.parse_map(body, Int)
         }
@@ -104,6 +109,7 @@ fn json_parse_map_new_order() {
 #[test]
 fn toml_parse_new_order_typechecks() {
     let src = r#"
+        import toml
         type Config { name: String }
 
         fn use_content(content: String) {
@@ -117,6 +123,7 @@ fn toml_parse_new_order_typechecks() {
 #[test]
 fn toml_parse_pipe_composes() {
     let src = r#"
+        import toml
         type Config { name: String }
 
         fn use_content(content: String) {
