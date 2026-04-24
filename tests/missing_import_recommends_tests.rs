@@ -71,11 +71,7 @@ fn imported_builtin_typechecks_clean() {
 
 #[test]
 fn aliased_import_typechecks_under_alias() {
-    // Use `l.length` — `length` is in `builtin_module_functions("list")`
-    // so the alias loop at `src/typechecker/mod.rs` mirrors its scheme
-    // under the alias. (`list.sum` exists at typecheck via a separate
-    // trait-based registration that the alias mirror doesn't yet
-    // cover; that's a pre-existing gap, not in scope for this wave.)
+    // `length` IS in `builtin_module_functions("list")`.
     let errs = type_errors(
         r#"
         import list as l
@@ -87,6 +83,28 @@ fn aliased_import_typechecks_under_alias() {
     assert!(
         errs.is_empty(),
         "alias-qualified access should typecheck, got:\n{}",
+        errs.join("\n")
+    );
+}
+
+#[test]
+fn aliased_import_covers_non_curated_functions() {
+    // Round 58 fix: `list.sum` is registered via the typechecker's
+    // list submodule but NOT listed in `builtin_module_functions`.
+    // Pre-fix, the alias loop missed it and `l.sum(...)` failed with
+    // "undefined variable 'l'". Lock the working-under-alias behavior
+    // with a function that exists only in the submodule's registrar.
+    let errs = type_errors(
+        r#"
+        import list as l
+        fn main() -> Int {
+            l.sum([1, 2, 3])
+        }
+        "#,
+    );
+    assert!(
+        errs.is_empty(),
+        "`l.sum` should typecheck under alias (round 58), got:\n{}",
         errs.join("\n")
     );
 }

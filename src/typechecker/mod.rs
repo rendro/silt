@@ -1091,15 +1091,31 @@ impl TypeChecker {
                     // user chose to rename the module, so the original
                     // symbol is no longer in scope under its bare name.
                     self.imported_modules.insert(*alias);
-                    let names = crate::module::builtin_module_functions(&module_str)
-                        .into_iter()
-                        .chain(crate::module::builtin_module_constants(&module_str));
-                    for func in names {
-                        let qualified = intern(&format!("{module}.{func}"));
-                        let aliased = intern(&format!("{alias}.{func}"));
-                        if let Some(scheme) = env.lookup(qualified).cloned() {
-                            env.define(aliased, scheme);
-                        }
+                    // Mirror every qualified `{module}.{suffix}` binding
+                    // under the alias. Before round 58, this loop iterated
+                    // `builtin_module_functions(module_str)` and copied
+                    // only names in that curated list — which excluded
+                    // schemes registered directly in the typechecker's
+                    // submodules (e.g. `list.sum`, `list.product`), so
+                    // `l.sum` under `import list as l` failed with
+                    // "undefined variable 'l'" while `list.sum` worked.
+                    // Iterating the env by prefix captures every
+                    // qualified entry regardless of which registrar
+                    // defined it.
+                    let alias_str = resolve(*alias);
+                    let prefix = format!("{module_str}.");
+                    let to_alias: Vec<(Symbol, Scheme)> = env
+                        .bindings
+                        .iter()
+                        .filter_map(|(k, scheme)| {
+                            let k_str = resolve(*k);
+                            k_str
+                                .strip_prefix(&prefix)
+                                .map(|suffix| (intern(&format!("{alias_str}.{suffix}")), scheme.clone()))
+                        })
+                        .collect();
+                    for (aliased, scheme) in to_alias {
+                        env.define(aliased, scheme);
                     }
                 } else {
                     self.warning(
@@ -3344,15 +3360,26 @@ impl ReplTypeContext {
                 let module_str = resolve(*module);
                 if crate::module::is_builtin_module(&module_str) {
                     self.checker.imported_modules.insert(*alias);
-                    let names = crate::module::builtin_module_functions(&module_str)
-                        .into_iter()
-                        .chain(crate::module::builtin_module_constants(&module_str));
-                    for func in names {
-                        let qualified = intern(&format!("{module}.{func}"));
-                        let aliased = intern(&format!("{alias}.{func}"));
-                        if let Some(scheme) = self.env.lookup(qualified).cloned() {
-                            self.env.define(aliased, scheme);
-                        }
+                    // See the parallel path in `check_program` (round 58)
+                    // for the rationale — we mirror every qualified
+                    // binding with the right prefix so methods registered
+                    // outside `builtin_module_functions` (e.g. `list.sum`)
+                    // are reachable under the alias.
+                    let alias_str = resolve(*alias);
+                    let prefix = format!("{module_str}.");
+                    let to_alias: Vec<(Symbol, Scheme)> = self
+                        .env
+                        .bindings
+                        .iter()
+                        .filter_map(|(k, scheme)| {
+                            let k_str = resolve(*k);
+                            k_str.strip_prefix(&prefix).map(|suffix| {
+                                (intern(&format!("{alias_str}.{suffix}")), scheme.clone())
+                            })
+                        })
+                        .collect();
+                    for (aliased, scheme) in to_alias {
+                        self.env.define(aliased, scheme);
                     }
                 } else {
                     self.checker.warning(
