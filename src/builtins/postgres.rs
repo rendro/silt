@@ -2544,6 +2544,82 @@ mod tests {
         }
     }
 
+    /// Round-60 L6 behavioural companion to the source-grep lock in
+    /// tests/postgres_poisoned_lock_tests.rs. Force-poisons each of the
+    /// three module-private registry mutexes (pool / tx / cursor) by
+    /// panicking a background thread while it holds the guard, then
+    /// exercises the recovery-pattern call sites and asserts they
+    /// return cleanly instead of re-panicking.
+    ///
+    /// A regression that reintroduces a bare unwrap on the guard
+    /// (rather than `unwrap_or_else(|e| e.into_inner())`) on any of
+    /// the probed accessors would re-panic here and fail the test
+    /// — which is exactly the runtime-level guarantee the source-grep
+    /// form cannot verify.
+    ///
+    /// NOTE: the Rust test harness prints "thread '<name>' panicked
+    /// at 'deliberate poison: ...'" to stderr three times during this
+    /// test. That output is EXPECTED — the panics are deliberate, they
+    /// are caught by `JoinHandle::join`, and the test passes when the
+    /// post-poison registry operations succeed.
+    #[test]
+    fn poisoned_registry_locks_are_recovered_not_repanicked() {
+        use std::thread;
+
+        // Pool registry. Spawn a thread that acquires the guard and
+        // panics, unwinding through the `MutexGuard` Drop and poisoning
+        // the mutex. `.join()` returns Err(Box<dyn Any>) carrying the
+        // panic payload, which we discard.
+        let pool_reg = registry();
+        thread::Builder::new()
+            .name("poison-pool-registry".into())
+            .spawn(|| {
+                let _guard = registry().lock().expect("first lock on fresh mutex");
+                panic!("deliberate poison: pool registry");
+            })
+            .unwrap()
+            .join()
+            .expect_err("poison thread must have panicked");
+        assert!(pool_reg.is_poisoned(), "pool registry should be poisoned");
+        // Both ops use `.lock().unwrap_or_else(|e| e.into_inner())` —
+        // must not re-panic on the poisoned guard.
+        assert!(lookup_pool(u64::MAX).is_none());
+        assert!(!remove_pool(u64::MAX));
+
+        // Tx registry.
+        let tx_reg = tx_registry();
+        thread::Builder::new()
+            .name("poison-tx-registry".into())
+            .spawn(|| {
+                let _guard = tx_registry().lock().expect("first lock on fresh mutex");
+                panic!("deliberate poison: tx registry");
+            })
+            .unwrap()
+            .join()
+            .expect_err("poison thread must have panicked");
+        assert!(tx_reg.is_poisoned(), "tx registry should be poisoned");
+        assert!(lookup_tx(u64::MAX).is_none());
+        assert!(remove_tx(u64::MAX).is_none());
+
+        // Cursor registry.
+        let cursor_reg = cursors();
+        thread::Builder::new()
+            .name("poison-cursor-registry".into())
+            .spawn(|| {
+                let _guard = cursors().lock().expect("first lock on fresh mutex");
+                panic!("deliberate poison: cursor registry");
+            })
+            .unwrap()
+            .join()
+            .expect_err("poison thread must have panicked");
+        assert!(cursor_reg.is_poisoned(), "cursor registry should be poisoned");
+        assert!(lookup_cursor(u64::MAX).is_none());
+        assert!(remove_cursor(u64::MAX).is_none());
+        // drain_cursors_for_tx returns (); just verify it doesn't
+        // panic on the poisoned guard.
+        drain_cursors_for_tx(u64::MAX);
+    }
+
     /// Live smoke test against a local Postgres. Ignored by default —
     /// run with:
     ///   cargo test --features postgres -- --ignored postgres::
